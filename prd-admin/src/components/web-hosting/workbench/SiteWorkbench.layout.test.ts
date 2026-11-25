@@ -17,14 +17,14 @@ const page = readFileSync(path.resolve(__dirname, '../../../pages/WebPagesPage.t
  */
 describe('生成工作台布局契约', () => {
   it('弹窗关键尺寸走 inline style，窄屏不溢出', () => {
-    expect(workbench).toContain("width: 'min(1440px, calc(100vw - 16px))'");
+    expect(workbench).toContain("width: 'min(1280px, calc(100vw - 16px))'");
     expect(workbench).toContain("maxWidth: 'calc(100vw - 16px)'");
-    expect(workbench).toContain("height: 'min(900px, calc(100dvh - 16px))'");
+    expect(workbench).toContain("height: 'min(800px, calc(100dvh - 16px))'");
     expect(workbench).not.toContain('contentClassName="h-[');
   });
 
   it('桌面左对话右预览且预览占弹性列；窄屏收成「对话 / 预览」两个页签', () => {
-    expect(parts).toContain('lg:grid-cols-[minmax(360px,420px)_minmax(0,1fr)]');
+    expect(parts).toContain('lg:grid-cols-[minmax(360px,min(39%,500px))_minmax(0,1fr)]');
     expect(parts).toContain("aria-label=\"对话与预览\"");
     expect(workbench).toContain('<PaneTabs pane={pane} onChange={setPane}');
     // 窄屏一次只显示一栏，桌面两栏都在。
@@ -33,7 +33,7 @@ describe('生成工作台布局契约', () => {
   });
 
   it('资料从输入框左边的 + 叠加放入：知识库、上传、粘贴纪要，不是二选一的页签', () => {
-    for (const id of ["id: 'knowledge'", "id: 'upload'", "id: 'notes'"]) {
+    for (const id of ["id: 'knowledge'", "id: 'upload'", "id: 'notes'", "id: 'reference'"]) {
       expect(newStage, `+ 菜单缺了 ${id}`).toContain(id);
     }
     expect(newStage).toContain('<KnowledgeInlineBrowser');

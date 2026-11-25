@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { CheckCircle2, ExternalLink, Settings2, Sparkles } from 'lucide-react';
+import { CheckCircle2, ExternalLink, Settings2 } from 'lucide-react';
 import { Dialog } from '@/components/ui/Dialog';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { getSite, type HostedSite } from '@/services/real/webPages';
 import NewSiteStage, { type GenerationIntro, type WorkbenchSource } from './NewSiteStage';
 import SiteEditStage from './SiteEditStage';
-import { PaneTabs, type WorkbenchPane } from './WorkbenchParts';
+import { AssistantBubble, PaneTabs, UserBubble, WorkbenchLayout, WorkbenchPreview, type WorkbenchPane } from './WorkbenchParts';
+import './siteWorkbench.css';
 
 /**
  * 生成网页工作台：一个对话 + 一个预览，把「新建」和「继续修改」放进同一个窗口。
@@ -76,6 +77,7 @@ export default function SiteWorkbench({
       setLoadingSite(false);
       if (!result.success) {
         setOpeningFailed(true);
+        setPane('chat');
         return;
       }
       setSite(result.data);
@@ -83,6 +85,7 @@ export default function SiteWorkbench({
       if (sessionRef.current !== requestedIn) return;
       setLoadingSite(false);
       setOpeningFailed(true);
+      setPane('chat');
     });
   }, []);
 
@@ -98,28 +101,11 @@ export default function SiteWorkbench({
     onSiteChanged?.(updated);
   }, [onSiteChanged]);
 
-  const title = site?.title ?? (savedSiteId ? '网页已生成' : '生成网页');
-  const subtitle = site
-    ? busy ? '正在修改 · 线上不变' : '说想改哪里，先出草稿再发布'
-    : busy ? '正在生成 · 可以关掉窗口，回来接着看' : '用知识、文件或纪要生成网页';
-
-  const dialogTitle = (
-    <span className="flex min-w-0 items-center gap-2.5">
-      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[9px]" style={{ background: 'var(--selection-bg)', color: 'var(--accent-primary)' }}>
-        <Sparkles size={16} />
-      </span>
-      <span className="min-w-0">
-        <span className="block max-w-[46vw] truncate text-[15px] font-bold lg:max-w-[520px]">{title}</span>
-        <span className="block max-w-[46vw] truncate text-[11px] font-normal text-token-muted lg:max-w-[520px]">{subtitle}</span>
-      </span>
-    </span>
-  );
-
   return (
     <Dialog
       open={open}
       onOpenChange={(next) => { if (!next) onClose(); }}
-      title={dialogTitle}
+      title={<span className="text-[16px] font-bold">{site ? '修改网页' : savedSiteId ? '网页已生成' : '生成网页'}</span>}
       titleAction={(
         <span className="flex items-center gap-1.5">
           <PaneTabs pane={pane} onChange={setPane} previewBadge={busy ? '生成中' : undefined} />
@@ -136,17 +122,19 @@ export default function SiteWorkbench({
           )}
         </span>
       )}
-      maxWidth={1440}
+      maxWidth={1280}
+      contentClassName="web-workbench-dialog"
       contentStyle={{
-        width: 'min(1440px, calc(100vw - 16px))',
+        width: 'min(1280px, calc(100vw - 16px))',
         maxWidth: 'calc(100vw - 16px)',
-        height: 'min(900px, calc(100dvh - 16px))',
+        height: 'min(800px, calc(100dvh - 16px))',
         maxHeight: 'calc(100dvh - 16px)',
+        borderRadius: 16,
       }}
       content={(
         <div data-testid="site-workbench" className="flex h-full min-h-0 flex-col" style={{ minHeight: 0 }}>
           {savedSiteId && (
-            <div className="mb-2 flex shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-2 rounded-lg px-3 py-2" style={{ background: 'var(--bg-secondary)' }}>
+            <div className="flex shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-[color:var(--border-subtle)] px-4 py-1.5" style={{ background: 'var(--bg-secondary)' }}>
               <p role="status" className="flex items-center gap-2 text-[13px] font-semibold text-token-primary">
                 <CheckCircle2 size={16} style={{ color: 'var(--accent-primary)' }} aria-hidden />
                 已保存到网页托管
@@ -168,15 +156,31 @@ export default function SiteWorkbench({
                 onOpenShareSettings={onOpenShareSettings}
                 onBusyChange={setBusy}
               />
-            ) : loadingSite ? (
-              <MapSectionLoader text="网页已生成，正在打开" />
-            ) : savedSiteId && openingFailed ? (
-              <div className="flex h-full flex-col items-center justify-center gap-3 p-4 text-center">
-                <p role="alert" className="text-[13px] text-token-secondary">已保存的网页暂时打不开。可以重试打开预览，或到网页托管查看。</p>
-                <button type="button" onClick={() => openSavedSite(savedSiteId)} className="min-h-9 rounded-lg px-3 text-[13px] font-semibold hover-bg-soft" style={{ border: '1px solid var(--border-default)' }}>
-                  重试打开预览
-                </button>
-              </div>
+            ) : savedSiteId ? (
+              <WorkbenchLayout
+                pane={pane}
+                composer={null}
+                conversation={
+                  <>
+                    {intro && <UserBubble text={intro.request} chips={intro.chips} attachments={intro.attachments} />}
+                    {openingFailed && (
+                      <AssistantBubble tone="warning">
+                        <p role="alert">已保存的网页暂时打不开。可以重试打开预览，或到网页托管查看。</p>
+                        <button type="button" onClick={() => openSavedSite(savedSiteId)} className="min-h-9 self-start rounded-lg px-3 text-[13px] font-semibold hover-bg-soft" style={{ border: '1px solid var(--border-default)' }}>
+                          重试打开预览
+                        </button>
+                      </AssistantBubble>
+                    )}
+                  </>
+                }
+                preview={
+                  <WorkbenchPreview title={intro?.preview ? '生成时的最后一版预览' : '网页预览'} note={loadingSite ? '正在打开已保存的网页' : '已保存，可到网页托管查看'} nextHint="">
+                    {intro?.preview ? (
+                      <iframe srcDoc={intro.preview.html} sandbox={intro.preview.sandbox} referrerPolicy="no-referrer" title="生成时的最后一版预览" className="h-full w-full bg-white" />
+                    ) : loadingSite ? <MapSectionLoader text="网页已生成，正在打开" /> : null}
+                  </WorkbenchPreview>
+                }
+              />
             ) : target.kind === 'new' ? (
               <NewSiteStage
                 key={session}

@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { ArrowUp, Check, Plus, Square, X, type LucideIcon } from 'lucide-react';
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
+import { ArrowUp, Circle, CircleCheck, Clock3, Plus, Square, X, type LucideIcon } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
+import type { DesignAttachmentItem } from '../designAttachments';
+import { WorkbenchAttachments } from './WorkbenchAttachments';
 
 /**
  * 生成工作台的公共部件：一个对话 + 一个预览。
@@ -21,24 +24,23 @@ export function WorkbenchLayout({ pane, conversation, composer, preview }: {
   preview: ReactNode;
 }) {
   return (
-    <div className="grid h-full min-h-0 grid-cols-1 gap-3 lg:grid-cols-[minmax(360px,420px)_minmax(0,1fr)]">
+    <div className="grid h-full min-h-0 grid-cols-1 lg:grid-cols-[minmax(360px,min(39%,500px))_minmax(0,1fr)]">
       <section
         aria-label="对话"
         data-workbench-pane="chat"
-        className={`${pane === 'chat' ? 'flex' : 'hidden'} relative min-h-0 flex-col overflow-hidden rounded-[14px] lg:flex`}
-        style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}
+        className={`${pane === 'chat' ? 'flex' : 'hidden'} relative min-h-0 flex-col overflow-hidden bg-[var(--bg-card)] lg:flex lg:border-r lg:border-[color:var(--border-subtle)]`}
       >
-        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4" style={{ overscrollBehavior: 'contain' }}>
-          <div className="flex flex-col gap-3">{conversation}</div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-5 lg:px-7 lg:py-7" style={{ overscrollBehavior: 'contain' }}>
+          <div className="flex flex-col gap-4">{conversation}</div>
         </div>
-        <div className="shrink-0 px-3 pb-3 pt-2" style={{ borderTop: '1px solid var(--border-subtle)' }}>
-          {composer}
-        </div>
+        {composer && (
+          <div className="shrink-0 px-3 pb-3 pt-2 lg:px-5 lg:pb-4">{composer}</div>
+        )}
       </section>
       <section
         aria-label="预览"
         data-workbench-pane="preview"
-        className={`${pane === 'preview' ? 'flex' : 'hidden'} min-h-0 flex-col lg:flex`}
+        className={`${pane === 'preview' ? 'flex' : 'hidden'} min-h-0 min-w-0 flex-col bg-[var(--bg-secondary)] p-3.5 lg:flex`}
       >
         {preview}
       </section>
@@ -75,13 +77,14 @@ export function PaneTabs({ pane, onChange, previewBadge }: {
   );
 }
 
-export function UserBubble({ text, chips }: { text: string; chips?: string[] }) {
+export function UserBubble({ text, chips, attachments }: { text: string; chips?: string[]; attachments?: DesignAttachmentItem[] }) {
   return (
     <div
-      className="ml-auto flex max-w-[92%] flex-col gap-1.5 rounded-xl px-3 py-2.5"
+      className={`ml-auto flex max-w-[94%] flex-col gap-2 rounded-xl px-3 py-2.5 ${attachments?.length ? 'w-full' : ''}`}
       style={{ background: 'var(--selection-bg)' }}
     >
       <p className="whitespace-pre-wrap break-words text-[13px] leading-relaxed text-token-primary">{text}</p>
+      {attachments && <WorkbenchAttachments items={attachments} />}
       {chips && chips.length > 0 && (
         <div className="flex flex-wrap gap-1">
           {chips.map((chip) => (
@@ -127,9 +130,6 @@ export function RunProgressCard({
   provenance,
   steps,
   activity,
-  onStop,
-  stopRequested,
-  canStop,
   stopHint,
 }: {
   title: string;
@@ -140,13 +140,10 @@ export function RunProgressCard({
   provenance?: string | null;
   steps: ProgressStep[];
   activity: string;
-  onStop?: () => void;
-  stopRequested?: boolean;
-  canStop?: boolean;
   stopHint: string;
 }) {
   return (
-    <AssistantBubble>
+    <div className="flex flex-col gap-2.5 text-[13px]">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="flex items-center gap-1.5 font-semibold"><MapSpinner size={13} />{title}</div>
@@ -163,40 +160,33 @@ export function RunProgressCard({
           {runtimeLabel && <div className="max-w-28 truncate">{runtimeLabel}</div>}
         </div>
       </div>
-      <ol className="flex flex-col gap-1" aria-label="任务步骤">
-        {steps.map((step) => (
-          <li key={step.key} aria-current={step.state === 'active' ? 'step' : undefined} className="flex items-center gap-2 text-[12px]">
-            <span
-              className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full"
-              style={step.state === 'done'
-                ? { background: 'var(--semantic-success-soft)', color: 'var(--semantic-success-text)' }
-                : step.state === 'active'
-                  ? { background: 'var(--selection-bg)', color: 'var(--accent-primary)' }
-                  : { border: '1px solid var(--border-default)' }}
-            >
-              {step.state === 'done' ? <Check size={10} strokeWidth={3} /> : step.state === 'active' ? <MapSpinner size={9} /> : null}
-            </span>
-            <span className={step.state === 'todo' ? 'text-token-muted' : 'text-token-primary'}>{step.label}</span>
-          </li>
-        ))}
-      </ol>
-      <p aria-live="polite" className="text-[11px] text-token-secondary">{activity}{estimate ? ` · ${estimate}` : ''}</p>
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-[11px] text-token-muted">{stopHint}</p>
-        {onStop && (
-          <button
-            type="button"
-            onClick={onStop}
-            disabled={!canStop || stopRequested}
-            className="inline-flex min-h-9 shrink-0 items-center gap-1 rounded-lg px-2.5 text-[12px] font-medium transition-colors disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2"
-            style={{ border: '1px solid var(--semantic-danger-border)', color: 'var(--semantic-danger-text)' }}
-          >
-            {stopRequested ? <MapSpinner size={12} /> : <Square size={11} fill="currentColor" />}
-            {stopRequested ? '正在停止' : '停止'}
-          </button>
-        )}
+      <div className="rounded-xl border border-[color:var(--border-subtle)] bg-[var(--bg-secondary)] px-3 py-2.5">
+        <div className="mb-1.5 flex items-center justify-between border-b border-[color:var(--border-subtle)] pb-2 text-[12px]">
+          <span className="font-semibold text-token-primary">任务清单</span>
+          <span className="tabular-nums text-token-muted">{steps.filter((step) => step.state === 'done').length} / {steps.length}</span>
+        </div>
+        <ol className="flex flex-col" aria-label="任务步骤">
+          {steps.map((step) => (
+            <li key={step.key} aria-current={step.state === 'active' ? 'step' : undefined} className="flex min-h-8 items-center gap-2 text-[12px]">
+              <span
+                className="flex h-4 w-4 shrink-0 items-center justify-center"
+                style={step.state === 'done'
+                  ? { color: 'var(--semantic-success-text)' }
+                  : step.state === 'active'
+                    ? { color: 'var(--accent-primary)' }
+                    : { color: 'var(--text-muted)' }}
+              >
+                {step.state === 'done' ? <CircleCheck size={14} /> : step.state === 'active' ? <Clock3 size={14} /> : <Circle size={14} />}
+              </span>
+              <span className={step.state === 'todo' ? 'flex-1 text-token-muted' : 'flex-1 text-token-primary'}>{step.label}</span>
+              {step.state === 'active' && <span className="shrink-0 text-[11px] font-semibold text-[var(--accent-primary)]">进行中</span>}
+            </li>
+          ))}
+        </ol>
       </div>
-    </AssistantBubble>
+      <p aria-live="polite" className="text-[11px] text-token-secondary">{activity}{estimate ? ` · ${estimate}` : ''}</p>
+      <p className="text-[11px] text-token-muted">{stopHint}</p>
+    </div>
   );
 }
 
@@ -213,6 +203,7 @@ export interface PlusMenuItem {
 export interface ComposerChip {
   key: string;
   label: string;
+  icon?: LucideIcon;
   /** 状态一句话：上传进度 / 可以用 / 失败原因。 */
   status?: string;
   tone?: 'default' | 'busy' | 'danger';
@@ -242,8 +233,8 @@ export function composerState({ disabled, sendDisabled, value, chipCount }: {
 const COMPOSER_MAX_LENGTH = 4000;
 /** 接近上限才出现字数，平时不打扰。 */
 const COMPOSER_COUNTER_FROM = 3500;
-const COMPOSER_MIN_HEIGHT = 96;
-const COMPOSER_MAX_HEIGHT = 240;
+const COMPOSER_MIN_HEIGHT = 50;
+const COMPOSER_MAX_HEIGHT = 160;
 
 /** 按当前宽度下的内容高度设输入框高度，夹在上下限之间。 */
 export function fitComposerHeight(element: HTMLTextAreaElement) {
@@ -265,6 +256,7 @@ export function WorkbenchComposer({
   plusItems,
   showAddLabel,
   chips,
+  attachments,
   options,
   sendLabel,
   sendDisabled,
@@ -272,6 +264,8 @@ export function WorkbenchComposer({
   onSend,
   hint,
   onPaste,
+  onStop,
+  stopDisabled,
 }: {
   id: string;
   value: string;
@@ -281,6 +275,7 @@ export function WorkbenchComposer({
   plusItems: PlusMenuItem[];
   showAddLabel?: boolean;
   chips: ComposerChip[];
+  attachments?: { items: readonly DesignAttachmentItem[]; onRemove: (key: string) => void; onRetry: (key: string) => void; onReplace: (key: string) => void };
   options?: ReactNode;
   sendLabel: string;
   sendDisabled?: boolean;
@@ -288,9 +283,10 @@ export function WorkbenchComposer({
   onSend: () => void;
   hint: string;
   onPaste?: (event: React.ClipboardEvent<HTMLTextAreaElement>) => void;
+  onStop?: () => void;
+  stopDisabled?: boolean;
 }) {
   const [plusOpen, setPlusOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const state = composerState({ disabled, sendDisabled, value, chipCount: chips.length });
   const canSend = state === 'ready' || state === 'idle';
@@ -300,7 +296,7 @@ export function WorkbenchComposer({
   useEffect(() => {
     const element = textareaRef.current;
     if (element) fitComposerHeight(element);
-  }, [value]);
+  }, [disabled, value]);
   useEffect(() => {
     const element = textareaRef.current;
     if (!element || typeof ResizeObserver === 'undefined') return;
@@ -315,66 +311,47 @@ export function WorkbenchComposer({
     return () => observer.disconnect();
   }, []);
 
-  useEffect(() => {
-    if (!plusOpen) return;
-    const close = (event: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(event.target as Node)) setPlusOpen(false);
-    };
-    const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') setPlusOpen(false); };
-    document.addEventListener('mousedown', close);
-    document.addEventListener('keydown', escape);
-    return () => {
-      document.removeEventListener('mousedown', close);
-      document.removeEventListener('keydown', escape);
-    };
-  }, [plusOpen]);
-
   const plusMenu = (
-    <div ref={menuRef} className="relative shrink-0">
-      <button
-        type="button"
+    <DropdownMenu.Root modal={false} open={plusOpen && !disabled} onOpenChange={setPlusOpen}>
+      <DropdownMenu.Trigger
         aria-label="添加资料"
-        aria-haspopup="menu"
-        aria-expanded={plusOpen}
         disabled={disabled}
-        onClick={() => setPlusOpen((current) => !current)}
-        className={`flex h-8 items-center justify-center rounded-full transition-colors hover-bg-soft disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 ${showAddLabel ? 'gap-1 px-2.5 text-[12px] font-medium' : 'w-8'}`}
-        style={{ color: 'var(--text-primary)', background: plusOpen || showAddLabel ? 'var(--bg-tertiary)' : undefined }}
+        className={`flex h-8 items-center justify-center rounded-lg border border-[color:var(--border-subtle)] transition-colors hover-bg-soft disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 ${showAddLabel ? 'gap-1 px-2.5 text-[12px] font-medium' : 'w-8'}`}
+        style={{ color: 'var(--text-primary)', background: plusOpen ? 'var(--bg-tertiary)' : undefined }}
       >
         <Plus size={showAddLabel ? 15 : 18} />
         {showAddLabel && <span>添加资料</span>}
-      </button>
-      {plusOpen && (
-        <div
-          role="menu"
+      </DropdownMenu.Trigger>
+      <DropdownMenu.Portal>
+        <DropdownMenu.Content
+          side="top"
+          sideOffset={8}
+          align="start"
+          collisionPadding={12}
           aria-label="添加资料"
-          className="absolute bottom-10 left-0 z-20 flex w-[288px] flex-col gap-0.5 rounded-xl p-1.5 shadow-lg"
+          className="z-[110] flex max-h-[var(--radix-dropdown-menu-content-available-height)] w-[min(285px,calc(100vw-48px))] flex-col gap-0.5 overflow-y-auto rounded-xl p-1.5 shadow-lg"
           style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-default)' }}
         >
           {plusItems.map((item) => {
             const Icon = item.icon;
             return (
-              <button
+              <DropdownMenu.Item
                 key={item.id}
-                type="button"
-                role="menuitem"
                 disabled={Boolean(item.disabledReason)}
-                onClick={() => { setPlusOpen(false); item.onPick(); }}
-                className="flex items-start gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors hover-bg-soft disabled:cursor-not-allowed disabled:opacity-55"
+                onSelect={item.onPick}
+                className="flex cursor-pointer items-start gap-2.5 rounded-lg px-2.5 py-2 text-left outline-none transition-colors hover-bg-soft data-[disabled]:cursor-not-allowed data-[disabled]:opacity-55 data-[highlighted]:bg-[var(--bg-tertiary)]"
               >
-                <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg" style={{ background: 'var(--bg-tertiary)', color: 'var(--text-primary)' }}>
-                  <Icon size={15} />
-                </span>
+                <Icon size={15} className="mt-0.5 shrink-0 text-token-secondary" aria-hidden />
                 <span className="min-w-0">
                   <span className="block text-[13px] font-medium text-token-primary">{item.title}</span>
                   <span className="block text-[11px] leading-snug text-token-muted">{item.disabledReason || item.description}</span>
                 </span>
-              </button>
+              </DropdownMenu.Item>
             );
           })}
-        </div>
-      )}
-    </div>
+        </DropdownMenu.Content>
+      </DropdownMenu.Portal>
+    </DropdownMenu.Root>
   );
 
   const sendTitle = canSend ? `${sendLabel}（Ctrl/⌘ + Enter）` : sendDisabledReason || sendLabel;
@@ -386,11 +363,33 @@ export function WorkbenchComposer({
         className="flex flex-col rounded-2xl transition-shadow focus-within:ring-2 focus-within:ring-[color:var(--accent-primary)]"
         style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)' }}
       >
+        {!disabled && attachments && attachments.items.length > 0 && (
+          <div className="max-h-[min(30dvh,244px)] overflow-y-auto px-3 pt-3">
+            <WorkbenchAttachments {...attachments} />
+          </div>
+        )}
+        {!disabled && chips.length > 0 && (
+          <ul className="flex flex-wrap gap-1.5 px-3 pt-2.5" aria-label="已放入的资料">
+            {chips.map((chip) => (
+              <li key={chip.key} className="flex h-6 max-w-full items-center gap-1.5 rounded-md border border-[color:var(--border-subtle)] px-1.5 text-[11px]" style={{ background: 'var(--selection-bg)' }}>
+                {chip.icon && <chip.icon size={13} className="shrink-0 text-token-secondary" aria-hidden />}
+                {chip.tone === 'busy' && <MapSpinner size={11} />}
+                <span className="truncate text-token-primary" title={chip.label}>{chip.label}</span>
+                {chip.status && <span className="shrink-0 text-token-muted">{chip.status}</span>}
+                {chip.onRemove && (
+                  <button type="button" aria-label={`移除 ${chip.label}`} onClick={chip.onRemove} className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-token-muted hover-bg-soft">
+                    <X size={11} />
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
         <label htmlFor={id} className="sr-only">要求</label>
         <textarea
           ref={textareaRef}
           id={id}
-          value={value}
+          value={disabled ? '' : value}
           onChange={(event) => onChange(event.target.value)}
           onPaste={onPaste}
           onKeyDown={(event) => {
@@ -400,56 +399,31 @@ export function WorkbenchComposer({
             }
           }}
           disabled={disabled}
-          rows={4}
+          rows={2}
           maxLength={COMPOSER_MAX_LENGTH}
           placeholder={placeholder}
           style={{ minHeight: COMPOSER_MIN_HEIGHT, maxHeight: COMPOSER_MAX_HEIGHT }}
-          className="w-full resize-none overflow-y-auto bg-transparent px-4 pb-1 pt-3.5 text-base leading-relaxed text-token-primary outline-none placeholder:text-token-muted disabled:opacity-60 sm:text-[14px]"
+          className="w-full resize-none overflow-y-auto bg-transparent px-3 pb-1 pt-2 text-base leading-relaxed text-token-primary outline-none placeholder:text-token-muted disabled:opacity-60 sm:text-[14px]"
         />
         <div className="flex items-end gap-2 px-2 pb-2 pt-1">
           <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
             {plusMenu}
-            {chips.length > 0 && (
-              <ul className="contents" aria-label="已放入的资料">
-                {chips.map((chip) => (
-                  <li
-                    key={chip.key}
-                    className="flex h-7 max-w-full items-center gap-1.5 rounded-full py-0.5 pl-2.5 pr-1 text-[12px]"
-                    style={{
-                      background: chip.tone === 'danger' ? 'var(--semantic-danger-soft)' : 'var(--bg-tertiary)',
-                      color: chip.tone === 'danger' ? 'var(--semantic-danger-text)' : 'var(--text-primary)',
-                    }}
-                  >
-                    {chip.tone === 'busy' && <MapSpinner size={11} />}
-                    <span className="max-w-[160px] truncate" title={chip.label}>{chip.label}</span>
-                    {chip.status && <span className="shrink-0 text-[11px] text-token-muted">{chip.status}</span>}
-                    {chip.onRemove && (
-                      <button
-                        type="button"
-                        aria-label={`移除 ${chip.label}`}
-                        onClick={chip.onRemove}
-                        disabled={disabled}
-                        className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-token-muted hover-bg-soft disabled:opacity-40"
-                      >
-                        <X size={11} />
-                      </button>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
           </div>
           <div className="flex shrink-0 items-center gap-2">
             {value.length >= COMPOSER_COUNTER_FROM && (
               <span className="text-[11px] tabular-nums text-token-muted" aria-live="polite">{value.length}/{COMPOSER_MAX_LENGTH}</span>
             )}
-            <button
+            {disabled && onStop ? (
+              <button type="button" onClick={onStop} disabled={stopDisabled} aria-label="停止生成" title="停止生成" className="flex h-[34px] w-[34px] items-center justify-center rounded-[9px] bg-[var(--accent-primary)] text-[var(--accent-on-primary)] disabled:opacity-50">
+                {stopDisabled ? <MapSpinner size={13} /> : <Square size={13} fill="currentColor" aria-hidden />}
+              </button>
+            ) : <button
               type="button"
               onClick={onSend}
               disabled={!canSend}
               aria-label={sendLabel}
               title={sendTitle}
-              className="flex h-9 w-9 items-center justify-center rounded-full transition-colors disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2"
+              className="flex h-[34px] w-[34px] items-center justify-center rounded-[9px] transition-colors disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2"
               style={state === 'ready'
                 ? { background: 'var(--accent-primary)', color: 'var(--accent-on-primary)' }
                 : state === 'idle'
@@ -457,7 +431,7 @@ export function WorkbenchComposer({
                   : { background: 'var(--bg-tertiary)', color: 'var(--text-muted)' }}
             >
               {state === 'busy' ? <MapSpinner size={15} /> : <ArrowUp size={17} strokeWidth={2.4} />}
-            </button>
+            </button>}
           </div>
         </div>
       </div>
@@ -558,7 +532,7 @@ export function WorkbenchPreview({ title, note, actions, children, nextHint, too
           {actions}
         </div>
       </div>
-      <div className="relative min-h-[320px] flex-1 overflow-hidden rounded-[14px]" style={{ border: '1px solid var(--border-subtle)', background: 'var(--bg-card)' }}>
+      <div className="relative min-h-0 flex-1 overflow-hidden rounded-[10px]" style={{ border: '1px solid var(--border-subtle)', background: 'var(--bg-card)' }}>
         {children}
       </div>
       {nextHint && <p className="text-[12px] leading-relaxed text-token-secondary">{nextHint}</p>}

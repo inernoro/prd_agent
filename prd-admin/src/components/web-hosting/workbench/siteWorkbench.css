@@ -1,0 +1,9 @@
+.web-workbench-dialog > .prd-dialog-body {
+  padding: 0;
+}
+
+.web-workbench-dialog > div:first-child {
+  height: 52px;
+  padding-top: 0;
+  border-bottom: 1px solid var(--border-subtle);
+}

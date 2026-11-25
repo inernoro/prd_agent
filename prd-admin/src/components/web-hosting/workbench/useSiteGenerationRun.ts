@@ -140,6 +140,7 @@ export function useSiteGenerationRun({ destinationTeamId, hasInitialSource, init
   const [failedRun, setFailedRun] = useState<DesignArtifactRunSummary | null>(null);
   /** 恢复时从服务端读回的标题：刷新之后对话里要能说出「正在生成的是哪一篇」。 */
   const [recoveredTitle, setRecoveredTitle] = useState('');
+  const [recoveredRun, setRecoveredRun] = useState<DesignArtifactRunSummary | null>(null);
   const streamRef = useRef('');
   const lastPaintAtRef = useRef(0);
   const previewRevisionRef = useRef(-1);
@@ -251,6 +252,7 @@ export function useSiteGenerationRun({ destinationTeamId, hasInitialSource, init
         setRunInfo({ styleName: result.data.styleName, promptFingerprint: result.data.promptFingerprint });
         setRunStartedAtMs(Date.parse(result.data.createdAt));
         if (result.data.title) setRecoveredTitle((current) => current || result.data.title || '');
+        setRecoveredRun((current) => current?.runId === runId ? current : result.data);
         const persistedPreview = resolvePersistedRunPreview(result.data);
         if (persistedPreview && isNewerPreviewRevision(persistedPreview.revision, previewRevisionRef.current)) {
           previewRevisionRef.current = persistedPreview.revision;
@@ -319,6 +321,7 @@ export function useSiteGenerationRun({ destinationTeamId, hasInitialSource, init
     setCompletedSite(null);
     setFailedRun(null);
     setRecoveredTitle('');
+    setRecoveredRun(null);
     setActiveRunId(null);
     setStopRequested(false);
     setGenerating(false);
@@ -403,6 +406,7 @@ export function useSiteGenerationRun({ destinationTeamId, hasInitialSource, init
     setCompletedSite(null);
     setFailedRun(null);
     setRecoveredTitle('');
+    setRecoveredRun(null);
     setPreviewHtml('');
     setPreviewSandbox(AI_STREAM_PREVIEW_SANDBOX);
     previewRevisionRef.current = -1;
@@ -593,6 +597,7 @@ export function useSiteGenerationRun({ destinationTeamId, hasInitialSource, init
     stopRequested,
     completedSite,
     recoveredTitle,
+    recoveredRun,
     failedRun,
     restartableRunId,
     reset,

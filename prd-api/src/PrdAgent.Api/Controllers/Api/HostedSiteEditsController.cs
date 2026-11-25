@@ -739,7 +739,26 @@ public sealed class HostedSiteEditsController : ControllerBase
                 .Project(x => new { x.Id, x.PublishedContentVersion }).SortBy(x => x.PublishedContentVersion).ThenBy(x => x.Id)
                 .ToListAsync(CancellationToken.None);
             var numbers = publishedOrder.Select((item, index) => (item.Id, Number: (long)index + 1)).ToDictionary(item => item.Id, item => item.Number);
-            return Ok(ApiResponse<object>.Ok(items.Select(x => ToDto(x, current.ContentVersion, numbers.GetValueOrDefault(x.Id))).ToList()));
+            var runIds = items.Select(item => item.SourceRunId).OfType<string>().Distinct().ToArray();
+            var inputProjection = Builders<DesignArtifactRun>.Projection
+                .Include(x => x.Id)
+                .Include(x => x.Instruction)
+                .Include($"{nameof(DesignArtifactRun.UploadedSources)}.{nameof(DesignUploadedSource.AttachmentId)}")
+                .Include($"{nameof(DesignArtifactRun.UploadedSources)}.{nameof(DesignUploadedSource.FileName)}")
+                .Include($"{nameof(DesignArtifactRun.ReferenceImages)}.{nameof(DesignReferenceImage.AttachmentId)}")
+                .Include($"{nameof(DesignArtifactRun.ReferenceImages)}.{nameof(DesignReferenceImage.FileName)}")
+                .Include($"{nameof(DesignArtifactRun.ReferenceImages)}.{nameof(DesignReferenceImage.Size)}")
+                .Include($"{nameof(DesignArtifactRun.KnowledgeReferences)}.{nameof(DesignKnowledgeSnapshot.Title)}")
+                .Include($"{nameof(DesignArtifactRun.DesignDirection)}.{nameof(DesignArtifactDesignDirection.ReferenceSiteTitle)}");
+            var sourceRuns = runIds.Length == 0
+                ? new Dictionary<string, DesignArtifactRun>()
+                : (await _db.DesignArtifactRuns
+                    .Find(x => runIds.Contains(x.Id) && x.UserId == userId)
+                    .Project<DesignArtifactRun>(inputProjection)
+                    .ToListAsync(CancellationToken.None)).ToDictionary(x => x.Id);
+            return Ok(ApiResponse<object>.Ok(items.Select(x => ToDto(
+                x, current.ContentVersion, numbers.GetValueOrDefault(x.Id),
+                x.SourceRunId == null ? null : sourceRuns.GetValueOrDefault(x.SourceRunId))).ToList()));
         }
         catch (KeyNotFoundException)
         {
@@ -965,7 +984,7 @@ public sealed class HostedSiteEditsController : ControllerBase
         }
     }
 
-    private static object ToDto(HostedSiteRevision item, DateTime? currentContentVersion, long versionNumber = 0) => new
+    private static object ToDto(HostedSiteRevision item, DateTime? currentContentVersion, long versionNumber = 0, DesignArtifactRun? sourceRun = null) => new
     {
         contentVersionKey = item.PublishedContentVersion.HasValue ? HostedSiteCommentRules.VersionKey(item.PublishedContentVersion.Value) : null,
         versionLabel = versionNumber > 0 ? "V" + versionNumber : null,
@@ -987,6 +1006,21 @@ public sealed class HostedSiteEditsController : ControllerBase
         item.RejectedByUserId,
         item.RejectionReason,
         isCurrent = currentContentVersion.HasValue && item.PublishedContentVersion == currentContentVersion,
+        sourceInputs = sourceRun == null ? null : ToSourceInputs(sourceRun),
+    };
+
+    private static object ToSourceInputs(DesignArtifactRun run) => new
+    {
+        run.Instruction,
+        attachments = (run.UploadedSources ?? []).Select(file => new
+        {
+            file.AttachmentId, file.FileName, Size = (long?)null,
+        }).Concat((run.ReferenceImages ?? []).Select(image => new
+        {
+            image.AttachmentId, image.FileName, Size = (long?)image.Size,
+        })),
+        chips = run.KnowledgeReferences.Select(item => $"知识库 · {item.Title}").Concat(
+            run.DesignDirection?.ReferenceSiteTitle is { Length: > 0 } title ? [$"风格参考 · {title}"] : Array.Empty<string>()),
     };
 
     private static object ToRunDto(DesignArtifactRun run) => new

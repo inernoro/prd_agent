@@ -21,7 +21,7 @@ import {
   runningGenerationActivity,
 } from '../siteEditPreview';
 import { formatGenerationClock, runProvenanceText } from '../siteGenerateProgress';
-import { DESIGN_ATTACHMENT_ACCEPT, MAX_EDIT_SCREENSHOTS } from '../designAttachments';
+import { DESIGN_ATTACHMENT_ACCEPT, DESIGN_ATTACHMENT_DESCRIPTION, MAX_EDIT_SCREENSHOTS, recordedDesignAttachments, sentDesignAttachments, type DesignAttachmentItem } from '../designAttachments';
 import { RUNTIME_CARD_REGISTRY, runtimeCardTitle } from '../siteGenerateOptions';
 import {
   GENERATION_STAGES,
@@ -90,7 +90,9 @@ export default function SiteEditStage({
     publish, rollback, reject, retryRecovery, progress,
   } = session;
   const [sheet, setSheet] = useState<'knowledge' | null>(null);
-  const [sentInstruction, setSentInstruction] = useState('');
+  const [sentRound, setSentRound] = useState<{ text: string; chips: string[]; attachments: DesignAttachmentItem[] } | null>(null);
+  const [completedRounds, setCompletedRounds] = useState<Record<string, NonNullable<typeof sentRound>>>({});
+  const replacingScreenshotRef = useRef<string | null>(null);
   const [confirmRollbackId, setConfirmRollbackId] = useState<string | null>(null);
   const [shareAnchor, setShareAnchor] = useState<HTMLElement | null>(null);
   const [shareLinks, setShareLinks] = useState<ShareLinkItem[]>([]);
@@ -153,15 +155,17 @@ export default function SiteEditStage({
 
   // 一轮修改做完（出了新草稿）就清空输入框：那一轮已经作为对话显示在上面了。
   const lastDraftRef = useRef<string | null>(null);
+  const resetScreenshots = screenshots.reset;
   useEffect(() => {
     const draftId = pendingDraft?.id ?? null;
-    if (draftId && draftId !== lastDraftRef.current && !generating && sentInstruction) {
+    if (draftId && draftId !== lastDraftRef.current && !generating && sentRound) {
+      setCompletedRounds((current) => ({ ...current, [draftId]: sentRound }));
       setInstruction('');
-      setSentInstruction('');
-      screenshots.reset();
+      setSentRound(null);
+      resetScreenshots();
     }
-    lastDraftRef.current = draftId;
-  }, [generating, pendingDraft?.id, screenshots, sentInstruction, setInstruction]);
+    if (!generating) lastDraftRef.current = draftId;
+  }, [generating, pendingDraft?.id, resetScreenshots, sentRound, setInstruction]);
 
   useEffect(() => {
     conversationEndRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' });
@@ -169,9 +173,18 @@ export default function SiteEditStage({
 
   const send = () => {
     if (!instruction.trim() || generating) return;
-    setSentInstruction(instruction.trim());
+    setSentRound({
+      text: instruction.trim(),
+      chips: selectedKnowledge.map((item) => `知识库 · ${item.title}`),
+      attachments: sentDesignAttachments(screenshots.items),
+    });
     void generate();
     onPaneChange('preview');
+  };
+
+  const openScreenshotPicker = (replaceKey: string | null = null) => {
+    replacingScreenshotRef.current = replaceKey;
+    screenshotInputRef.current?.click();
   };
 
   const plusItems: PlusMenuItem[] = [
@@ -185,9 +198,9 @@ export default function SiteEditStage({
     {
       id: 'screenshot',
       title: '附上截图',
-      description: '把要改的地方截图圈出来，也可以直接在输入框里粘贴',
+      description: DESIGN_ATTACHMENT_DESCRIPTION.image,
       icon: ImagePlus,
-      onPick: () => screenshotInputRef.current?.click(),
+      onPick: () => openScreenshotPicker(),
       disabledReason: !screenshotsSupported
         ? '设计服务就绪后可以附上截图'
         : screenshots.items.length >= MAX_EDIT_SCREENSHOTS
@@ -201,25 +214,16 @@ export default function SiteEditStage({
       key: `kb-${entry.entryId}`,
       label: entry.title,
       status: '知识库',
+      icon: Library,
       onRemove: () => setSelectedKnowledge(selectedKnowledge.filter((item) => item.entryId !== entry.entryId)),
-    })),
-    ...screenshots.items.map((item) => ({
-      key: item.key,
-      label: item.fileName,
-      status: !screenshotsSupported
-        ? '设计服务尚未就绪'
-        : item.status === 'uploading'
-          ? `上传 ${item.progress}%`
-          : item.status === 'ready' ? '截图' : item.status === 'failed' ? item.error || '失败' : '保存中',
-      tone: item.status === 'failed' ? 'danger' as const : item.status === 'ready' ? 'default' as const : 'busy' as const,
-      onRemove: () => screenshots.remove(item.key),
     })),
   ];
 
   const runtimeCopy = RUNTIME_CARD_REGISTRY[REQUIRED_WEB_PAGE_RUNTIME];
   const sendBlocker = !requestRuntime
     ? missingRuntimeBlocker(runtimesLoaded)
-    : screenshots.busy ? '截图还在上传，传完就能生成' : '';
+    : screenshots.busy ? '截图上传完成后可发送'
+      : screenshots.hasFailed ? '请处理或移除失败的截图后再发送' : '';
 
   const steps = GENERATION_STAGES.map((stage, index) => {
     const { complete, current } = siteEditStageState(index, generationStageIndex, generating, progress);
@@ -230,12 +234,17 @@ export default function SiteEditStage({
     const outcome = roundOutcome(revision);
     const isFirst = index === 0;
     const showIntro = isFirst && intro;
+    const completed = completedRounds[revision.id];
     const previewing = previewedRevision?.id === revision.id;
     const canRollback = revision.status === 'published' && !revision.isCurrent;
     return (
       <div key={revision.id} className="flex flex-col gap-2">
         {showIntro ? (
-          <UserBubble text={intro.request} chips={intro.chips} />
+          <UserBubble text={intro.request} chips={intro.chips} attachments={intro.attachments} />
+        ) : completed ? (
+          <UserBubble {...completed} />
+        ) : revision.sourceInputs?.instruction ? (
+          <UserBubble text={revision.sourceInputs.instruction} chips={revision.sourceInputs.chips} attachments={recordedDesignAttachments(revision.sourceInputs.attachments)} />
         ) : revision.source === 'ai-edit' && revision.instruction ? (
           <UserBubble text={revision.instruction} chips={revision.knowledgeEntryIds.length > 0 ? [`引用了 ${revision.knowledgeEntryIds.length} 篇知识`] : undefined} />
         ) : null}
@@ -312,23 +321,18 @@ export default function SiteEditStage({
         <AssistantBubble><p className="flex items-center gap-2 text-[12px] text-token-secondary"><MapSpinner size={12} />正在读取这个网页的修改记录</p></AssistantBubble>
       )}
       {roundBubbles}
+      {sentRound && <UserBubble {...sentRound} />}
       {generating && (
-        <>
-          {sentInstruction && <UserBubble text={sentInstruction} />}
-          <RunProgressCard
-            title="正在修改，先出草稿"
-            clock={formatGenerationClock(elapsedSeconds)}
-            runtimeLabel={activeRuntime ? runtimeCardTitle(activeRuntime) : undefined}
-            resolvedModel={resolvedModel}
-            provenance={runProvenanceText(runInfo)}
-            steps={steps}
-            activity={runningGenerationActivity(phase, elapsedSeconds)}
-            onStop={() => void stopGeneration()}
-            stopRequested={stopRequested}
-            canStop={Boolean(activeRunId)}
-            stopHint="线上版本不变，客户看到的还是原来那版；可以关掉窗口，回来接着看。"
-          />
-        </>
+        <RunProgressCard
+          title="正在修改，先出草稿"
+          clock={formatGenerationClock(elapsedSeconds)}
+          runtimeLabel={activeRuntime ? runtimeCardTitle(activeRuntime) : undefined}
+          resolvedModel={resolvedModel}
+          provenance={runProvenanceText(runInfo)}
+          steps={steps}
+          activity={runningGenerationActivity(phase, elapsedSeconds)}
+          stopHint="线上版本不变，客户看到的还是原来那版；可以关掉窗口，回来接着看。"
+        />
       )}
       {recoveryNotice && (
         <AssistantBubble tone="warning">
@@ -355,10 +359,16 @@ export default function SiteEditStage({
         id={`workbench-edit-instruction-${site.id}`}
         value={instruction}
         onChange={setInstruction}
-        placeholder="想改哪里？比如「把首屏标题改短」「第三块换成表格」"
+        placeholder={generating ? '修改完成后可继续调整…' : '想改哪里？比如「把首屏标题改短」'}
         disabled={generating}
         plusItems={plusItems}
         chips={chips}
+        attachments={{
+          items: [...screenshots.items, ...screenshots.rejections],
+          onRemove: screenshots.remove,
+          onRetry: screenshots.retry,
+          onReplace: openScreenshotPicker,
+        }}
         onPaste={(event) => {
           if (!screenshotsSupported) return;
           const files = Array.from(event.clipboardData.files).filter((file) => file.type.startsWith('image/'));
@@ -370,6 +380,8 @@ export default function SiteEditStage({
         sendDisabled={generating || !instruction.trim() || Boolean(sendBlocker)}
         sendDisabledReason={generating ? undefined : sendBlocker || '先写一句想改哪里'}
         onSend={send}
+        onStop={() => void stopGeneration()}
+        stopDisabled={!activeRunId || stopRequested}
         hint={`只改你点名的地方，先出草稿再发布${runtimeCopy ? ` · ${runtimeCopy.footnote}` : ''}`}
       />
       <input
@@ -379,7 +391,10 @@ export default function SiteEditStage({
         accept={DESIGN_ATTACHMENT_ACCEPT.image}
         className="hidden"
         onChange={(event) => {
-          addScreenshots(Array.from(event.target.files ?? []));
+          const files = Array.from(event.target.files ?? []);
+          if (files.length > 0 && replacingScreenshotRef.current) screenshots.remove(replacingScreenshotRef.current);
+          replacingScreenshotRef.current = null;
+          addScreenshots(files);
           event.target.value = '';
         }}
       />

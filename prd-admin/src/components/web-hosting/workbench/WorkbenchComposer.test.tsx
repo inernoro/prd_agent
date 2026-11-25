@@ -1,7 +1,8 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { FileText } from 'lucide-react';
-import { WorkbenchComposer, composerState, fitComposerHeight, type ComposerChip } from './WorkbenchParts';
+import type { DesignAttachmentItem } from '../designAttachments';
+import { UserBubble, WorkbenchComposer, composerState, fitComposerHeight, type ComposerChip } from './WorkbenchParts';
 
 function render(overrides: Partial<Parameters<typeof WorkbenchComposer>[0]> = {}) {
   return renderToStaticMarkup(
@@ -22,6 +23,7 @@ function render(overrides: Partial<Parameters<typeof WorkbenchComposer>[0]> = {}
 }
 
 const chip: ComposerChip = { key: 'notes', label: '会议纪要-1.md', status: '可以用', onRemove: () => undefined };
+const file: DesignAttachmentItem = { key: 'pdf', fileName: '评审记录.pdf', status: 'ready', progress: 100, attachmentId: 'a1', size: 12000, textPreview: '架构决策会议纪要' };
 
 /** 取出输入卡片（带 data-composer-state 的那一层）自身的 HTML。 */
 function card(html: string): string {
@@ -65,8 +67,36 @@ describe('WorkbenchComposer 布局', () => {
     expect(inside).toContain('aria-label="生成网页 · 约 9–12 分钟"');
     expect(inside).not.toContain('data-testid="options"');
     expect(html).toContain('data-testid="options"');
-    // 资料排在发送按钮之前：左下角放引用，右下角才是发送。
-    expect(inside.indexOf('会议纪要-1.md')).toBeLessThan(inside.indexOf('aria-label="生成网页 · 约 9–12 分钟"'));
+    expect(inside.indexOf('会议纪要-1.md')).toBeLessThan(inside.indexOf('<textarea'));
+  });
+
+  it('上传预览位于文本框上方，发送后的同一个文件可回看且没有移除操作', () => {
+    const inside = card(render({
+      attachments: { items: [file], onRemove: () => undefined, onRetry: () => undefined, onReplace: () => undefined },
+    }));
+    expect(inside.indexOf('预览 评审记录.pdf')).toBeGreaterThan(-1);
+    expect(inside.indexOf('预览 评审记录.pdf')).toBeLessThan(inside.indexOf('<textarea'));
+    expect(inside).toContain('移除 评审记录.pdf');
+    expect(inside).toContain('架构决策会议纪要');
+    const sent = renderToStaticMarkup(<UserBubble text="生成 ADR 交接页" attachments={[file]} />);
+    expect(sent).toContain('预览 评审记录.pdf');
+    expect(sent).not.toContain('移除 评审记录.pdf');
+  });
+
+  it('上传、读取和两种失败分别显示进度、状态与相应恢复入口', () => {
+    const inside = card(render({ attachments: {
+      items: [
+        { ...file, status: 'uploading', progress: 64 },
+        { ...file, key: 'word', fileName: '交接.docx', status: 'reading' },
+        { ...file, key: 'md', fileName: '清单.md', status: 'failed', canRetry: true, error: '没有完成上传，请重试' },
+        { ...file, key: 'video', fileName: '演示.mp4', status: 'failed', rejected: true, error: '文件格式不支持' },
+      ],
+      onRemove: () => undefined, onRetry: () => undefined, onReplace: () => undefined,
+    } }));
+    expect(inside).toContain('64%');
+    expect(inside).toContain('正在读取正文');
+    expect(inside).toContain('重试上传');
+    expect(inside).toContain('重新选择');
   });
 
   it('发送按钮只放图标，按下去得到什么写在卡片下方的说明行，且不重复按钮文字', () => {
@@ -104,15 +134,15 @@ describe('fitComposerHeight', () => {
     return { scrollHeight, style: { height: '' } } as unknown as HTMLTextAreaElement;
   }
 
-  it('按内容高度设高，夹在 96 到 240 之间', () => {
+  it('按内容高度设高，夹在 50 到 160 之间', () => {
     const short = element(40);
     fitComposerHeight(short);
-    expect(short.style.height).toBe('96px');
-    const medium = element(180);
+    expect(short.style.height).toBe('50px');
+    const medium = element(120);
     fitComposerHeight(medium);
-    expect(medium.style.height).toBe('180px');
+    expect(medium.style.height).toBe('120px');
     const long = element(900);
     fitComposerHeight(long);
-    expect(long.style.height).toBe('240px');
+    expect(long.style.height).toBe('160px');
   });
 });

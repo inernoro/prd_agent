@@ -25,7 +25,7 @@ vi.mock('./useSiteEditSession', () => ({
     ],
     loadingHistory: false, generating: false, mutatingId: null, mutatingAction: null,
     recentKnowledge: [], selectedKnowledge: [], setSelectedKnowledge: vi.fn(), loadingKnowledge: false,
-    screenshots: { items: [], busy: false, reset: vi.fn() }, runInfo: null, activeRunId: null,
+    screenshots: { items: [], rejections: [], busy: false, reset: vi.fn() }, runInfo: null, activeRunId: null,
     recoveryNotice: null, runtimeRecoveryGate: null, runtimesLoaded: true,
     activeRuntime: null, requestRuntime: null, screenshotsSupported: false,
     generationStageIndex: 0, openRevision: mock.openRevision, progress: 0,

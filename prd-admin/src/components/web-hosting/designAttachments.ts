@@ -32,6 +32,11 @@ export interface DesignAttachmentItem {
   progress: number;
   attachmentId?: string;
   error?: string;
+  canRetry?: boolean;
+  rejected?: boolean;
+  textPreview?: string;
+  previewTruncated?: boolean;
+  url?: string;
   /** 图片的本地缩略图（object URL），移除或重置时回收。 */
   thumbnailUrl?: string;
 }
@@ -44,6 +49,11 @@ const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.webp'];
 export const DESIGN_ATTACHMENT_ACCEPT: Record<DesignAttachmentKind, string> = {
   document: DOCUMENT_EXTENSIONS.join(','),
   image: IMAGE_EXTENSIONS.join(','),
+};
+
+export const DESIGN_ATTACHMENT_DESCRIPTION: Record<DesignAttachmentKind, string> = {
+  document: `支持 PDF、Word（DOC / DOCX）、Markdown（MD）、TXT、HTML / HTM。最多 ${MAX_GENERATE_ATTACHMENTS} 个，每个不超过 19.9 MB`,
+  image: `支持 PNG、JPG、JPEG、WebP。最多 ${MAX_EDIT_SCREENSHOTS} 张，每张不超过 5 MB，也可以直接粘贴`,
 };
 
 function extensionOf(fileName: string): string {
@@ -74,8 +84,8 @@ export function validateDesignAttachment(
   const allowed = kind === 'image' ? IMAGE_EXTENSIONS : DOCUMENT_EXTENSIONS;
   if (!allowed.includes(extensionOf(file.name))) {
     return kind === 'image'
-      ? `「${file.name}」不是支持的截图格式，只支持 PNG、JPG、WebP`
-      : `「${file.name}」格式不支持，只支持 Word、PDF、Markdown、TXT、HTML`;
+      ? '截图格式不支持，请选择 PNG、JPG、JPEG 或 WebP'
+      : '文件格式不支持，请选择 PDF、Word、Markdown、TXT 或 HTML';
   }
   if (kind === 'image' && file.size > DESIGN_SCREENSHOT_MAX_BYTES) {
     return `「${file.name}」超过 5 MB，请压缩后再传`;
@@ -122,23 +132,28 @@ function nextKey() {
   return `att-${Date.now().toString(36)}-${keySeed}`;
 }
 
-/**
- * 上传队列 hook。addFiles 返回被拒收的原因列表（格式 / 大小 / 数量），调用方负责提示；
- * 队列里的每一项自己推进：uploading（带字节进度）→ reading（服务端提取正文）→ ready / failed。
- */
+/** 本地文件只在需要重新上传时保留。发送记录用附件 ID 与持久化地址，不依赖输入框的 Blob URL。 */
+export function sentDesignAttachments(items: readonly DesignAttachmentItem[]): DesignAttachmentItem[] {
+  return items.filter((item) => item.status === 'ready' && item.attachmentId)
+    .map(({ thumbnailUrl: _thumbnailUrl, ...item }) => item);
+}
+
+export function recordedDesignAttachments(items?: ReadonlyArray<{ attachmentId: string; fileName: string; size?: number | null }> | null): DesignAttachmentItem[] {
+  return (items ?? []).map((item) => ({ ...item, key: item.attachmentId, size: item.size ?? 0, status: 'ready', progress: 100 }));
+}
+
 export function useDesignAttachmentUploads(kind: DesignAttachmentKind, max: number) {
   const [items, setItems] = useState<DesignAttachmentItem[]>([]);
+  const [rejections, setRejections] = useState<DesignAttachmentItem[]>([]);
   const itemsRef = useRef<DesignAttachmentItem[]>([]);
   const controllersRef = useRef(new Map<string, AbortController>());
+  const filesRef = useRef(new Map<string, File>());
   // 缩略图 object URL 单独记一份（稳定对象），卸载时一次回收，不依赖随时被替换的 items。
   const thumbnailsRef = useRef(new Set<string>());
 
-  useEffect(() => {
-    itemsRef.current = items;
-  }, [items]);
-
   const patch = useCallback((key: string, next: Partial<DesignAttachmentItem>) => {
-    setItems((current) => current.map((item) => (item.key === key ? { ...item, ...next } : item)));
+    itemsRef.current = itemsRef.current.map((item) => (item.key === key ? { ...item, ...next } : item));
+    setItems(itemsRef.current);
   }, []);
 
   const startUpload = useCallback(async (key: string, file: File) => {
@@ -146,32 +161,46 @@ export function useDesignAttachmentUploads(kind: DesignAttachmentKind, max: numb
     controllersRef.current.set(key, controller);
     const result = await uploadAttachment(file, {
       signal: controller.signal,
+      includeTextPreview: kind === 'document',
+      timeoutMs: 120_000,
       onProgress: (loaded, total) => {
+        if (controller.signal.aborted) return;
         const percent = total > 0 ? Math.min(100, Math.round((loaded / total) * 100)) : 0;
         patch(key, percent >= 100 ? { progress: 100, status: 'reading' } : { progress: percent });
       },
-    });
+    }).catch(() => null);
     controllersRef.current.delete(key);
     if (controller.signal.aborted) return;
-    if (result.success && result.data?.attachmentId) {
-      patch(key, { status: 'ready', progress: 100, attachmentId: result.data.attachmentId, error: undefined });
+    if (result?.success && result.data?.attachmentId) {
+      filesRef.current.delete(key);
+      const { attachmentId, textPreview, previewTruncated, url } = result.data;
+      if (kind === 'document' && textPreview === '') {
+        patch(key, { status: 'failed', error: '没有读到正文，请选择包含文字的文件', canRetry: false });
+        return;
+      }
+      patch(key, { status: 'ready', progress: 100, attachmentId, textPreview, previewTruncated, url, error: undefined });
     } else {
-      patch(key, { status: 'failed', error: result.error?.message || '上传失败，请稍后重试' });
+      const unsupported = result?.error?.code === 'UNSUPPORTED_TYPE' || result?.error?.code === 'INVALID_FILE';
+      if (unsupported) filesRef.current.delete(key);
+      patch(key, {
+        status: 'failed',
+        error: unsupported ? '文件无法读取，请重新选择' : '没有完成上传，请重试',
+        canRetry: !unsupported,
+      });
     }
-  }, [patch]);
+  }, [kind, patch]);
 
-  const addFiles = useCallback((files: readonly File[]): string[] => {
-    const rejected: string[] = [];
+  const addFiles = useCallback((files: readonly File[]) => {
+    if (files.length === 0) return;
+    const rejected: DesignAttachmentItem[] = [];
     const accepted: Array<{ item: DesignAttachmentItem; file: File }> = [];
     let room = max - itemsRef.current.length;
     for (const file of files) {
-      const reason = validateDesignAttachment(file, kind);
+      const reason = validateDesignAttachment(file, kind)
+        || (room <= 0 ? `最多 ${max} ${kind === 'image' ? '张截图' : '个文件'}，请移除一项后再试` : null);
       if (reason) {
-        rejected.push(reason);
-        continue;
-      }
-      if (room <= 0) {
-        rejected.push(`最多 ${max} 个${kind === 'image' ? '截图' : '文件'}，「${file.name}」没有加入`);
+        if (rejected.length < max)
+          rejected.push({ key: nextKey(), fileName: file.name, size: file.size, progress: 0, status: 'failed', error: reason, rejected: true });
         continue;
       }
       room -= 1;
@@ -195,14 +224,26 @@ export function useDesignAttachmentUploads(kind: DesignAttachmentKind, max: numb
       const next = [...itemsRef.current, ...accepted.map((entry) => entry.item)];
       itemsRef.current = next;
       setItems(next);
-      accepted.forEach(({ item, file }) => { void startUpload(item.key, file); });
+      accepted.forEach(({ item, file }) => {
+        filesRef.current.set(item.key, file);
+        void startUpload(item.key, file);
+      });
     }
-    return rejected;
+    setRejections(rejected);
   }, [kind, max, startUpload]);
 
+  const retry = useCallback((key: string) => {
+    const file = filesRef.current.get(key);
+    if (!file || controllersRef.current.has(key)) return;
+    patch(key, { status: 'uploading', progress: 0, error: undefined, canRetry: false });
+    void startUpload(key, file);
+  }, [patch, startUpload]);
+
   const remove = useCallback((key: string) => {
+    setRejections((current) => current.filter((item) => item.key !== key));
     controllersRef.current.get(key)?.abort();
     controllersRef.current.delete(key);
+    filesRef.current.delete(key);
     const target = itemsRef.current.find((item) => item.key === key);
     if (target?.thumbnailUrl) {
       URL.revokeObjectURL(target.thumbnailUrl);
@@ -213,13 +254,13 @@ export function useDesignAttachmentUploads(kind: DesignAttachmentKind, max: numb
     setItems(next);
   }, []);
 
-  const restoreReady = useCallback((sources: ReadonlyArray<{ attachmentId: string; fileName: string }>) => {
+  const restoreReady = useCallback((sources: ReadonlyArray<{ attachmentId: string; fileName: string; size?: number }>) => {
     const current = itemsRef.current;
     const known = new Set(current.map((item) => item.attachmentId));
     const restored = sources.filter((source) => !known.has(source.attachmentId))
       .slice(0, Math.max(0, max - current.length))
       .map((source): DesignAttachmentItem => ({
-        ...source, key: nextKey(), size: 0, status: 'ready', progress: 100,
+        ...source, key: nextKey(), size: source.size ?? 0, status: 'ready', progress: 100,
       }));
     itemsRef.current = [...current, ...restored];
     setItems(itemsRef.current);
@@ -228,10 +269,12 @@ export function useDesignAttachmentUploads(kind: DesignAttachmentKind, max: numb
   const reset = useCallback(() => {
     controllersRef.current.forEach((controller) => controller.abort());
     controllersRef.current.clear();
+    filesRef.current.clear();
     thumbnailsRef.current.forEach((url) => URL.revokeObjectURL(url));
     thumbnailsRef.current.clear();
     itemsRef.current = [];
     setItems([]);
+    setRejections([]);
   }, []);
 
   useEffect(() => {
@@ -244,5 +287,6 @@ export function useDesignAttachmentUploads(kind: DesignAttachmentKind, max: numb
   }, []);
 
   const busy = items.some((item) => item.status === 'uploading' || item.status === 'reading');
-  return { items, addFiles, remove, reset, restoreReady, busy, readyIds: readyAttachmentIds(items) };
+  const hasFailed = rejections.length > 0 || items.some((item) => item.status === 'failed');
+  return { items, rejections, addFiles, remove, retry, reset, restoreReady, busy, hasFailed, readyIds: readyAttachmentIds(items) };
 }

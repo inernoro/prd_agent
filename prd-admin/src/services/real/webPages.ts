@@ -108,6 +108,11 @@ export interface HostedSiteRevision {
   instruction?: string | null;
   runtime: 'map-gateway' | 'open-design' | 'codex' | 'manual';
   knowledgeEntryIds: string[];
+  sourceInputs?: {
+    instruction: string;
+    attachments: Array<{ attachmentId: string; fileName: string; size?: number | null }>;
+    chips: string[];
+  } | null;
   basedOnContentVersion: string;
   publishedContentVersion?: string | null;
   createdAt: string;
@@ -197,6 +202,7 @@ export interface DesignArtifactRunSummary {
   sourceSurface: 'web-hosting' | 'knowledge-base' | 'html-ppt';
   runtime: string;
   title?: string | null;
+  instruction?: string | null;
   progress: number;
   phase: string;
   phaseCode?: string | null;
