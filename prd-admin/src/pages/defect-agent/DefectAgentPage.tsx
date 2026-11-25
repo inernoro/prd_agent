@@ -255,25 +255,20 @@ export default function DefectAgentPage() {
     <div className={cn('h-full min-h-0 flex flex-col', isMobile ? 'gap-2' : 'gap-4')}>
       {isMobile ? (
         <div className="shrink-0 px-1 pb-0.5">
-          <div
-            className="surface-choice-group mx-auto w-full max-w-[240px]"
-            role="group"
-            aria-label="缺陷分区"
-          >
-            {tabItems.map((item) => {
-              const active = item.key === filter;
-              return (
+          <div className="flex justify-center">
+            <div className="surface-choice-group w-full max-w-[240px]" role="group" aria-label="缺陷分区">
+              {tabItems.map((item) => (
                 <button
                   key={item.key}
                   type="button"
                   onClick={() => setFilter(item.key as 'submitted' | 'assigned')}
                   className="surface-choice h-7 flex-1 rounded-md text-[13px]"
-                  aria-pressed={active}
+                  aria-pressed={item.key === filter}
                 >
                   {item.label}
                 </button>
-              );
-            })}
+              ))}
+            </div>
           </div>
 
           <div
