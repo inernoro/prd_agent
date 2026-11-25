@@ -2637,7 +2637,7 @@ export function BranchDetailDrawer({
                       </section>
                     ) : null}
 
-                    {!readFailures['部署记录'] || deploymentRuns.length > 0 ? <DeploymentRunLedger runs={deploymentRuns} activeRunId={branch.lastDeploymentRunId} /> : <p className="text-sm text-muted-foreground">部署记录尚未确认。</p>}
+                    {!readFailures['部署记录'] || deploymentRuns.length > 0 ? <DeploymentRunLedger runs={deploymentRuns} activeRunId={branch.lastDeploymentRunId} now={now} /> : <p className="text-sm text-muted-foreground">部署记录尚未确认。</p>}
                     {canManageConsole && (!readFailures['版本记录'] || deploymentVersions.length > 0) ? <DeploymentVersionLedger
                       versions={deploymentVersions}
                       currentVersionId={branch.currentVersionId}
@@ -3176,9 +3176,11 @@ function DeploymentVersionLedger({
 function DeploymentRunLedger({
   runs,
   activeRunId,
+  now,
 }: {
   runs: DeploymentRunSummary[];
   activeRunId?: string;
+  now: number;
 }): JSX.Element | null {
   if (runs.length === 0) return null;
   const visible = runs.slice(0, 5);
@@ -3194,8 +3196,11 @@ function DeploymentRunLedger({
       </header>
       <div className="divide-y divide-[hsl(var(--hairline))]">
         {visible.map((run) => {
-          const meta = deploymentRunStatusMeta(run.status);
-          const message = run.failure?.summary || run.latestEvent?.message || '等待部署事件';
+          const meta = deploymentRunStatusMeta(run);
+          const ciFailure = run.failure?.owner === 'external' && run.failure.code.startsWith('upstream.ci.');
+          const buildUrl = ciFailure ? run.failure?.evidenceRefs?.find(ref => /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/actions\/runs\/\d+$/.test(ref)) : undefined;
+          const message = ciFailure ? '失败来自 GitHub Actions。部署尚未开始。'
+            : run.failure?.summary || run.latestEvent?.message || '等待部署事件';
           return (
             <div key={run.id} className="px-4 py-3">
               <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -3206,7 +3211,9 @@ function DeploymentRunLedger({
                 {run.commitSha ? <span className="font-mono text-xs text-muted-foreground">{run.commitSha.slice(0, 7)}</span> : null}
               </div>
               <div className="mt-2 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-                <span className="font-medium text-foreground">阶段: {run.phase}</span>
+                {run.status === 'queued'
+                  ? <span className="text-muted-foreground">已等 {formatDuration(now - Date.parse(run.startedAt))}</span>
+                  : null}
                 <span className="text-muted-foreground">事件 {run.eventCount}</span>
                 <span className="text-muted-foreground">{new Date(run.updatedAt).toLocaleString()}</span>
                 {run.executorId ? <span className="text-muted-foreground">执行器 {run.executorId}</span> : null}
@@ -3219,7 +3226,12 @@ function DeploymentRunLedger({
                   建议: {run.failure.suggestedAction}
                 </p>
               ) : null}
-              {run.status === 'failed' ? <DeploymentRunDiagnosis runId={run.id} /> : null}
+              {buildUrl ? (
+                <a className="mt-1 inline-block text-xs text-primary underline" href={buildUrl} target="_blank" rel="noreferrer">
+                  查看 GitHub 构建记录
+                </a>
+              ) : null}
+              {run.status === 'failed' && !ciFailure ? <DeploymentRunDiagnosis runId={run.id} /> : null}
             </div>
           );
         })}
@@ -3321,13 +3333,16 @@ function deploymentFailureOwnerLabel(owner: NonNullable<DeploymentRunSummary['fa
   return ({ code: '代码', config: '配置', cds: 'CDS', external: '外部依赖', unknown: '未归类' })[owner];
 }
 
-function deploymentRunStatusMeta(status: DeploymentRunStatus): { label: string; className: string } {
+function deploymentRunStatusMeta({ status, phase, failure }: DeploymentRunSummary): { label: string; className: string } {
   if (status === 'running') return { label: '部署成功', className: 'border-ok/30 bg-ok-soft text-ok' };
-  if (status === 'failed') return { label: '部署失败', className: 'border-destructive/30 bg-destructive/10 text-destructive' };
+  if (status === 'failed') return {
+    label: failure?.code.startsWith('upstream.ci.') ? failure.summary : phase === 'artifact-wait-ended' ? '等待部署产物超时' : '部署失败',
+    className: 'border-destructive/30 bg-destructive/10 text-destructive',
+  };
   if (status === 'cancelled') return { label: '已取消', className: 'border-slate-500/30 bg-slate-500/10 text-slate-600 dark:text-slate-300' };
   const labels: Record<Exclude<DeploymentRunStatus, 'running' | 'failed' | 'cancelled'>, string> = {
     pending: '已受理',
-    queued: '排队中',
+    queued: phase === 'artifact-wait' ? '等待部署产物' : phase === 'artifact-ready' ? '等待部署资源' : '等待前序部署',
     preparing: '准备中',
     building: '构建中',
     starting: '启动中',

@@ -225,6 +225,35 @@ describe('已受理部署的持久输入与重启恢复', () => {
     expect(new DeploymentRunService(afterClaim).restoreQueued(new BranchOperationCoordinator())).toEqual([]);
   });
 
+  it('无通用加密密钥时，迁移存量请求到本机加密并在重启后只领取一次', async () => {
+    delete process.env.CDS_SECRET_KEY;
+    const { run } = await accepted();
+    expect(typeof state.getDeploymentIntents()[0].inputPayload).toBe('string');
+    const reopened = new StateService(file); reopened.load();
+    const service = new DeploymentRunService(reopened, { intentKeyDirectory: dir });
+    const coordinator = new BranchOperationCoordinator();
+    expect(service.restoreQueued(coordinator).map(row => row.id)).toEqual([run.id]);
+    await service.waitForAcceptance(run.id);
+    expect(service.canPreserveQueuedRun(run.id, coordinator)).toBe(true);
+    const intent = reopened.getDeploymentIntents()[0];
+    expect(intent).toMatchObject({ keyScope: 'node', inputPayload: { __sealed: true } });
+    expect(fs.statSync(path.join(dir, 'deployment-intent.key')).mode & 0o777).toBe(0o600);
+    expect(fs.readFileSync(file, 'utf8')).not.toContain('private-before');
+    coordinator.interruptAll('normal restart', 'api.self-update', { normalShutdown: true });
+    await reopened.flush();
+
+    const next = new StateService(file); next.load();
+    const resumed = new DeploymentRunService(next, { intentKeyDirectory: dir });
+    const nextCoordinator = new BranchOperationCoordinator();
+    expect(resumed.restoreQueued(nextCoordinator).map(row => row.id)).toEqual([run.id]);
+    await resumed.waitForAcceptance(run.id);
+    const [claim] = nextCoordinator.drainReady();
+    expect(claim).toMatchObject({ operationId: run.operationId, generation: run.operationGeneration });
+    await resumed.claimQueued(run.id);
+    expect(nextCoordinator.drainReady()).toEqual([]);
+    expect(resumed.restoreQueued(new BranchOperationCoordinator())).toEqual([]);
+  });
+
   it.each(['delayed', 'failed'])('同实例恢复已有真实保存回执时，额外保存%s不撤销原正常关闭资格', async mode => {
     const { run, service, coordinator, blocker } = await accepted();
     settleAdmissionBlocker(coordinator, blocker);

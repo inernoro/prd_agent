@@ -8,7 +8,7 @@ import { rememberRelationReturn, relationRestoreForVisit, consumeRelationRestore
 import { runSurfaceMotion } from '@/lib/surfaceMotion';
 import { ArchivedBranchCard, BranchLifecycleControls, type BranchArchiveView } from '@/components/branch/BranchLifecycleControls';
 import { CiImageNotice } from '@/components/branch/CiImageNotice';
-import { ciImageNotice, type CiDiagnosisView } from '@/lib/ci-image-notice';
+import { ciImageNotice, type CiDiagnosisView, type CiImageNoticeInput } from '@/lib/ci-image-notice';
 import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import type { ReleasePreflightResult } from './release-center/types';
 import { projectUnavailable } from '../lib/project-availability.js';
@@ -281,6 +281,7 @@ interface BranchSummary {
   ciWaitingSince?: string;
   ciImageError?: string;
   ciDiagnosis?: CiDiagnosisView | null;
+  lastDeploymentCiFailure?: CiImageNoticeInput['lastDeploymentCiFailure'];
   archive?: BranchArchiveView | null;
   deployRuntime?: {
     kind: 'source' | 'release' | 'mixed';
@@ -5665,7 +5666,8 @@ const BranchCard = memo(function BranchCard({
   // 每多一个，端口就少露一个（全收进「+N」也可以）；只减其中几个，剩下的在最窄卡宽下照样把
   // 后面的控件挤出卡片（Codex P2 三连，PR #1646）。标记本身也都可收缩、文字截断（完整说明在 title），
   // 只有「+N」保持原宽——同时出现几个标记最多显示成省略号，不会被裁出卡片。
-  const ciFailedChip = branch.ciImageStatus === 'failed' && branch.deployRuntime?.prebuilt !== false;
+  const ciFailedChip = (branch.ciImageStatus === 'failed' || Boolean(branch.lastDeploymentCiFailure))
+    && branch.deployRuntime?.prebuilt !== false;
   const infraErrorChip = infraResources.some((resource) => resource.status === 'error');
   const driftChip = Boolean(branch.deployRuntime?.drift?.hasDrift);
   const portRowMarkers = [replicaEntries.length > 0, ciFailedChip, infraErrorChip, driftChip].filter(Boolean).length;
@@ -5947,8 +5949,8 @@ const BranchCard = memo(function BranchCard({
       || svc.status === 'starting' || svc.status === 'restarting')
     && branchServices.some((svc) => svc.status === 'stopped');
   const ciPrebuilt = branch.deployRuntime?.prebuilt !== false;
-  const isCiWaiting = !isRunning && !isInterim && ciPrebuilt && branch.ciImageStatus === 'waiting';
-  const isCiFailed = !isRunning && !isInterim && !isError && ciPrebuilt && branch.ciImageStatus === 'failed';
+  const isCiWaiting = !isRunning && !isInterim && ciPrebuilt && branch.ciImageStatus === 'waiting' && !branch.lastDeploymentCiFailure;
+  const isCiFailed = !isRunning && !isInterim && !isError && ciFailedChip;
   const isNeverDeployed = !isRunning && !isInterim && !isError && !isCiWaiting && !isCiFailed
     && !hasStopSignal && !branch.lastDeployAt && branchServices.length === 0;
   // 真正展示「停止记录」面板：非运行/中间态，且排除上面那几种「其实没停止」的情况。
@@ -5983,7 +5985,7 @@ const BranchCard = memo(function BranchCard({
       : isNeverDeployed
         ? '尚未部署'
         : isCiFailed
-          ? `${modeText} · 镜像未就绪`
+          ? `${modeText} · ${branch.lastDeploymentCiFailure ? '部署尚未开始' : '镜像未就绪'}`
           : serviceTotal > 0
             ? `${serviceTotal} 个服务已停止`
             : '没有运行中的服务';
@@ -5997,6 +5999,8 @@ const BranchCard = memo(function BranchCard({
       : branch.lastDeployAt
         ? { label: '上次部署', text: formatRelativeTime(branch.lastDeployAt), title: `上一次成功部署完成: ${branch.lastDeployAt}` }
         : null)
+    : branch.lastDeploymentCiFailure
+      ? { label: '', text: formatRelativeTime(branch.lastDeploymentCiFailure.checkedAt), title: ciNotice.title }
     : shouldShowStopReason && !isError && branch.lastStoppedAt
       ? { label: '', text: `${statusTimeText}停止`, title: `${stopSourceLabel} · ${branch.lastStoppedAt}\n${stopReasonText}` }
       : timeBadge;
@@ -6479,9 +6483,9 @@ const BranchCard = memo(function BranchCard({
               <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-warn" aria-hidden />
               <span className="min-w-0 truncate">{ciNotice.title}</span>
             </button>
-            {branch.ciWorkflowRunUrl ? (
+            {ciNotice.actionUrl && (branch.lastDeploymentCiFailure?.actionUrl || branch.ciWorkflowRunUrl) ? (
               <a
-                href={branch.ciWorkflowRunUrl}
+                href={ciNotice.actionUrl}
                 target="_blank"
                 rel="noreferrer"
                 onClick={(e) => e.stopPropagation()}

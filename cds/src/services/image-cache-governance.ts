@@ -218,7 +218,7 @@ export function collectImageCacheReferences(state: import('./state.js').StateSer
   for(const intent of state.getDeploymentIntents()) {
     const run=state.getDeploymentRun(intent.runId);
     if(!run)throw new Error('恢复记录的镜像引用未确认。');
-    const input=readDeploymentIntent(run,intent,'image-protection');
+    const input=readDeploymentIntent(run,intent,'image-protection',intent.keyScope === 'node' ? state.getDeploymentIntentKeyDirectory() : undefined);
     const branch=state.getBranch(intent.request.branchId);
     if(!branch)throw new Error('在途部署归属未确认。');
     const captured=deploymentInputBranch(input,branch);

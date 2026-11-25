@@ -863,6 +863,13 @@ export class BranchOperationCoordinator {
     return true;
   }
 
+  finishArtifactWait(pending: PendingWebhookDeploy, reason: string): void {
+    if (!this.isArtifactWaiterCurrent(pending)) return;
+    this.pendingWebhookDeploys.delete(this.operationKey(pending.request));
+    this.deploymentInputs.delete(this.replayKey(pending));
+    this.record('branch.operation.failed', pending.request, pending.operationId, pending.generation, 'error', { pending: true, reason });
+  }
+
   clearForTest(): void {
     this.artifactTargetReads.clear();
     this.active.clear();
