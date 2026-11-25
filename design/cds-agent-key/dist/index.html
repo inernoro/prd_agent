@@ -1,0 +1,429 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CDS Agent Key 管理</title>
+<style>
+/* 原型：CDS 系统设置 · Agent Key。颜色取 FW-CDS-UI V3 的 tokens.json，主题由预览桥接脚本写 data-theme。 */
+:root{
+  --surface-base:hsl(30 28% 96%);--surface-raised:hsl(0 0% 100%);--surface-sunken:hsl(30 24% 91%);
+  --hairline:hsl(30 15% 84%);--hairline-strong:hsl(30 12% 70%);
+  --fg:hsl(24 20% 15%);--muted:hsl(24 10% 40%);
+  --primary:hsl(24 90% 50%);--primary-ink:hsl(24 85% 38%);--primary-soft:hsl(30 80% 94%);--on-primary:hsl(222 24% 8%);
+  --ok:hsl(161 94% 30%);--ok-soft:hsl(150 50% 92%);
+  --warn:hsl(32 95% 44%);--warn-soft:hsl(38 90% 94%);
+  --bad:hsl(0 74% 42%);--bad-soft:hsl(0 80% 96%);
+  --info:hsl(201 98% 39%);--info-soft:hsl(199 85% 95%);
+  --scrim:hsl(24 20% 10% / .45);
+  --font:Inter,-apple-system,"PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Consolas,monospace;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --surface-base:hsl(222 14% 6%);--surface-raised:hsl(222 12% 13%);--surface-sunken:hsl(222 16% 4%);
+  --hairline:hsl(222 10% 18%);--hairline-strong:hsl(222 10% 26%);
+  --fg:hsl(240 6% 90%);--muted:hsl(240 4% 60%);
+  --primary:hsl(24 100% 60%);--primary-ink:hsl(24 100% 64%);--primary-soft:hsl(24 60% 12%);--on-primary:hsl(222 24% 8%);
+  --ok:hsl(158 64% 52%);--ok-soft:hsl(152 35% 11%);--warn:hsl(43 96% 56%);--warn-soft:hsl(38 45% 10%);
+  --bad:hsl(0 91% 71%);--bad-soft:hsl(0 45% 12%);--info:hsl(199 95% 74%);--info-soft:hsl(199 45% 11%);
+  --scrim:hsl(240 10% 2% / .65);color-scheme:dark}}
+:root[data-theme="dark"]{
+  --surface-base:hsl(222 14% 6%);--surface-raised:hsl(222 12% 13%);--surface-sunken:hsl(222 16% 4%);
+  --hairline:hsl(222 10% 18%);--hairline-strong:hsl(222 10% 26%);
+  --fg:hsl(240 6% 90%);--muted:hsl(240 4% 60%);
+  --primary:hsl(24 100% 60%);--primary-ink:hsl(24 100% 64%);--primary-soft:hsl(24 60% 12%);--on-primary:hsl(222 24% 8%);
+  --ok:hsl(158 64% 52%);--ok-soft:hsl(152 35% 11%);--warn:hsl(43 96% 56%);--warn-soft:hsl(38 45% 10%);
+  --bad:hsl(0 91% 71%);--bad-soft:hsl(0 45% 12%);--info:hsl(199 95% 74%);--info-soft:hsl(199 45% 11%);
+  --scrim:hsl(240 10% 2% / .65);color-scheme:dark}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--surface-base);color:var(--fg);font:13.6px/1.55 var(--font)}
+button,input,select{font:inherit;color:inherit}
+.mono{font-family:var(--mono);font-size:.85em}
+.top{height:46px;display:flex;align-items:center;gap:10px;padding:0 14px;border-bottom:1px solid var(--hairline);background:var(--surface-raised)}
+.top b{font-weight:600}
+.top .crumb{color:var(--muted)}
+.shell{display:grid;grid-template-columns:56px 216px minmax(0,1fr);height:calc(100% - 46px)}
+.rail{border-right:1px solid var(--hairline);background:var(--surface-raised);display:flex;flex-direction:column;align-items:center;gap:14px;padding-top:12px;color:var(--muted);font-size:11px}
+.rail span{display:grid;place-items:center;width:40px;height:40px;border-radius:8px}
+.rail .on{background:var(--primary-soft);color:var(--primary-ink);font-weight:600}
+.dir{border-right:1px solid var(--hairline);background:var(--surface-raised);padding:14px 10px;overflow:auto}
+.dir h4{margin:12px 8px 4px;font-size:11px;color:var(--muted);font-weight:600}
+.dir a{display:block;padding:6px 8px;border-radius:6px;color:inherit;text-decoration:none}
+.dir a.on{background:var(--surface-sunken);font-weight:600}
+.phone-dir{display:none;margin:0 0 12px;width:100%;min-height:44px;border:1px solid var(--hairline-strong);border-radius:8px;background:var(--surface-raised);padding:0 12px}
+main{overflow:auto;padding:18px 22px 40px}
+.head{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-start;gap:12px}
+.head h2{margin:0;font-size:16px;display:flex;align-items:center;gap:8px}
+.head p{margin:4px 0 0;color:var(--muted);max-width:60ch}
+.actions{display:flex;flex-wrap:wrap;gap:8px}
+.btn{display:inline-flex;align-items:center;gap:6px;min-height:34px;padding:0 12px;border-radius:8px;border:1px solid var(--hairline-strong);background:var(--surface-raised);cursor:pointer;font-weight:500}
+.btn.primary{background:var(--primary);border-color:var(--primary);color:var(--on-primary);font-weight:600}
+.btn.ghost{border-color:transparent;background:transparent}
+.btn.danger{border-color:var(--bad);color:var(--bad);background:transparent}
+.btn[disabled]{opacity:.5;cursor:not-allowed}
+.btn:focus-visible,.row:focus-visible,.choice:focus-visible,.pill-btn:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
+.note{margin-top:12px;font-size:13px;color:var(--muted);display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.ask{margin-top:12px;padding:12px 14px;border:1px solid var(--hairline);border-radius:8px;background:var(--surface-sunken)}
+.ask pre{margin:6px 0;white-space:pre-wrap;word-break:break-all;font-family:var(--mono);font-size:12px;background:var(--surface-raised);border:1px solid var(--hairline);border-radius:6px;padding:8px}
+.ask p{margin:0;color:var(--muted)}
+.tools{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:16px 0 6px}
+.search{flex:1 1 220px;min-width:0;min-height:36px;border:1px solid var(--hairline-strong);border-radius:8px;background:var(--surface-raised);padding:0 10px}
+.seg{display:inline-flex;flex-wrap:wrap;gap:2px;padding:2px;border:1px solid var(--hairline-strong);border-radius:8px}
+.seg button{border:0;background:transparent;padding:4px 10px;border-radius:6px;color:var(--muted);cursor:pointer;min-height:30px}
+.seg button[aria-pressed="true"]{background:var(--primary-soft);color:var(--primary-ink);font-weight:600}
+select.st{min-height:36px;border:1px solid var(--hairline-strong);border-radius:8px;background:var(--surface-raised);padding:0 8px}
+.group{display:flex;align-items:center;gap:8px;margin:16px 0 2px;font-size:11.5px;font-weight:600;color:var(--muted)}
+.group::after{content:"";flex:1;height:1px;background:var(--hairline)}
+article{border-bottom:1px solid var(--hairline);border-radius:6px}
+article.fresh{background:var(--primary-soft)}
+.row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 14px;width:100%;text-align:left;border:0;background:transparent;padding:10px 8px;border-radius:6px;cursor:pointer}
+.row:hover{background:var(--surface-sunken)}
+.r1{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.r1 .name{font-weight:600;overflow-wrap:anywhere}
+article.off .name{color:var(--muted)}
+.r2{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;margin-top:3px;color:var(--muted);font-size:12.5px}
+.side{display:flex;flex-direction:column;align-items:flex-end;gap:2px;font-size:11.5px;color:var(--muted);white-space:nowrap}
+.pill{display:inline-flex;padding:0 8px;border-radius:999px;font-size:11.5px;font-weight:600;line-height:20px}
+.pill.ok{background:var(--ok-soft);color:var(--ok)}
+.pill.warn{background:var(--warn-soft);color:var(--warn)}
+.pill.off{background:var(--surface-sunken);color:var(--muted);border:1px solid var(--hairline)}
+.pill.new{background:var(--primary);color:var(--on-primary)}
+.src{display:inline-flex;align-items:center;gap:3px;padding:0 6px;border-radius:5px;font-size:11.5px;font-weight:500;line-height:20px}
+.src.user{background:var(--surface-sunken);border:1px solid var(--hairline)}
+.src.agent{background:var(--info-soft);color:var(--info)}
+.src.unknown{border:1px dashed var(--hairline-strong)}
+.detail{padding:4px 8px 14px;display:grid;gap:14px}
+.risk{display:inline-flex;width:max-content;max-width:100%;gap:4px;padding:2px 8px;border-radius:5px;font-size:12px;font-weight:600}
+.risk.low{background:var(--ok-soft);color:var(--ok)}.risk.mid{background:var(--warn-soft);color:var(--warn)}.risk.high{background:var(--bad-soft);color:var(--bad)}
+.sum{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 18px}
+.sum h5{margin:0 0 3px;font-size:11.5px;color:var(--muted);font-weight:600}
+.sum p{margin:0}
+.sum ul{margin:0;padding-left:18px}
+.sum .yes li::marker{color:var(--ok)}.sum .no li::marker{color:var(--bad)}
+.steps{margin:0;padding-left:20px}
+dl{display:grid;grid-template-columns:auto minmax(0,1fr);gap:2px 14px;margin:0}
+dt{color:var(--muted)}dd{margin:0;overflow-wrap:anywhere}
+.revoke{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:10px;border-top:1px solid var(--hairline);padding-top:10px}
+.revoke p{margin:0;flex:1 1 240px;color:var(--muted)}
+.confirm{border:1px solid var(--bad);background:var(--bad-soft);border-radius:8px;padding:10px;display:grid;gap:8px}
+.receipt{margin-top:14px;padding:14px;border:1px solid var(--warn);background:var(--warn-soft);border-radius:8px;display:grid;gap:10px}
+.receipt h3{margin:0;font-size:14px}
+.receipt textarea{width:100%;min-height:58px;font-family:var(--mono);font-size:12.5px;border:1px solid var(--hairline-strong);border-radius:8px;background:var(--surface-raised);padding:8px;resize:vertical}
+.scrim{position:fixed;inset:0;background:var(--scrim);display:flex;align-items:center;justify-content:center;padding:16px;z-index:50}
+.dialog{width:min(1000px,100%);max-height:calc(100% - 32px);display:flex;flex-direction:column;background:var(--surface-raised);border:1px solid var(--hairline);border-radius:12px;overflow:hidden}
+.dh{padding:14px 18px;border-bottom:1px solid var(--hairline)}
+.dh h3{margin:0;font-size:15px}.dh p{margin:3px 0 0;color:var(--muted)}
+.db{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);overflow:hidden}
+.form{overflow:auto;padding:14px 18px 22px;display:grid;gap:20px;align-content:start}
+.panel{overflow:auto;background:var(--surface-sunken);border-left:1px solid var(--hairline);padding:14px 18px;display:grid;gap:12px;align-content:start}
+.panel .sum{grid-template-columns:1fr}
+.df{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:10px;padding:10px 18px;border-top:1px solid var(--hairline)}
+.df .why{flex:1 1 200px;color:var(--muted)}
+label.f{display:grid;gap:6px;font-weight:600}
+label.f input{min-height:38px;border:1px solid var(--hairline-strong);border-radius:8px;background:var(--surface-raised);padding:0 10px;font-weight:400}
+.q{display:grid;gap:10px}
+.qt{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px}
+.qt .n{font-family:var(--mono);font-size:11.5px;color:var(--primary-ink)}
+.qt b{font-size:13.5px}.qt span{font-size:12px;color:var(--muted)}
+.choices{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.choice{text-align:left;border:1px solid var(--hairline-strong);border-radius:8px;background:var(--surface-raised);padding:9px 11px;cursor:pointer;display:grid;gap:2px}
+.choice b{font-size:13px}.choice span{font-size:11.5px;color:var(--muted)}
+.choice[aria-checked="true"]{border-color:var(--primary);background:var(--primary-soft)}
+.choice.danger[aria-checked="true"]{border-color:var(--bad);background:var(--bad-soft)}
+.pills{display:flex;flex-wrap:wrap;gap:6px}
+.pill-btn{min-height:32px;border:1px solid var(--hairline-strong);border-radius:999px;background:var(--surface-raised);padding:0 12px;cursor:pointer}
+.pill-btn[aria-checked="true"]{border-color:var(--primary);background:var(--primary-soft);color:var(--primary-ink);font-weight:600}
+.perm{display:grid;gap:8px}
+.perm .sub{font-size:11.5px;font-weight:600;color:var(--muted);margin-top:4px}
+.box{border:1px solid var(--hairline);border-radius:8px;background:var(--surface-sunken);padding:10px;color:var(--muted)}
+.hint{font-size:11.5px;color:var(--muted)}
+.check{display:flex;gap:8px;align-items:flex-start}
+.toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:var(--fg);color:var(--surface-raised);padding:8px 14px;border-radius:8px;z-index:60}
+@media (max-width:820px){
+  .shell{grid-template-columns:minmax(0,1fr)}
+  .rail,.dir{display:none}
+  .phone-dir{display:block}
+  main{padding:14px 16px 32px}
+  .sum{grid-template-columns:1fr}
+  .row{grid-template-columns:minmax(0,1fr)}
+  .side{flex-direction:row;gap:10px;align-items:center}
+  .btn{min-height:44px}
+  .scrim{padding:0}
+  .dialog{width:100%;max-height:100%;height:100%;border-radius:0}
+  .db{grid-template-columns:1fr;overflow:auto}
+  .form,.panel{overflow:visible}
+  .panel{border-left:0;border-top:1px solid var(--hairline)}
+  .choices{grid-template-columns:1fr}
+}
+@media (prefers-reduced-motion:no-preference){.scrim .dialog{animation:rise .18s ease-out}@keyframes rise{from{transform:translateY(10px);opacity:.5}}}
+</style>
+</head>
+<body>
+<header class="top"><b>CDS</b><span class="crumb">/ 系统设置</span></header>
+<div class="shell">
+  <nav class="rail" aria-label="主导航"><span>项目</span><span>发布</span><span>报告</span><span>设计</span><span class="on">设置</span></nav>
+  <nav class="dir" aria-label="CDS 系统设置目录">
+    <h4>常用</h4><a href="#">CDS 更新</a><a href="#">概览</a>
+    <h4>接入</h4><a href="#">登录与认证</a><a href="#">用户管理</a><a class="on" href="#/list" aria-current="page">Agent Key</a><a href="#">权限总览</a><a href="#">GitHub 集成</a>
+    <h4>运行</h4><a href="#">调度器</a><a href="#">CDS 全局变量</a>
+  </nav>
+  <main id="main" data-screen-ready="0"></main>
+</div>
+<div id="overlay"></div>
+<div id="toast" aria-live="polite"></div>
+<script>
+(function(){
+  'use strict';
+  var MIN=6e4,HOUR=36e5,DAY=864e5;
+  var NOW=Date.parse('2026-11-25T10:00:00+08:00');
+  var PROJECTS=[{id:'prd-agent',name:'prd-agent'},{id:'map-web',name:'map-web'},{id:'cds-self',name:'cds-self'},{id:'llmgw',name:'llmgw'},{id:'demo-shop',name:'demo-shop'}];
+  var PERMS=[
+    {v:'full',label:'项目完整读写',detail:'部署与重启分支、修改构建配置和项目环境变量、管理本项目的 Agent Key'},
+    {v:'planning-read',label:'工程规划只读',detail:'只能读取本项目的工程规划与债务'},
+    {v:'planning-propose',label:'工程规划提案',detail:'读取工程规划，并提交待人工处理的提案'},
+    {v:'design-read',label:'设计稿只读',detail:'只能读取本项目的私有设计稿'},
+    {v:'design-feedback',label:'设计实施反馈',detail:'读取设计稿，并提交实施反馈'},
+    {v:'design-publish',label:'设计稿件发布',detail:'读取设计稿，并发布经 Git 校验的稿件'}];
+  var CAN={
+    full:['部署、重启、停止分支，查看部署记录与容器日志','修改构建配置与项目环境变量','为同一项目签发、吊销 Agent Key'],
+    'planning-read':['读取工程规划与债务'],'planning-propose':['读取工程规划与债务','提交工程规划提案（由人处理后生效）'],
+    'design-read':['读取私有设计稿'],'design-feedback':['读取私有设计稿','提交设计实施反馈'],
+    'design-publish':['读取私有设计稿','提交设计实施反馈','发布经 Git 校验的设计稿件']};
+  function P(id){return {id:id,name:id};}
+  /* 演示数据：与 设计文档/演示数据.json 一致，人名与编号均为虚构 */
+  var KEYS=[
+    {id:'a91c40e2',kind:'project',label:'Claude Code · prd-agent',created:NOW-12*MIN,lastUsed:NOW-3*MIN,access:{scope:'project',projects:[P('prd-agent')],canCreate:false,permission:'full'},expiry:'never',source:{type:'agent',via:'access-request',agent:'Claude Code',approvedBy:'owner-alice',requestId:'req5e21a0'},status:'active'},
+    {id:'5d07b3aa',kind:'project',label:'设计稿发布 · map-web',created:NOW-3*HOUR,lastUsed:NOW-40*MIN,access:{scope:'project',projects:[P('map-web')],canCreate:false,permission:'design-publish'},expiry:'sliding',expiresAt:NOW+2*DAY,source:{type:'agent',via:'self-service',agent:'Codex（li.wei 的工作站）',credential:'uc_3f9a1c'},status:'expiring'},
+    {id:'e4410c9d',kind:'project',label:'建项目时签发 2026-11-24 08:50',created:NOW-26*HOUR,lastUsed:NOW-25*HOUR,access:{scope:'project',projects:[P('demo-shop')],canCreate:false,permission:'full'},expiry:'never',source:{type:'agent',via:'project-create',agent:'Claude Code',parentKey:'7b2e90f1'},status:'active'},
+    {id:'7b2e90f1',kind:'global',label:'一次性新项目接入 (申请 9f00aa · Claude Code)',created:NOW-27*HOUR,access:{scope:'create',projects:[],canCreate:true,permission:'full',oneTime:true},expiry:'fixed',expiresAt:NOW-27*HOUR+5*MIN,source:{type:'agent',via:'access-request',agent:'Claude Code',approvedBy:'owner-alice',requestId:'9f00aa'},status:'revoked',revoked:NOW-26*HOUR},
+    {id:'c3f8d215',kind:'global',label:'周报机器人',created:NOW-3*DAY,lastUsed:NOW-14*HOUR,access:{scope:'all',projects:[],canCreate:false,permission:'full'},expiry:'never',source:{type:'user',actor:'li.wei'},status:'active'},
+    {id:'19aa6b70',kind:'project',label:'授权密钥 (申请 a1b2c3 · Codex)',created:NOW-6*DAY,access:{scope:'project',projects:[P('cds-self')],canCreate:false,permission:'full'},expiry:'never',source:{type:'agent',via:'access-request',agent:'Codex',approvedBy:'li.wei',requestId:'a1b2c3'},status:'revoked',revoked:NOW-5*DAY},
+    {id:'2c6e11b8',kind:'project',label:'llmgw 灰度巡检',created:NOW-12*DAY,access:{scope:'project',projects:[P('llmgw')],canCreate:false,permission:'full'},expiry:'sliding',expiresAt:NOW+18*DAY,source:{type:'agent',via:'self-service',agent:'Cursor',credential:'uc_88d0e2'},status:'principal-disabled'},
+    {id:'0f3d2a61',kind:'project',label:'签发于 2026-04-18 10:32',created:NOW-221*DAY,lastUsed:NOW-41*DAY,access:{scope:'project',projects:[P('prd-agent')],canCreate:false,permission:'full'},expiry:'never',source:{type:'unknown',recordedAccount:'li.wei',claimedBy:'li.wei'},status:'active'},
+    {id:'8be7c4f0',kind:'global',label:'bootstrap for prd-agent Claude',created:NOW-230*DAY,lastUsed:NOW-2*DAY,access:{scope:'all',projects:[],canCreate:true,permission:'full',legacy:true},expiry:'never',source:{type:'unknown'},status:'active'}];
+  var STATUS={active:['有效','ok'],expiring:['即将过期','warn'],expired:['已过期','off'],revoked:['已吊销','off'],'principal-disabled':['所属主体已停用','off'],'principal-missing':['所属主体不存在','off'],'grant-revoked':['项目授权已收回','off']};
+  function usable(k){return k.status==='active'||k.status==='expiring';}
+  function esc(t){return String(t).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+  function pad(n){return n<10?'0'+n:''+n;}
+  function fmt(t){var d=new Date(t);return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+' '+pad(d.getHours())+':'+pad(d.getMinutes());}
+  function rel(t){var d=NOW-t;if(d<MIN)return '刚刚';if(d<HOUR)return Math.round(d/MIN)+' 分钟前';if(d<DAY)return Math.round(d/HOUR)+' 小时前';if(d<30*DAY)return Math.round(d/DAY)+' 天前';return fmt(t).slice(0,10);}
+
+  /* 唯一说明函数：签发预览、回执、列表详情共用（实现对应 web/src/lib/agentKeyCatalog.ts 的 describeAgentKey） */
+  function describe(a,expiry,expiresAt){
+    var names=a.projects.map(function(p){return p.name;}),scope,can=[],cannot=[];
+    if(a.scope==='project')scope=names.length?'只能访问 '+names.join('、'):'尚未选择项目';
+    else if(a.scope==='all')scope='可访问全部现有项目（当前 '+PROJECTS.length+' 个），以后新建的项目也包括在内';
+    else scope='不能访问任何现有项目，只能创建新项目。每建一个项目，CDS 会另发一把只能用于该项目的 Key';
+    if(a.scope!=='create'&&a.canCreate)scope+='；也可以创建新项目';
+    if(a.legacy)can.push('旧版全权：读写、配置并部署全部项目，也能创建项目（签发时还没有授权范围）');
+    else if(a.scope==='create'){can.push('创建新项目');can.push('每建一个项目，拿到该项目的完整读写 Key');}
+    else{can=can.concat(CAN[a.permission]);if(a.canCreate)can.push('创建新项目');}
+    if(a.scope==='project'&&names.length)cannot.push('不能访问其他项目');
+    if(a.scope==='create')cannot.push('不能读取或修改任何现有项目');
+    if(a.permission!=='full')cannot.push('不能部署分支，不能修改构建配置或环境变量');
+    cannot.push('不能签发或吊销全局 Key');
+    if(a.permission==='full'||a.legacy)cannot.push('写数据库时，每次都要等系统所有者批准');
+    if(a.oneTime)cannot.push('建成第一个项目后自动吊销，只能用一次');
+    var ex;
+    if(expiry==='never'||!expiresAt)ex='永久有效，直到被吊销';
+    else if(expiresAt<=NOW)ex='已于 '+fmt(expiresAt)+' 失效';
+    else if(expiry==='sliding')ex='闲置 30 天自动失效，每次使用自动续期（目前到 '+fmt(expiresAt)+'）';
+    else ex=fmt(expiresAt)+' 自动失效（还剩 '+Math.ceil((expiresAt-NOW)/DAY)+' 天）';
+    var ro=a.permission==='planning-read'||a.permission==='design-read',so=a.permission==='planning-propose'||a.permission==='design-feedback',risk;
+    if(a.scope==='all'||a.legacy)risk=['high','高风险','能改动全部项目，泄露后影响整个 CDS'];
+    else if(a.scope==='create'||a.canCreate)risk=['mid','中风险','能创建新项目'];
+    else if(ro||so)risk=['low','低风险',ro?'只读':'只能提交待人工处理的内容'];
+    else risk=['mid','中风险',a.permission==='full'?'能部署并修改这个项目':'能发布设计稿件'];
+    return {scope:scope,can:can,cannot:cannot,expiry:ex,risk:risk};
+  }
+  function srcLabel(s){return s.type==='user'?'用户签发':s.type==='agent'?'AI Agent 签发':'来源未记录';}
+  function srcSentence(s){
+    if(s.type==='user')return (s.actor||'')+' 在页面签发';
+    if(s.type==='agent'){var a=s.agent||'Agent';
+      if(s.via==='access-request')return a+' 申请，'+(s.approvedBy||'')+' 批准';
+      if(s.via==='self-service')return a+' 用用户凭据自助签发';
+      if(s.via==='project-create')return a+' 建项目时获得';
+      return '通过接口签发，没有人工会话';}
+    return s.recordedAccount?'签发时未记录来源，账号字段为 '+s.recordedAccount:'签发时未记录来源';
+  }
+  function srcSteps(s){
+    if(s.type==='user')return [s.actor+' 在 CDS 页面签发'];
+    if(s.type==='unknown'){var r=['这把 Key 签发时，系统还没有记录签发来源。不会根据名称推测来源。'];
+      if(s.recordedAccount)r.push('记录里的账号字段是 '+s.recordedAccount+'，但无法确认是本人签发还是批准了 Agent 申请。');
+      if(s.claimedBy)r.push('归属已由 '+s.claimedBy+' 人工核对；核对的是归属，签发来源仍未记录。');return r;}
+    if(s.via==='access-request')return [s.agent+' 发起接入申请（申请编号 '+s.requestId+'）',s.approvedBy+' 在 CDS 页面批准','CDS 签发这把 Key，由 CLI 直接保存到项目本地'];
+    if(s.via==='self-service')return [s.agent+' 使用用户凭据 '+s.credential+' 为已授权项目自助签发','该用户凭据被吊销或主体停用时，这把 Key 同时失效'];
+    if(s.via==='project-create')return [s.agent+' 使用“仅创建新项目”的 Key '+s.parentKey+' 创建了项目','CDS 自动签发这把只能用于该项目的 Key'];
+    return ['调用方没有人工登录会话，通过接口签发'];
+  }
+  function permLabel(v){for(var i=0;i<PERMS.length;i++)if(PERMS[i].v===v)return PERMS[i].label;return '项目完整读写';}
+  function accessShort(a){
+    var s=a.scope==='all'?'全部项目':a.scope==='create'?'仅创建新项目':a.projects.map(function(p){return p.name;}).join('、');
+    if(a.legacy)return s+' · 旧版全权';if(a.scope==='create')return s;
+    return s+' · '+permLabel(a.permission)+(a.canCreate?' · 可建项目':'');
+  }
+  function statusText(k){
+    if(k.status==='expiring'&&k.expiresAt){var l=k.expiresAt-NOW;return l<DAY?Math.max(1,Math.round(l/HOUR))+' 小时后过期':Math.ceil(l/DAY)+' 天后过期';}
+    return STATUS[k.status][0];
+  }
+
+  var st={project:'',src:'all',status:'all',q:'',open:'',ask:false,fresh:'',receipt:null,confirm:false,
+    draft:{label:'',scope:'project',projectId:'',alsoCreate:false,permission:'full',expiry:'never',date:''},sign:false};
+
+  function summaryHtml(d,two){
+    return '<div class="sum"'+(two?'':' style="grid-template-columns:1fr"')+'><div><h5>能访问</h5><p>'+esc(d.scope)+'</p></div>'+
+      '<div><h5>何时失效</h5><p>'+esc(d.expiry)+'</p></div>'+
+      '<div><h5>能做什么</h5><ul class="yes">'+d.can.map(function(x){return '<li>'+esc(x)+'</li>';}).join('')+'</ul></div>'+
+      '<div><h5>不能做什么</h5><ul class="no">'+d.cannot.map(function(x){return '<li>'+esc(x)+'</li>';}).join('')+'</ul></div></div>';
+  }
+  function riskHtml(r){return '<span class="risk '+r[0]+'">'+r[1]+' · '+esc(r[2])+'</span>';}
+
+  function visible(){
+    return KEYS.filter(function(k){
+      if(st.project&&!(k.access.scope==='all'||k.access.projects.some(function(p){return p.id===st.project;})))return false;
+      return true;
+    }).sort(function(a,b){return b.created-a.created;});
+  }
+  function render(){
+    var all=visible(),counts={all:all.length,user:0,agent:0,unknown:0};
+    all.forEach(function(k){counts[k.source.type]++;});
+    var needle=st.q.trim().toLowerCase();
+    var rows=all.filter(function(k){
+      if(st.src!=='all'&&k.source.type!==st.src)return false;
+      if(st.status==='active'&&!usable(k))return false;
+      if(st.status==='inactive'&&usable(k))return false;
+      if(needle&&[k.label,k.id,accessShort(k.access),srcSentence(k.source)].join(' ').toLowerCase().indexOf(needle)<0)return false;
+      return true;
+    });
+    var title=st.project?st.project+' 的 Agent Key':'Agent Key';
+    var h='<select class="phone-dir" aria-label="CDS 系统设置目录"><option>接入 · Agent Key</option></select>'+
+      '<div class="head"><div><h2>'+esc(title)+'</h2><p>供 Agent 和 cdscli / curl 自动化访问 CDS。点开一行查看这把 Key 能做什么、从哪来；明文只在签发时显示一次。</p></div>'+
+      '<div class="actions"><button class="btn ghost" data-act="ask" aria-expanded="'+st.ask+'">让 Agent 自己申请</button>'+
+      '<button class="btn primary" data-act="sign"'+(st.receipt?' disabled':'')+'>+ 签发新 Key</button></div></div>';
+    if(st.ask)h+='<div class="ask"><b>更推荐：让 Agent 在仓库里发起申请</b><pre>cdscli connect --host &lt;CDS 地址&gt; --project '+esc(st.project||'<项目 ID>')+' --agent "&lt;Agent 名称&gt;"</pre><p>Agent 发起后，在 CDS 右下角批准一次即可。Key 由 CLI 直接保存到项目本地，不经过对话和剪贴板；列表里会标为 AI Agent 签发，并记下是谁批准的。</p></div>';
+    if(st.project)h+='<div class="note">只显示能访问 '+esc(st.project)+' 的 Key，包括全部项目授权的 Key。签发时默认选中这个项目。<button class="btn" data-act="all">显示全部 Key</button></div>';
+    if(st.receipt){var r=st.receipt;h+='<section class="receipt" aria-label="本次签发结果"><h3>已签发 '+esc(r.label)+' · 请保存明文</h3><p class="mono">编号 '+r.id+'</p>'+
+      '<textarea readonly aria-label="完整 Key 明文">'+esc(r.plain)+'</textarea><div class="actions"><button class="btn" data-act="copy">复制完整明文</button><button class="btn ghost" data-act="closeReceipt">我已安全保存，关闭明文</button></div>'+
+      summaryHtml(r.d,true)+'<p class="hint">这段说明与签发前看到的一致。原型里的明文是虚构示例，不能使用。</p></section>';}
+    h+='<div class="tools"><input class="search" aria-label="搜索 Key" placeholder="搜索名称、项目、签发人、Agent 或编号" value="'+esc(st.q)+'" data-act="q">'+
+      '<div class="seg" role="group" aria-label="签发来源">'+[['all','全部'],['user','用户签发'],['agent','AI Agent'],['unknown','来源未记录']].map(function(o){return '<button data-src="'+o[0]+'" aria-pressed="'+(st.src===o[0])+'">'+o[1]+' '+counts[o[0]]+'</button>';}).join('')+'</div>'+
+      '<label>状态 <select class="st" aria-label="Key 状态" data-act="status">'+[['all','全部'],['active','有效'],['inactive','已失效']].map(function(o){return '<option value="'+o[0]+'"'+(st.status===o[0]?' selected':'')+'>'+o[1]+'</option>';}).join('')+'</select></label>'+
+      '<button class="btn" data-act="reload">重新读取列表</button></div>';
+    if(!rows.length)h+='<p class="box">'+(all.length?'没有符合条件的 Key，请调整搜索或筛选。':'还没有 Key。点击「签发新 Key」，或让 Agent 自己申请。')+'</p>';
+    var today=new Date(NOW).toDateString(),groups=[['今天',[]],['最近 7 天',[]],['更早',[]]];
+    rows.forEach(function(k){if(new Date(k.created).toDateString()===today)groups[0][1].push(k);else if(NOW-k.created<7*DAY)groups[1][1].push(k);else groups[2][1].push(k);});
+    groups.forEach(function(g){if(!g[1].length)return;h+='<div class="group">'+g[0]+' · '+g[1].length+'</div>';g[1].forEach(function(k){h+=rowHtml(k);});});
+    var main=document.getElementById('main');main.innerHTML=h;main.setAttribute('data-screen-ready','1');
+  }
+  function rowHtml(k){
+    var s=STATUS[k.status],open=st.open===k.id,u=usable(k);
+    var exp=k.expiry==='never'?'永久':'到 '+fmt(k.expiresAt).slice(5,10);
+    var h='<article data-agent-key-id="'+k.id+'" class="'+(u?'':'off ')+(st.fresh===k.id?'fresh':'')+'"><button class="row" data-open="'+k.id+'" aria-expanded="'+open+'">'+
+      '<span style="min-width:0"><span class="r1"><span class="name">'+esc(k.label)+'</span>'+(st.fresh===k.id?'<span class="pill new">刚签发</span>':'')+'<span class="pill '+s[1]+'">'+esc(statusText(k))+'</span></span>'+
+      '<span class="r2"><span class="src '+k.source.type+'">'+srcLabel(k.source)+'</span><span>'+esc(srcSentence(k.source))+'</span><span aria-hidden="true">·</span><span>'+esc(accessShort(k.access))+'</span></span></span>'+
+      '<span class="side"><span>签发 '+rel(k.created)+'</span><span>'+exp+(open?' ▲':' ▼')+'</span></span></button>';
+    if(open){
+      var d=describe(k.access,k.expiry,k.expiresAt);if(!u)d.expiry=statusText(k)+'，不能再用于认证';
+      h+='<div class="detail">'+(u?riskHtml(d.risk):'')+summaryHtml(d,true)+
+        '<div><h5 style="margin:0 0 3px;font-size:11.5px;color:var(--muted)">签发来源</h5><ol class="steps">'+srcSteps(k.source).map(function(x){return '<li>'+esc(x)+'</li>';}).join('')+'</ol></div>'+
+        '<dl><dt>签发时间</dt><dd>'+fmt(k.created)+'</dd><dt>最近使用</dt><dd>'+(k.lastUsed?rel(k.lastUsed):'从未使用')+'</dd>'+(k.revoked?'<dt>吊销时间</dt><dd>'+fmt(k.revoked)+'</dd>':'')+'<dt>编号</dt><dd class="mono">'+k.id+'（'+(k.kind==='global'?'全局 Key':'项目 Key')+'）</dd></dl>';
+      if(!k.revoked){
+        h+=st.confirm?'<div class="confirm"><b>吊销 '+esc(k.label)+'？</b><span>编号 '+k.id+'。吊销后无法恢复；如果还有自动化在用它，请先配置替代 Key。</span><div class="actions"><button class="btn danger" data-act="doRevoke" data-id="'+k.id+'">确认吊销</button><button class="btn" data-act="cancelRevoke">取消</button></div></div>'
+          :'<div class="revoke"><p>吊销后立即失效，正在使用它的自动化会认证失败，记录会保留。'+(k.lastUsed?'最近一次使用在 '+rel(k.lastUsed)+'。':'')+'</p><button class="btn" data-act="revoke">吊销</button></div>';
+      }
+      h+='</div>';
+    }
+    return h+'</article>';
+  }
+
+  /* 签发对话框 */
+  function draftAccess(){var d=st.draft,pk=d.scope==='project'&&!d.alsoCreate;
+    return {scope:d.scope,projects:d.scope==='project'&&d.projectId?[P(d.projectId)]:[],canCreate:d.scope==='create'||d.alsoCreate,permission:pk?d.permission:'full'};}
+  function draftExpiry(){var d=st.draft;if(d.expiry==='never')return null;if(d.expiry==='date'){var t=d.date?new Date(d.date+'T23:59:00').getTime():NaN;return isNaN(t)||t<=NOW?-1:t;}return NOW+Number(d.expiry)*DAY;}
+  function blocker(){var d=st.draft;if(d.scope==='project'&&!d.projectId)return '请在第 1 步选择一个项目';if(draftExpiry()===-1)return '请选择晚于今天的失效日期';return '';}
+  function renderSign(){
+    var ov=document.getElementById('overlay');if(!st.sign){ov.innerHTML='';return;}
+    var d=st.draft,pk=d.scope==='project'&&!d.alsoCreate,ex=draftExpiry(),desc=describe(draftAccess(),ex&&ex>0?'fixed':'never',ex&&ex>0?ex:null),why=blocker();
+    var scopes=[['project','指定项目','只能访问你选的项目',''],['all','全部项目','包括以后新建的项目','danger'],['create','仅创建新项目','不能访问现有项目','']];
+    var h='<div class="scrim" data-act="scrim"><div class="dialog" role="dialog" aria-modal="true" aria-label="签发新 Key">'+
+      '<div class="dh"><h3>签发新 Key</h3><p>依次回答三个问题；「拿到这把 Key 的 Agent」一栏会随选择实时说明它能做什么、不能做什么。</p></div><div class="db"><div class="form">'+
+      '<label class="f">名称（可选）<input data-act="label" placeholder="写明用途，例如 Claude Code 部署调试" value="'+esc(d.label)+'"></label>'+
+      '<div class="q"><div class="qt"><span class="n">1/3</span><b>能访问哪些项目</b></div><div class="choices" role="radiogroup" aria-label="项目范围">'+
+      scopes.map(function(o){return '<button class="choice '+o[3]+'" role="radio" aria-checked="'+(d.scope===o[0])+'" data-scope="'+o[0]+'"><b>'+o[1]+'</b><span>'+o[2]+'</span></button>';}).join('')+'</div>';
+    if(d.scope==='project')h+='<div class="pills" role="radiogroup" aria-label="选择项目">'+PROJECTS.map(function(p){return '<button class="pill-btn" role="radio" aria-checked="'+(d.projectId===p.id)+'" data-proj="'+p.id+'">'+p.name+'</button>';}).join('')+'</div><p class="hint">一把 Key 暂时只能指定一个项目；需要多个项目时，可以分别签发，或选“全部项目”。</p>';
+    if(d.scope!=='create')h+='<label class="check"><input type="checkbox" data-act="also"'+(d.alsoCreate?' checked':'')+'><span>同时允许创建新项目</span></label>';
+    h+='</div><div class="q"><div class="qt"><span class="n">2/3</span><b>能执行哪些操作</b></div>';
+    if(pk)h+='<div class="perm" role="radiogroup" aria-label="权限">'+PERMS.map(function(p,i){return (i===1?'<div class="sub">只开放一个模块（由系统所有者签发）</div>':'')+'<button class="choice" role="radio" aria-checked="'+(d.permission===p.v)+'" data-perm="'+p.v+'"><b>'+p.label+'</b><span>'+p.detail+'</span></button>';}).join('')+'</div>';
+    else h+='<p class="box">'+(d.scope==='create'?'只能创建新项目。每建一个项目，Agent 会拿到该项目的完整读写 Key。':'跨项目或可建项目的 Key 目前只能是完整读写；需要只开放工程规划或设计稿时，请选“指定项目”并取消“同时允许创建新项目”。')+'</p>';
+    h+='</div><div class="q"><div class="qt"><span class="n">3/3</span><b>何时失效</b><span>临时调试建议设置期限</span></div><div class="pills" role="radiogroup" aria-label="有效期">'+
+      [['never','永久（默认）'],['1','1 天'],['7','7 天'],['30','30 天'],['90','90 天'],['date','指定日期']].map(function(o){return '<button class="pill-btn" role="radio" aria-checked="'+(d.expiry===o[0])+'" data-exp="'+o[0]+'">'+o[1]+'</button>';}).join('')+'</div>'+
+      (d.expiry==='date'?'<input type="date" aria-label="失效日期" data-act="date" value="'+esc(d.date)+'" style="min-height:38px;max-width:220px;border:1px solid var(--hairline-strong);border-radius:8px;background:var(--surface-raised);padding:0 10px">':'')+'</div></div>'+
+      '<aside class="panel" aria-label="这把 Key 能做什么" aria-live="polite"><b>拿到这把 Key 的 Agent</b>'+riskHtml(desc.risk)+
+      (d.scope==='all'?'<p style="margin:0;color:var(--warn)">全部项目授权包括以后新建的项目。只有一两个项目需要访问时，选“指定项目”更安全。</p>':'')+summaryHtml(desc,false)+'</aside></div>'+
+      '<div class="df"><span class="why">'+esc(why||'确认说明无误后签发。明文只显示一次。')+'</span><button class="btn" data-act="cancelSign">取消</button><button class="btn primary" data-act="doSign"'+(why?' disabled':'')+'>签发</button></div></div></div>';
+    ov.innerHTML=h;
+  }
+  function doSign(){
+    if(blocker())return;var d=st.draft,ex=draftExpiry(),a=draftAccess(),id='64a4c9fe';
+    var k={id:id,kind:d.scope==='project'&&!d.alsoCreate?'project':'global',label:d.label.trim()||'签发于 '+fmt(NOW),created:NOW,access:a,expiry:ex&&ex>0?'fixed':'never',expiresAt:ex&&ex>0?ex:undefined,source:{type:'user',actor:'owner-alice'},status:'active'};
+    KEYS.unshift(k);st.fresh=id;st.sign=false;
+    st.receipt={id:id,label:k.label,plain:(k.kind==='project'?'cdsp_'+(d.projectId||'x').replace(/[^a-z0-9]/g,'')+'_':'cdsg_')+'EXAMPLE_ONLY_NOT_A_REAL_KEY',d:describe(a,k.expiry,k.expiresAt)};
+    renderSign();render();toast('已签发 '+k.label+'，请保存本次明文');
+  }
+  function toast(m){var t=document.getElementById('toast');t.innerHTML='<div class="toast">'+esc(m)+'</div>';setTimeout(function(){t.innerHTML='';},2400);}
+
+  document.addEventListener('click',function(e){
+    var el=e.target.closest('[data-act],[data-src],[data-open],[data-scope],[data-proj],[data-perm],[data-exp]');if(!el)return;
+    var act=el.getAttribute('data-act');
+    if(act==='scrim'&&e.target!==el)return;
+    if(el.hasAttribute('data-src')){st.src=el.getAttribute('data-src');render();return;}
+    if(el.hasAttribute('data-open')){var id=el.getAttribute('data-open');st.open=st.open===id?'':id;st.confirm=false;render();return;}
+    if(el.hasAttribute('data-scope')){st.draft.scope=el.getAttribute('data-scope');if(st.draft.scope==='create')st.draft.alsoCreate=false;renderSign();return;}
+    if(el.hasAttribute('data-proj')){st.draft.projectId=el.getAttribute('data-proj');renderSign();return;}
+    if(el.hasAttribute('data-perm')){st.draft.permission=el.getAttribute('data-perm');renderSign();return;}
+    if(el.hasAttribute('data-exp')){st.draft.expiry=el.getAttribute('data-exp');renderSign();return;}
+    if(act==='ask'){st.ask=!st.ask;render();}
+    else if(act==='sign'){if(st.project&&!st.draft.projectId)st.draft.projectId=st.project;st.sign=true;renderSign();}
+    else if(act==='cancelSign'||act==='scrim'){st.sign=false;renderSign();}
+    else if(act==='doSign')doSign();
+    else if(act==='closeReceipt'){st.receipt=null;render();}
+    else if(act==='copy'){var ta=document.querySelector('.receipt textarea');if(ta){ta.focus();ta.select();}toast('已选中全文，请复制后存入安全位置');}
+    else if(act==='all'){st.project='';render();}
+    else if(act==='reload'){render();toast('已重新读取');}
+    else if(act==='revoke'){st.confirm=true;render();}
+    else if(act==='cancelRevoke'){st.confirm=false;render();}
+    else if(act==='doRevoke'){var k=KEYS.filter(function(x){return x.id===el.getAttribute('data-id');})[0];if(k){k.status='revoked';k.revoked=NOW;}st.confirm=false;render();toast('已吊销 '+(k?k.label:''));}
+  });
+  document.addEventListener('input',function(e){
+    var act=e.target.getAttribute('data-act');
+    if(act==='q'){st.q=e.target.value;var pos=e.target.selectionStart;render();var s=document.querySelector('.search');s.focus();s.setSelectionRange(pos,pos);}
+    else if(act==='label')st.draft.label=e.target.value;
+  });
+  document.addEventListener('change',function(e){
+    var act=e.target.getAttribute('data-act');
+    if(act==='status'){st.status=e.target.value;render();}
+    else if(act==='also'){st.draft.alsoCreate=e.target.checked;renderSign();}
+    else if(act==='date'){st.draft.date=e.target.value;renderSign();}
+  });
+  document.addEventListener('keydown',function(e){if(e.key==='Escape'&&st.sign){st.sign=false;renderSign();}});
+
+  /* 画面路由：每个画面一个 hash，预览桥接按 design.json 的 route 打开 */
+  function route(){
+    var r=(location.hash||'#/list').slice(2);
+    st.project='';st.open='';st.confirm=false;st.sign=false;st.receipt=null;st.fresh='';st.ask=false;
+    st.draft={label:'',scope:'project',projectId:'',alsoCreate:false,permission:'full',expiry:'never',date:''};
+    if(r==='project')st.project='prd-agent';
+    if(r==='detail')st.open='0f3d2a61';
+    if(r==='sign'){st.sign=true;st.draft.projectId='prd-agent';st.draft.label='Claude Code 部署调试';st.draft.expiry='7';}
+    if(r==='sign-all'){st.sign=true;st.draft.scope='all';}
+    render();renderSign();
+    if(r==='receipt'){st.draft={label:'Claude Code 部署调试',scope:'project',projectId:'prd-agent',alsoCreate:false,permission:'full',expiry:'7',date:''};doSign();}
+  }
+  window.addEventListener('hashchange',route);
+  route();
+})();
+</script>
+</body>
+</html>
