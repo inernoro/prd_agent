@@ -1,3 +1,14 @@
 {
- "versions": []
+ "design": "DSN-2A3B7293",
+ "path": "design/cds-agent-key",
+ "note": "版本登记由程序写入（version-diff.mjs --register）。commit 是发布时的来源提交；tag 只在本地，供 git 计算差异。",
+ "versions": [
+  {
+   "version": 1,
+   "commit": "d79b482f4c470663768f830bb971118ed9e3181b",
+   "tag": "design/DSN-2A3B7293/v1",
+   "committedAt": "2026-11-25T16:07:07+08:00",
+   "subject": "docs(cds): [设计稿件] Agent Key 管理去掉含正式站点的框架附件，源码差异里的测试明文改为拼接（CDS G-08）"
+  }
+ ]
 }
