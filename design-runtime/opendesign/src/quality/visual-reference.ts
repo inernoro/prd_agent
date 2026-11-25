@@ -28,10 +28,26 @@ export async function measureVisualReference(
       ?? [...document.querySelectorAll('h1')].find(visible);
     if (!title) return null;
     const titleStyle = getComputedStyle(title);
-    const paragraph = [...main.querySelectorAll('p')].find((element) =>
+    // A subtitle or a statistic may also be marked up as a paragraph. Sample
+    // the article's reading text so one secondary line cannot set the baseline.
+    const paragraphs = [...main.querySelectorAll('p')].filter((element) =>
       visible(element) && (element.textContent ?? '').trim().length >= 24
-      && (title.compareDocumentPosition(element) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0) ?? main;
-    const textStyle = getComputedStyle(paragraph);
+      && !element.closest('nav, aside, footer, figure, [role="doc-subtitle"]')
+      && (title.compareDocumentPosition(element) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0).slice(0, 9);
+    const readingText = (paragraphs.length ? paragraphs : [main]).map((element) => {
+      const style = getComputedStyle(element);
+      const size = Number.parseFloat(style.fontSize);
+      return {
+        size,
+        lineHeight: Number.parseFloat(style.lineHeight) || size * 1.2,
+        width: element.getBoundingClientRect().width,
+      };
+    });
+    const median = (key: keyof typeof readingText[number]) => {
+      const values = readingText.map((item) => item[key]).sort((a, b) => a - b);
+      const middle = Math.floor(values.length / 2);
+      return Math.round((values[middle] + values[Math.floor((values.length - 1) / 2)]) / 2);
+    };
     const backgrounds = [document.body, document.documentElement].map((element) => getComputedStyle(element).backgroundColor);
     const normalizeFont = (font: string) => font.toLowerCase().split(',')
       .map((part) => part.trim().replace(/["']/g, '')).reverse()
@@ -42,9 +58,9 @@ export async function measureVisualReference(
       titleFont: normalizeFont(titleStyle.fontFamily),
       titleSize: Math.round(Number.parseFloat(titleStyle.fontSize)),
       titleTop: Math.round(title.getBoundingClientRect().top),
-      textSize: Math.round(Number.parseFloat(textStyle.fontSize)),
-      textLineHeight: Math.round(Number.parseFloat(textStyle.lineHeight) || Number.parseFloat(textStyle.fontSize) * 1.2),
-      textWidth: Math.round(paragraph.getBoundingClientRect().width),
+      textSize: median('size'),
+      textLineHeight: median('lineHeight'),
+      textWidth: median('width'),
     };
   });
   return values ? { viewport, scheme, ...values } : null;

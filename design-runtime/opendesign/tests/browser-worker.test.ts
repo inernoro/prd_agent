@@ -203,9 +203,16 @@ describe('isolated Chromium quality measurements', () => {
     expect(result.measurements).toHaveLength(4);
     expect(result.measurements.every(x => x.issues.some(issue => issue.issueCode === 'reference_style_mismatch'
       && String(issue.actual.differences).includes('heading size 64px; reference 38px')))).toBe(true);
-    fs.writeFileSync(path.join(sample.workspaceDir, 'index.html'), ref);
+    const withSubtitle = ref.replace('</h1>', '</h1><p style="font-size:13px;line-height:21px">An explanatory subtitle may use its own text scale.</p>')
+      .replace('</main>', '<p>Details and context remain in the same reading column.</p></main>');
+    fs.writeFileSync(path.join(sample.workspaceDir, 'index.html'), withSubtitle);
     const matching = await runBrowserWorker({ ...sample, repairAttempt: 1, referenceStyle });
     expect(matching.measurements.every(x => x.issues.every(issue => issue.issueCode !== 'reference_style_mismatch'))).toBe(true);
+
+    fs.writeFileSync(path.join(sample.workspaceDir, 'index.html'), withSubtitle.replace('font:17px', 'font:12px'));
+    const smallerBody = await runBrowserWorker({ ...sample, repairAttempt: 2, referenceStyle });
+    expect(smallerBody.measurements.every(x => x.issues.some(issue => issue.issueCode === 'reference_style_mismatch'
+      && String(issue.actual.differences).includes('paragraph size 12px; reference 17px')))).toBe(true);
   }, 30_000);
 
   it('detects every deterministic hard-gate category from a fixed broken sample', async () => {
