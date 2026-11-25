@@ -83,6 +83,7 @@ import * as nodePath from 'node:path';
 import * as nodeOs from 'node:os';
 import { spawn } from 'node:child_process';
 import type { IShellExecutor, Project, ProjectAgentProfile, CdsConfig, AgentKey, AgentKeyAccess, BuildProfile, InfraService } from '../types.js';
+import { isAgentKeyExpiryDays, isLegacyProjectAgentKey, type ProjectAgentKeyIssuer, type ProjectAgentKeyPermissions } from '../shared/project-agent-key.js';
 import { combinedOutput } from '../types.js';
 import { workloadCgroupFlags } from '../services/workload-cgroup.js';
 import { isAuthenticatedHuman, isHumanSystemOwner, type HumanAuthContext } from '../services/human-auth.js';
@@ -338,9 +339,11 @@ function mintProjectAgentKey(
   stateService: StateService,
   project: Project,
   label: string,
+  issuer: ProjectAgentKeyIssuer,
   createdBy?: string,
-  restrictions: Pick<AgentKey, 'planningAccess' | 'designAccess'> = {},
-): { keyId: string; plaintext: string; preview: string } {
+  permissions: ProjectAgentKeyPermissions = {},
+  expiresAt?: string,
+): { keyId: string; plaintext: string; preview: string; expiresAt?: string } {
   const slugHead = project.slug.slice(0, 12).toLowerCase();
   const suffix = randomBytes(32).toString('base64url');
   const plaintext = `cdsp_${slugHead}_${suffix}`;
@@ -351,12 +354,40 @@ function mintProjectAgentKey(
     label,
     hash,
     scope: 'rw',
-    ...restrictions,
+    ...(isLegacyProjectAgentKey(permissions) ? { projectAccess: 'rw' } : permissions),
+    ...(expiresAt ? { expiresAt, expiryMode: 'fixed' } : {}),
     createdAt: new Date().toISOString(),
+    issuer,
     createdBy: createdBy || undefined,
   };
   stateService.addAgentKey(project.id, entry);
-  return { keyId, plaintext, preview: formatKeyPreview(plaintext) };
+  return { keyId, plaintext, preview: formatKeyPreview(plaintext), expiresAt };
+}
+
+function agentKeyIssuer(key: Pick<AgentKey, 'issuer' | 'createdBy' | 'issuedByCredentialId'>): ProjectAgentKeyIssuer {
+  if (key.issuer) return key.issuer;
+  if (key.issuedByCredentialId) return 'agent';
+  // Older direct sign / approval routes recorded the authenticated account when known.
+  const account = key.createdBy?.trim().toLowerCase();
+  return account && !['anonymous', 'cookie', 'operator'].includes(account) ? 'user' : 'unknown';
+}
+
+function agentKeySigner(req: import('express').Request): { issuer: ProjectAgentKeyIssuer; createdBy?: string } {
+  const actor = req as typeof req & HumanAuthContext & {
+    cdsProjectKey?: unknown; cdsAccess?: unknown; cdsPrincipal?: unknown; _aiSession?: unknown; cdsLegacyMachineAuth?: true;
+  };
+  const machine = actor.cdsProjectKey || actor.cdsAccess || actor.cdsPrincipal || actor._aiSession || actor.cdsLegacyMachineAuth;
+  const account = !machine && isAuthenticatedHuman(req) ? actor.cdsUser : undefined;
+  return { issuer: machine ? 'agent' : account ? 'user' : 'unknown', createdBy: account?.githubLogin || account?.login || account?.username };
+}
+
+function newestAgentKeys<T extends { createdAt: string }>(entries: T[]): T[] {
+  return [...entries].reverse().sort((a, b) => (Date.parse(b.createdAt) || 0) - (Date.parse(a.createdAt) || 0));
+}
+
+function agentKeyExpiry(value: unknown, now: Date): string | undefined | null {
+  if (value == null) return undefined;
+  return isAgentKeyExpiryDays(value) ? new Date(now.getTime() + value * 86_400_000).toISOString() : null;
 }
 
 /**
@@ -3412,7 +3443,10 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
             stateService,
             newProject,
             `建项目时签发 ${new Date().toISOString().replace('T', ' ').slice(0, 16)}`,
-            (req as unknown as { cdsUser?: { login?: string } }).cdsUser?.login,
+            'agent',
+            undefined,
+            {},
+            creationKey?.oneTime ? undefined : creationKey?.expiresAt,
           );
         } catch {
           // 签发失败不阻断建项目本身:项目已建好,用户仍可去项目卡手动签 key。
@@ -4514,7 +4548,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
   // ── Project-scoped Agent Keys ──
   //
   // POST /api/projects/:id/agent-keys — sign a new project-bound agent key
-  //   body: { label?: string }
+  //   body: { label?: string, projectAccess?, planningAccess?, designAccess? }
   //   201 { keyId, plaintext, preview }  (plaintext shown ONCE, never stored)
   //
   // GET /api/projects/:id/agent-keys — list metadata (no plaintext, no hash)
@@ -4543,20 +4577,24 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       return;
     }
 
-    const body = (req.body || {}) as { label?: string; planningAccess?: unknown; designAccess?: unknown };
+    const body = (req.body || {}) as { label?: unknown; projectAccess?: unknown; planningAccess?: unknown; designAccess?: unknown; expiresInDays?: unknown };
+    if (body.projectAccess !== undefined && body.projectAccess !== 'rw' && body.projectAccess !== 'admin') {
+      return res.status(400).json({ error: 'invalid_project_access', message: '请选择项目读写或项目管理员权限。' });
+    }
     if (body.planningAccess !== undefined && body.planningAccess !== 'read' && body.planningAccess !== 'propose') {
       return res.status(400).json({ error: 'invalid_planning_access', message: '请选择工程规划只读或提案权限' });
     }
     if (body.designAccess !== undefined && body.designAccess !== 'read' && body.designAccess !== 'feedback' && body.designAccess !== 'publish') {
       return res.status(400).json({ error: 'invalid_design_access', message: '请选择设计只读、实施反馈或稿件发布权限' });
     }
-    if (body.planningAccess && body.designAccess) {
-      return res.status(400).json({ error: 'invalid_key_scope', message: '请为工程规划和设计分别签发凭据' });
-    }
-    if ((body.planningAccess || body.designAccess) && !isHumanSystemOwner(req)) {
-      return res.status(403).json({ error: 'owner_required', message: '仅 CDS 系统所有者可签发此类受限项目凭据' });
+    if ((body.projectAccess === 'admin' || body.planningAccess || body.designAccess) && !isHumanSystemOwner(req)) {
+      return res.status(403).json({ error: 'owner_required', message: '请由登录 CDS 的系统所有者签发所选权限的项目密钥。' });
     }
     const now = new Date();
+    const requestedExpiry = agentKeyExpiry(body.expiresInDays, now);
+    if (requestedExpiry === null) {
+      return res.status(400).json({ error: 'invalid_key_expiry', message: '请选择永久、1 天、7 天、30 天或 90 天。' });
+    }
     // Label: auto-generate from timestamp when the user didn't supply one.
     const defaultLabel =
       '签发于 ' +
@@ -4565,13 +4603,21 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       ? body.label.trim().slice(0, 100)
       : defaultLabel;
 
-    const account = isAuthenticatedHuman(req) ? (req as HumanAuthContext).cdsUser : undefined;
+    const actor = req as typeof req & {
+      cdsAccess?: { keyId: string };
+      cdsProjectKey?: { keyId: string };
+    };
+    const projectParent = actor.cdsProjectKey && stateService.getAgentKeys(project.id).find(key => key.id === actor.cdsProjectKey?.keyId);
+    const globalParent = actor.cdsAccess && stateService.getGlobalAgentKeys().find(key => key.id === actor.cdsAccess?.keyId);
+    const parentExpiry = globalParent?.expiresAt ?? (projectParent?.expiryMode === 'fixed' ? projectParent.expiresAt : undefined);
+    const expiresAt = parentExpiry && (!requestedExpiry || parentExpiry < requestedExpiry) ? parentExpiry : requestedExpiry;
+    const { issuer, createdBy } = agentKeySigner(req);
 
-    let minted: { keyId: string; plaintext: string; preview: string };
+    let minted: ReturnType<typeof mintProjectAgentKey>;
     try {
-      minted = mintProjectAgentKey(stateService, project, label, account?.githubLogin || account?.login || account?.username, {
-        planningAccess: body.planningAccess, designAccess: body.designAccess,
-      });
+      minted = mintProjectAgentKey(stateService, project, label, issuer, createdBy, {
+        projectAccess: body.projectAccess, planningAccess: body.planningAccess, designAccess: body.designAccess,
+      }, expiresAt);
     } catch (err) {
       res.status(500).json({
         error: 'state_save_failed',
@@ -4580,7 +4626,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       return;
     }
 
-    res.status(201).json(minted);
+    res.status(201).set('Cache-Control', 'private, no-store').json(minted);
   });
 
   router.get('/projects/:id/agent-keys', (req, res) => {
@@ -4592,17 +4638,22 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       });
       return;
     }
-    const entries = stateService.getAgentKeys(project.id);
+    const entries = newestAgentKeys(stateService.getAgentKeys(project.id));
     res.json({
+      canIssueRestrictedPermissions: isHumanSystemOwner(req),
       keys: entries.map((e) => ({
         id: e.id,
         label: e.label,
         scope: e.scope,
+        projectAccess: e.projectAccess,
         planningAccess: e.planningAccess,
         designAccess: e.designAccess,
         createdAt: e.createdAt,
         createdBy: e.createdBy,
+        issuer: agentKeyIssuer(e),
         lastUsedAt: e.lastUsedAt,
+        expiresAt: e.expiresAt,
+        expiryMode: e.expiryMode,
         revokedAt: e.revokedAt,
         status: e.revokedAt ? 'revoked' : 'active',
       })),
@@ -4625,6 +4676,13 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     if (mismatch) {
       res.status(mismatch.status).json(mismatch.body);
       return;
+    }
+    const target = stateService.getAgentKeys(project.id).find(key => key.id === req.params.keyId);
+    const callerKey = (req as typeof req & {
+      cdsProjectKey?: ProjectAgentKeyPermissions;
+    }).cdsProjectKey;
+    if (target?.projectAccess === 'admin' && !isHumanSystemOwner(req) && callerKey?.projectAccess !== 'admin') {
+      return res.status(403).json({ error: 'owner_required', message: '请联系 CDS 系统所有者或项目管理员吊销这把密钥。' });
     }
     const ok = stateService.revokeAgentKey(project.id, req.params.keyId);
     if (!ok) {
@@ -4670,8 +4728,13 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     const body = (req.body || {}) as {
       label?: string;
       access?: { canCreateProjects?: unknown; projects?: unknown };
+      expiresInDays?: unknown;
     };
     const now = new Date();
+    const expiresAt = agentKeyExpiry(body.expiresInDays, now);
+    if (expiresAt === null) {
+      return res.status(400).json({ error: 'invalid_key_expiry', message: '请选择永久、1 天、7 天、30 天或 90 天。' });
+    }
     const defaultLabel = 'Global 签发于 ' + now.toISOString().replace('T', ' ').slice(0, 16);
     const label = typeof body.label === 'string' && body.label.trim()
       ? body.label.trim().slice(0, 100)
@@ -4728,16 +4791,15 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     const hash = createHash('sha256').update(plaintext).digest('hex');
     const keyId = randomBytes(4).toString('hex');
 
-    const ghUser = (req as unknown as { cdsUser?: { login?: string } }).cdsUser;
-
     const entry = {
       id: keyId,
       label,
       hash,
       scope: 'rw' as const,
       access,
+      expiresAt,
       createdAt: now.toISOString(),
-      createdBy: ghUser?.login || undefined,
+      ...agentKeySigner(req),
     };
     try {
       stateService.addGlobalAgentKey(entry);
@@ -4749,17 +4811,19 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       return;
     }
 
-    res.status(201).json({
+    res.status(201).set('Cache-Control', 'private, no-store').json({
       keyId,
       plaintext,
       preview: formatKeyPreview(plaintext),
       access,
+      expiresAt,
     });
   });
 
   router.get('/global-agent-keys', (_req, res) => {
-    const entries = stateService.getGlobalAgentKeys();
+    const entries = newestAgentKeys(stateService.getGlobalAgentKeys());
     res.json({
+      canIssueRestrictedPermissions: isHumanSystemOwner(_req),
       keys: entries.map((e) => ({
         id: e.id,
         label: e.label,
@@ -4768,6 +4832,8 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         access: StateService.resolveGlobalAgentKeyAccess(e),
         createdAt: e.createdAt,
         createdBy: e.createdBy,
+        issuer: agentKeyIssuer(e),
+        expiresAt: e.expiresAt,
         lastUsedAt: e.lastUsedAt,
         revokedAt: e.revokedAt,
         status: e.revokedAt ? 'revoked' : 'active',

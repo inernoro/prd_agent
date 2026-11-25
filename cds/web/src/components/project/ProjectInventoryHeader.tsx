@@ -1,4 +1,4 @@
-import { FolderGit2, LayoutGrid, List, Plus, Search } from 'lucide-react';
+import { FolderGit2, KeyRound, LayoutGrid, List, Plus, Search } from 'lucide-react';
 import { useEffect, useRef, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import type { ProjectSummary } from '@/pages/ProjectListPage';
@@ -100,10 +100,11 @@ interface ProjectInventoryHeaderProps {
   importOpen: boolean;
   onImport: () => void;
   onCreate: () => void;
+  onManageAgentKeys: () => void;
 }
 
 export function ProjectInventoryHeader({ projects, selection, onChange, targets, environmentStatus,
-  canManageProjects, importOpen, onImport, onCreate }: ProjectInventoryHeaderProps): JSX.Element {
+  canManageProjects, importOpen, onImport, onCreate, onManageAgentKeys }: ProjectInventoryHeaderProps): JSX.Element {
   const searchRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     const focusSearch = (event: KeyboardEvent) => {
@@ -122,6 +123,7 @@ export function ProjectInventoryHeader({ projects, selection, onChange, targets,
   return (
     <ProjectInventoryLayout count={projects.length} canManageProjects={canManageProjects}
       actions={<>
+        <Button variant="outline" size="sm" aria-label="管理 Agent Key" title="管理 Agent Key" onClick={onManageAgentKeys}><KeyRound /><span className="hidden sm:inline">Agent Key</span></Button>
         <Button variant="outline" size="sm" onClick={onImport} aria-expanded={importOpen} aria-controls="project-repository-import"><FolderGit2 />导入仓库</Button>
         <Button size="sm" onClick={onCreate}><Plus />新建项目</Button>
       </>}

@@ -231,34 +231,44 @@ export default function DefectAgentPage() {
     { key: 'stats', icon: BarChart3, title: '统计看板' },
   ];
 
+  const viewModeSwitcher = (
+    <div data-tour-id="defect-view-mode-switcher" className="surface-choice-group shrink-0" role="group" aria-label="缺陷视图">
+      {viewButtons.map(({ key, icon: Icon, title }) => (
+        <button
+          key={key}
+          type="button"
+          className="surface-choice grid h-7 w-7 place-items-center rounded-md"
+          onClick={() => setViewMode(key)}
+          title={title}
+          aria-label={title}
+          aria-pressed={viewMode === key}
+        >
+          <Icon size={14} />
+        </button>
+      ))}
+    </div>
+  );
+
   const isStatsView = viewMode === 'stats';
 
   return (
     <div className={cn('h-full min-h-0 flex flex-col', isMobile ? 'gap-2' : 'gap-4')}>
       {isMobile ? (
         <div className="shrink-0 px-1 pb-0.5">
-          <div
-            className="mx-auto grid h-8 w-full max-w-[240px] grid-cols-2 rounded-full p-0.5 bg-token-nested border border-token-subtle"
-
-          >
-            {tabItems.map((item) => {
-              const active = item.key === filter;
-              return (
+          <div className="flex justify-center">
+            <div className="surface-choice-group w-full max-w-[240px]" role="group" aria-label="缺陷分区">
+              {tabItems.map((item) => (
                 <button
                   key={item.key}
                   type="button"
                   onClick={() => setFilter(item.key as 'submitted' | 'assigned')}
-                  className="h-7 rounded-full text-[13px] font-semibold transition-colors"
-                  style={{
-                    background: active ? 'var(--nested-block-bg)' : 'transparent',
-                    color: active ? 'var(--text-primary)' : 'var(--text-muted)',
-                    boxShadow: active ? '0 1px 4px rgba(0,0,0,0.22)' : 'none',
-                  }}
+                  className="surface-choice h-7 flex-1 rounded-md text-[13px]"
+                  aria-pressed={item.key === filter}
                 >
                   {item.label}
                 </button>
-              );
-            })}
+              ))}
+            </div>
           </div>
 
           <div
@@ -289,23 +299,7 @@ export default function DefectAgentPage() {
               </select>
             )}
 
-            <div data-tour-id="defect-view-mode-switcher" className="surface-inset flex h-8 shrink-0 items-center rounded-full overflow-hidden">
-              {viewButtons.map(({ key, icon: Icon, title }) => (
-                <button
-                  key={key}
-                  type="button"
-                  className={cn(
-                    'flex h-8 w-8 items-center justify-center transition-colors',
-                    viewMode === key ? 'bg-token-nested text-token-primary' : 'text-token-muted hover:text-token-primary'
-                  )}
-                  onClick={() => setViewMode(key)}
-                  title={title}
-                  aria-label={title}
-                >
-                  <Icon size={14} />
-                </button>
-              ))}
-            </div>
+            {viewModeSwitcher}
 
             <button
               type="button"
@@ -357,6 +351,7 @@ export default function DefectAgentPage() {
           icon={<Bug size={16} />}
           items={tabItems}
           activeKey={filter}
+          tabGroupLabel="缺陷分区"
           onChange={(key) => setFilter(key as 'submitted' | 'assigned')}
           actions={
             <>
@@ -384,22 +379,7 @@ export default function DefectAgentPage() {
                 </select>
               )}
 
-              <div data-tour-id="defect-view-mode-switcher" className="surface-inset flex items-center rounded-lg overflow-hidden">
-                {viewButtons.map(({ key, icon: Icon, title }) => (
-                  <button
-                    key={key}
-                    type="button"
-                    className={cn(
-                      'flex items-center justify-center w-7 h-7 transition-colors',
-                      viewMode === key ? 'bg-token-nested text-token-primary' : 'text-token-muted hover:text-token-primary'
-                    )}
-                    onClick={() => setViewMode(key)}
-                    title={title}
-                  >
-                    <Icon size={14} />
-                  </button>
-                ))}
-              </div>
+              {viewModeSwitcher}
               <Button
                 variant="secondary"
                 size="sm"
