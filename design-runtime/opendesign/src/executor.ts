@@ -31,7 +31,7 @@ import {
 } from './artifact/public-package.js';
 import { runtimeDiagnosticPreview } from './diagnostics.js';
 import { OpenDesignClient, signalForDeadline, type OpenDesignRunOutcome } from './engine/client.js';
-import { CODE_FILM_SKILL_ID, collectCodeFilm, registerCodeFilmSkill, verifyCodeFilmInput } from './engine/code-film.js';
+import { collectCodeFilm, registerCodeFilmSkill, verifyCodeFilmInput } from './engine/code-film.js';
 import type { EngineDaemon } from './engine/daemon.js';
 import { startEgressRelay, type EgressRelay, type EgressRelayOptions } from './engine/egress-relay.js';
 import { registerPresentationSkill } from './engine/presentation-skill.js';
@@ -418,9 +418,7 @@ export class DesignTaskExecutor {
     }
     const referenceBrief = visualReferenceBrief(referenceStyle ?? []);
     const isPresentation = designContext.presentation !== undefined;
-    const requiredSkillId = task.codeFilm
-      ? CODE_FILM_SKILL_ID
-      : isPresentation ? OPEN_DESIGN_PRESENTATION_SKILL : OPEN_DESIGN_WEB_PROTOTYPE_SKILL;
+    const requiredSkillId = isPresentation ? OPEN_DESIGN_PRESENTATION_SKILL : OPEN_DESIGN_WEB_PROTOTYPE_SKILL;
     validatePresentationSourcePlanIdentity(workspaceDir, designContext.presentation?.sourcePlan);
     const daemonHandle = this.options.daemon.current();
     const client = this.daemonClient();
@@ -430,7 +428,7 @@ export class DesignTaskExecutor {
       body: {
         baseDir: workspaceDir,
         name: `MAP design ${sessionId.slice(-12)}`,
-        skillId: requiredSkillId,
+        ...(task.codeFilm ? {} : { skillId: requiredSkillId }),
         orchestratorWorkspace: {
           kind: 'scratch',
           sourceLabel: 'MAP design workspace',
@@ -447,7 +445,7 @@ export class DesignTaskExecutor {
     if (!projectId || !conversationId) {
       throw new AgentWorkspaceRuntimeError('open_design_contract_mismatch', 'OpenDesign folder import returned no project identity');
     }
-    if (project?.skillId !== requiredSkillId) {
+    if (!task.codeFilm && project?.skillId !== requiredSkillId) {
       throw new AgentWorkspaceRuntimeError('open_design_contract_mismatch', 'OpenDesign folder import did not retain the required task skill');
     }
     const relayClientToken = daemonHandle?.modelPlaceholderToken || '';
@@ -504,6 +502,20 @@ export class DesignTaskExecutor {
       this.writeCodexConfig(buildOpenDesignCodexConfig(relay.proxiedBaseUrl, model.model));
       if (task.codeFilm) {
         const source = prepared.inputFiles[0];
+        // Folder import defaults to the browser-prototype surface. Use the
+        // freeform project kind with Codex's isolated native Skills catalogue.
+        const switched = await client.odJson(`/api/projects/${encodeURIComponent(projectId)}`, {
+          method: 'PATCH',
+          body: { metadata: { ...(project?.metadata as object), kind: 'other' } },
+          signal: signalForDeadline(executionDeadline, signal),
+        });
+        const updatedProject = (switched.project ?? switched) as { metadata?: { kind?: string } };
+        if (updatedProject.metadata?.kind !== 'other') {
+          throw new AgentWorkspaceRuntimeError('open_design_contract_mismatch', 'OpenDesign did not retain the freeform coding project');
+        }
+        const dataDir = this.options.paths.dataDir;
+        const proof = verifyCodeFilmInput(dataDir, workspaceDir, source);
+        onStage('open_design_run_starting', { projectId });
         const started = await client.odJson('/api/runs', {
           method: 'POST',
           body: {
@@ -511,7 +523,6 @@ export class DesignTaskExecutor {
             conversationId,
             agentId: 'codex',
             model: model.model,
-            skillId: CODE_FILM_SKILL_ID,
             message: instruction,
             attachments: [source.path],
           },
@@ -525,23 +536,13 @@ export class DesignTaskExecutor {
         }
         const filmRunId = activeRunId;
         const daemon = this.options.daemon;
-        let inputVerified = false;
-        const checkInput = () => {
-          const proof = verifyCodeFilmInput(workspaceDir, source);
-          onStage('code_film_input_verified', { ...proof, runId: filmRunId, instructionSha256: sha256(instruction) });
-          inputVerified = true;
-        };
+        onStage('code_film_input_verified', { ...proof, runId: filmRunId, instructionSha256: sha256(instruction) });
         try {
-          await client.waitForRun(filmRunId, budget.finalizationDeadline, signal, onStage, async () => {
-            if (!inputVerified && fs.existsSync(path.join(workspaceDir, '.od-skills', CODE_FILM_SKILL_ID, 'scripts', 'setup.sh'))) {
-              checkInput();
-            }
-          });
+          await client.waitForRun(filmRunId, budget.finalizationDeadline, signal, onStage);
           daemon.freeze();
           let film: WorkspacePackageFile;
           try {
-            if (!inputVerified) checkInput();
-            verifyCodeFilmInput(workspaceDir, source);
+            verifyCodeFilmInput(dataDir, workspaceDir, source);
             film = collectCodeFilm(workspaceDir, transfer.maxOutputBytes);
           } finally {
             daemon.thaw();

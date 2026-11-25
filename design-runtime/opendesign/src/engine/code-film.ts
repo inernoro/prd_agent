@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { AgentWorkspaceRuntimeError } from '../errors.js';
+import { OPEN_DESIGN_CODEX_HOME_RELATIVE } from '../prompts.js';
 import { readRegularFileNoFollow } from '../workspace/output-preflight.js';
 import { sha256 } from '../workspace/primitives.js';
 import type { WorkspacePackageFile } from '../workspace/transfer.js';
@@ -13,8 +14,15 @@ const SKILL_FILES = {
   'scripts/setup.sh': '6b5e39efe99e42d671edb365e11b89d065ccda7188a45e81fe5757f5f46661be',
 } as const;
 
+function codexSkillDirectory(dataDir: string): string {
+  return path.join(dataDir, OPEN_DESIGN_CODEX_HOME_RELATIVE, 'skills', CODE_FILM_SKILL_ID);
+}
+
 export function registerCodeFilmSkill(dataDir: string, chownForEngine: (target: string) => void): void {
-  const target = path.join(dataDir, 'skills', CODE_FILM_SKILL_ID);
+  // Register on the coding agent's native surface. OpenDesign's catalogue
+  // classifies the upstream guide as an image skill because it mentions an
+  // image generator for other styles, then enforces direct media dispatch.
+  const target = codexSkillDirectory(dataDir);
   for (const [file, digest] of Object.entries(SKILL_FILES)) {
     const bytes = readRegularFileNoFollow(path.join(SKILL_SOURCE, file), 1024 * 1024);
     if (sha256(bytes) !== digest) {
@@ -24,17 +32,18 @@ export function registerCodeFilmSkill(dataDir: string, chownForEngine: (target: 
     fs.mkdirSync(path.dirname(output), { recursive: true, mode: 0o755 });
     fs.writeFileSync(output, bytes, { flag: 'wx', mode: 0o644 });
   }
-  chownForEngine(path.dirname(target));
+  chownForEngine(path.join(dataDir, 'sandbox'));
 }
 
 export function verifyCodeFilmInput(
+  dataDir: string,
   workspaceDir: string,
   source: { path: string; sha256: string },
 ): Record<string, unknown> {
-  const staged = path.join(workspaceDir, '.od-skills', CODE_FILM_SKILL_ID);
+  const staged = codexSkillDirectory(dataDir);
   for (const [file, digest] of Object.entries(SKILL_FILES)) {
     if (sha256(readRegularFileNoFollow(path.join(staged, file), 1024 * 1024)) !== digest) {
-      throw new AgentWorkspaceRuntimeError('code_film_skill_not_loaded', 'OpenDesign did not stage the original Lemo-Opuscar skill');
+      throw new AgentWorkspaceRuntimeError('code_film_skill_not_loaded', 'The Codex skill directory did not retain the original Lemo-Opuscar skill');
     }
   }
   const sourceSha256 = sha256(readRegularFileNoFollow(path.join(workspaceDir, source.path), 1024 * 1024));
