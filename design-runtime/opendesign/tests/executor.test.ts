@@ -909,7 +909,7 @@ function committedHtml(commit: { files: Array<{ path: string; contentBase64: str
 }
 
 describe('public output boundary', () => {
-  it('keeps the native deck assets README private without allowing public Markdown', async () => {
+  it('keeps known OpenDesign workspace notes private without allowing public Markdown', async () => {
     harness = await startHarness();
     const pkg = buildPackage([]);
     harness.daemon.onRun = ({ workspaceDir, index }) => {
@@ -918,6 +918,7 @@ describe('public output boundary', () => {
         fs.writeFileSync(path.join(workspaceDir, 'index.html'), '<!doctype html><html><head><link rel="stylesheet" href="assets/deck.css"></head><body><main><h1>Native deck</h1><p>完整可见正文。</p></main></body></html>');
         fs.writeFileSync(path.join(workspaceDir, 'assets/deck.css'), 'body { color: #123; }');
         fs.writeFileSync(path.join(workspaceDir, 'assets/README.md'), '# Agent workspace notes\nThis file is not a public page resource.\n');
+        fs.writeFileSync(path.join(workspaceDir, 'brand-spec.md'), '# Internal reference-style notes\n');
       }
       return { status: 'succeeded', deliverableEntryFile: 'index.html' };
     };
@@ -927,6 +928,7 @@ describe('public output boundary', () => {
     const committedPaths = map!.commits[0].files.map((file: { path: string }) => file.path);
     expect(committedPaths).toContain('assets/deck.css');
     expect(committedPaths).not.toContain('assets/README.md');
+    expect(committedPaths).not.toContain('brand-spec.md');
 
     const markdown = Buffer.from('# Public notes');
     expect(() => buildGeneratedPublicArtifactPackage('<!doctype html><html><body>Public</body></html>', [{
@@ -936,6 +938,21 @@ describe('public output boundary', () => {
       size: markdown.length,
       mediaType: 'text/markdown; charset=utf-8',
     }])).toThrow(AgentWorkspaceRuntimeError);
+  });
+
+  it('still rejects arbitrary files outside the public output paths', async () => {
+    harness = await startHarness();
+    harness.daemon.onRun = ({ workspaceDir }) => {
+      fs.writeFileSync(path.join(workspaceDir, 'index.html'), '<!doctype html><html><body><h1>Deliverable</h1></body></html>');
+      fs.mkdirSync(path.join(workspaceDir, 'notes'), { recursive: true });
+      fs.writeFileSync(path.join(workspaceDir, 'notes/brand-spec.md'), '# Unrecognized scratch path\n');
+      return { status: 'succeeded', deliverableEntryFile: 'index.html' };
+    };
+    const view = await runToEnd(buildPackage([]));
+    expect(view.state).toBe('failed');
+    expect(view.error?.code).toBe('design_output_invalid');
+    expect(view.error?.details?.rejectedPath).toBe('notes/brand-spec.md');
+    expect(map?.commits).toHaveLength(0);
   });
 });
 
@@ -1300,7 +1317,7 @@ describe('design direction, review passes and live preview', () => {
 });
 
 describe('collecting the deliverable', () => {
-  it('promotes the deliverable file OpenDesign named instead of guessing', async () => {
+  it('commits the named HTML under index.html and keeps the review edits', async () => {
     harness = await startHarness();
     const pkg = buildPackage([]);
     harness.daemon.onRun = ({ workspaceDir, index }) => {
@@ -1308,15 +1325,35 @@ describe('collecting the deliverable', () => {
         fs.writeFileSync(path.join(workspaceDir, 'launch-page.html'), '<!doctype html><html><body><main>Promoted launch page</main></body></html>');
         return { status: 'succeeded', deliverableEntryFile: 'launch-page.html' };
       }
+      expect(fs.existsSync(path.join(workspaceDir, 'launch-page.html'))).toBe(false);
+      fs.writeFileSync(path.join(workspaceDir, 'index.html'), '<!doctype html><html><body><main>Reviewed launch page</main></body></html>');
       return { status: 'succeeded', deliverableValid: false, deliverableValidation: 'no_artifact' };
     };
-    await runToEnd(pkg);
-    // 只断言「按 OpenDesign 指名的文件搬」这一步本身。搬完之后那份 slug 文件仍留在工作区根、
-    // 会被产物预检按白名单拒收——这与 CDS 现行实现一致，是否属实要在真实引擎上确认，
-    // 记在 https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.open-design.md，这里不把它锁成期望。
+    const view = await runToEnd(pkg);
+    expect(view.state, JSON.stringify(view.error)).toBe('succeeded');
+    const committedFiles = map!.commits[0].files as Array<{ path: string; contentBase64: string }>;
+    const committedIndex = committedFiles.find((file) => file.path === 'index.html')!;
+    expect(Buffer.from(committedIndex.contentBase64, 'base64').toString('utf8')).toContain('Reviewed launch page');
+    expect(committedFiles.some((file) => file.path === 'launch-page.html')).toBe(false);
     const events = (await harness.request('GET', `/v1/tasks/${pkg.runId}/events`, undefined, auth)).body.events;
     const resolved = events.find((event: { payload: { reason?: string; promoted?: boolean } }) => event.payload.reason === 'deliverable_entry_checkpointed' && event.payload.promoted);
     expect(resolved.payload).toMatchObject({ entryFile: 'launch-page.html', promoted: true, bytes: 74 });
+  });
+
+  it.each(['failed', 'invalid'] as const)('keeps a checked first draft when review is %s', async (outcome) => {
+    harness = await startHarness();
+    const pkg = buildPackage([]);
+    harness.daemon.onRun = ({ workspaceDir, index }) => {
+      const html = index === 1 ? '<!doctype html><html><body><main><h1>Complete first draft</h1></main></body></html>' : 'Truncated review';
+      fs.writeFileSync(path.join(workspaceDir, 'index.html'), html);
+      return { status: index === 2 && outcome === 'failed' ? 'failed' : 'succeeded' };
+    };
+    const view = await runToEnd(pkg);
+    expect(view.state, JSON.stringify(view.error)).toBe('succeeded');
+    expect(view.result.openDesignRunId).toBe('od-run-1');
+    expect(await statusReasons(pkg.runId)).toContain('open_design_review_checkpoint_restored');
+    const committedIndex = map!.commits[0].files.find((file: { path: string }) => file.path === 'index.html');
+    expect(Buffer.from(committedIndex.contentBase64, 'base64').toString('utf8')).toContain('Complete first draft');
   });
 
   it.each([

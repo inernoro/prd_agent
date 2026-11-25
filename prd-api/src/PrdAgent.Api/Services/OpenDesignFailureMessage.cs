@@ -125,6 +125,9 @@ internal static class OpenDesignFailureMessage
     /// </summary>
     private static readonly (string[] Codes, string Reason, string NextStep)[] KnownRemoteCodes =
     [
+        (["design_reference_visual_unavailable"],
+            "这张参考网页缺少可量取的首屏",
+            "请换一张参考网页后再生成"),
         (["design_output_quality_rejected", "design_browser_quality_rejected", "design_output_invalid", "design_output_missing",
           "design_output_too_large", "design_output_too_many_files"],
             "生成出来的页面没有通过发布前的校验",

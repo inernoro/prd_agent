@@ -33,6 +33,7 @@ public enum HostedSiteOfflineExportFailure
 
     /// <summary>页面用 meta 声明了自己的内容安全策略，离线内嵌的 data: 资源会被它拦下。</summary>
     ContentSecurityPolicyMeta,
+    ContentSecurityPolicyLinkedCode,
 }
 
 public sealed record HostedSiteOfflineExportMissing(string Reference, string Reason);

@@ -78,6 +78,13 @@ public sealed class DesignArtifactDesignDirection
 
     public string StyleDescription { get; set; } = string.Empty;
 
+    public string? ReferenceSiteId { get; set; }
+
+    public string? ReferenceSiteTitle { get; set; }
+
+    /// <summary>仅供隔离浏览器量取参考样式，不进入提示词、公开接口或交付包。</summary>
+    public string? ReferenceVisualHtml { get; set; }
+
     public string ReviewMode { get; set; } = DesignReviewModes.Light;
 
     public string GeneratePrompt { get; set; } = string.Empty;

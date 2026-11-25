@@ -16,21 +16,22 @@ export default function SiteEditComposer(props: Props) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [knowledgeOpen, setKnowledgeOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
-  const attachmentsPending = props.screenshots.items.some((item) => item.status !== 'ready');
+  const attachments = [...props.screenshots.items, ...props.screenshots.rejections];
+  const attachmentsPending = attachments.some((item) => item.status !== 'ready');
   const submit = () => {
     if (!props.generating && props.instruction.trim() && !attachmentsPending) void props.generate();
   };
   const submitKeys = useImeSubmit(submit);
   return <div className="shrink-0 border-t border-token-subtle bg-token-elevated p-3">
-    {(props.selectedKnowledge.length > 0 || props.screenshots.items.length > 0) && <div className="mb-2 flex flex-wrap gap-1.5" aria-label="已添加的内容">
+    {(props.selectedKnowledge.length > 0 || attachments.length > 0) && <div className="mb-2 flex flex-wrap gap-1.5" aria-label="已添加的内容">
       {props.selectedKnowledge.map((entry) => <span key={`${entry.storeId}:${entry.entryId}`} className="inline-flex max-w-full items-center gap-1 rounded-md bg-token-nested px-2 py-1 text-xs">
         <Library size={12} /><span className="max-w-40 truncate">{entry.title}</span>
         <button type="button" disabled={props.generating} aria-label={`移除引用 ${entry.title}`} onClick={() => props.setSelectedKnowledge(props.selectedKnowledge.filter((item) => item !== entry))}><X size={12} /></button>
       </span>)}
-      {props.screenshots.items.map((item) => <span key={item.key} className="inline-flex max-w-full items-center gap-1 rounded-md bg-token-nested px-2 py-1 text-xs" title={item.error || item.fileName}>
+      {attachments.map((item) => <span key={item.key} className="inline-flex max-w-full flex-wrap items-center gap-1 rounded-md bg-token-nested px-2 py-1 text-xs" title={item.error || item.fileName}>
         {item.thumbnailUrl ? <img src={item.thumbnailUrl} alt="" className="h-6 w-6 rounded object-cover" /> : <ImagePlus size={12} />}
         <span className="max-w-36 truncate">{item.fileName}</span>
-        {item.status !== 'ready' && <span role="status">{item.status === 'uploading' ? `${item.progress}%` : item.status === 'failed' ? '失败' : '读取中'}</span>}
+        {item.status !== 'ready' && <span role="status">{item.status === 'uploading' ? `${item.progress}%` : item.status === 'failed' ? item.error || '添加失败' : '读取中'}</span>}
         <button type="button" disabled={props.generating} aria-label={`删除截图 ${item.fileName}`} onClick={() => props.screenshots.remove(item.key)}><X size={12} /></button>
       </span>)}
     </div>}

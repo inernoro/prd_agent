@@ -482,6 +482,7 @@ export function buildReviewMessage(input: { reviewPass: number; editingExistingP
     editingExistingPage
       ? 'Use only the smallest targeted edit operations needed. Never use broad or global string replacement. Never alter CSS values, existing facts, links, section order, or product identity unless task.json explicitly requests that exact change. If a possible change is not directly required or you are uncertain, keep the existing content unchanged.'
       : 'For this newly generated page, correct every unsupported element. Do not retain sample copy, fake actions, missing targets, invented measured claims, or incomplete sections merely to preserve the first draft. Never remove or disable requested functionality to bypass a platform limitation; report that incompatibility instead.',
+    !editingExistingPage ? 'Check that the first viewport tells the reader what the page is for. Review heading wraps, body line lengths, navigation, and touch targets at desktop and 390px. For Chinese articles, fit the headline to the actual text and available width instead of forcing a fixed display size; keep related labels and values together.' : '',
     'Reread the finished index.html and only stop when every requested constraint is visibly present and every forbidden placeholder, inert control, broken fragment, or unsupported claim is absent. Do not satisfy this review by removing requested functionality; report incompatible publication requirements instead.',
     reviewAddendum,
   ].filter(Boolean).join(' ') : [

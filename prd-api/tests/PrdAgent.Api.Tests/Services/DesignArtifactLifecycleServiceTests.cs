@@ -12,6 +12,7 @@ using MongoDB.Driver;
 using Moq;
 using PrdAgent.Api.Controllers.Api;
 using PrdAgent.Api.Services;
+using PrdAgent.Api.Services.BackgroundTasks;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
@@ -2297,18 +2298,63 @@ public sealed class DesignArtifactLifecycleServiceTests
     }
 
     [Fact]
+    public void RestartDesignArtifact_DeclaresBoundedGatewayAdmissionForItsArtifactTypes()
+    {
+        var policy = TaskAdmissionPolicies.Find(typeof(DesignArtifactsController).FullName!, nameof(DesignArtifactsController.RestartRun));
+        Assert.NotNull(policy);
+        Assert.Equal(TaskAdmissionTiming.Middleware, policy.Timing);
+        Assert.False(policy.AllowDelegatedSubjects);
+        Assert.Equal(256, policy.InteractiveMaxCalls);
+        Assert.Equal(16, policy.AgentMaxCalls);
+        Assert.Equal(
+            from artifact in new[] { DesignArtifactTypes.WebPage, DesignArtifactTypes.HtmlPpt }
+            from operation in new[] { DesignArtifactOperations.Generate, DesignArtifactOperations.Edit }
+            select DesignArtifactGatewayGrantService.CallerFor(new DesignArtifactRun { ArtifactType = artifact, Operation = operation }),
+            policy.AppCallers);
+    }
+
+    [Theory]
+    [InlineData("project::feature::revision::old", "project::feature::revision::new", "project::feature", true)]
+    [InlineData("project::feature", "project::feature::revision::new", "project::feature", true)]
+    [InlineData("project::feature-other::revision::old", "project::feature::revision::new", "project::feature", false)]
+    [InlineData("other::feature::revision::old", "project::feature::revision::new", "project::feature", false)]
+    [InlineData("project::feature::revision::old", null, null, false)]
+    [InlineData(null, "project::feature::revision::new", "project::feature", false)]
+    [InlineData(null, null, null, true)]
+    public void WebGenerationRetryScope_ShouldKeepProjectAndBranchIsolation(
+        string? sourceScope, string? currentScope, string? durableScope, bool expected)
+    {
+        Assert.Equal(expected, DesignArtifactsController.IsWebGenerationRetryScope(sourceScope, currentScope, durableScope));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
     [Trait("Category", TestCategories.Integration)]
-    public async Task RestartRun_ShouldBeIdempotent_AndKeepInterruptedSourceUnchanged()
+    public async Task RestartWebGeneration_ShouldBeIdempotent_AndKeepFailedSourceUnchanged(bool interrupted)
     {
         await using var fixture = await LifecycleMongoFixture.CreateAsync();
         var source = new DesignArtifactRun
         {
             Id = "interrupted-source", UserId = "owner-user", Runtime = DesignArtifactRuntimes.OpenDesign,
-            Status = RunStatuses.Error, PhaseCode = DesignArtifactPhaseCodes.Interrupted,
+            Status = RunStatuses.Error, PhaseCode = interrupted ? DesignArtifactPhaseCodes.Interrupted : DesignArtifactPhaseCodes.CollectingArtifact,
             Phase = HostedSiteEditRunWorker.RestartInterruptedMessage,
-            Error = HostedSiteEditRunWorker.RestartInterruptedMessage,
-            Instruction = "生成产品发布页", Title = "产品发布页",
-            DeploymentSlug = DeploymentScope.Current,
+            Error = interrupted ? HostedSiteEditRunWorker.RestartInterruptedMessage : "设计服务在整理页面产物时出错",
+            Instruction = "生成产品发布页", Title = "产品发布页", TaskPermitId = "original-permit",
+            DeploymentSlug = !interrupted && DeploymentScope.CurrentDurable is { } scope
+                ? scope + "::revision::previous"
+                : DeploymentScope.Current,
+            DesignDirection = new DesignArtifactDesignDirection
+            {
+                StyleId = "reference-site:owned-reference",
+                ReferenceSiteId = "owned-reference",
+                ReferenceSiteTitle = "参考刊物",
+                GeneratePrompt = "冻结的参考网页样式",
+            },
+            UploadedSources =
+            [
+                new DesignUploadedSource { AttachmentId = "old-upload", FileName = "产品发布.md", Content = "冻结的资料正文" },
+            ],
             DesignBrief = new DesignArtifactDesignBrief
             {
                 Goal = "生成产品发布页",
@@ -2378,6 +2424,14 @@ public sealed class DesignArtifactLifecycleServiceTests
         };
 
         var request = new RestartDesignArtifactRunRequest { IdempotencyKey = "same-restart-key" };
+        var discovered = Assert.IsType<OkObjectResult>(await controller.GetActiveRun(
+            DesignArtifactOperations.Generate, includeLatestFailed: true));
+        Assert.Equal(source.Instruction, Data(discovered).GetProperty("retryInstruction").GetString());
+        Assert.Equal("参考刊物", Data(discovered).GetProperty("referenceSiteTitle").GetString());
+        var upload = Data(discovered).GetProperty("uploadedSources")[0];
+        Assert.Equal("产品发布.md", upload.GetProperty("fileName").GetString());
+        Assert.False(upload.TryGetProperty("content", out _));
+        using var execution = TaskExecutionContext.Enter(new TaskExecutionIdentity("restart-permit"));
         var first = Assert.IsType<AcceptedResult>(await controller.RestartRun(source.Id, request));
         var second = Assert.IsType<AcceptedResult>(await controller.RestartRun(source.Id, request));
         var firstId = Data(first).GetProperty("runId").GetString();
@@ -2385,10 +2439,18 @@ public sealed class DesignArtifactLifecycleServiceTests
         Assert.Equal(2, await fixture.Db.DesignArtifactRuns.CountDocumentsAsync(_ => true));
         var persistedSource = await fixture.Db.DesignArtifactRuns.Find(item => item.Id == source.Id).SingleAsync();
         Assert.Equal(RunStatuses.Error, persistedSource.Status);
-        Assert.Equal(DesignArtifactPhaseCodes.Interrupted, persistedSource.PhaseCode);
+        Assert.Equal(source.PhaseCode, persistedSource.PhaseCode);
+        Assert.Equal(source.Error, persistedSource.Error);
+        Assert.Equal("original-permit", persistedSource.TaskPermitId);
         var restarted = await fixture.Db.DesignArtifactRuns.Find(item => item.Id == firstId).SingleAsync();
         Assert.Equal(source.Id, restarted.RestartedFromRunId);
+        Assert.Equal("restart-permit", restarted.TaskPermitId);
+        Assert.Equal(DeploymentScope.Current, restarted.DeploymentSlug);
         Assert.Equal(source.Instruction, restarted.Instruction);
+        Assert.Equal("owned-reference", restarted.DesignDirection?.ReferenceSiteId);
+        Assert.Equal("冻结的参考网页样式", restarted.DesignDirection?.GeneratePrompt);
+        Assert.Equal("冻结的资料正文", Assert.Single(restarted.UploadedSources!).Content);
+        Assert.Null(restarted.LatestPreviewHtml);
         Assert.Equal(source.DesignBrief.Fingerprint, restarted.DesignBrief?.Fingerprint);
         Assert.Equal(source.BrandPackage.Fingerprint, restarted.BrandPackage?.Fingerprint);
         Assert.Equal(source.PresentationInput.ManualEditHtml, restarted.PresentationInput?.ManualEditHtml);

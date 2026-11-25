@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { ClipboardList, Library, Palette, Upload } from 'lucide-react';
+import { ClipboardList, Library, PanelsTopLeft, Upload } from 'lucide-react';
 import type { KnowledgeEntrySelection } from '@/components/knowledge/KnowledgeEntryPicker';
 import { toast } from '@/lib/toast';
 import { listRecentDocumentEntries } from '@/services/real/documentStore';
@@ -9,17 +8,19 @@ import {
   getDesignGenerationSettings,
   getDesignRuntimeCapabilities,
   getDesignTimingStats,
+  getSite,
   type DesignGenerationStyle,
+  type DesignArtifactRunSummary,
   type DesignRuntimeCapability,
   type DesignTimingStats,
+  type HostedSite,
 } from '@/services/real/webPages';
-import { freshPptSessionPath } from '@/pages/md-to-ppt-agent/sessionContext';
 import KnowledgeInlineBrowser from '../KnowledgeInlineBrowser';
-import { REQUIRED_WEB_PAGE_RUNTIME, displayedDesignRuntime, requiredWebPageRuntime } from '../siteEditPreview';
+import { AI_STREAM_PREVIEW_SANDBOX, REQUIRED_WEB_PAGE_RUNTIME, displayedDesignRuntime, requiredWebPageRuntime } from '../siteEditPreview';
+import { useSitePreviewHtml } from '../useSitePreviewHtml';
 import {
   formatGenerationClock,
   formatCompletedRunDuration,
-  generationEtaShort,
   pickGenerationTiming,
   remainingEstimateText,
   runProvenanceText,
@@ -28,31 +29,25 @@ import {
 } from '../siteGenerateProgress';
 import {
   DESIGN_ATTACHMENT_ACCEPT,
+  DESIGN_ATTACHMENT_DESCRIPTION,
   MAX_GENERATE_ATTACHMENTS,
+  recordedDesignAttachments,
+  sentDesignAttachments,
   useDesignAttachmentUploads,
+  type DesignAttachmentItem,
 } from '../designAttachments';
-import { PRESET_REQUESTS, RUNTIME_CARD_REGISTRY, runtimeCardTitle, titleFromFileName } from '../siteGenerateOptions';
+import { runtimeCardTitle, titleFromFileName } from '../siteGenerateOptions';
 import { useSiteGenerationRun } from './useSiteGenerationRun';
-import {
-  OUTPUT_FORM_ORDER,
-  OUTPUT_FORM_REGISTRY,
-  buildHtmlPptHandoff,
-  missingRuntimeBlocker,
-  openHtmlPptHandoff,
-  sendRoute,
-  type WorkbenchOutputForm,
-} from './outputForm';
-import { HtmlPptHandoffPanel } from './HtmlPptHandoffPanel';
-import { StyleGallery, presetSelection, selectionStyleId, type StyleGallerySelection } from './StyleGallery';
+import { missingRuntimeBlocker } from './outputForm';
+import { PersonalStyleDialog } from './PersonalStyleDialog';
+import { DESIGN_SYSTEM_KEY_PREFIX, presetSelection, selectionStyleId, type StyleGallerySelection } from './StyleGallery';
 import { StyleThumbnail } from './StyleThumbnail';
 import {
   AssistantBubble,
   ComposerSheet,
-  OptionChip,
   PageSkeleton,
   PreviewPanel,
   RunProgressCard,
-  Segmented,
   UserBubble,
   WorkbenchComposer,
   WorkbenchLayout,
@@ -61,6 +56,7 @@ import {
   type PlusMenuItem,
   type WorkbenchPane,
 } from './WorkbenchParts';
+import { useWorkbenchModelPicker } from './useWorkbenchModelPicker';
 
 /** 知识库的一篇稿子，从知识库页「做成网页」带进来时预先放好。 */
 export interface WorkbenchSource {
@@ -74,13 +70,22 @@ export interface WorkbenchSource {
 export interface GenerationIntro {
   request: string;
   chips: string[];
+  attachments?: DesignAttachmentItem[];
   durationText: string;
   runtimeLabel: string;
   styleName?: string | null;
+  referenceStyleCheck?: 'matched' | 'mismatch' | 'unavailable';
+  preview?: { html: string; sandbox: string };
 }
 
 const MAX_KNOWLEDGE = 3;
 const DEFAULT_REQUEST = '把这些资料做成一个清晰好读、适合发给客户看的网页';
+const REFERENCE_EXAMPLE_REQUEST = '把知识库文章做成一页给团队阅读的指南。开头用一句话说明读者能解决什么问题，正文按原文梳理步骤和常见问题，保留关键术语、数字和出处。借鉴参考网页的配色、字体和版式，在手机上也要好读。';
+
+const frozenMaterials = (record?: DesignArtifactRunSummary | null) => [
+  ...(record?.knowledgeReferences ?? []).map((entry) => `知识库 · ${entry.title}`),
+  ...(record?.referenceSiteTitle ? [`风格参考 · ${record.referenceSiteTitle}`] : []),
+];
 
 export default function NewSiteStage({
   source,
@@ -98,6 +103,7 @@ export default function NewSiteStage({
   onBusyChange?: (busy: boolean) => void;
 }) {
   const [instruction, setInstruction] = useState('');
+  const modelPicker = useWorkbenchModelPicker('generate');
   const [recentKnowledge, setRecentKnowledge] = useState<RecentDocumentEntry[]>([]);
   const [loadingKnowledge, setLoadingKnowledge] = useState(true);
   const [selectedKnowledge, setSelectedKnowledge] = useState<KnowledgeEntrySelection[]>(() => (source ? [{
@@ -108,8 +114,10 @@ export default function NewSiteStage({
   }] : []));
   const uploads = useDesignAttachmentUploads('document', MAX_GENERATE_ATTACHMENTS);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const replacingRef = useRef<string | null>(null);
   const [capabilities, setCapabilities] = useState<DesignRuntimeCapability[]>([]);
   const [runtimesLoaded, setRuntimesLoaded] = useState(false);
+  const [runtimeAttempt, setRuntimeAttempt] = useState(0);
   const [styles, setStyles] = useState<DesignGenerationStyle[]>([]);
   /** 本部署最近 30 天的真实耗时；拿不到就是 null，预估退回经验值并明说。 */
   const [timingStats, setTimingStats] = useState<DesignTimingStats | null>(null);
@@ -118,39 +126,49 @@ export default function NewSiteStage({
   const [timingState, setTimingState] = useState<TimingStatsState>('loading');
   /** 选中的风格：管理员预设（按 styleId 冻结）或目录里的设计系统（按 designSystemId 冻结）。 */
   const [styleSelection, setStyleSelection] = useState<StyleGallerySelection | null>(null);
-  const [galleryOpen, setGalleryOpen] = useState(false);
+  const [referenceSite, setReferenceSite] = useState<{ id: string; title: string } | null>(null);
+  const [referencePreview, setReferencePreview] = useState<{ siteId: string; site: HostedSite | null } | null>(null);
+  const [referencePreviewAttempt, setReferencePreviewAttempt] = useState(0);
+  const [referencePickerOpen, setReferencePickerOpen] = useState(false);
+  const [showReferenceExample, setShowReferenceExample] = useState(false);
   const [sheet, setSheet] = useState<'knowledge' | 'notes' | null>(null);
   const [notesDraft, setNotesDraft] = useState('');
   /** 已发出去的那一条（对话里的用户气泡）；失败后输入框里的内容原样保留，可直接再发。 */
-  const [sent, setSent] = useState<{ text: string; chips: string[]; runtimeLabel: string; styleName?: string | null } | null>(null);
+  const [sent, setSent] = useState<(Omit<GenerationIntro, 'request' | 'durationText' | 'preview'> & { text: string }) | null>(null);
   const handedOffRef = useRef(false);
-  /** 产出形式：网页在这里直接生成；网页 PPT 带着资料与要求交给 HTML PPT 智能体（原因见 outputForm.ts）。 */
-  const [outputForm, setOutputForm] = useState<WorkbenchOutputForm>('web-page');
-  const navigate = useNavigate();
-  /**
-   * PPT 的发布落点在打开工作台那一刻冻结，与网页生成（useSiteGenerationRun.reset 快照）同一口径：
-   * 工作台开着时切换了当前空间，也不许把 A 团队里发起的稿子悄悄发到 B 团队或个人空间。
-   */
-  const [pptDestinationTeamId] = useState(destinationTeamId);
-
   const run = useSiteGenerationRun({
     destinationTeamId,
     hasInitialSource: Boolean(source),
+    initialEntryId: source?.entryId,
     onCreated: () => { /* 完成后由下面的 effect 交给修改阶段 */ },
   });
   const { reset: resetRun } = run;
 
+  const referenceSiteId = referenceSite?.id;
+  const referencePreviewSite = referencePreview?.siteId === referenceSiteId ? referencePreview?.site ?? null : null;
+  const { srcDoc: referenceSrcDoc, settled: referencePreviewSettled } = useSitePreviewHtml(referencePreviewSite, !run.generating);
+  useEffect(() => {
+    if (!referenceSiteId) return;
+    let current = true;
+    void getSite(referenceSiteId).then((result) => {
+      if (current) setReferencePreview({ siteId: referenceSiteId, site: result.success ? result.data : null });
+    }).catch(() => { if (current) setReferencePreview({ siteId: referenceSiteId, site: null }); });
+    return () => { current = false; };
+  }, [referenceSiteId, referencePreviewAttempt]);
+
+  useEffect(() => {
+    let active = true;
+    void getDesignRuntimeCapabilities().then((runtimes) => {
+      if (active && runtimes.success) setCapabilities(runtimes.data.runtimes);
+    }).catch(() => { /* 连接失败时保留资料，由对话消息提供重试入口。 */ }).finally(() => {
+      if (active) setRuntimesLoaded(true);
+    });
+    return () => { active = false; };
+  }, [runtimeAttempt]);
+
   useEffect(() => {
     resetRun();
     let active = true;
-    // 执行器能力单独结算：别的请求慢不该让「正在检测设计服务」一直挂着。
-    void getDesignRuntimeCapabilities().then((runtimes) => {
-      if (!active) return;
-      if (runtimes.success) {
-        setCapabilities(runtimes.data.runtimes);
-      }
-      setRuntimesLoaded(true);
-    });
     void Promise.all([
       listRecentDocumentEntries(16),
       getDesignGenerationSettings(),
@@ -187,6 +205,9 @@ export default function NewSiteStage({
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { onBusyChange?.(run.generating); }, [onBusyChange, run.generating]);
+  useEffect(() => {
+    if (run.notice?.tone === 'error') onPaneChange('chat');
+  }, [onPaneChange, run.notice]);
 
   // 真实耗时只影响「预计多久」这句话，单独取、不挡资料与执行器的加载。
   useEffect(() => {
@@ -223,21 +244,9 @@ export default function NewSiteStage({
     || titleFromFileName(uploads.items.find((item) => item.status !== 'failed')?.fileName ?? '')
     || undefined;
   const hasSources = selectedKnowledge.length > 0 || uploads.readyIds.length > 0;
-  const runtimeCopy = RUNTIME_CARD_REGISTRY[REQUIRED_WEB_PAGE_RUNTIME];
-  const requestTiming = pickGenerationTiming(timingStats, REQUIRED_WEB_PAGE_RUNTIME);
-  const eta = generationEtaShort(REQUIRED_WEB_PAGE_RUNTIME, requestTiming);
-  /**
-   * 说明行只放一行：耗时 · 过程中会怎样。没有真实统计时标明是经验值；统计还在读或读不到要分开说，
-   * 读不到若也写成「经验值」，统计接口坏了会被一直当成样本少（降级不许静默）。
-   */
-  const etaSource = requestTiming
-    ? ''
-    : timingState === 'unavailable'
-      ? '（经验值，耗时统计暂时取不到）'
-      : timingState === 'loading'
-        ? '（经验值，正在读取真实耗时）'
-        : '（经验值）';
-  const etaHint = eta ? `${eta}${etaSource}` : '';
+  const failedRun = run.failedRun;
+  const savedRequest = failedRun?.retryInstruction;
+  const failedMaterials = frozenMaterials(failedRun);
   const activeTiming = pickGenerationTiming(timingStats, run.activeRunRuntime);
 
   // 生成完成：把这一轮对话交给修改阶段，同一个窗口里接着说「想改哪里」。
@@ -246,17 +255,20 @@ export default function NewSiteStage({
     if (!done || handedOffRef.current) return;
     handedOffRef.current = true;
     onGenerated(done.id, {
-      request: sent?.text || run.recoveredTitle || '生成网页',
-      chips: sent?.chips ?? [],
+      request: sent?.text || run.recoveredRun?.instruction || run.recoveredTitle || '生成网页',
+      chips: sent?.chips ?? frozenMaterials(run.recoveredRun),
+      attachments: sent?.attachments ?? recordedDesignAttachments(run.recoveredRun?.uploadedSources),
       durationText: formatCompletedRunDuration(done.durationSeconds),
       runtimeLabel: sent?.runtimeLabel || (visibleRuntime ? runtimeCardTitle(visibleRuntime) : '设计执行器'),
       styleName: run.runInfo?.styleName ?? sent?.styleName,
+      referenceStyleCheck: done.referenceStyleCheck,
+      preview: run.previewHtml ? { html: run.previewHtml, sandbox: run.previewSandbox } : undefined,
     });
-  }, [onGenerated, run.completedSite, run.recoveredTitle, run.runInfo?.styleName, sent, visibleRuntime]);
+  }, [onGenerated, run.completedSite, run.previewHtml, run.previewSandbox, run.recoveredRun, run.recoveredTitle, run.runInfo?.styleName, sent, visibleRuntime]);
 
-  const addFiles = (files: File[]) => {
-    const rejected = uploads.addFiles(files);
-    if (rejected.length > 0) toast.error('有文件没有加入', rejected.join('；'));
+  const openFilePicker = (replaceKey: string | null = null) => {
+    replacingRef.current = replaceKey;
+    fileInputRef.current?.click();
   };
 
   const addNotes = () => {
@@ -264,7 +276,7 @@ export default function NewSiteStage({
     if (!text) return;
     // 粘贴的纪要按一篇 Markdown 附件上传，和拖进来的文件走同一条路，服务端同样当作事实来源。
     const index = uploads.items.filter((item) => item.fileName.startsWith('会议纪要')).length + 1;
-    addFiles([new File([text], `会议纪要-${index}.md`, { type: 'text/markdown' })]);
+    uploads.addFiles([new File([text], `会议纪要-${index}.md`, { type: 'text/markdown' })]);
     setNotesDraft('');
     setSheet(null);
   };
@@ -274,38 +286,33 @@ export default function NewSiteStage({
       key: `kb-${entry.entryId}`,
       label: entry.title,
       status: '知识库',
+      icon: Library,
       onRemove: () => setSelectedKnowledge((current) => current.filter((item) => item.entryId !== entry.entryId)),
-    })),
-    ...uploads.items.map((item) => ({
-      key: item.key,
-      label: item.fileName,
-      status: item.status === 'uploading'
-        ? `上传 ${item.progress}%`
-        : item.status === 'reading'
-          ? '读取正文'
-          : item.status === 'ready'
-            ? '可以用'
-            : item.error || '失败',
-      tone: item.status === 'failed' ? 'danger' as const : item.status === 'ready' ? 'default' as const : 'busy' as const,
-      onRemove: () => uploads.remove(item.key),
     })),
   ];
 
   const plusItems: PlusMenuItem[] = [
     {
+      id: 'upload',
+      title: '上传文件',
+      description: DESIGN_ATTACHMENT_DESCRIPTION.document,
+      onPick: () => openFilePicker(),
+      icon: Upload,
+      disabledReason: uploads.items.length >= MAX_GENERATE_ATTACHMENTS ? `已放入 ${MAX_GENERATE_ATTACHMENTS} 个文件，先移除一个` : undefined,
+    },
+    {
       id: 'knowledge',
       title: '引用知识库',
       description: `从我的或团队知识库挑，最多 ${MAX_KNOWLEDGE} 篇；稿子更新后可一键重生成`,
       icon: Library,
-      onPick: () => { setGalleryOpen(false); setSheet('knowledge'); onPaneChange('preview'); },
+      onPick: () => { setSheet('knowledge'); onPaneChange('preview'); },
     },
     {
-      id: 'upload',
-      title: '上传文件',
-      description: 'Markdown、Word、PDF、PPT、纯文本，最多 5 个',
-      icon: Upload,
-      onPick: () => fileInputRef.current?.click(),
-      disabledReason: uploads.items.length >= MAX_GENERATE_ATTACHMENTS ? `已放入 ${MAX_GENERATE_ATTACHMENTS} 个文件，先移除一个` : undefined,
+      id: 'reference',
+      title: '参考网页',
+      description: '从网页托管选择 HTML 网页，借鉴排版和风格',
+      icon: PanelsTopLeft,
+      onPick: () => { setSheet(null); setReferencePickerOpen(true); },
     },
     {
       id: 'notes',
@@ -317,55 +324,56 @@ export default function NewSiteStage({
     },
   ];
 
-  const isPpt = outputForm === 'html-ppt';
-  const pptHandoff = useMemo(() => buildHtmlPptHandoff({
-    instruction,
-    knowledge: selectedKnowledge,
-    uploadedFileNames: uploads.items.filter((item) => item.status !== 'failed').map((item) => item.fileName),
-    destinationTeamId: pptDestinationTeamId,
-  }), [instruction, selectedKnowledge, uploads.items, pptDestinationTeamId]);
+  const sendBlocker = uploads.busy
+    ? '上传和读取完成后可发送'
+    : uploads.hasFailed
+      ? '请处理或移除失败的附件后再发送'
+      : !requestRuntime
+        ? missingRuntimeBlocker(runtimesLoaded)
+        : !hasSources ? '添加至少一份资料后即可生成'
+          : modelPicker.selectionUnavailable ? '请重新选择可用模型' : '';
 
-  const sendBlocker = isPpt
-    ? (pptHandoff.ok ? '' : pptHandoff.blocker)
-    : !requestRuntime
-    ? missingRuntimeBlocker(runtimesLoaded)
-    : uploads.busy
-      ? '文件还在上传，传完就能生成'
-      : !hasSources
-        ? '先点左下角的 + 放入资料：知识库、文件或会议纪要都行'
-        : '';
+  const restoreInputs = () => {
+    if (!failedRun || !savedRequest) return;
+    setInstruction(savedRequest);
+    setSelectedKnowledge(failedRun.knowledgeReferences.flatMap((entry): KnowledgeEntrySelection[] =>
+      entry.storeId ? [{ ...entry, storeId: entry.storeId, storeName: entry.storeName || '知识库' }] : []));
+    uploads.reset();
+    uploads.restoreReady(failedRun.uploadedSources ?? []);
+    const { styleId, designSystemId, styleName: savedStyleName, referenceSiteId, referenceSiteTitle } = failedRun;
+    setReferenceSite(referenceSiteId && referenceSiteTitle ? { id: referenceSiteId, title: referenceSiteTitle } : null);
+    if (!referenceSiteId && designSystemId) {
+      const name = savedStyleName || '默认风格';
+      if (!styleId || styleId.startsWith(DESIGN_SYSTEM_KEY_PREFIX)) {
+        setStyleSelection({ kind: 'design-system', key: `${DESIGN_SYSTEM_KEY_PREFIX}${designSystemId}`, designSystemId, name });
+      } else if (styleId.startsWith('personal:')) {
+        setStyleSelection({ kind: 'personal', key: styleId, styleId, designSystemId, name, swatches: [] });
+      } else {
+        setStyleSelection({ kind: 'preset', key: styleId, styleId, designSystemId, name });
+      }
+    }
+    document.getElementById('workbench-new-instruction')?.focus();
+  };
 
   const send = () => {
-    const route = sendRoute({
-      outputForm,
-      blocked: Boolean(sendBlocker),
-      generating: run.generating,
-      pptHandoffReady: pptHandoff.ok,
-      hasRuntime: Boolean(requestRuntime),
-    });
-    if (route === 'none') return;
-    if (route === 'ppt-handoff') {
-      // 交接不是生成：不建设计任务、不显示网页进度卡，直接带着资料与要求去 PPT 智能体。
-      if (pptHandoff.ok) navigate(openHtmlPptHandoff(pptHandoff));
-      return;
-    }
-    if (!requestRuntime) return;
+    if (!requestRuntime || sendBlocker || run.generating) return;
     const text = instruction.trim() || DEFAULT_REQUEST;
     const title = selectedKnowledge[0]?.title
       || titleFromFileName(uploads.items.find((item) => item.status === 'ready')?.fileName ?? '');
     const chips = [
       ...selectedKnowledge.map((entry) => `知识库 · ${entry.title}`),
-      ...uploads.items.filter((item) => item.status === 'ready').map((item) => `文件 · ${item.fileName}`),
+      ...(referenceSite ? [`风格参考 · ${referenceSite.title}`] : []),
     ];
-    setSent({ text, chips, runtimeLabel: runtimeCardTitle(requestRuntime), styleName: styleSelection?.name });
-    setGalleryOpen(false);
+    setSent({ text, chips, attachments: sentDesignAttachments(uploads.items), runtimeLabel: runtimeCardTitle(requestRuntime), styleName: referenceSite?.title ?? styleSelection?.name });
     handedOffRef.current = false;
     void run.start({
       instruction: text,
+      modelOptionId: modelPicker.value || undefined,
       title,
       sourceSurface: source ? 'knowledge-base' : 'web-hosting',
       knowledge: selectedKnowledge,
       styleId: selectionStyleId(styleSelection),
+      referenceSiteId: referenceSite?.id,
       designSystemId: styleSelection?.kind === 'design-system' ? styleSelection.designSystemId : null,
       attachmentIds: uploads.readyIds,
     });
@@ -379,42 +387,80 @@ export default function NewSiteStage({
     state: stage.endedAtMs == null && run.generating ? 'active' as const : 'done' as const,
   }));
   const composing = !run.generating && !sent && !run.notice;
-  // 进度卡往下长、停止按钮在卡片最底下：不跟着滚，按钮就被输入区挡住（与修改阶段同一做法）。
+  // 随着运行阶段增长，让聊天流滚到最新一条。
   const conversationEndRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     conversationEndRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' });
   }, [run.generating, steps.length, run.notice, sent]);
   const styleName = styleSelection?.name ?? '默认风格';
+  const canLoadOriginalInputs = !instruction && uploads.items.length === 0 && !referenceSite
+    && selectedKnowledge.length === (source ? 1 : 0)
+    && (!source || selectedKnowledge[0]?.entryId === source.entryId);
+  const retry = () => {
+    setSheet(null);
+    handedOffRef.current = false;
+    if (savedRequest) setSent({
+      text: savedRequest,
+      chips: failedMaterials,
+      attachments: sent?.attachments ?? recordedDesignAttachments(failedRun?.uploadedSources),
+      runtimeLabel: visibleRuntime ? runtimeCardTitle(visibleRuntime) : '设计执行器',
+      styleName: failedRun?.styleName,
+    });
+    void run.restart();
+  };
 
   const conversation = (
     <>
-      <AssistantBubble>
-        <p className="font-semibold">{isPpt ? '把资料做成网页 PPT，发给客户看' : '把资料做成网页，发给客户看'}</p>
-        <p className="text-[12px] text-token-secondary">
-          {isPpt
-            ? '从 + 里放一篇知识库稿子，再用一句话说给谁看、想讲清什么。点下去会带着稿子和这句话去 HTML PPT 智能体：先出大纲给你确认，再逐页生成；发布后进网页托管，按幻灯片播放，同样能「发布给客户」。'
-            : '点输入框左边的 + 放资料（知识库、文件、会议纪要可以一起放），再用一句话说给谁看、想达到什么效果。预览里是所选风格的样张，生成后换成你的页面；做好先存进网页托管，只有你能看到，确认后再发给客户。'}
-        </p>
-      </AssistantBubble>
-      {composing && !isPpt && (
-        <div className="flex flex-wrap gap-1.5" aria-label="常用要求">
-          {PRESET_REQUESTS.map((preset) => (
-            <button
-              key={preset.label}
-              type="button"
-              onClick={() => setInstruction(preset.text)}
-              className="rounded-lg px-2.5 py-1 text-[12px] text-token-secondary transition-colors hover-bg-soft"
-              style={{ border: '1px solid var(--border-default)' }}
-            >
-              {preset.label}
-            </button>
-          ))}
+      {composing && (
+        <div className="space-y-2">
+          <p className="text-[13px] font-semibold text-[var(--accent-primary)]">网页生成助手</p>
+          <p className="text-[14px] leading-relaxed text-token-primary">
+            想做什么网页？说说给谁看，再把要用的资料加进来。
+          </p>
         </div>
       )}
-      {!sent && run.generating && (
-        <UserBubble text={run.recoveredTitle ? `接着看：${run.recoveredTitle}` : '接着看上次没跑完的生成'} />
+      {composing && (
+        <div className="flex flex-wrap gap-1.5" aria-label="常用要求">
+          <button
+            type="button"
+            onClick={() => {
+              if (!instruction.trim()) setInstruction(REFERENCE_EXAMPLE_REQUEST);
+              setShowReferenceExample(true);
+              setSheet('knowledge');
+              onPaneChange('preview');
+            }}
+            className="flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[12px] text-token-secondary hover-bg-soft"
+            style={{ border: '1px solid var(--border-default)' }}
+          >
+            <PanelsTopLeft size={13} />知识库文章＋网页风格示例
+          </button>
+        </div>
       )}
-      {sent && <UserBubble text={sent.text} chips={sent.chips} />}
+      {composing && showReferenceExample && !referenceSite && selectedKnowledge.length > 0 && sheet !== 'knowledge' && (
+        <p className="text-[13px] text-token-secondary">接下来点「＋」里的「参考网页」，选择你想借鉴的风格。</p>
+      )}
+      {(runtimesLoaded || runtimeAttempt > 0) && !requestRuntime && !run.generating && !run.notice && (
+        <AssistantBubble tone="warning">
+          <p role="status">{runtimesLoaded ? '设计服务暂时不可用。你可以继续准备资料，服务恢复后再发送。' : '正在重新检测设计服务…'}</p>
+          <button
+            type="button"
+            disabled={!runtimesLoaded}
+            onClick={() => { setRuntimesLoaded(false); setRuntimeAttempt((attempt) => attempt + 1); }}
+            className="min-h-8 self-start rounded-md px-2 text-[12px] font-semibold hover-bg-soft disabled:opacity-50"
+          >
+            重试连接
+          </button>
+        </AssistantBubble>
+      )}
+      {!sent && run.generating && (
+        <UserBubble
+          text={run.recoveredRun?.instruction || (run.recoveredTitle ? `接着看：${run.recoveredTitle}` : '接着看上次没跑完的生成')}
+          chips={frozenMaterials(run.recoveredRun)}
+          attachments={recordedDesignAttachments(run.recoveredRun?.uploadedSources)}
+        />
+      )}
+      {sent && <UserBubble text={sent.text} chips={sent.chips} attachments={sent.attachments} />}
+      {!sent && savedRequest && <UserBubble text={savedRequest} chips={failedMaterials} attachments={recordedDesignAttachments(failedRun?.uploadedSources)} />}
       {run.generating && (
         <RunProgressCard
           title="正在生成网页"
@@ -425,67 +471,46 @@ export default function NewSiteStage({
           provenance={runProvenanceText(run.runInfo)}
           steps={steps.length > 0 ? steps : [{ key: 'start', label: '正在提交资料', state: 'active' }]}
           activity={`${run.phase || '正在准备'}${run.lastEventAtMs ? ` · 最近一次回应 ${Math.max(0, Math.round((Date.now() - run.lastEventAtMs) / 1000))} 秒前` : ''}`}
-          onStop={() => void run.stop()}
-          stopRequested={run.stopRequested}
-          canStop={Boolean(run.activeRunId)}
           stopHint="可以关掉窗口，任务在服务器上继续；重新打开「生成网页」会接着显示进度。"
         />
       )}
       {run.notice && (
         <AssistantBubble tone="warning">
-          <p className="font-semibold">{run.notice.tone === 'error' ? '这次没有做成' : '说明'}</p>
+          <p className="font-semibold" role="status">{run.notice.tone === 'error' ? '网页生成未完成' : '说明'}</p>
           <p className="text-[12px] text-token-secondary">{run.notice.text}</p>
-          {run.restartableRunId ? (
+          {run.restartableRunId && (
+            <div className="mt-1 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={retry}
+                disabled={!requestRuntime}
+                className="inline-flex min-h-9 items-center rounded-lg px-3 text-[12px] font-semibold disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2"
+                style={{ background: 'var(--accent-primary)', color: 'var(--accent-on-primary)' }}
+              >
+                用原资料和要求重试
+              </button>
+              {canLoadOriginalInputs && (
+                <button type="button" onClick={restoreInputs} className="min-h-9 rounded-lg px-2 text-[12px] font-medium text-token-primary hover-bg-soft">
+                  载入原资料和要求编辑
+                </button>
+              )}
+              {!requestRuntime && <p className="w-full text-[12px] text-token-secondary">{missingRuntimeBlocker(runtimesLoaded)}</p>}
+            </div>
+          )}
+          {!run.restartableRunId && run.notice.tone === 'error' && !sendBlocker && (
             <button
               type="button"
-              onClick={() => void run.restart()}
-              className="mt-1 inline-flex min-h-9 items-center rounded-lg px-3 text-[12px] font-medium text-token-primary focus-visible:outline-none focus-visible:ring-2"
-              style={{ border: '1px solid var(--border-default)', background: 'var(--bg-card)' }}
+              onClick={send}
+              className="inline-flex min-h-9 items-center rounded-lg px-3 text-[12px] font-semibold"
+              style={{ background: 'var(--accent-primary)', color: 'var(--accent-on-primary)' }}
             >
-              按原资料和要求重新开始
+              重新生成
             </button>
-          ) : (
-            <p className="text-[12px] text-token-secondary">资料和要求还在下面的输入框里，改一改或直接再点一次生成。</p>
           )}
+          {failedRun && <p className="text-[11px] text-token-muted">任务编号 {failedRun.runId}</p>}
         </AssistantBubble>
       )}
       <div ref={conversationEndRef} />
-    </>
-  );
-
-  const options = (
-    <>
-      <Segmented
-        label="产出形式"
-        value={outputForm}
-        disabled={run.generating}
-        onChange={(form) => { setOutputForm(form); setGalleryOpen(false); onPaneChange('preview'); }}
-        options={OUTPUT_FORM_ORDER.map((form) => ({
-          value: form,
-          label: OUTPUT_FORM_REGISTRY[form].label,
-          title: OUTPUT_FORM_REGISTRY[form].title,
-        }))}
-      />
-      {isPpt ? (
-        <span className="text-[12px] text-token-muted">主题与模板在 PPT 智能体里选</span>
-      ) : (
-        <>
-          <OptionChip
-            label={`风格：${styleName}，点开换一个`}
-            value={styleName}
-            pressed={galleryOpen}
-            onClick={() => { setSheet(null); setGalleryOpen((current) => !current); onPaneChange('preview'); }}
-            disabled={run.generating}
-          >
-            <Palette size={13} />
-            {selectedStyle && (
-              <span className="flex gap-0.5">
-                {selectedStyle.swatches.slice(0, 3).map((color) => <span key={color} className="h-2.5 w-2.5 rounded-full" style={{ background: color }} />)}
-              </span>
-            )}
-          </OptionChip>
-        </>
-      )}
     </>
   );
 
@@ -495,20 +520,20 @@ export default function NewSiteStage({
         id="workbench-new-instruction"
         value={instruction}
         onChange={setInstruction}
-        placeholder="说说要做成什么样：给谁看、想达到什么效果（可以不写，只放资料也行）"
+        placeholder={run.generating ? '生成完成后可继续修改…' : '说说想做什么网页，也可以只添加资料'}
         disabled={run.generating}
         plusItems={plusItems}
-        chips={materialChips}
-        options={options}
-        sendLabel={run.generating
-          ? '正在生成…'
-          : isPpt ? '去 PPT 智能体生成' : `生成网页${eta ? ` · ${eta}` : ''}`}
+        modelPicker={modelPicker}
+        chips={referenceSite ? [...materialChips, {
+          key: 'reference-site', label: referenceSite.title, status: '风格参考', icon: PanelsTopLeft, onRemove: () => setReferenceSite(null),
+        }] : materialChips}
+        attachments={{ items: [...uploads.items, ...uploads.rejections], onRemove: uploads.remove, onRetry: uploads.retry, onReplace: openFilePicker }}
+        sendLabel={run.generating ? '正在生成…' : '生成网页'}
         sendDisabled={run.generating || Boolean(sendBlocker)}
         sendDisabledReason={run.generating ? undefined : sendBlocker}
         onSend={send}
-        hint={isPpt
-          ? '打开 PPT 智能体，要求只预填、不自动发送 · 约几分钟（经验值）'
-          : [etaHint, runtimeCopy ? runtimeCopy.continuity : '进度在对话里，成品出现在预览里'].filter(Boolean).join(' · ')}
+        onStop={() => void run.stop()}
+        stopDisabled={!run.activeRunId || run.stopRequested}
       />
       <input
         ref={fileInputRef}
@@ -517,7 +542,10 @@ export default function NewSiteStage({
         accept={DESIGN_ATTACHMENT_ACCEPT.document}
         className="hidden"
         onChange={(event) => {
-          addFiles(Array.from(event.target.files ?? []));
+          const files = Array.from(event.target.files ?? []);
+          if (files.length > 0 && replacingRef.current) uploads.remove(replacingRef.current);
+          replacingRef.current = null;
+          uploads.addFiles(files);
           event.target.value = '';
         }}
       />
@@ -552,42 +580,55 @@ export default function NewSiteStage({
           </div>
         </ComposerSheet>
       )}
+      {referencePickerOpen && (
+        <PersonalStyleDialog
+          open
+          mode={{ kind: 'reference', onSelect: (site) => {
+            if (site.id !== referenceSite?.id) setReferencePreview(null);
+            setReferenceSite(site);
+            setReferencePickerOpen(false);
+            onPaneChange('chat');
+          } }}
+          onOpenChange={setReferencePickerOpen}
+        />
+      )}
     </>
   );
 
   const pickingKnowledge = sheet === 'knowledge' && !run.generating;
-  const showPptHandoff = isPpt && !run.generating && !pickingKnowledge;
-  const previewTitle = run.generating ? '正在生成网页' : pickingKnowledge ? '引用知识库' : showPptHandoff ? '网页 PPT 怎么做' : galleryOpen ? '选一个风格' : `样张 · ${styleName}`;
-  const previewNote = run.generating
-    ? (run.phase || '正在准备')
-    : pickingKnowledge
-      ? `勾选要放进来的稿子，最多 ${MAX_KNOWLEDGE} 篇；放入后输入框上方会列出来`
-      : showPptHandoff
-      ? '在 HTML PPT 智能体里生成，这里说清会带过去什么'
-      : galleryOpen
-      ? '每张缩略图都是这个风格真实的样子，标题已换成你的资料'
-      : sampleTitle ? '标题已换成你的资料，正文是示例；点生成后换成你的页面' : '示例内容；放进资料后标题先换成你的';
-  const nextHint = run.generating
-    ? '灰色块是还没写到的部分，写好一段换一段；做好后自动存进网页托管，这里直接显示成品。'
-    : pickingKnowledge
-      ? '选好点右上角「放入」，这里换回样张，样张标题会换成第一篇稿子的标题。'
-      : showPptHandoff
-      ? '点「去 PPT 智能体生成」后离开这个窗口；PPT 发布后回到网页托管就能看到它，按幻灯片播放。'
-      : galleryOpen
-      ? '点一张就选定它，预览立刻换成这个风格的样张；选好后回到对话点生成。'
-      : hasSources
-        ? '资料已放好。不喜欢这个样子就点输入框下面的风格换一个；点生成后，这里一段段出现你的页面。'
-        : '先放资料、说要求；这里是所选风格真实的样子。';
+  const showFailure = Boolean(run.failedRun || (run.notice?.tone === 'error' && !run.generating));
+  const failedPreview = showFailure && Boolean(run.previewHtml);
+  let previewTitle = `风格样张 · ${styleName}`;
+  let previewNote = sampleTitle ? '标题来自你的资料，正文为示例内容' : '示例内容';
+  if (pickingKnowledge) {
+    previewTitle = '引用知识库';
+    previewNote = `选好资料后点「放入」，最多 ${MAX_KNOWLEDGE} 篇`;
+  } else if (failedPreview) {
+    previewTitle = '上次生成的预览';
+    previewNote = '来自未完成的任务，仅供查看';
+  } else if (run.generating) {
+    previewTitle = '正在生成网页';
+    previewNote = run.phase || '正在准备';
+  } else if (run.completedSite) {
+    previewTitle = '已保存的网页';
+    previewNote = '已存入网页托管';
+  } else if (showFailure) {
+    previewTitle = '网页预览';
+    previewNote = '这次没有可查看的预览';
+  } else if (referenceSite) {
+    previewTitle = '参考网页';
+    previewNote = `${referenceSite.title} · 风格参考`;
+  }
 
   const preview = (
     <WorkbenchPreview
       title={previewTitle}
       note={previewNote}
-      nextHint={nextHint}
-      actions={(galleryOpen || pickingKnowledge) && !run.generating ? (
+      nextHint=""
+      actions={pickingKnowledge ? (
         <button
           type="button"
-          onClick={() => { setGalleryOpen(false); setSheet(null); }}
+          onClick={() => setSheet(null)}
           className="inline-flex h-9 items-center rounded-lg px-3 text-[13px] font-semibold"
           style={{ background: 'var(--accent-primary)', color: 'var(--accent-on-primary)' }}
         >
@@ -605,32 +646,43 @@ export default function NewSiteStage({
             onLimitReached={() => toast.info(`最多引用 ${MAX_KNOWLEDGE} 篇`, '取消一篇后再选；更多资料可以改用上传文件')}
           />
         </PreviewPanel>
-      ) : showPptHandoff ? (
-        <HtmlPptHandoffPanel handoff={pptHandoff} onOpenBlank={() => navigate(freshPptSessionPath(pptDestinationTeamId))} />
-      ) : galleryOpen && !run.generating ? (
-        <div className="h-full overflow-y-auto p-4" style={{ overscrollBehavior: 'contain' }}>
-          <StyleGallery
-            selectedId={styleSelection?.key ?? null}
-            title={sampleTitle}
-            onSelect={(selection) => { setStyleSelection(selection); setGalleryOpen(false); }}
-            onClearSelection={() => setStyleSelection(null)}
-          />
-        </div>
       ) : run.previewHtml ? (
         <iframe
           key={run.previewSandbox}
           srcDoc={run.previewHtml}
           sandbox={run.previewSandbox}
           referrerPolicy="no-referrer"
-          title="生成中的网页预览"
+          title={failedPreview ? '上次生成的预览' : run.completedSite ? '已保存的网页' : '生成中的网页预览'}
           className="h-full w-full bg-white"
         />
-      ) : run.generating || !styleSelection || styleSelection.kind === 'personal' ? (
+      ) : showFailure && !run.generating ? (
+        <div className="flex h-full items-center justify-center p-6 text-center text-[13px] text-token-muted">
+          重试后，生成的页面会显示在这里。
+        </div>
+      ) : referenceSite && !run.generating && !run.completedSite ? (
+        referencePreview?.siteId !== referenceSite.id || !referencePreviewSettled ? (
+          <PageSkeleton caption="正在打开参考网页" />
+        ) : referencePreviewSite?.siteUrl ? (
+          <iframe
+            src={referenceSrcDoc ? undefined : referencePreviewSite.siteUrl}
+            srcDoc={referenceSrcDoc ?? undefined}
+            sandbox={AI_STREAM_PREVIEW_SANDBOX}
+            referrerPolicy="no-referrer"
+            title="参考网页预览"
+            className="h-full w-full bg-white"
+          />
+        ) : (
+          <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center text-[13px] text-token-secondary">
+            <p>暂时打不开参考网页的预览。</p>
+            <button type="button" onClick={() => { setReferencePreview(null); setReferencePreviewAttempt((attempt) => attempt + 1); }} className="rounded-md px-3 py-1.5 font-semibold hover-bg-soft">重试预览</button>
+          </div>
+        )
+      ) : run.generating || run.completedSite || !styleSelection || styleSelection.kind === 'personal' ? (
         // 我的风格没有现成样张（样张来自设计系统，而它覆盖了配色与字体），只画它自己的色块，不拿骨架样张冒充。
         <PageSkeleton
           caption={run.generating
             ? '正在规划页面结构，首段内容写好就出现在这里'
-            : styleSelection?.kind === 'personal'
+            : run.completedSite ? '正在打开已保存的网页' : styleSelection?.kind === 'personal'
               ? `「${styleSelection.name}」没有现成样张，生成时按它的配色、字体与版式出页面`
               : '风格还没读出来，生成时用设置里的默认风格'}
           swatches={selectedStyle?.swatches ?? (styleSelection?.kind === 'personal' ? styleSelection.swatches : undefined)}

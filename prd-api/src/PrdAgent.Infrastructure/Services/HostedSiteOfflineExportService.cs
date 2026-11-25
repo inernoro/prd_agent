@@ -52,9 +52,10 @@ public sealed class HostedSiteOfflineExportService : IHostedSiteOfflineExportSer
             ? Encoding.UTF8.GetString(entryBytes, 3, entryBytes.Length - 3)
             : Encoding.UTF8.GetString(entryBytes);
 
-        // 作者自己声明的内容安全策略会拦下内嵌进来的 data: 资源。改写或删掉它不是打包该替作者做的决定，
-        // 所以直接拒绝，并在文案里给出替代路径。
-        if (HostedSiteHtmlInliner.DeclaresContentSecurityPolicy(html))
+        // 系统生成的策略已允许打包后的内联样式及 data: 资源。用剥离结果识别是否还有其他策略，
+        // 实际交给打包器的仍是原 HTML，下载件也保留同一条策略。
+        var htmlWithoutSystemPolicy = HostedSiteRevisionRules.StripSingleTrustedSystemCspEnvelope(html);
+        if (HostedSiteHtmlInliner.DeclaresContentSecurityPolicy(htmlWithoutSystemPolicy))
             return Fail(HostedSiteOfflineExportFailure.ContentSecurityPolicyMeta);
 
         var inliner = new HostedSiteHtmlInliner(
@@ -68,6 +69,8 @@ public sealed class HostedSiteOfflineExportService : IHostedSiteOfflineExportSer
 
         if (!result.Succeeded)
             return Fail(HostedSiteOfflineExportFailure.TooLarge, result.OverLimitAt, missing);
+        if (html != htmlWithoutSystemPolicy && HostedSiteHtmlInliner.HasDataStylesheetOrScript(result.Html))
+            return Fail(HostedSiteOfflineExportFailure.ContentSecurityPolicyLinkedCode);
 
         if (missing.Count > 0)
         {
@@ -111,6 +114,8 @@ public sealed class HostedSiteOfflineExportService : IHostedSiteOfflineExportSer
             + (string.IsNullOrWhiteSpace(detail) ? string.Empty : $"（超限时正在打包：{detail}）"),
         HostedSiteOfflineExportFailure.ContentSecurityPolicyMeta =>
             "这个网页在页面里声明了自己的内容安全策略，它会拦下离线打包时内嵌进来的样式、脚本和图片，下载下来的文件打开后显示不正常，所以这次没有生成下载。线上网页不受影响；请改用在线分享链接查看，或去掉页面里的这条安全策略后重新发布再下载。",
+        HostedSiteOfflineExportFailure.ContentSecurityPolicyLinkedCode =>
+            "这张网页的部分样式或脚本分开存放，保留网页的安全设置时无法打成一个离线文件。请先用在线链接查看。",
         _ => "离线打包没有完成，请稍后再试。",
     };
 

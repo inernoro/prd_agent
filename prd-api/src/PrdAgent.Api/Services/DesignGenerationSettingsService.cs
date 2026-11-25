@@ -171,6 +171,8 @@ public interface IDesignGenerationSettingsService
     /// </summary>
     Task<DesignArtifactDesignDirection> FreezeForRunAsync(
         string userId, string? styleId, string? designSystemId, CancellationToken ct);
+
+    Task<DesignArtifactDesignDirection> FreezeReferenceSiteAsync(PersonalStyleDraft draft, CancellationToken ct);
 }
 
 public sealed class DesignGenerationSettingsService : IDesignGenerationSettingsService
@@ -221,6 +223,21 @@ public sealed class DesignGenerationSettingsService : IDesignGenerationSettingsS
         string userId, string? styleId, string? designSystemId, CancellationToken ct)
         => await FreezeForRun(Effective(await LoadAsync(ct), _catalog), _catalog, _personalStyles, userId, styleId, designSystemId, ct);
 
+    public async Task<DesignArtifactDesignDirection> FreezeReferenceSiteAsync(PersonalStyleDraft draft, CancellationToken ct)
+        => FreezeReferenceSite(Effective(await LoadAsync(ct), _catalog), _catalog, draft);
+
+    internal static DesignArtifactDesignDirection FreezeReferenceSite(
+        DesignGenerationEffectiveSettings settings, IDesignSystemCatalog catalog, PersonalStyleDraft draft)
+        => FreezePersonalStyle(settings, catalog, new PersonalDesignStyle
+        {
+            Name = draft.Name,
+            Instruction = draft.Instruction,
+            Swatches = draft.Swatches,
+            Fonts = draft.Fonts,
+            BaseDesignSystemId = draft.BaseDesignSystemId,
+            SourceSiteId = draft.SourceSiteId,
+        }, draft.SourceSiteTitle, draft.ReferenceVisualHtml);
+
     /// <summary>
     /// 生成请求 → 冻结的设计方向。分支只有三条，且判据都在这里：
     /// designSystemId（目录风格）/ personal:&lt;id&gt;（我的风格，服务端按编号 + 归属人取，从不收前端传来的风格正文）/ 其余按预设。
@@ -254,27 +271,40 @@ public sealed class DesignGenerationSettingsService : IDesignGenerationSettingsS
     /// 下线了就明说，不悄悄换成默认骨架（形状 10）。
     /// </summary>
     internal static DesignArtifactDesignDirection FreezePersonalStyle(
-        DesignGenerationEffectiveSettings settings, IDesignSystemCatalog catalog, PersonalDesignStyle style)
+        DesignGenerationEffectiveSettings settings, IDesignSystemCatalog catalog, PersonalDesignStyle style,
+        string? referenceSiteTitle = null, string? referenceVisualHtml = null)
     {
         var baseEntry = catalog.Find(style.BaseDesignSystemId)
             ?? throw new DesignGenerationSettingsException(
                 $"「{style.Name}」参考的设计系统「{style.BaseDesignSystemId}」已不在风格目录里，请在风格画廊里编辑这套风格、换一个骨架");
         var instruction = PersonalStyleSpec(style);
-        var generatePrompt = settings.GeneratePrompt.TrimEnd() + "\n\n" + PersonalStylePromptBlock(style.Name, instruction);
+        var reference = referenceSiteTitle != null;
+        var promptBlock = reference
+            ? $"""
+              【参考网页的视觉样式】
+              只借鉴这里提取的配色、字体、层级和疏密。页面标题、正文、数字、链接和品牌身份来自本次资料和用户要求。
+              按新文章的结构组织页面，保留长中文标题的可读性，并在窄屏检查换行、导航和正文宽度。
+              {instruction}
+              """
+            : PersonalStylePromptBlock(style.Name, instruction);
+        var generatePrompt = settings.GeneratePrompt.TrimEnd() + "\n\n" + promptBlock;
         if (generatePrompt.Length > DesignGenerationDefaults.MaxPromptLength)
             throw new DesignGenerationSettingsException(
                 $"「{style.Name}」的风格说明加上当前创作提示词超过 {DesignGenerationDefaults.MaxPromptLength} 个字，请把风格说明写短一些");
         var direction = new DesignArtifactDesignDirection
         {
-            StyleId = PersonalDesignStyle.StyleIdPrefix + style.Id,
+            StyleId = reference ? $"reference-site:{style.SourceSiteId}" : PersonalDesignStyle.StyleIdPrefix + style.Id,
             StyleName = style.Name,
             StyleDescription = instruction,
+            ReferenceSiteId = reference ? style.SourceSiteId : null,
+            ReferenceSiteTitle = referenceSiteTitle,
+            ReferenceVisualHtml = referenceVisualHtml,
             DesignSystemId = baseEntry.Id,
             ReviewMode = settings.ReviewMode,
             GeneratePrompt = generatePrompt,
             EditPrompt = settings.EditPrompt,
             ReviewPrompt = settings.ReviewPrompt,
-            BrandSource = "personal-style",
+            BrandSource = reference ? "reference-site" : "personal-style",
             BrandColors = style.Swatches.Count > 0 ? style.Swatches.ToList() : DerivedSwatches(baseEntry),
             BrandFonts = style.Fonts.Count > 0
                 ? style.Fonts.ToList()
@@ -527,6 +557,8 @@ public sealed class DesignGenerationSettingsService : IDesignGenerationSettingsS
             string.Join('\u001e', direction.BrandColors),
             string.Join('\u001e', direction.BrandFonts),
             string.Join('\u001e', direction.BrandExamples));
+        if (direction.ReferenceVisualHtml is { } visual)
+            material += "\u001f" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(visual)));
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(material))).ToLowerInvariant()[..12];
     }
 

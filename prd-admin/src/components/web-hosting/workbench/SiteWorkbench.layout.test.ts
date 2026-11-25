@@ -17,14 +17,14 @@ const page = readFileSync(path.resolve(__dirname, '../../../pages/WebPagesPage.t
  */
 describe('生成工作台布局契约', () => {
   it('弹窗关键尺寸走 inline style，窄屏不溢出', () => {
-    expect(workbench).toContain("width: 'min(1440px, calc(100vw - 16px))'");
+    expect(workbench).toContain("width: 'min(1280px, calc(100vw - 16px))'");
     expect(workbench).toContain("maxWidth: 'calc(100vw - 16px)'");
-    expect(workbench).toContain("height: 'min(900px, calc(100dvh - 16px))'");
+    expect(workbench).toContain("height: 'min(800px, calc(100dvh - 16px))'");
     expect(workbench).not.toContain('contentClassName="h-[');
   });
 
   it('桌面左对话右预览且预览占弹性列；窄屏收成「对话 / 预览」两个页签', () => {
-    expect(parts).toContain('lg:grid-cols-[minmax(360px,420px)_minmax(0,1fr)]');
+    expect(parts).toContain('lg:grid-cols-[minmax(360px,min(39%,500px))_minmax(0,1fr)]');
     expect(parts).toContain("aria-label=\"对话与预览\"");
     expect(workbench).toContain('<PaneTabs pane={pane} onChange={setPane}');
     // 窄屏一次只显示一栏，桌面两栏都在。
@@ -33,7 +33,7 @@ describe('生成工作台布局契约', () => {
   });
 
   it('资料从输入框左边的 + 叠加放入：知识库、上传、粘贴纪要，不是二选一的页签', () => {
-    for (const id of ["id: 'knowledge'", "id: 'upload'", "id: 'notes'"]) {
+    for (const id of ["id: 'knowledge'", "id: 'upload'", "id: 'notes'", "id: 'reference'"]) {
       expect(newStage, `+ 菜单缺了 ${id}`).toContain(id);
     }
     expect(newStage).toContain('<KnowledgeInlineBrowser');
@@ -66,15 +66,24 @@ describe('生成工作台布局契约', () => {
     expect(run).toContain('styleId: request.styleId');
   });
 
-  it('风格：画廊里预设与我的风格按 styleId、目录风格按 designSystemId 交给服务端；生成前右边是真实样张', () => {
+  it('风格：保留默认或恢复的风格契约与真实样张；风格参考从添加资料进入', () => {
     // 哪些选择带 styleId 的判据收在 StyleGallery.selectionStyleId 一处，行为由 StyleGallery.test 断言。
     expect(newStage).toContain('styleId: selectionStyleId(styleSelection),');
     expect(newStage).toContain("designSystemId: styleSelection?.kind === 'design-system' ? styleSelection.designSystemId : null,");
     expect(run).toContain('designSystemId: request.designSystemId ?? null,');
-    expect(newStage).toContain('<StyleGallery');
+    expect(newStage).not.toMatch(/<StyleGallery[\s/>]/);
+    expect(newStage).toContain("title: '参考网页'");
     expect(newStage).toContain('<StyleThumbnail');
     // 样张标题先换成资料的标题，让人预判成品长什么样。
     expect(newStage).toContain('title={sampleTitle}');
+  });
+
+  it('选中的参考页沿用托管页预览的相对资源规则和直链回退', () => {
+    expect(newStage).toContain('getSite(referenceSiteId)');
+    expect(newStage).toContain('useSitePreviewHtml(referencePreviewSite, !run.generating)');
+    expect(newStage).toContain('src={referenceSrcDoc ? undefined : referencePreviewSite.siteUrl}');
+    expect(newStage).toContain('srcDoc={referenceSrcDoc ?? undefined}');
+    expect(newStage).not.toContain('previewableAiStreamHtml');
   });
 
   it('新建和修改不暴露执行器选择，OpenDesign 不可用时直接阻断', () => {
@@ -115,7 +124,7 @@ describe('生成工作台布局契约', () => {
   });
 
   it('修改阶段：先出草稿，线上版与草稿可切换对比，确认才发布；发给客户复用一键分享', () => {
-    expect(editStage).toContain("options={[{ value: 'live', label: '线上版' }, { value: 'draft', label: '草稿' }]}");
+    expect(editStage).toContain("options={[{ value: 'live', label: currentVersionLabel }, { value: 'draft', label: '草稿' }]}");
     expect(editStage).toContain('void publish(draftId)');
     expect(editStage).toContain('void reject(draftId');
     expect(editStage).toContain('<QuickSharePopover');
@@ -149,7 +158,7 @@ describe('生成完读站点的请求按会话隔离', () => {
     const openGuard = wb.indexOf('if (!open) return;', effect);
     expect(effect, '关窗时也要换会话号').toBeGreaterThan(-1);
     expect(openGuard).toBeGreaterThan(effect);
-    const handler = wb.slice(wb.indexOf('const handleGenerated'), wb.indexOf('const handleSiteChanged'));
+    const handler = wb.slice(wb.indexOf('const openSavedSite'), wb.indexOf('const handleGenerated'));
     expect(handler).toContain('const requestedIn = sessionRef.current;');
     expect(handler).toMatch(/getSite\(siteId\)\.then\(\(result\) => \{\s*if \(sessionRef\.current !== requestedIn\) return;/);
   });

@@ -1692,6 +1692,16 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                         throw new InvalidOperationException("浏览器质量证据截图引用无效，请重新生成");
                 }
             }
+            string? referenceStyleCheck = null;
+            if (root.TryGetProperty("referenceStyleChecked", out var referenceChecked)
+                && referenceChecked.ValueKind == JsonValueKind.True)
+            {
+                var lastAttempt = attempts[attempts.GetArrayLength() - 1];
+                if (lastAttempt.GetProperty("viewports").GetArrayLength() != 4)
+                    throw new InvalidOperationException("参考风格检查缺少完整的视口或配色方案证据");
+                referenceStyleCheck = lastAttempt.GetProperty("issueCodes").EnumerateArray().Any(
+                    issue => issue.GetString() == "reference_style_mismatch") ? "mismatch" : "matched";
+            }
             return new DesignArtifactBrowserQualitySummary
             {
                 SchemaVersion = "map-browser-quality-evidence-v1",
@@ -1703,6 +1713,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                 FinalHardPassed = finalHardPassed,
                 FinalScore = finalScore,
                 Viewports = expectedViewports.ToList(),
+                ReferenceStyleCheck = referenceStyleCheck,
                 EvidenceRef = evidencePath,
             };
         }
