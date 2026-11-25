@@ -2245,16 +2245,25 @@ static async Task<IResult> DeepHealth(
             },
             ["tapd-model-advisory:daily-check"] = tapdAdvisoryHealthy is null ? Array.Empty<object>() : new object[]
             {
-                new
+                new Dictionary<string, object?>
                 {
-                    componentId = "tapd-model-advisory.daily-check",
-                    componentType = "service",
-                    observedValue = tapdAdvisoryHealthy.Value ? 0 : 1,
-                    observedUnit = "count",
-                    status = tapdAdvisoryHealthy.Value ? "pass" : "warn",
-                    time = now.ToString("o"),
-                    output = tapdAdvisoryHealthy.Value ? "最近一次 TAPD 模型检查已完成"
+                    ["componentId"] = "tapd-model-advisory.daily-check",
+                    ["componentType"] = "service",
+                    ["observedValue"] = tapdAdvisoryHealthy.Value ? 0 : 1,
+                    ["observedUnit"] = "count",
+                    ["status"] = tapdAdvisoryHealthy.Value ? "pass" : "warn",
+                    ["time"] = now.ToString("o"),
+                    ["output"] = tapdAdvisoryHealthy.Value ? "最近一次 TAPD 模型检查已完成"
                         : "TAPD 模型检查未完成、已过期或在用路由无法解析",
+                    ["cds:monitor"] = new
+                    {
+                        name = "TAPD 模型淘汰检查",
+                        field = "observedValue",
+                        op = "eq",
+                        value = 0,
+                        intervalSeconds = 21600,
+                        environment = "production",
+                    },
                 },
             },
             ["visual-image:recent-outcomes"] = new object[]
