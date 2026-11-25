@@ -2499,6 +2499,13 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     expect(contractCheck?.observedValue).toBe(0);
     expect(contractCheck?.targetCount).toBe(5);
     expect(contractCheck?.catalogEntryCount).toBeGreaterThanOrEqual(5);
+
+    // 尚未启用淘汰检查的环境不会有结果行。启用后，过期、网关失联和路由丢失都要使本用例失败。
+    const advisoryChecks = deepBody.checks?.['tapd-model-advisory:daily-check'] ?? [];
+    for (const advisoryCheck of advisoryChecks) {
+      expect(advisoryCheck.status, 'TAPD 淘汰检查需在近 48 小时内成功且路由可解析').toBe('pass');
+      expect(advisoryCheck.observedValue).toBe(0);
+    }
   });
 
   test('[LIT-002][LIT-005][LIT-010] 文学配图标记流式生成、保存恢复与清理', { tag: '@cleanup' }, async ({ page, request }) => {
