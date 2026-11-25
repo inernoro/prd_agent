@@ -1,0 +1,35 @@
+/* 快速创作页的少量局部样式；颜色只取 tokens.css 语义变量 */
+/* 放进 components 层：Tailwind 工具类（hidden、sm:inline-flex 等）可以覆盖这里 */
+@layer components {
+.qc-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex: none;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.qc-icon-btn:hover { background: var(--bg-card-hover); color: var(--text-primary); }
+.qc-icon-btn:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 1px; }
+
+.qc-range { appearance: none; background: transparent; cursor: pointer; margin: 0; }
+.qc-range::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: var(--border-default); }
+.qc-range::-webkit-slider-thumb { appearance: none; width: 12px; height: 12px; margin-top: -4px; border-radius: 50%; background: var(--accent-primary); }
+.qc-range::-moz-range-track { height: 4px; border-radius: 2px; background: var(--border-default); }
+.qc-range::-moz-range-thumb { width: 12px; height: 12px; border: 0; border-radius: 50%; background: var(--accent-primary); }
+
+@keyframes qc-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .45; transform: scale(.7); } }
+.qc-pulse { animation: qc-pulse 1.4s ease-in-out infinite; }
+@keyframes qc-rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.qc-rise { animation: qc-rise .32s ease-out both; }
+@media (prefers-reduced-motion: reduce) { .qc-pulse, .qc-rise { animation: none; } }
+
+@media (max-width: 767px) {
+  .qc-icon-btn { width: 44px; height: 44px; }
+}
+}

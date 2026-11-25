@@ -1,0 +1,18 @@
+{
+ "web": "prd-admin",
+ "baseline": "949bfa2768a57a466c08444b34b8f9a46e9eb2f6",
+ "entry": "src/main.tsx",
+ "shellFile": "src/layouts/AppShell.tsx",
+ "overrides": {
+  "src/app/navRegistry.tsx": "src/overrides/app/navRegistry.tsx",
+  "src/stores/toolboxStore.ts": "src/overrides/toolboxStore.ts"
+ },
+ "added": {
+  "src/pages/quick-creation-agent/": "src/added/pages/quick-creation-agent/",
+  "src/services/real/quickCreation.ts": "src/added/services/real/quickCreation.ts"
+ },
+ "lazyPlaceholders": ["src/app/navRegistry.tsx"],
+ "omitAssets": ["src/assets/agent-card-art/"],
+ "skipPreloads": [],
+ "title": "MAP 快速创作 · 原型"
+}

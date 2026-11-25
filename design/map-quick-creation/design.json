@@ -1,0 +1,887 @@
+{
+  "project": "prd-agent",
+  "title": "MAP 快速创作",
+  "group": "MAP · 创作",
+  "framework": "FW-MAP-ADMIN",
+  "frameworkVersion": 1,
+  "prototypeVersion": 1,
+  "date": "2026-11-25",
+  "rationale": "思路.md",
+  "prototype": "dist/index.html",
+  "checks": "checks/result.json",
+  "source": "src",
+  "docs": [
+    "设计文档/源码差异.diff",
+    "设计文档/目标与验收.md",
+    "spec/rules.md"
+  ],
+  "notes": "快捷版：一份文档 + 一个模板 → 视频或网页，发布到网页托管。未来逐幕创作只给概念稿（concept-*），不交接实现。",
+  "demoData": {
+    "file": "src/fixtures.ts",
+    "sha256": "346f5fc18438e870312c1c53d3293da12c0542f8e305fdcdf14b67f4b90b9ce2",
+    "note": "虚构稿件《需求评审的三个习惯》与虚构成员；实现方取证时用同一份数据"
+  },
+  "screens": [
+    {
+      "id": "compose",
+      "name": "空态与选中模板（视频）",
+      "route": "#/quick-creation-agent",
+      "viewport": "desktop",
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "entryReadySelector": "[data-qc-ready=compose]",
+      "impl": null
+    },
+    {
+      "id": "compose-web",
+      "name": "产出切到网页",
+      "route": "#/quick-creation-agent",
+      "viewport": "desktop",
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "entryReadySelector": "[data-qc-ready=compose]",
+      "entryActions": [
+        "[aria-label=选择产出] button:nth-child(2)"
+      ],
+      "impl": null
+    },
+    {
+      "id": "attachments",
+      "name": "多附件 · 收起（读取中与失败）",
+      "route": "#/quick-creation-agent",
+      "viewport": "desktop",
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "entryReadySelector": "[data-qc=attachment-tray]",
+      "entryActions": [
+        "[data-qc=sample-doc]",
+        "[data-qc=pick-knowledge]",
+        "[data-qc=pick-knowledge]",
+        "[data-qc=pick-knowledge]",
+        "[data-qc=pick-knowledge]",
+        "[data-qc=pick-knowledge]"
+      ],
+      "impl": null
+    },
+    {
+      "id": "attachments-expanded",
+      "name": "多附件 · 展开管理",
+      "route": "#/quick-creation-agent",
+      "viewport": "desktop",
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "entryReadySelector": "[data-qc=attachment-list]",
+      "entryActions": [
+        "[data-qc=sample-doc]",
+        "[data-qc=pick-knowledge]",
+        "[data-qc=pick-knowledge]",
+        "[data-qc=pick-knowledge]",
+        "[data-qc=pick-knowledge]",
+        "[data-qc=tray-toggle]"
+      ],
+      "impl": null
+    },
+    {
+      "id": "queued",
+      "name": "已提交 · 排队中",
+      "route": "#/quick-creation-agent?run=run-queued",
+      "viewport": "desktop",
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "entryReadySelector": "[data-qc-ready=run-queued]",
+      "impl": null
+    },
+    {
+      "id": "generating",
+      "name": "生成中 · 配音（返回同一任务）",
+      "route": "#/quick-creation-agent?run=run-voicing",
+      "viewport": "desktop",
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "entryReadySelector": "[data-qc-ready=run-running]",
+      "impl": null
+    },
+    {
+      "id": "failed-scene",
+      "name": "单幕失败 · 只重做这一幕",
+      "route": "#/quick-creation-agent?run=run-failed",
+      "viewport": "desktop",
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "entryReadySelector": "[data-qc-ready=run-failed]",
+      "impl": null
+    },
+    {
+      "id": "timeout",
+      "name": "整条超时 · 保留已完成部分",
+      "route": "#/quick-creation-agent?run=run-timeout",
+      "viewport": "desktop",
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "entryReadySelector": "[data-qc-ready=run-failed]",
+      "impl": null
+    },
+    {
+      "id": "done-video",
+      "name": "成片 · 有声播放、字幕与重点",
+      "route": "#/quick-creation-agent?run=run-done",
+      "viewport": "desktop",
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "entryReadySelector": "[data-qc=video-player]",
+      "impl": null
+    },
+    {
+      "id": "publish-failed",
+      "name": "发布失败 · 成片仍可播",
+      "route": "#/quick-creation-agent?run=run-publish-failed",
+      "viewport": "desktop",
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "entryReadySelector": "[data-qc=publish-failed]",
+      "impl": null
+    },
+    {
+      "id": "published",
+      "name": "发布成功",
+      "route": "#/quick-creation-agent?run=run-published",
+      "viewport": "desktop",
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "entryReadySelector": "[data-qc=published]",
+      "impl": null
+    },
+    {
+      "id": "hosting",
+      "name": "网页托管里定位到这条记录",
+      "route": "#/web-pages?focusSite=site-run-published",
+      "viewport": "desktop",
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "entryReadySelector": "[data-qc-ready=hosting]",
+      "impl": null
+    },
+    {
+      "id": "attachment-review",
+      "name": "发送后的附件回看",
+      "route": "#/quick-creation-agent?run=run-done",
+      "viewport": "desktop",
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "entryReadySelector": "[data-qc=attachment-review]",
+      "entryActions": [
+        "[data-qc=open-all-attachments]"
+      ],
+      "impl": null
+    },
+    {
+      "id": "web-generating",
+      "name": "网页 · 生成中（大纲逐节）",
+      "route": "#/quick-creation-agent?run=run-web-running",
+      "viewport": "desktop",
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "entryReadySelector": "[data-qc-ready=run-running]",
+      "impl": null
+    },
+    {
+      "id": "web-done",
+      "name": "网页 · 已生成（桌面 / 手机预览）",
+      "route": "#/quick-creation-agent?run=run-web-done",
+      "viewport": "desktop",
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "entryReadySelector": "[data-qc=web-preview]",
+      "impl": null
+    },
+    {
+      "id": "works",
+      "name": "我的作品（30 条）",
+      "route": "#/quick-creation-agent?view=works",
+      "viewport": "desktop",
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "entryReadySelector": "[data-qc-ready=works]",
+      "impl": null
+    },
+    {
+      "id": "toolbox",
+      "name": "百宝箱入口卡片",
+      "route": "#/ai-toolbox",
+      "viewport": "desktop",
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "entryReadySelector": "[data-qc-ready=toolbox]",
+      "impl": null
+    },
+    {
+      "id": "phone-compose",
+      "name": "手机 · 创作（多附件）",
+      "route": "#/quick-creation-agent",
+      "viewport": "phone",
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "entryReadySelector": "[data-qc=attachment-tray]",
+      "entryActions": [
+        "[data-qc=sample-doc]",
+        "[data-qc=pick-knowledge]",
+        "[data-qc=pick-knowledge]",
+        "[data-qc=pick-knowledge]",
+        "[data-qc=pick-knowledge]"
+      ],
+      "impl": null
+    },
+    {
+      "id": "phone-queued",
+      "name": "手机 · 排队中",
+      "route": "#/quick-creation-agent?run=run-queued",
+      "viewport": "phone",
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "entryReadySelector": "[data-qc-ready=run-queued]",
+      "impl": null
+    },
+    {
+      "id": "phone-preview",
+      "name": "手机 · 预览成片",
+      "route": "#/quick-creation-agent?run=run-published",
+      "viewport": "phone",
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "entryReadySelector": "[data-qc=video-player]",
+      "entryActions": [
+        ".overflow-x-auto.border-b > button:nth-child(2)"
+      ],
+      "impl": null
+    },
+    {
+      "id": "phone-works",
+      "name": "手机 · 我的作品（长标题）",
+      "route": "#/quick-creation-agent?view=works",
+      "viewport": "phone",
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "entryReadySelector": "[data-qc-ready=works]",
+      "impl": null
+    },
+    {
+      "id": "concept-settings",
+      "name": "未来 · 设置概念稿（不在快捷版实现）",
+      "route": "#/concept/settings",
+      "viewport": "desktop",
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "entryReadySelector": "[data-qc-ready=concept-settings]",
+      "impl": null
+    },
+    {
+      "id": "concept-studio",
+      "name": "未来 · 逐幕调整概念稿（不在快捷版实现）",
+      "route": "#/concept/studio",
+      "viewport": "desktop",
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "entryReadySelector": "[data-qc-ready=concept-studio]",
+      "impl": null
+    }
+  ],
+  "acceptance": [
+    {
+      "id": "A-01",
+      "ruleId": "R-01",
+      "screenId": "compose",
+      "how": "measure",
+      "slots": [
+        "desktop-light",
+        "desktop-dark",
+        "phone-light",
+        "phone-dark"
+      ],
+      "rule": "页面挂在正式 AppShell 里，左侧导航来自服务端菜单目录",
+      "expected": "检查：原型 DOM 里有 AppShell 的侧栏与主区，快速创作页在主区内渲染"
+    },
+    {
+      "id": "A-02",
+      "ruleId": "R-02",
+      "screenId": "compose",
+      "how": "measure",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "页面组件只用 tokens.css 语义变量；作品配色只在模板画面组件里",
+      "expected": "检查：pages/quick-creation-agent 下除 TemplateFrames.tsx 外，十六进制与 rgb 字面量为 0"
+    },
+    {
+      "id": "A-03",
+      "ruleId": "R-03",
+      "screenId": "done-video",
+      "how": "measure",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "白天与黑天都可读",
+      "expected": "检查：两个主题下 --text-primary、--text-secondary 与 --bg-base 的对比度都不低于 4.5"
+    },
+    {
+      "id": "A-04",
+      "ruleId": "R-04",
+      "screenId": "compose",
+      "how": "measure",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "图标只用 lucide-react，界面与源码不出现 emoji",
+      "expected": "检查：新增源码与渲染文本里 emoji 为 0"
+    },
+    {
+      "id": "A-05",
+      "ruleId": "R-05",
+      "screenId": "done-video",
+      "how": "human",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "每一屏只有一个 primary 主动作",
+      "expected": "逐画面数：空态只有「快捷生成」，已生成只有「发布到网页托管」，失败只有恢复主按钮，作品列表只有「新建」"
+    },
+    {
+      "id": "A-06",
+      "ruleId": "R-06",
+      "screenId": "phone-compose",
+      "how": "measure",
+      "slots": [
+        "phone-light",
+        "phone-dark"
+      ],
+      "rule": "手机两栏改成「创作 / 预览」切换，375 宽没有整页横向溢出，本页新增的可点元素触控高度不小于 44px",
+      "expected": "检查：375 宽下 document.scrollWidth 等于视口宽；快速创作页内未标 data-qc-touch-exempt（公共组件 SegmentedTabs）的可点元素高度 ≥ 44",
+      "probe": {
+        "type": "horizontal-overflow"
+      }
+    },
+    {
+      "id": "A-07",
+      "ruleId": "R-07",
+      "screenId": "toolbox",
+      "how": "measure",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "在 navRegistry 注册 /quick-creation-agent（section: toolbox，wip: true），百宝箱有入口卡片",
+      "expected": "检查：navRegistry 改动副本里有该路由与 wip: true；toolboxStore 有 builtin-quick-creation"
+    },
+    {
+      "id": "A-08",
+      "ruleId": "R-08",
+      "screenId": "generating",
+      "how": "human",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "生成显示当前阶段、进度、已用与预计剩余；离开页面不取消，回来是同一个任务",
+      "expected": "从提交到完成逐阶段截图；生成中离开，从作品列表点回，地址 ?run= 不变、阶段继续"
+    },
+    {
+      "id": "A-09",
+      "ruleId": "R-09",
+      "screenId": "failed-scene",
+      "how": "human",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "错误先说结果和恢复动作，不出现内部诊断",
+      "expected": "逐个错误态核对：附件读取失败、单幕失败、超时、发布失败，每条都写「已保存什么 + 下一步」"
+    },
+    {
+      "id": "A-10",
+      "ruleId": "R-10",
+      "screenId": "compose",
+      "how": "measure",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "请求走 services/real 与 apiRequest；附件上传用直接 fetch + FormData",
+      "expected": "检查：services/real/quickCreation.ts 只经 apiRequest 发 JSON 请求，只有附件上传用 fetch"
+    },
+    {
+      "id": "A-11",
+      "screenId": "compose",
+      "how": "screenshot",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "首屏：产出（视频 / 网页）、模板卡与快捷生成在一屏内；模板缩略图是真实成品帧，选中态唯一",
+      "expected": "1440×900 首屏同时看到产出切换、模板卡、输入框与「快捷生成」；只有一张模板卡带选中边框"
+    },
+    {
+      "id": "A-12",
+      "screenId": "compose",
+      "how": "measure",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "没有可用稿件时不能生成，原因写在按钮下方",
+      "expected": "检查：没有附件时 [data-qc=submit] 为 disabled，且 [data-qc=block-reason] 可见"
+    },
+    {
+      "id": "A-13",
+      "screenId": "attachments",
+      "how": "human",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "项目名默认取第一份稿件的标题，没有稿件时为「未命名 · 模板名」",
+      "expected": "放入「需求评审的三个习惯.md」后标题变为「需求评审的三个习惯」"
+    },
+    {
+      "id": "A-14",
+      "screenId": "attachments",
+      "how": "measure",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "附件再多，收起时托盘也只占一行胶囊：一行摘要（数量、字数、读取中、失败）+ 最多两个胶囊 + 「+N」",
+      "expected": "检查：6 个附件时托盘高度 ≤ 88px，摘要行不折行，胶囊不超过 2 个且有「+N」"
+    },
+    {
+      "id": "A-15",
+      "screenId": "attachments-expanded",
+      "how": "screenshot",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "读取失败的附件排在最前、用错误色，写明原因与恢复动作，可单项重试或移除",
+      "expected": "展开后第一组是「读取失败」，含原因文字、「重试」与移除按钮"
+    },
+    {
+      "id": "A-16",
+      "screenId": "attachments-expanded",
+      "how": "measure",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "展开列表限高可滚动，按稿件 / 知识库文档 / 图片分组，底部显示文字预算与附件上限",
+      "expected": "检查：[data-qc=attachment-list] 最大高度 232px；分组标题含数量；底部写「文字 x / 20,000 · 附件 n / 10」"
+    },
+    {
+      "id": "A-17",
+      "screenId": "attachments",
+      "how": "human",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "有附件在读取时不能生成，读完自动可用；失败项不会用于生成",
+      "expected": "按钮下方写「还有附件在读取，读完即可生成」；失败组标注「不会用于生成」"
+    },
+    {
+      "id": "A-18",
+      "screenId": "attachment-review",
+      "how": "screenshot",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "发送后附件收成一行（前两个 + 「全部 N 个附件」），点开在右栏按类型回看原文，可回到预览",
+      "expected": "右栏出现附件分组列表与原文，顶部有「回到预览」"
+    },
+    {
+      "id": "A-19",
+      "screenId": "queued",
+      "how": "human",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "提交后先确认稿件和要求已保存，说明离开也会继续",
+      "expected": "左栏消息下方第一张卡写「稿件和要求已保存。生成在后台进行，离开页面也会继续。」"
+    },
+    {
+      "id": "A-20",
+      "screenId": "queued",
+      "how": "screenshot",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "排队显示位置、前面几个、预计开始时间，并明确排队不是失败",
+      "expected": "排队卡写「排队中 · 第 4 位」「前面 3 个，约 1 分 40 秒后开始」与「排队不是失败」"
+    },
+    {
+      "id": "A-21",
+      "screenId": "generating",
+      "how": "screenshot",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "生成中写出当前阶段在做什么、阶段进度、已用与预计剩余，以及预计依据",
+      "expected": "配音阶段有说明、进度条、「已用 7 分 20 秒 · 预计还需约 1 分 30 秒」和「预计依据」"
+    },
+    {
+      "id": "A-22",
+      "screenId": "generating",
+      "how": "screenshot",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "分镜逐幕亮起，区分正在画、待配音、配音中、已完成、没有完成",
+      "expected": "右栏 6 幕各带状态标签，配音中的一幕描边强调"
+    },
+    {
+      "id": "A-23",
+      "screenId": "works",
+      "how": "human",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "离开后在作品列表看到任务仍在进行，点它回到同一个任务",
+      "expected": "作品列表第一组是进行中的任务，点开回到 ?run=<编号> 的同一任务"
+    },
+    {
+      "id": "A-24",
+      "screenId": "failed-scene",
+      "how": "screenshot",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "单幕失败只标出失败的那一幕，写明已保存的内容，主按钮只重做这一幕",
+      "expected": "第 4 幕红框；失败卡写「已保存：原稿与要求、6 幕分镜与画面、其余旁白」，主按钮「重试第 4 幕」"
+    },
+    {
+      "id": "A-25",
+      "screenId": "timeout",
+      "how": "screenshot",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "整条超时是失败状态，保留稿件与已生成的分镜，给出从断点继续的动作",
+      "expected": "失败卡写「生成超时，已停止」和已保存的 3 幕，主按钮「重新排队，从这里继续」"
+    },
+    {
+      "id": "A-26",
+      "screenId": "done-video",
+      "how": "human",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "成片播放器：播放 / 暂停、上一幕 / 下一幕、拖动进度、字幕开关、全屏，进度条上有重点刻度",
+      "expected": "逐个控件点一遍，字幕随幕切换；关字幕后画面不再显示字幕"
+    },
+    {
+      "id": "A-27",
+      "screenId": "done-video",
+      "how": "human",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "片头预告的重点可点击，跳到对应时间并开始播放",
+      "expected": "点「再画边界」后时间到 0:40，当前重点卡描边"
+    },
+    {
+      "id": "A-28",
+      "screenId": "done-video",
+      "how": "screenshot",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "完成后过程收成一行，注意力给成品与发布",
+      "expected": "左栏显示「排队 → 分镜 → 配音 → 合成 全部完成 · 用时」一行，可展开；主按钮是「发布到网页托管」"
+    },
+    {
+      "id": "A-29",
+      "screenId": "publish-failed",
+      "how": "screenshot",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "发布失败时成品仍可播放，说明重试只上传、不会重新生成，可重试",
+      "expected": "失败卡含原因、「重试只上传，不会重新生成」与「重试发布」，右栏播放器可用"
+    },
+    {
+      "id": "A-30",
+      "screenId": "published",
+      "how": "human",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "发布成功给「在网页托管中查看」，进入网页托管后定位并高亮这条记录",
+      "expected": "点按钮进入 /web-pages?focusSite=<站点编号>，对应卡片高亮（复用 WebPagesPage 已有的 focusSite）"
+    },
+    {
+      "id": "A-31",
+      "screenId": "done-video",
+      "how": "screenshot",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "成品可追溯：原稿、模板、配音写在预览上方，原稿可点开回看",
+      "expected": "预览标题右侧有「原稿 · n 个附件」「模板 · 视觉笔记」「配音 · 女声 · 稍快」"
+    },
+    {
+      "id": "A-32",
+      "screenId": "web-done",
+      "how": "human",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "网页产出：生成中大纲逐节出现；完成后可切桌面 / 手机预览，重点点击定位到对应一节",
+      "expected": "网页生成中右栏列出 4 节；完成后点「再画边界」，对应一节高亮"
+    },
+    {
+      "id": "A-33",
+      "screenId": "done-video",
+      "how": "human",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "同一份稿件可一键改做另一种产出，稿件与要求自动带回",
+      "expected": "点「用这份稿件做网页」回到创作，附件与要求已填好，产出切到网页"
+    },
+    {
+      "id": "A-34",
+      "screenId": "works",
+      "how": "screenshot",
+      "slots": [
+        "desktop-light",
+        "desktop-dark",
+        "phone-light",
+        "phone-dark"
+      ],
+      "rule": "作品列表：按状态筛选；标题桌面一行、手机两行截断；状态与时间在第二行；30 条稳定",
+      "expected": "30 条作品逐行高度一致，长标题省略，不撑破行；状态标签不折行"
+    },
+    {
+      "id": "A-35",
+      "screenId": "phone-compose",
+      "how": "screenshot",
+      "slots": [
+        "phone-light",
+        "phone-dark"
+      ],
+      "rule": "手机上「创作 / 预览」切换，输入框与「快捷生成」在底部可达",
+      "expected": "390×844 下底部可见输入框、附件托盘与「快捷生成」"
+    },
+    {
+      "id": "A-36",
+      "screenId": "phone-queued",
+      "how": "screenshot",
+      "slots": [
+        "phone-light",
+        "phone-dark"
+      ],
+      "rule": "手机头部的状态不挤压标题",
+      "expected": "状态标签在标题上方一行，标题完整一行显示"
+    },
+    {
+      "id": "A-37",
+      "screenId": "phone-preview",
+      "how": "screenshot",
+      "slots": [
+        "phone-light",
+        "phone-dark"
+      ],
+      "rule": "手机播放器进度条单独一行，控件不换到第三行",
+      "expected": "进度条在上，按钮一行排完"
+    },
+    {
+      "id": "A-38",
+      "screenId": "toolbox",
+      "how": "screenshot",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "百宝箱里是一张独立的「快速创作」入口卡片，带开发中标记",
+      "expected": "卡片名、简介与「开发中」标记可见，点击进入快速创作"
+    },
+    {
+      "id": "A-39",
+      "screenId": "compose-web",
+      "how": "screenshot",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "切到网页后只显示网页模板，产出标签与主按钮旁的标记同步",
+      "expected": "模板变为「导读长页」「卡片速览」，输入框下方标记为「网页 · 导读长页」"
+    },
+    {
+      "id": "A-40",
+      "screenId": "hosting",
+      "how": "screenshot",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "网页托管里新发布的记录高亮，并提示默认可见范围",
+      "expected": "高亮卡片带「刚刚发布」，右下提示「默认仅团队成员可看」"
+    }
+  ],
+  "goals": [
+    {
+      "id": "G-01",
+      "goal": "一份文档 + 一个模板，最快路径得到成品",
+      "doneWhen": "首次打开即可选产出与模板、放稿件并快捷生成；没有稿件时按钮不可用且说明原因",
+      "items": [
+        "A-11",
+        "A-12",
+        "A-13",
+        "A-39"
+      ]
+    },
+    {
+      "id": "G-02",
+      "goal": "附件再多也清楚、不堆一大把",
+      "doneWhen": "收起时只占一行，展开可分组管理，失败项单独处理；发送后可回看",
+      "items": [
+        "A-14",
+        "A-15",
+        "A-16",
+        "A-17",
+        "A-18"
+      ]
+    },
+    {
+      "id": "G-03",
+      "goal": "团队集中提交时，排队、后台继续和恢复都看得见",
+      "doneWhen": "排队写位置与预计开始；生成写阶段、进度与剩余；离开后能回到同一任务",
+      "items": [
+        "A-19",
+        "A-20",
+        "A-21",
+        "A-22",
+        "A-23"
+      ]
+    },
+    {
+      "id": "G-04",
+      "goal": "失败时保住已有工作，并给出明确的恢复入口",
+      "doneWhen": "单幕失败只重做那一幕；超时保留已完成部分并从断点继续",
+      "items": [
+        "A-24",
+        "A-25"
+      ]
+    },
+    {
+      "id": "G-05",
+      "goal": "成品能播、能发布、能追溯",
+      "doneWhen": "有声播放器带字幕与重点；发布失败可重试且成品仍可播；发布成功定位到网页托管记录",
+      "items": [
+        "A-26",
+        "A-27",
+        "A-28",
+        "A-29",
+        "A-30",
+        "A-31",
+        "A-33",
+        "A-40"
+      ]
+    },
+    {
+      "id": "G-06",
+      "goal": "同一入口同时支持生成视频与生成网页",
+      "doneWhen": "产出切到网页后模板、过程与预览都换成网页形态",
+      "items": [
+        "A-32"
+      ]
+    },
+    {
+      "id": "G-07",
+      "goal": "手机上创作与预览都可用",
+      "doneWhen": "390 宽下切换创作 / 预览，底部动作可达，头部与播放器不挤压，30 条作品稳定",
+      "items": [
+        "A-34",
+        "A-35",
+        "A-36",
+        "A-37"
+      ]
+    },
+    {
+      "id": "G-08",
+      "goal": "作为独立智能体进入 MAP",
+      "doneWhen": "百宝箱有独立入口卡片，路由按 navRegistry 注册并带 wip",
+      "items": [
+        "A-38"
+      ]
+    },
+    {
+      "id": "G-09",
+      "goal": "未来的逐幕深入创作（本稿只给概念稿，不交接实现）",
+      "doneWhen": "开放前另起稿件：设置面板、逐幕编辑与版本、模板库分类",
+      "where": "后续稿件 map/quick-creation-studio；本稿画面 concept-settings、concept-studio 仅作方向参考"
+    }
+  ]
+}

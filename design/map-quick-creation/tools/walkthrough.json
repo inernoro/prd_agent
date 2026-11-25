@@ -1,0 +1,122 @@
+{
+ "A-05": {
+  "status": "passed",
+  "note": "逐画面数 primary：空态「快捷生成」、已生成「发布到网页托管」、失败恢复主按钮、作品列表「新建」，各一个"
+ },
+ "A-08": {
+  "status": "passed",
+  "note": "真实路径：提交后排队 → 分镜逐幕 → 配音 → 合成 → 已生成（约 32 秒模拟 3 分 15 秒）；生成中离开到作品列表，任务仍在进行"
+ },
+ "A-09": {
+  "status": "passed",
+  "note": "核对附件读取失败、单幕失败、整条超时、发布失败四处文案，均为「结果 + 已保存什么 + 下一步」"
+ },
+ "A-11": {
+  "status": "passed",
+  "note": "compose 两主题截图：产出、模板卡、输入框与快捷生成同屏，选中卡唯一"
+ },
+ "A-13": {
+  "status": "passed",
+  "note": "放入「需求评审的三个习惯.md」后标题从「未命名 · 视觉笔记」变为「需求评审的三个习惯」"
+ },
+ "A-15": {
+  "status": "passed",
+  "note": "attachments-expanded：失败组置顶，含原因、重试与移除"
+ },
+ "A-17": {
+  "status": "passed",
+  "note": "读取中时按钮下方写「还有附件在读取，读完即可生成」；失败组标注「不会用于生成」"
+ },
+ "A-18": {
+  "status": "passed",
+  "note": "attachment-review：右栏分组列表 + 原文 + 回到预览"
+ },
+ "A-19": {
+  "status": "passed",
+  "note": "queued：第一张卡为「稿件和要求已保存……离开页面也会继续」"
+ },
+ "A-20": {
+  "status": "passed",
+  "note": "queued：排队中 · 第 4 位、前面 3 个、约 1 分 40 秒后开始、排队不是失败"
+ },
+ "A-21": {
+  "status": "passed",
+  "note": "generating：配音阶段说明、进度条、已用 7 分 20 秒 · 预计还需约 1 分 30 秒、预计依据"
+ },
+ "A-22": {
+  "status": "passed",
+  "note": "generating：6 幕带状态（已完成 / 配音中 / 待配音），配音中一幕描边"
+ },
+ "A-23": {
+  "status": "passed",
+  "note": "交互：作品列表点第一条 → 回到 run-voicing，标题「需求评审的三个习惯」，状态生成中"
+ },
+ "A-24": {
+  "status": "passed",
+  "note": "failed-scene：第 4 幕红框，失败卡列出已保存内容，主按钮「重试第 4 幕」"
+ },
+ "A-25": {
+  "status": "passed",
+  "note": "timeout：「生成超时，已停止」，已保存 3 幕，主按钮「重新排队，从这里继续」"
+ },
+ "A-26": {
+  "status": "passed",
+  "note": "交互：下一幕 0:00→0:12；关字幕后字幕层 1→0；播放 2 秒 0:12→0:14；全屏按钮存在"
+ },
+ "A-27": {
+  "status": "passed",
+  "note": "点「再画边界」后时间到 0:40，当前重点卡描边"
+ },
+ "A-28": {
+  "status": "passed",
+  "note": "done-video：过程收成一行「排队 → 分镜 → 配音 → 合成 全部完成 · 用时」，主按钮为发布"
+ },
+ "A-29": {
+  "status": "passed",
+  "note": "publish-failed：原因、重试只上传不重新生成、重试发布；右栏播放器可用"
+ },
+ "A-30": {
+  "status": "passed",
+  "note": "交互：首次发布失败 → 重试成功 → 在网页托管中查看 → 落到高亮记录"
+ },
+ "A-31": {
+  "status": "passed",
+  "note": "done-video：预览上方原稿、模板、配音三项可见，原稿可点开回看"
+ },
+ "A-32": {
+  "status": "passed",
+  "note": "交互：网页重点「再画边界」→ 对应一节 outline 高亮；生成中右栏列出 4 节"
+ },
+ "A-33": {
+  "status": "passed",
+  "note": "交互：用这份稿件做网页 → 回到创作，5 个附件与要求带回，标记为「网页 · 导读长页」"
+ },
+ "A-34": {
+  "status": "passed",
+  "note": "works 桌面与手机：30 条行高一致，长标题省略，状态标签不折行"
+ },
+ "A-35": {
+  "status": "passed",
+  "note": "phone-compose：底部输入框、附件托盘与快捷生成可见"
+ },
+ "A-36": {
+  "status": "passed",
+  "note": "phone-queued：状态在标题上方一行，标题完整"
+ },
+ "A-37": {
+  "status": "passed",
+  "note": "phone-preview：进度条单独一行，按钮一行排完（窄屏隐藏音量）"
+ },
+ "A-38": {
+  "status": "passed",
+  "note": "toolbox：快速创作卡片带「开发中」，点击进入"
+ },
+ "A-39": {
+  "status": "passed",
+  "note": "compose-web：模板为导读长页 / 卡片速览，标记「网页 · 导读长页」"
+ },
+ "A-40": {
+  "status": "passed",
+  "note": "hosting：高亮卡片「刚刚发布」，提示默认仅团队成员可看"
+ }
+}

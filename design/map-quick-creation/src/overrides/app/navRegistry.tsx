@@ -1,0 +1,1159 @@
+/**
+ * 导航注册表（Single Source of Truth）—— v7 全改造
+ *
+ * 一处声明、三处自动同步：
+ *   1. <Route> 路由渲染（App.tsx 遍历 NAV_REGISTRY 生成 <Route>）
+ *   2. 「我的导航」可添加池（NavLayoutEditor 通过 launcherCatalog 读取）
+ *   3. Cmd+K 命令面板（AgentSwitcher 通过 launcherCatalog 读取）
+ *
+ * 加新功能：在 NAV_REGISTRY 写一个条目，结束。无需登记 launcherCatalog /
+ * AGENT_DEFINITIONS / BUILTIN_TOOLS。
+ *
+ * 元信息字段对齐 LauncherItem，下游消费方零改动。
+ */
+
+import { lazy, type ReactElement } from 'react';
+import { RequireAuth, RequirePermission } from '@/app/RouteGuards';
+import { ProductAgentAppearance } from '@/pages/product-agent/VersionAppearance';
+
+// ── 页面组件（lazy 加载） ─────────────────────────────────
+const VisualAgentFullscreenPage = lazy(() => import('@/pages/visual-agent/VisualAgentFullscreenPage'));
+const VisualStoryboardPage = lazy(() => import('@/pages/visual-storyboard/VisualStoryboardPage'));
+const LiteraryAgentWorkspaceListPage = lazy(() => import('@/pages/literary-agent').then(m => ({ default: m.LiteraryAgentWorkspaceListPage })));
+const ChatPage = lazy(() => import('@/pages/chat').then(m => ({ default: m.ChatPage })));
+const ActiveTasksPage = lazy(() => import('@/pages/active-tasks').then(m => ({ default: m.ActiveTasksPage })));
+const ActiveTasksTeamPage = lazy(() => import('@/pages/active-tasks').then(m => ({ default: m.TeamBoardPage })));
+const ActiveTaskHistoryPage = lazy(() => import('@/pages/active-tasks').then(m => ({ default: m.ActiveTaskHistoryPage })));
+const DefectAgentPage = lazy(() => import('@/pages/defect-agent').then(m => ({ default: m.DefectAgentPage })));
+const VideoAgentPage = lazy(() => import('@/pages/video-agent').then(m => ({ default: m.VideoAgentPage })));
+const ReportAgentPage = lazy(() => import('@/pages/report-agent').then(m => ({ default: m.ReportAgentPage })));
+const TranscriptAgentPage = lazy(() => import('@/pages/transcript-agent').then(m => ({ default: m.TranscriptAgentPage })));
+const ShortcutsPage = lazy(() => import('@/pages/shortcuts-agent').then(m => ({ default: m.ShortcutsPage })));
+const WorkflowListPage = lazy(() => import('@/pages/workflow-agent').then(m => ({ default: m.WorkflowListPage })));
+const MarketplacePage = lazy(() => import('@/pages/marketplace').then(m => ({ default: m.MarketplacePage })));
+const WritingWorkspacePage = lazy(() => import('@/pages/document-store/writing/WritingWorkspacePage'));
+const WritingCollectionPage = lazy(() => import('@/pages/document-store/writing/WritingCollectionPage'));
+const HostedTemplatePage = lazy(() => import('@/pages/hosted-collections/HostedTemplatePage'));
+const HostedCollectionsPage = lazy(() => import('@/pages/hosted-collections/HostedCollectionsPage'));
+const HostedCollectionPage = lazy(() => import('@/pages/hosted-collections/HostedCollectionPage'));
+const HostedCollectionSharePage = lazy(() => import('@/pages/hosted-collections/HostedCollectionSharePage'));
+const DocumentStorePage = lazy(() => import('@/pages/document-store').then(m => ({ default: m.DocumentStorePage })));
+const RecordingResultPage = lazy(() => import('@/pages/document-store/RecordingResultPage').then(m => ({ default: m.RecordingResultPage })));
+const RecordingProcessingPage = lazy(() => import('@/pages/document-store/RecordingProcessingPage').then(m => ({ default: m.RecordingProcessingPage })));
+const UniverseGraphPage = lazy(() => import('@/pages/document-store/UniverseGraphPage').then(m => ({ default: m.UniverseGraphPage })));
+const GalaxyStandalonePage = lazy(() => import('@/pages/document-store/GalaxyStandalonePage').then(m => ({ default: m.GalaxyStandalonePage })));
+const AdminWebPagesPage = lazy(() => import('@/pages/AdminWebPagesPage'));
+const LibraryLandingPage = lazy(() => import('@/pages/library/LibraryLandingPage').then(m => ({ default: m.LibraryLandingPage })));
+const EmergenceExplorerPage = lazy(() => import('@/pages/emergence').then(m => ({ default: m.EmergenceExplorerPage })));
+const TaskTreePage = lazy(() => import('@/pages/task-tree').then(m => ({ default: m.TaskTreePage })));
+const PmAgentPage = lazy(() => import('@/pages/pm-agent').then(m => ({ default: m.PmAgentPage })));
+const PmTaskDetailPage = lazy(() => import('@/pages/pm-agent').then(m => ({ default: m.TaskDetailPage })));
+const PmMilestoneDetailPage = lazy(() => import('@/pages/pm-agent').then(m => ({ default: m.MilestoneDetailPage })));
+const PmProjectDetailPage = lazy(() => import('@/pages/pm-agent').then(m => ({ default: m.ProjectDetailPage })));
+const OverviewShell = lazy(() => import('@/pages/product-agent').then(m => ({ default: m.OverviewShell })));
+const ProductVersionProductRoute = lazy(() => import('@/pages/product-agent/ProductVersionAccessPage').then(m => ({ default: m.ProductVersionProductRoute })));
+const ProductObjectDetailPage = lazy(() => import('@/pages/product-agent/ProductObjectDetailPage').then(m => ({ default: m.ProductObjectDetailPage })));
+const KnowledgeDetailPage = lazy(() => import('@/pages/product-agent').then(m => ({ default: m.KnowledgeDetailPage })));
+const ChangelogPage = lazy(() => import('@/pages/changelog/ChangelogPage'));
+const SkillAgentPage = lazy(() => import('@/pages/SkillAgentPage'));
+const McpConsolePage = lazy(() => import('@/pages/mcp-console/McpConsolePage'));
+const ArenaPage = lazy(() => import('@/pages/arena/ArenaPage').then(m => ({ default: m.ArenaPage })));
+const ReviewAgentSubmitPage = lazy(() => import('@/pages/product-agent/review/ReviewAgentSubmitPage').then(m => ({ default: m.ReviewAgentSubmitPage })));
+const ReviewAgentPage = lazy(() => import('@/pages/review-agent').then(m => ({ default: m.ReviewAgentPage })));
+const ReviewAgentResultPage = lazy(() => import('@/pages/product-agent/review/ReviewAgentResultPage').then(m => ({ default: m.ReviewAgentResultPage })));
+const ReviewAgentAllPage = lazy(() => import('@/pages/product-agent/review/ReviewAgentAllPage').then(m => ({ default: m.ReviewAgentAllPage })));
+const ReviewAssessmentListPage = lazy(() => import('@/pages/product-agent/review/ReviewAssessmentListPage').then(m => ({ default: m.ReviewAssessmentListPage })));
+const ReviewAssessmentDetailPage = lazy(() => import('@/pages/product-agent/review/ReviewAssessmentDetailPage').then(m => ({ default: m.ReviewAssessmentDetailPage })));
+const CcasAgentPage = lazy(() => import('@/pages/ccas-agent').then(m => ({ default: m.CcasAgentPage })));
+const EmailAgentPage = lazy(() => import('@/pages/email-agent').then(m => ({ default: m.EmailAgentPage })));
+const ShituAgentPage = lazy(() => import('@/pages/shitu-agent').then(m => ({ default: m.ShituAgentPage })));
+const PrReviewPage = lazy(() => import('@/pages/pr-review').then(m => ({ default: m.PrReviewPage })));
+const PaAgentPage = lazy(() => import('@/pages/pa-agent').then(m => ({ default: m.PaAgentPage })));
+const FrontEndAgentPage = lazy(() => import('@/pages/front-end-agent').then(m => ({ default: m.FrontEndAgentPage })));
+const ProjectRouteAgentPage = lazy(() => import('@/pages/project-route-agent').then(m => ({ default: m.ProjectRouteAgentPage })));
+const TapdBugReportPage = lazy(() => import('@/pages/tapd-bug-agent').then(m => ({ default: m.TapdBugReportPage })));
+const ChannelTraceAgentPage = lazy(() => import('@/pages/channel-trace-agent').then(m => ({ default: m.ChannelTraceAgentPage })));
+const UsersPage = lazy(() => import('@/pages/UsersPage'));
+const LlmLogsPage = lazy(() => import('@/pages/LlmLogsPage'));
+const AuthorizationHealthPage = lazy(() => import('@/pages/AuthorizationHealthPage'));
+const TeamActivityPage = lazy(() => import('@/pages/team-activity/TeamActivityPage'));
+const LabPage = lazy(() => import('@/pages/LabPage'));
+const AutomationRulesPage = lazy(() => import('@/pages/AutomationRulesPage'));
+const WebPagesPage = lazy(() => import('@/pages/WebPagesPage'));
+const CdsDesignSharePage = lazy(() => import('@/pages/CdsDesignSharePage'));
+const MyAssetsPage = lazy(() => import('@/pages/MyAssetsPage'));
+const CdsAgentPage = lazy(() => import('@/pages/cds-agent').then(m => ({ default: m.CdsAgentPage })));
+const InfraServicesPage = lazy(() => import('@/pages/infra-services').then(m => ({ default: m.InfraServicesPage })));
+const OpenPlatformTabsPage = lazy(() => import('@/pages/OpenPlatformTabsPage'));
+const MdToPptAgentPage = lazy(() => import('@/pages/md-to-ppt-agent/MdToPptAgentPage').then(m => ({ default: m.MdToPptAgentPage })));
+const QuickCreationAgentPage = lazy(() => import('@/pages/quick-creation-agent/QuickCreationAgentPage').then(m => ({ default: m.QuickCreationAgentPage })));
+const TechDocFormatAgentPage = lazy(() => import('@/pages/tech-doc-format-agent').then(m => ({ default: m.TechDocFormatAgentPage })));
+const SpeechAgentListPage = lazy(() => import('@/pages/speech-agent').then(m => ({ default: m.SpeechAgentListPage })));
+const SpeechAgentCreatePage = lazy(() => import('@/pages/speech-agent').then(m => ({ default: m.SpeechAgentCreatePage })));
+const SpeechAgentEditorPage = lazy(() => import('@/pages/speech-agent').then(m => ({ default: m.SpeechAgentEditorPage })));
+const SpeechAgentPlayPage = lazy(() => import('@/pages/speech-agent').then(m => ({ default: m.SpeechAgentPlayPage })));
+const LearningCenterPage = lazy(() => import('@/pages/learning-center/LearningCenterPage'));
+const ModelLeaderboardPage = lazy(() => import('@/pages/model-leaderboard/ModelLeaderboardPage'));
+const BookshelfPage = lazy(() => import('@/pages/bookshelf/BookshelfPage'));
+const DataSyncPage = lazy(() => import('@/pages/data-sync/DataSyncPage'));
+
+// ── 类型定义 ──────────────────────────────────────────────
+//
+// 注：这是 navRegistry 内部用的 4 段分组（智能体 / 百宝箱 / 实用工具
+// / 基础设施）。命令面板还会扩展出 'home' / 'shortcut' / 'menu' 等
+// 段，那是 unifiedNavCatalog.ts 里的 NavSection 类型，二者刻意分开
+// 避免同名歧义。
+export type RegistrySection = 'agent' | 'toolbox' | 'utility' | 'infra';
+
+export interface NavMeta {
+  /** 完整名（菜单文本 / 命令面板主标题） */
+  label: string;
+  /** 短标签（≤ 4 字，侧栏折叠态） */
+  shortLabel: string;
+  /** 描述（命令面板副标题） */
+  description: string;
+  /** Lucide 图标名 */
+  icon: string;
+  /** 分组归属 */
+  section: RegistrySection;
+  /** 应用标识（与后端 appKey 对齐） */
+  appKey?: string;
+  /** Agent 主题色文字（用于命令面板高亮） */
+  accentColor?: string;
+  /** 智能体专用色板（4 个核心 agent，AgentSwitcher 卡片样式用） */
+  agentColor?: { bg: string; border: string; iconBg: string; text: string };
+  /** 搜索关键字 */
+  tags?: string[];
+  /** 施工中标记 */
+  wip?: boolean;
+  /** Agent 卡片副标签（如「画布」「项目」） */
+  statLabel?: string;
+}
+
+export interface NavRegistryEntry {
+  /** 完整路径，含前导 `/` */
+  path: string;
+  /** 渲染元素（已包裹权限/认证守卫，App.tsx 直接 <Route element={...}>） */
+  element: ReactElement;
+  /**
+   * 渲染位置：
+   *   - 'shell'      （默认）渲染在 AppShell 布局内
+   *   - 'fullscreen' 独立全屏，跳过 AppShell（visual-agent / library）
+   */
+  placement?: 'shell' | 'fullscreen';
+  /** 权限守卫 key（如 'visual-agent.use'），数组表示 OR 逻辑（任一满足即可），与 element 中 RequirePermission 对齐 */
+  permission?: string | string[];
+  /** 缺省 = 仅注册路由，不进导航/命令面板 */
+  nav?: NavMeta;
+}
+
+// ── 守卫包装 helper ────────────────────────────────────────
+function shellGuarded(perm: string | string[], el: ReactElement): ReactElement {
+  return <RequirePermission perm={perm}>{el}</RequirePermission>;
+}
+
+function fullscreenGuarded(perm: string | string[], el: ReactElement): ReactElement {
+  return (
+    <RequireAuth>
+      <RequirePermission perm={perm}>{el}</RequirePermission>
+    </RequireAuth>
+  );
+}
+
+function productGuarded(el: ReactElement): ReactElement {
+  return <RequireAuth><ProductAgentAppearance>{el}</ProductAgentAppearance></RequireAuth>;
+}
+
+function productReviewGuarded(section: 'review' | 'requirements', el: ReactElement): ReactElement {
+  return productGuarded(<OverviewShell sectionOverride={section}>{el}</OverviewShell>);
+}
+
+// ── 注册表正文 ─────────────────────────────────────────────
+//
+// 加新功能：在合适的分组下追加一个 entry。下游全部自动同步。
+//
+export const NAV_REGISTRY: NavRegistryEntry[] = [
+  // ╔══════════════ 智能体（5）══════════════════════════════
+  {
+    path: '/visual-agent',
+    placement: 'fullscreen',
+    permission: 'visual-agent.use',
+    element: fullscreenGuarded('visual-agent.use', <VisualAgentFullscreenPage />),
+    nav: {
+      label: '视觉创作智能体',
+      shortLabel: '视觉',
+      description: 'AI 驱动的视觉创作，一键生成精美图像',
+      icon: 'Image',
+      section: 'agent',
+      appKey: 'visual-agent',
+      accentColor: '#A78BFA',
+      agentColor: {
+        bg: 'rgba(139, 92, 246, 0.08)',
+        border: 'rgba(139, 92, 246, 0.2)',
+        iconBg: 'rgba(139, 92, 246, 0.15)',
+        text: '#A78BFA',
+      },
+      statLabel: '画布',
+      tags: ['视觉', '智能体', '图像', '生图', 'AI绘画'],
+    },
+  },
+  {
+    path: '/active-tasks',
+    permission: 'active-tasks.use',
+    element: shellGuarded('active-tasks.use', <ActiveTasksPage />),
+    nav: {
+      label: '任务台',
+      shortLabel: '任务台',
+      description: '此刻在做什么、还剩几件、走过哪些',
+      icon: 'ListChecks',
+      section: 'agent',
+      appKey: 'active-tasks',
+      accentColor: '#D97757',
+      statLabel: '任务',
+      tags: ['任务', '活动任务', '在做什么', '备用', '汇报', 'active tasks'],
+      wip: true,
+    },
+  },
+  {
+    path: '/active-tasks/team',
+    permission: 'active-tasks.manage',
+    element: shellGuarded('active-tasks.manage', <ActiveTasksTeamPage />),
+    nav: {
+      label: '团队此刻',
+      shortLabel: '团队此刻',
+      description: '谁在做什么、谁卡住了、谁没活了',
+      icon: 'Users',
+      section: 'agent',
+      appKey: 'active-tasks',
+      accentColor: '#D97757',
+      statLabel: '成员',
+      tags: ['团队', '此刻', '委派', '派活', '管理', 'team board'],
+      wip: true,
+    },
+  },
+  {
+    path: '/active-tasks/history',
+    permission: 'active-tasks.use',
+    element: shellGuarded('active-tasks.use', <ActiveTaskHistoryPage />),
+  },
+  {
+    path: '/chat',
+    permission: 'chat-agent.use',
+    element: shellGuarded('chat-agent.use', <ChatPage />),
+    nav: {
+      label: '对话',
+      shortLabel: '对话',
+      description: '打开就能聊的通用智能体，多轮对话，刷新不丢',
+      icon: 'MessageSquare',
+      section: 'agent',
+      appKey: 'chat-agent',
+      accentColor: '#D97757',
+      agentColor: {
+        bg: 'rgba(217, 119, 87, 0.08)',
+        border: 'rgba(217, 119, 87, 0.2)',
+        iconBg: 'rgba(217, 119, 87, 0.15)',
+        text: '#D97757',
+      },
+      statLabel: '会话',
+      tags: ['对话', '聊天', '智能体', '通用', 'chat'],
+      wip: true,
+    },
+  },
+  {
+    path: '/literary-agent',
+    permission: 'literary-agent.use',
+    element: shellGuarded('literary-agent.use', <LiteraryAgentWorkspaceListPage />),
+    nav: {
+      label: '文学创作智能体',
+      shortLabel: '文学',
+      description: '文学创作智能体，为文章配图赋予灵魂',
+      icon: 'PenLine',
+      section: 'agent',
+      appKey: 'literary-agent',
+      accentColor: '#4ADE80',
+      agentColor: {
+        bg: 'rgba(34, 197, 94, 0.08)',
+        border: 'rgba(34, 197, 94, 0.2)',
+        iconBg: 'rgba(34, 197, 94, 0.15)',
+        text: '#4ADE80',
+      },
+      statLabel: '项目',
+      tags: ['文学', '智能体', '写作', '配图'],
+    },
+  },
+  {
+    path: '/defect-agent',
+    permission: 'defect-agent.use',
+    element: shellGuarded('defect-agent.use', <DefectAgentPage />),
+    nav: {
+      label: '缺陷管理智能体',
+      shortLabel: '缺陷',
+      description: '缺陷管理专家，高效追踪问题闭环',
+      icon: 'Bug',
+      section: 'agent',
+      appKey: 'defect-agent',
+      accentColor: '#FB923C',
+      agentColor: {
+        bg: 'rgba(249, 115, 22, 0.08)',
+        border: 'rgba(249, 115, 22, 0.2)',
+        iconBg: 'rgba(249, 115, 22, 0.15)',
+        text: '#FB923C',
+      },
+      statLabel: '缺陷',
+      tags: ['缺陷', '智能体', 'bug', '追踪'],
+    },
+  },
+  {
+    path: '/video-agent',
+    permission: 'video-agent.use',
+    element: shellGuarded('video-agent.use', <VideoAgentPage />),
+    nav: {
+      label: '视频创作智能体',
+      shortLabel: '视频',
+      description: '文章转视频教程，AI 驱动分镜创作',
+      icon: 'Video',
+      section: 'agent',
+      appKey: 'video-agent',
+      accentColor: '#EC4899',
+      agentColor: {
+        bg: 'rgba(236, 72, 153, 0.08)',
+        border: 'rgba(236, 72, 153, 0.2)',
+        iconBg: 'rgba(236, 72, 153, 0.15)',
+        text: '#EC4899',
+      },
+      statLabel: '视频',
+      tags: ['视频', '智能体', '分镜', '教程'],
+    },
+  },
+  {
+    path: '/emergence',
+    permission: 'emergence-agent.use',
+    element: shellGuarded('emergence-agent.use', <EmergenceExplorerPage />),
+    nav: {
+      label: '涌现探索智能体',
+      shortLabel: '涌现',
+      description: '从文档出发，AI 辅助发现功能创意与交叉价值',
+      icon: 'Sparkle',
+      section: 'agent',
+      appKey: 'emergence-agent',
+      tags: ['涌现', '探索', 'AI', '创意', '智能体'],
+    },
+  },
+  {
+    path: '/task-tree',
+    permission: 'task-tree.use',
+    element: shellGuarded('task-tree.use', <TaskTreePage />),
+    nav: {
+      label: '个人任务树',
+      shortLabel: '任务树',
+      description: '分层任务管理，对话摘取任务、卡点上报，一眼看清推进进度',
+      icon: 'ListTree',
+      section: 'agent',
+      appKey: 'task-tree-agent',
+      tags: ['任务', '任务树', '卡点', '进度', '智能体'],
+    },
+  },
+  {
+    path: '/speech-agent/new',
+    permission: 'speech-agent.use',
+    element: shellGuarded('speech-agent.use', <SpeechAgentCreatePage />),
+  },
+  {
+    path: '/speech-agent/:deckId/play',
+    placement: 'fullscreen',
+    permission: 'speech-agent.use',
+    element: fullscreenGuarded('speech-agent.use', <SpeechAgentPlayPage />),
+  },
+  {
+    path: '/speech-agent/:deckId',
+    permission: 'speech-agent.use',
+    element: shellGuarded('speech-agent.use', <SpeechAgentEditorPage />),
+  },
+  {
+    path: '/speech-agent',
+    permission: 'speech-agent.use',
+    element: shellGuarded('speech-agent.use', <SpeechAgentListPage />),
+    nav: {
+      label: '演讲智能体',
+      shortLabel: '演讲',
+      description: '把长文本/文档转成可上台讲的思维导图（首期 mindmap 模式）',
+      icon: 'Mic',
+      section: 'agent',
+      appKey: 'speech-agent',
+      wip: true,
+      tags: ['演讲', '导图', 'PPT', '思维导图', '智能体'],
+    },
+  },
+
+  // ╔══════════════ 百宝箱（8）══════════════════════════════
+  {
+    path: '/report-agent',
+    permission: 'report-agent.use',
+    element: shellGuarded('report-agent.use', <ReportAgentPage />),
+    nav: {
+      label: '周报智能体',
+      shortLabel: '周报',
+      description: '周报创建、提交、审阅，支持 AI 生成 / 团队汇总 / 计划比对',
+      icon: 'FileBarChart',
+      section: 'toolbox',
+      appKey: 'report-agent',
+      tags: ['周报', '日报', '团队管理'],
+    },
+  },
+  {
+    path: '/visual-storyboard',
+    permission: 'visual-agent.use',
+    element: shellGuarded('visual-agent.use', <VisualStoryboardPage />),
+    nav: {
+      label: '视觉分镜台',
+      shortLabel: '分镜',
+      description: '想法/文章拆成电影分镜，关键帧实时生长、逐镜精修，预留 image-to-video',
+      icon: 'Clapperboard',
+      section: 'toolbox',
+      appKey: 'visual-storyboard',
+      tags: ['视频', '分镜', '关键帧', '故事板', 'storyboard'],
+      wip: true,
+    },
+  },
+  {
+    path: '/arena',
+    permission: 'arena-agent.use',
+    element: shellGuarded('arena-agent.use', <ArenaPage />),
+    nav: {
+      label: 'AI 竞技场智能体',
+      shortLabel: '竞技场',
+      description: '多模型盲测对战，匿名 PK 后揭晓真实身份',
+      icon: 'Swords',
+      section: 'toolbox',
+      appKey: 'arena',
+      tags: ['竞技场', '模型对比', '盲测'],
+    },
+  },
+  {
+    path: '/review-agent',
+    permission: 'review-agent.use',
+    element: shellGuarded('review-agent.use', <ReviewAgentPage />),
+    nav: {
+      label: '产品评审智能体',
+      shortLabel: '评审',
+      description: '上传产品方案 (.md)，AI 多维度评审打分',
+      icon: 'ClipboardCheck',
+      section: 'toolbox',
+      appKey: 'review-agent',
+      tags: ['评审', '产品', 'PRD'],
+    },
+  },
+  {
+    path: '/model-leaderboard',
+    // 全员可见（用户 2026-09-14 定）：榜单是 arena.ai 的公开数据，
+    // 不含本站调用量或成本这类经营信息，只要求登录。
+    permission: 'access',
+    element: shellGuarded('access', <ModelLeaderboardPage />),
+    nav: {
+      label: '模型排行榜',
+      shortLabel: '模型榜',
+      // 数目与分组跟着后端目录（ModelLeaderboardCatalog）走。这里写的是分组名而不是
+      // 逐个榜名：榜会增减，分组不常动，写具体榜名必然漂（原文停在「五个公开分榜」，
+      // 而页面早已是十一个，Codex 在 PR #1538 指出）。
+      description: '业界模型怎么排：编程与智能体、对话与理解、图像生成、视频生成四组共十一个公开分榜，每天同步',
+      icon: 'Trophy',
+      section: 'toolbox',
+      appKey: 'model-leaderboard',
+      tags: ['模型', '排行榜', 'arena', '评测', '选型'],
+      // 规则 #9：新功能先带 wip，等真人在预览域名验收过再转正式
+      wip: true,
+    },
+  },
+  {
+    path: '/learning-center',
+    permission: 'access',
+    element: shellGuarded('access', <LearningCenterPage />),
+    nav: {
+      label: '学习中心',
+      shortLabel: '学习',
+      description: '所有官方教程与你的掌握进度,随时点「跟我做」走一遍',
+      icon: 'GraduationCap',
+      // 普通用户导航中单独存在(用户 2026-06-04):从百宝箱(toolbox)升为基础设施(infra)一级入口,去 wip。
+      section: 'infra',
+      appKey: 'learning-center',
+      tags: ['教程', '新手引导', '学习进度', '帮助'],
+    },
+  },
+  {
+    path: '/bookshelf',
+    permission: 'access',
+    element: shellGuarded('access', <BookshelfPage />),
+    nav: {
+      label: '公共藏书阁',
+      shortLabel: '藏书阁',
+      description: '从新手到高手的心路历程书目，七卷 + 结业考，开发与产品各一条线',
+      icon: 'Library',
+      section: 'infra',
+      appKey: 'bookshelf',
+      tags: ['书单', '成长', '读书', '考试', '新人', '规范'],
+    },
+  },
+  {
+    path: '/ccas-agent',
+    permission: 'ccas-agent.use',
+    element: shellGuarded('ccas-agent.use', <CcasAgentPage />),
+    nav: {
+      label: '赋码采集关联智能体',
+      shortLabel: '赋码',
+      description: '产线赋码业务三件套：PRD 文档生成 + 设备素材库 + 流程示意图绘制',
+      icon: 'Factory',
+      section: 'toolbox',
+      appKey: 'ccas-agent',
+      tags: ['赋码', '采集', '产线', 'PRD', '流程图'],
+    },
+  },
+  {
+    path: '/email-agent',
+    permission: 'email-agent.use',
+    element: shellGuarded('email-agent.use', <EmailAgentPage />),
+    nav: {
+      label: '邮件模板智能体',
+      shortLabel: '邮件',
+      description: '常用流程邮件模板库：内容/发送/抄送对象一键复制 + 变量快填 + AI 起草润色',
+      icon: 'Mail',
+      section: 'toolbox',
+      appKey: 'email-agent',
+      wip: true,
+      tags: ['邮件', '模板', '审批', '汇报', '通知', '一键复制'],
+    },
+  },
+  {
+    path: '/shitu-agent',
+    permission: 'shitu-agent.use',
+    element: shellGuarded('shitu-agent.use', <ShituAgentPage />),
+    nav: {
+      label: '识途',
+      shortLabel: '识途',
+      description: '新人文化与制度问答：企业文化 / 事故教训 / 规章制度 / 奖赏表彰',
+      icon: 'BookOpen',
+      section: 'toolbox',
+      appKey: 'shitu-agent',
+      tags: ['识途', '新人', '文化', '制度', '问答'],
+      wip: true,
+    },
+  },
+  {
+    path: '/pr-review',
+    permission: 'pr-review.use',
+    element: shellGuarded('pr-review.use', <PrReviewPage />),
+    nav: {
+      label: 'PR 审查智能体',
+      shortLabel: 'PR审查',
+      description: '用你自己的 GitHub 账号审查任意有权访问的 PR',
+      icon: 'GitPullRequest',
+      section: 'toolbox',
+      appKey: 'pr-review',
+      tags: ['PR', 'GitHub', '审查', 'OAuth'],
+    },
+  },
+  {
+    path: '/pa-agent',
+    permission: 'pa-agent.use',
+    element: shellGuarded('pa-agent.use', <PaAgentPage />),
+    nav: {
+      label: '毒舌秘书',
+      shortLabel: '毒舌',
+      description: '把模糊想法转成 MECE 执行清单的 MBB 级私人助理。毒舌幽默、不堆鸡汤、能落盘。',
+      icon: 'PaSecretary',
+      section: 'toolbox',
+      appKey: 'pa-agent',
+      wip: true,
+      tags: ['助理', 'PA', '任务', '四象限', 'MECE'],
+    },
+  },
+  {
+    path: '/front-end-agent',
+    permission: 'front-end-agent.use',
+    element: shellGuarded('front-end-agent.use', <FrontEndAgentPage />),
+    nav: {
+      label: '前端搭档智能体',
+      shortLabel: '前端',
+      description: '给后端同事用的前端交付助手：接 API、写组件、修报错、看截图现象',
+      icon: 'FolderKanban',
+      section: 'toolbox',
+      appKey: 'front-end-agent',
+      wip: true,
+      tags: ['前端', 'API', '组件', '报错', 'CSS', '智能体'],
+    },
+  },
+  {
+    path: '/tapd-bug-agent',
+    permission: 'tapd-bug-agent.use',
+    element: shellGuarded('tapd-bug-agent.use', <TapdBugReportPage />),
+    nav: {
+      label: 'TAPD 缺陷自动提报',
+      shortLabel: '提缺陷',
+      description: '口语描述转标准四要素，确认后自动创建 TAPD 缺陷',
+      icon: 'Bug',
+      section: 'toolbox',
+      appKey: 'tapd-bug-agent',
+      wip: true,
+      tags: ['TAPD', '缺陷', '提单', '测试', '智能体'],
+    },
+  },
+  {
+    // 任务独立详情页（全屏路由，参数化子路由，不进导航）
+    path: '/pm-agent/p/:projectId/task/:taskId',
+    placement: 'fullscreen',
+    permission: 'pm-agent.use',
+    element: fullscreenGuarded('pm-agent.use', <PmTaskDetailPage />),
+  },
+  {
+    // 里程碑独立详情页（OKR + DoD + 任务 + 交付物管理；参数化子路由，不进导航）
+    path: '/pm-agent/p/:projectId/milestone/:milestoneId',
+    placement: 'fullscreen',
+    permission: 'pm-agent.use',
+    element: fullscreenGuarded('pm-agent.use', <PmMilestoneDetailPage />),
+  },
+  {
+    // 项目层视图（进入某个具体项目：目标/里程碑/任务等 9 大模块），参数化子路由，全屏，不进导航
+    path: '/pm-agent/p/:projectId',
+    placement: 'fullscreen',
+    permission: 'pm-agent.use',
+    element: fullscreenGuarded('pm-agent.use', <PmProjectDetailPage />),
+  },
+  {
+    path: '/pm-agent',
+    placement: 'fullscreen',
+    permission: 'pm-agent.use',
+    element: fullscreenGuarded('pm-agent.use', <PmAgentPage />),
+    nav: {
+      label: '项目管理',
+      shortLabel: '项目',
+      description: '项目立项、任务看板、甘特图，AI 自动拆解需求为任务（对齐 PMO 方法论）',
+      icon: 'FolderKanban',
+      section: 'toolbox',
+      appKey: 'pm-agent',
+      wip: true,
+      tags: ['项目管理', 'PMO', '看板', '甘特图', '任务拆解'],
+    },
+  },
+  {
+    path: '/product-agent/review/submit',
+    placement: 'fullscreen',
+    element: productReviewGuarded('review', <ReviewAgentSubmitPage />),
+  },
+  {
+    path: '/product-agent/review/submissions/:id',
+    placement: 'fullscreen',
+    element: productReviewGuarded('review', <ReviewAgentResultPage />),
+  },
+  {
+    path: '/product-agent/review/all',
+    placement: 'fullscreen',
+    element: productReviewGuarded('review',
+      <RequirePermission perm={['review-agent.view-all', 'product-agent.map-admin']}><ReviewAgentAllPage /></RequirePermission>),
+  },
+  {
+    path: '/product-agent/requirements/assessments',
+    placement: 'fullscreen',
+    element: productReviewGuarded('requirements', <ReviewAssessmentListPage />),
+  },
+  {
+    path: '/product-agent/requirements/assessments/:id',
+    placement: 'fullscreen',
+    element: productReviewGuarded('requirements', <ReviewAssessmentDetailPage />),
+  },
+  {
+    // 知识详情页（静态段 knowledge 优先于 :kind 通配），全屏，不进导航
+    path: '/product-agent/p/:productId/knowledge/:entryId',
+    placement: 'fullscreen',
+    element: productGuarded(<KnowledgeDetailPage />),
+  },
+  {
+    // 对象独立详情/新建页（需求/功能/缺陷/版本/立项/release，:id 为 new 时是新建），必须排在单产品路由之前
+    path: '/product-agent/p/:productId/:kind/:id',
+    placement: 'fullscreen',
+    element: productGuarded(<ProductObjectDetailPage />),
+  },
+  {
+    // 单产品视图（进入某个具体产品看其全部信息），参数化子路由，全屏，不进导航
+    path: '/product-agent/p/:productId',
+    placement: 'fullscreen',
+    element: productGuarded(<ProductVersionProductRoute />),
+  },
+  {
+    path: '/product-agent',
+    placement: 'fullscreen',
+    element: productGuarded(<OverviewShell />),
+    nav: {
+      label: '产品管理',
+      shortLabel: '产品',
+      description: '产品-版本-需求-功能-缺陷-客户全链路串联，版本化管理、分级追溯与知识图谱',
+      icon: 'Blocks',
+      section: 'toolbox',
+      appKey: 'product-agent',
+      wip: true,
+      tags: ['产品管理', '版本', '需求', '功能', '缺陷追溯', '知识图谱', 'RTM'],
+    },
+  },
+  {
+    path: '/project-route-agent',
+    permission: 'project-route-agent.use',
+    element: shellGuarded('project-route-agent.use', <ProjectRouteAgentPage />),
+    nav: {
+      label: '项目路由智能体',
+      shortLabel: '路由',
+      description: '上传方案 md，AI 识别应用 / 模块并定位仓库 routemap 项目路径',
+      icon: 'Route',
+      section: 'toolbox',
+      appKey: 'project-route-agent',
+      wip: true,
+      tags: ['路由', 'routemap', '项目定位', '仓库', '方案'],
+    },
+  },
+  {
+    path: '/channel-trace-agent',
+    permission: 'channel-trace-agent.use',
+    element: shellGuarded('channel-trace-agent.use', <ChannelTraceAgentPage />),
+    nav: {
+      label: '商品溯源智能体',
+      shortLabel: '溯源',
+      description: '防窜物流业务知识问答、线上问题案例排查、业务规则与代码实现差异对比',
+      icon: 'PackageSearch',
+      section: 'toolbox',
+      appKey: 'channel-trace-agent',
+      wip: true,
+      tags: ['防窜', '物流', '溯源', '商品', '知识库', '排查', '代码对比'],
+    },
+  },
+  {
+    path: '/transcript-agent',
+    permission: 'transcript-agent.use',
+    element: shellGuarded('transcript-agent.use', <TranscriptAgentPage />),
+    nav: {
+      label: '转录工作台',
+      shortLabel: '转录',
+      description: '音视频智能转录，多模型 ASR + 时间戳编辑 + 模板转文案',
+      icon: 'AudioLines',
+      section: 'toolbox',
+      appKey: 'transcript-agent',
+      tags: ['转录', '语音', 'ASR', '字幕'],
+    },
+  },
+  {
+    path: '/md-to-ppt-agent',
+    permission: 'access',
+    element: shellGuarded('access', <MdToPptAgentPage />),
+    nav: {
+      label: 'MD 转网页 PPT',
+      shortLabel: 'PPT',
+      description: '将 Markdown 或文档内容 AI 直出 reveal.js 网页 PPT，支持局部修改与一键发布',
+      icon: 'FileText',
+      section: 'toolbox',
+      appKey: 'md-to-ppt-agent',
+      tags: ['PPT', 'Markdown', '演示', '网页', 'reveal.js'],
+      wip: true,
+    },
+  },
+  {
+    path: '/quick-creation-agent',
+    permission: 'access',
+    element: shellGuarded('access', <QuickCreationAgentPage />),
+    nav: {
+      label: '快速创作',
+      shortLabel: '快创',
+      description: '一份文档加一个模板，快速得到能播放的视频或能浏览的网页，并发布到网页托管',
+      icon: 'Clapperboard',
+      section: 'toolbox',
+      appKey: 'quick-creation-agent',
+      tags: ['视频', '网页', '文稿', '配音', '模板', '网页托管'],
+      wip: true,
+    },
+  },
+  {
+    path: '/tech-doc-format-agent',
+    permission: 'access',
+    element: shellGuarded('access', <TechDocFormatAgentPage />),
+    nav: {
+      label: '技术分析文档格式校验 Agent',
+      shortLabel: '技分',
+      description: '按 PM2502 模板生成技术分析文档，并检查上传文档的标题、表格和微格式',
+      icon: 'FileText',
+      section: 'toolbox',
+      appKey: 'tech-doc-format-agent',
+      tags: ['技术分析', '文档格式', 'PM2502', '模板校验'],
+      wip: true,
+    },
+  },
+  {
+    path: '/shortcuts-agent',
+    permission: 'access',
+    element: shellGuarded('access', <ShortcutsPage />),
+    nav: {
+      label: '快捷指令',
+      shortLabel: '指令',
+      description: '一键执行常用操作，支持自定义和分享指令',
+      icon: 'Zap',
+      section: 'toolbox',
+      appKey: 'shortcuts-agent',
+      tags: ['快捷', '效率', '指令'],
+    },
+  },
+
+  // ╔══════════════ 实用工具（6）═══════════════════════════
+  {
+    path: '/mcp-console',
+    permission: 'access',
+    element: shellGuarded('access', <McpConsolePage />),
+    nav: {
+      label: '智能体接入台',
+      shortLabel: '接入台',
+      description: '把平台接进你的智能体：授权哪些能力、连着哪几台客户端、它们刚才做了什么',
+      icon: 'Plug',
+      section: 'utility',
+      tags: ['MCP', '接入', '智能体', 'agent', '密钥', '连接器', 'connector'],
+    },
+  },
+  {
+    path: '/skill-agent',
+    permission: 'access',
+    element: shellGuarded('access', <SkillAgentPage />),
+    nav: {
+      label: '技能创建助手',
+      shortLabel: '技能助手',
+      description: 'AI 引导你逐步创建可复用的技能模板',
+      icon: 'Wand2',
+      section: 'utility',
+      tags: ['技能', 'skill', 'AI', '创建', '模板'],
+    },
+  },
+  {
+    path: '/lab',
+    permission: 'lab.read',
+    element: shellGuarded('lab.read', <LabPage />),
+    nav: {
+      label: '实验室',
+      shortLabel: '实验室',
+      description: 'Model Lab / 桌面实验 / 工具箱',
+      icon: 'FlaskConical',
+      section: 'utility',
+      tags: ['实验室', 'lab', 'beta'],
+    },
+  },
+  {
+    path: '/automations',
+    permission: 'automations.manage',
+    element: shellGuarded('automations.manage', <AutomationRulesPage />),
+    nav: {
+      label: '自动化规则',
+      shortLabel: '自动化',
+      description: '创建和管理跨系统的自动化任务',
+      icon: 'Zap',
+      section: 'utility',
+      tags: ['自动化', 'automation', '规则'],
+    },
+  },
+  {
+    path: '/logs',
+    permission: 'logs.read',
+    element: shellGuarded('logs.read', <LlmLogsPage />),
+    nav: {
+      label: '请求日志',
+      shortLabel: '日志',
+      description: 'LLM 调用与 API 请求日志审计',
+      icon: 'ScrollText',
+      section: 'utility',
+      tags: ['日志', 'logs', '审计'],
+    },
+  },
+  {
+    path: '/authorization-health',
+    permission: 'logs.read',
+    element: shellGuarded('logs.read', <AuthorizationHealthPage />),
+    nav: {
+      label: '授权健康中心',
+      shortLabel: '授权',
+      description: '统一诊断用户、Agent、验收、LLMGW 与部署身份',
+      icon: 'ShieldCheck',
+      section: 'utility',
+      tags: ['授权', '401', 'Agent', '验收', 'LLMGW', 'CDS', '健康'],
+      wip: true,
+    },
+  },
+  {
+    path: '/team-activity',
+    permission: 'team-activity.read',
+    element: shellGuarded('team-activity.read', <TeamActivityPage />),
+    nav: {
+      label: 'VOC',
+      shortLabel: 'VOC',
+      description: '行为洞察（VOC）+ 全员工作动态时间线（管理员）',
+      icon: 'Activity',
+      section: 'utility',
+      tags: ['VOC', '行为洞察', '动态', '活动', '工作日志', 'activity', 'voice of customer'],
+    },
+  },
+
+  // ╔══════════════ 基础设施（9）═══════════════════════════
+  {
+    // 跨 MAP 实例数据同步。后端只放行管理员（真人会话），这里用通用 access 守卫，
+    // 非管理员进来会看到端点返回的「只有管理员可以发起」而不是一个空白页。
+    path: '/data-sync',
+    permission: 'access',
+    element: shellGuarded('access', <DataSyncPage />),
+    nav: {
+      label: '数据同步',
+      shortLabel: '数据同步',
+      description: '从另一台 MAP 拉一次数据：跳过去让对方管理员当场同意，回来执行一次',
+      icon: 'ArrowRightLeft',
+      // 归 infra 而不是 toolbox：百宝箱那一格是智能体卡片，契约要求每张卡有独占的
+      // 主题插画素材（AgentCardArtwork.test.ts 会红）；数据同步是平台运维入口，
+      // 和知识库、学习中心同类。
+      section: 'infra',
+      wip: true,
+      tags: ['同步', '迁移', '恢复', '跨实例', 'data sync'],
+    },
+  },
+  {
+    path: '/document-store',
+    permission: ['document-store.read', 'document-store.write'],
+    element: shellGuarded(['document-store.read', 'document-store.write'], <DocumentStorePage />),
+    nav: {
+      label: '知识库',
+      shortLabel: '知识库',
+      description: '文档存储与知识管理，支持文件夹、GitHub 同步',
+      icon: 'Library',
+      section: 'infra',
+      tags: ['文档', '知识', '知识库', 'docs'],
+    },
+  },
+  ...['/document-store/:storeId/write', '/document-store/:storeId/write/:entryId', '/document-store/:storeId/write/:entryId/:view'].map(path => ({
+    path, placement: 'fullscreen' as const, permission: 'document-store.read',
+    element: fullscreenGuarded('document-store.read', <WritingWorkspacePage />),
+  })),
+  { path: '/document-store/:storeId/collection', placement: 'fullscreen', permission: 'document-store.read',
+    element: fullscreenGuarded('document-store.read', <WritingCollectionPage />) },
+  {
+    // 录音交付页走独立全屏路由：设计稿这批「整屏」画板自带顶部栏与屏底主操作，
+    // 套在平台外壳里还原不到位（结构与版式的失分大半在这一层）。
+    // 它是从知识库某条录音点进来的深页，不进导航目录——nav 留空即不登记。
+    path: '/document-store/:storeId/recording/:entryId',
+    // `placement` 不写就默认 shell，条目会被挂进 AppShell——外面套着平台顶栏与底部
+    // TabBar，稿面自己那条顶栏被挤到屏幕中段，整屏和设计稿差得最远。
+    // 这一条漏了半天没人发现：`fullscreenGuarded` 只管鉴权，不决定挂在哪；
+    // 编译过、测试绿、路由也能进，只有真的打开那一屏才看得出来。
+    placement: 'fullscreen',
+    permission: ['document-store.read', 'document-store.write'],
+    element: fullscreenGuarded(['document-store.read', 'document-store.write'], <RecordingResultPage />),
+  },
+  {
+    // 录音处理页：稿面 R4 / cap-A4 / cap-A5 画的是**整屏接管**，屏底压着主操作。
+    // 与结果页分成两条路由而不是同一屏的两个状态——那颗按钮写的就是「进入结果页」，
+    // 同一个地址上说这句话说不通。
+    path: '/document-store/:storeId/recording/:entryId/processing',
+    placement: 'fullscreen',
+    permission: ['document-store.read', 'document-store.write'],
+    element: fullscreenGuarded(['document-store.read', 'document-store.write'], <RecordingProcessingPage />),
+  },
+  {
+    path: '/document-store/:storeId/universe',
+    permission: ['document-store.read', 'document-store.write'],
+    element: shellGuarded(['document-store.read', 'document-store.write'], <UniverseGraphPage />),
+    nav: {
+      label: '知识宇宙图',
+      shortLabel: '宇宙图',
+      description: '基于双链构建的知识星图（Obsidian Graph View 风格）',
+      icon: 'Network',
+      section: 'infra',
+      wip: true,
+      tags: ['宇宙图', '图谱', 'graph', '双链', '反向链接'],
+    },
+  },
+  {
+    path: '/document-store/universe',
+    permission: ['document-store.read', 'document-store.write'],
+    element: shellGuarded(['document-store.read', 'document-store.write'], <UniverseGraphPage />),
+    // 顶层入口默认走第一个库；nav 字段省略以避免重复占用导航位
+  },
+  {
+    // 知识库 3D 文档星系独立全屏页（fullscreen 跳过 AppShell，自身再 fixed inset-0 兜底盖住 shell）。
+    // 参数化子路由，navCoverage 自动豁免，不进 launcherCatalog / shortLabel。
+    path: '/document-store/:storeId/galaxy',
+    placement: 'fullscreen',
+    permission: ['document-store.read', 'document-store.write'],
+    element: fullscreenGuarded(['document-store.read', 'document-store.write'], <GalaxyStandalonePage />),
+  },
+  {
+    path: '/admin-web-pages',
+    permission: 'web-pages.viewAll',
+    element: shellGuarded('web-pages.viewAll', <AdminWebPagesPage />),
+    nav: {
+      label: '全部网页',
+      shortLabel: '全网页',
+      description: '高级权限：跨用户查看全部托管网页及阅读量、访客记录',
+      icon: 'Globe',
+      section: 'infra',
+      tags: ['网页', '审计', '全部', '阅读量', '访客'],
+    },
+  },
+  {
+    path: '/my-assets',
+    permission: 'access',
+    element: shellGuarded('access', <MyAssetsPage />),
+    nav: {
+      label: '我的资源',
+      shortLabel: '资源',
+      description: '图片、附件、素材等个人资源统一管理',
+      icon: 'FolderHeart',
+      section: 'infra',
+      tags: ['资源', '素材', '附件'],
+    },
+  },
+  {
+    path: '/marketplace',
+    permission: 'access',
+    element: shellGuarded('access', <MarketplacePage />),
+    nav: {
+      label: '海鲜市场',
+      shortLabel: '市场',
+      description: '社区共享的提示词、水印、参考图、工具',
+      icon: 'Store',
+      section: 'infra',
+      tags: ['市场', 'marketplace', '分享', '社区'],
+    },
+  },
+  {
+    path: '/users',
+    permission: 'users.read',
+    element: shellGuarded('users.read', <UsersPage />),
+    nav: {
+      label: '团队协作',
+      shortLabel: '团队',
+      description: '团队成员、用户组、分享与协作',
+      icon: 'Users',
+      section: 'infra',
+      tags: ['团队', '用户', '协作', '权限'],
+    },
+  },
+  {
+    path: '/workflow-agent',
+    permission: 'workflow-agent.use',
+    element: shellGuarded('workflow-agent.use', <WorkflowListPage />),
+    nav: {
+      label: '工作流引擎',
+      shortLabel: '工作流',
+      description: '可视化工作流编排，自动化多步骤任务串联',
+      icon: 'Workflow',
+      section: 'infra',
+      tags: ['工作流', '自动化', '编排'],
+    },
+  },
+  { path: '/web-pages/new-document', placement: 'fullscreen', permission: 'web-pages.read',
+    element: fullscreenGuarded('web-pages.read', <HostedTemplatePage />) },
+  { path: '/web-pages/cds-share', placement: 'fullscreen', permission: 'web-pages.write',
+    element: fullscreenGuarded('web-pages.write', <CdsDesignSharePage />) },
+  { path: '/web-pages/collections', placement: 'fullscreen', permission: 'web-pages.read',
+    element: fullscreenGuarded('web-pages.read', <HostedCollectionsPage />) },
+  { path: '/web-pages/collections/:collectionId', placement: 'fullscreen', permission: 'web-pages.read',
+    element: fullscreenGuarded('web-pages.read', <HostedCollectionPage />) },
+  { path: '/web-pages/collections/:collectionId/share', placement: 'fullscreen', permission: 'web-pages.read',
+    element: fullscreenGuarded('web-pages.read', <HostedCollectionSharePage />) },
+  {
+    path: '/web-pages',
+    permission: 'web-pages.read',
+    element: shellGuarded('web-pages.read', <WebPagesPage />),
+    nav: {
+      label: '网页托管',
+      shortLabel: '网页',
+      description: '上传 HTML 或 ZIP，托管并分享你的网页',
+      icon: 'Globe',
+      section: 'infra',
+      tags: ['托管', '网页', 'hosting'],
+    },
+  },
+  {
+    path: '/changelog',
+    permission: 'access',
+    element: shellGuarded('access', <ChangelogPage />),
+    nav: {
+      label: '更新中心',
+      shortLabel: '更新',
+      description: '代码级周报：自动汇总仓库内的变更',
+      icon: 'Sparkles',
+      section: 'infra',
+      tags: ['更新', '周报', 'changelog', 'release'],
+    },
+  },
+  {
+    path: '/library',
+    placement: 'fullscreen',
+    // 智识殿堂是公开的内容发现页，不加 RequireAuth / RequirePermission——
+    // refactor 前 App.tsx 也是无守卫直挂的，匿名访客能直接看
+    element: <LibraryLandingPage />,
+    nav: {
+      label: '智识殿堂',
+      shortLabel: '殿堂',
+      description: '社区共享的知识库与精选文档',
+      icon: 'BookOpenText',
+      section: 'infra',
+      tags: ['智识', '殿堂', '知识', 'library', '社区'],
+    },
+  },
+  {
+    path: '/cds-agent',
+    permission: 'access',
+    element: shellGuarded('access', <CdsAgentPage />),
+    nav: {
+      label: 'CDS Agent',
+      shortLabel: 'CDS',
+      description: '远程 Claude Code / Codex 类 sandbox 智能体',
+      icon: 'Terminal',
+      section: 'agent',
+      appKey: 'cds-agent',
+      accentColor: '#38BDF8',
+      agentColor: {
+        bg: 'rgba(14, 165, 233, 0.08)',
+        border: 'rgba(14, 165, 233, 0.2)',
+        iconBg: 'rgba(14, 165, 233, 0.15)',
+        text: '#7DD3FC',
+      },
+      statLabel: '远程',
+      tags: ['cds', 'agent', 'claude code', 'codex', 'sandbox', '远程智能体'],
+      wip: true,
+    },
+  },
+  {
+    // claude-sdk sidecar 等共享基础设施服务的管理入口。
+    // v1：通过剪贴板配对密钥与 CDS 建立信任连接（spec.cds.map-pairing-protocol）。
+    // 后续：实例只读列表 / 路由策略 / 业务监控等。
+    path: '/infra-services',
+    permission: 'access',
+    element: shellGuarded('access', <InfraServicesPage />),
+    nav: {
+      label: '基础设施服务',
+      shortLabel: '基设',
+      description: 'shared 基础设施服务（如 Claude sidecar runtime，自研 sidecar / Anthropic 协议，runtime 标识 claude-sdk）的实例分布、路由策略与业务监控',
+      icon: 'Server',
+      section: 'infra',
+      tags: ['sidecar', '基础设施', 'cds', '远程主机', 'shared-service'],
+    },
+  },
+  {
+    // 开放平台：对外开放接口 API 网关（OpenAI 兼容）+ 外部授权 / API 应用 / 调用日志的统一管理入口。
+    // 从 App.tsx 手写 Route 移入 SSOT，自动出现在首页、Cmd+K 搜索、设置「我的导航」可添加池。
+    path: '/open-platform',
+    permission: 'open-platform.manage',
+    element: shellGuarded('open-platform.manage', <OpenPlatformTabsPage />),
+    nav: {
+      label: '开放平台',
+      shortLabel: '开放',
+      description: '对外开放接口（OpenAI 兼容）API 网关、外部授权、API 应用与调用日志管理',
+      icon: 'Plug',
+      section: 'infra',
+      tags: ['开放平台', 'open-platform', 'open-api', 'API', '网关', '授权', '调用日志'],
+    },
+  },
+];
+
+// ── 派生工具函数 ──────────────────────────────────────────
+
+/** 把 path 标准化为 launcherCatalog id（与历史 navOrder 兼容） */
+export function navIdFromPath(path: string): string {
+  return path.replace(/^\//, '').replace(/[/?].*$/, '');
+}

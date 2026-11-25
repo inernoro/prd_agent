@@ -1,0 +1,85 @@
+--- a/.claude/skills/cds/scripts/design/prototype-build.mjs
++++ b/.claude/skills/cds/scripts/design/prototype-build.mjs
+@@ -15,6 +15,8 @@
+ //                                       （例如懒加载的其他页签）。占位不是设计改动，不进源码差异
+ //     "shared": "cds/src/shared",       @shared 别名（可选）
+ //     "skipPreloads": ["@/pages/X"],    原型用不到的正式预加载（可选）
++//     "omitAssets": ["src/assets/agent-card-art/"],  样式表里指向这些目录的图片换成 none（可选，只用于原型）
++//     "lazyPlaceholders": ["src/app/navRegistry.tsx"],  这些文件里的懒加载换成空模块（可选，只用于原型）
+ //     "shellFile": "src/components/layout/AppShell.tsx",
+ //     "title": "原型标题"
+ //   }
+@@ -67,14 +69,34 @@
+ 
+ const require = createRequire(path.join(web, 'package.json'));
+ const { build } = await import(pathToFileURL(path.join(web, 'node_modules', 'vite', 'dist', 'node', 'index.js')));
+-const tw = require('tailwindcss');
+-const autoprefixer = require('autoprefixer');
+ const reactPlugin = require('@vitejs/plugin-react');
+ const react = reactPlugin.default ?? reactPlugin;
+-const tailwindConfig = require('tailwindcss/loadConfig')(path.join(web, 'tailwind.config.js'));
++/* Tailwind v4（@tailwindcss/vite，例如 prd-admin）没有 tailwind.config.js：用正式前端自己的 vite 插件，
++ * 并在引入 tailwindcss 的样式表末尾补一行 @source 指向稿件 src，稿件里新写的类名才会生成。
++ * Tailwind v3（cds/web）沿用 PostCSS + tailwind.config.js。 */
++const twV4 = existsSync(path.join(web, 'node_modules', '@tailwindcss', 'vite'));
++let cssPlugins = [], twVitePlugins = [];
++if (twV4) {
++  const twVite = await import(pathToFileURL(require.resolve('@tailwindcss/vite')));
++  twVitePlugins = [{
++    name: 'cds-design-tailwind-source', enforce: 'pre',
++    transform(code, id) {
++      if (!/\.css(\?|$)/.test(id) || !/@import\s+["']tailwindcss["']/.test(code)) return;
++      return code + `\n@source "${posix(path.join(draft, 'src'))}";\n`;
++    },
++  }, ...[].concat((twVite.default ?? twVite)())];
++} else {
++  const tw = require('tailwindcss');
++  const autoprefixer = require('autoprefixer');
++  const tailwindConfig = require('tailwindcss/loadConfig')(path.join(web, 'tailwind.config.js'));
++  cssPlugins = [
++    tw({ ...tailwindConfig, content: [path.join(web, 'src/**/*.{ts,tsx}'), path.join(draft, 'src/**/*.{ts,tsx}')].map(posix) }),
++    autoprefixer(),
++  ];
++}
+ const result = await build({
+   configFile: false, root: web, publicDir: false,
+-  plugins: [react(), {
++  plugins: [...twVitePlugins, react(), {
+     name: 'cds-design-overrides', enforce: 'pre',
+     async resolveId(source, importer, options) {
+       if (source.endsWith('?real')) return this.resolve(source.slice(0, -5), importer, { ...options, skipSelf: true });
+@@ -106,16 +128,29 @@
+       for (const page of config.skipPreloads ?? []) code = code.replace(`import('${page}')`, 'Promise.resolve()');
+       return code;
+     },
++  }, {
++    /* 只用于原型：这些正式文件里的懒加载（例如路由注册表里的其他页面）换成空模块，避免把整站打进原型。
++     * 空模块的任何导出都是返回 null 的组件，懒加载解析得到但不会渲染；不进源码差异。 */
++    name: 'cds-design-lazy-placeholders', enforce: 'pre',
++    transform(code, id) {
++      const file = posix(id.split('?')[0]);
++      /* 只用于原型：样式表里指向这些目录的图片换成 none（例如几十张卡片插画），控制在 4 MiB 内；令牌本身不改 */
++      if (/\.css$/.test(file) && (config.omitAssets ?? []).length)
++        code = code.replace(/url\(\s*(['"]?)([^'")]+)\1\s*\)/g, (all, _q, url) =>
++          config.omitAssets.some(prefix => posix(path.resolve(path.dirname(file), url)).startsWith(posix(path.join(web, prefix)))) ? 'none' : all);
++      if (/\.css$/.test(file)) return code;
++      if (!(config.lazyPlaceholders ?? []).some(rel => file === posix(path.join(web, rel))
++        || file === posix(overrides.get(posix(path.join(web, rel))) ?? ''))) return;
++      return code.replace(/import\(\s*(['"])[^'"]+\1\s*\)/g,
++        'Promise.resolve(new Proxy({}, { get: (_, key) => key === "then" ? undefined : () => null }))');
++    },
+   }],
+   define: { 'process.env.NODE_ENV': JSON.stringify('production') },
+   resolve: {
+     alias: { ...(config.shared ? { '@shared': path.join(checkout, config.shared) } : {}), '@': path.join(web, 'src') },
+-    dedupe: ['react', 'react-dom', 'react-router-dom', 'lucide-react', 'marked'],
++    dedupe: ['react', 'react-dom', 'react-router-dom', 'lucide-react', 'marked'].filter(name => existsSync(path.join(web, 'node_modules', name))),
+   },
+-  css: { postcss: { plugins: [
+-    tw({ ...tailwindConfig, content: [path.join(web, 'src/**/*.{ts,tsx}'), path.join(draft, 'src/**/*.{ts,tsx}')].map(posix) }),
+-    autoprefixer(),
+-  ] } },
++  css: { postcss: { plugins: cssPlugins } },
+   build: {
+     write: false,
+     lib: { entry: path.join(draft, config.entry ?? 'src/main.tsx'), name: 'CdsDesignPrototype', formats: ['iife'], fileName: 'prototype' },

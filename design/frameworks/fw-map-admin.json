@@ -1,24 +1,55 @@
 {
-  "rules": "# MAP 管理后台框架（prd-admin）\n\n适用：MAP 平台在 prd-admin 里的页面与智能体。原型由 prd-admin 正式代码构建（cds-design/prototype-build），壳、组件和令牌都取自正式源码。\n\n| R-01 | 页面挂在正式 AppShell（src/layouts/AppShell.tsx），左侧导航来自服务端菜单目录（AdminMenuCatalog），不另画导航 | 自动：原型 DOM 含 AppShell 的侧栏与主区，页面在主区 Outlet 内渲染 |\n| R-02 | 颜色只取 src/styles/tokens.css 的语义变量（--bg-*、--text-*、--border-*、--accent-*、--panel-solid、--nested-block-bg），页面组件不写死十六进制；作品本身的画面配色（例如视频模板帧）不受此限，但要与界面隔离在一个组件内 | 自动：页面源码（不含模板画面组件）扫描十六进制与 rgb 字面量为 0 |\n| R-03 | 白天（data-theme=light）与黑天（dark）都可读，正文对比度不低于 4.5，状态色用 --accent-fg-* 成对取值 | 自动：两个主题各截一张同画面，正文与背景对比度 ≥ 4.5 |\n| R-04 | 图标只用 lucide-react；代码、界面、文案不出现 emoji | 自动：页面源码与渲染文本扫描 emoji 为 0 |\n| R-05 | 按钮用 components/design/Button（primary / secondary / ghost / danger），每一屏只有一个 primary 主动作；不可逆操作放次要位置并二次确认 | 人工：逐画面数 primary 按钮 |\n| R-06 | 窄屏（小于 768）两栏改为页内切换，触控目标不小于 44px，375 宽无整页横向溢出 | 自动：375 宽视口 document.scrollWidth 等于视口宽，交互元素高度 ≥ 44 |\n| R-07 | 新智能体在 src/app/navRegistry.tsx 注册（section: toolbox），上线验收前带 wip: true；入口、路径、预览三行随交付给出 | 自动：navRegistry 里有对应 path 与 wip |\n| R-08 | 模型调用与长任务显示当前阶段、进度和预计耗时；静止的「加载中」不超过 2 秒；任务在服务端跑，离开页面不取消，回来能恢复 | 人工：从提交到完成逐阶段截图，离开再返回仍是同一任务 |\n| R-09 | 用户可见错误先说结果和恢复动作（例如「已保存稿件，可重试这一幕」），内部诊断只进日志 | 人工：逐个错误态核对文案 |\n| R-10 | 前端请求走 services/real 与 apiRequest，响应以 success 判断，错误取 error.message；文件上传用直接 fetch + FormData | 自动：新增 services/real 文件只经 apiRequest 发 JSON 请求 |\n",
+  "rules": "# MAP 管理后台框架（prd-admin）\n\n适用：MAP 平台在 prd-admin 里的页面与智能体。原型由 prd-admin 正式代码构建（cds-design/prototype-build），壳、组件和令牌都取自正式源码。\n\n| R-01 | 页面挂在正式 AppShell（src/layouts/AppShell.tsx），左侧导航来自服务端菜单目录（AdminMenuCatalog），不另画导航 | 自动：原型 DOM 含 AppShell 的侧栏与主区，页面在主区 Outlet 内渲染 |\n| R-02 | 颜色只取 src/styles/tokens.css 的语义变量（--bg-*、--text-*、--border-*、--accent-*、--panel-solid、--nested-block-bg），页面组件不写死十六进制；作品本身的画面配色（例如视频模板帧）不受此限，但要与界面隔离在一个组件内 | 自动：页面源码（不含模板画面组件）扫描十六进制与 rgb 字面量为 0 |\n| R-03 | 白天（data-theme=light）与黑天（dark）都可读，正文对比度不低于 4.5，状态色用 --accent-fg-* 成对取值 | 自动：两个主题各截一张同画面，正文与背景对比度 ≥ 4.5 |\n| R-04 | 图标只用 lucide-react；代码、界面、文案不出现 emoji | 自动：页面源码与渲染文本扫描 emoji 为 0 |\n| R-05 | 按钮用 components/design/Button（primary / secondary / ghost / danger），每一屏只有一个 primary 主动作；不可逆操作放次要位置并二次确认 | 人工：逐画面数 primary 按钮 |\n| R-06 | 窄屏（小于 768）两栏改为页内切换，375 宽无整页横向溢出；本页新增的可点元素触控高度不小于 44px。公共组件沿用正式实现（例如 SegmentedTabs 为 32px），差异记为框架债务、不在单页改，原型里用 data-qc-touch-exempt 标出 | 自动：375 宽视口 document.scrollWidth 等于视口宽；未标出的可点元素高度 ≥ 44 |\n| R-07 | 新智能体在 src/app/navRegistry.tsx 注册（section: toolbox），上线验收前带 wip: true；入口、路径、预览三行随交付给出 | 自动：navRegistry 里有对应 path 与 wip |\n| R-08 | 模型调用与长任务显示当前阶段、进度和预计耗时；静止的「加载中」不超过 2 秒；任务在服务端跑，离开页面不取消，回来能恢复 | 人工：从提交到完成逐阶段截图，离开再返回仍是同一任务 |\n| R-09 | 用户可见错误先说结果和恢复动作（例如「已保存稿件，可重试这一幕」），内部诊断只进日志 | 人工：逐个错误态核对文案 |\n| R-10 | 前端请求走 services/real 与 apiRequest，响应以 success 判断，错误取 error.message；文件上传用直接 fetch + FormData | 自动：新增 services/real 文件只经 apiRequest 发 JSON 请求 |\n",
   "components": "# 可复用组件（prd-admin 正式源码）\n\n| 组件 | 路径 | 用途 |\n|---|---|---|\n| AppShell | src/layouts/AppShell.tsx | 应用外壳、左侧导航、移动端抽屉与底栏 |\n| Button | src/components/design/Button.tsx | 按钮：primary / secondary / ghost / danger，xs / sm / md |\n| Badge | src/components/design/Badge.tsx | 状态标签：subtle / success / danger / warning / new |\n| GlassCard | src/components/design/GlassCard.tsx | 卡片表面 |\n| SegmentedTabs | src/components/design/SegmentedTabs.tsx | 二到四项切换 |\n| SplitToTabLayout | src/components/design/SplitToTabLayout.tsx | 桌面两栏、移动端页签 |\n| Switch | src/components/design/Switch.tsx | 开关 |\n| MapSpinner | src/components/ui/VideoLoader.tsx | 行内加载 |\n| Dialog / BottomSheet | src/components/ui/Dialog.tsx、BottomSheet.tsx | 弹窗与移动端底部面板 |\n| toast | src/lib/toast | 轻提示 |\n| navRegistry | src/app/navRegistry.tsx | 路由与百宝箱入口登记 |\n| apiRequest | src/services/real/apiClient.ts | JSON 请求 |\n",
   "tokens": {
     "source": "prd-admin/src/styles/tokens.css",
     "dark": {
-      "--bg-base": "#141418", "--bg-elevated": "#1e1e24", "--bg-card": "rgba(255, 255, 255, 0.08)", "--bg-card-hover": "rgba(255, 255, 255, 0.11)",
-      "--bg-input": "rgba(255, 255, 255, 0.07)", "--border-faint": "rgba(255, 255, 255, 0.08)", "--border-subtle": "rgba(255, 255, 255, 0.12)",
-      "--border-default": "rgba(255, 255, 255, 0.18)", "--text-primary": "#f7f7fb", "--text-secondary": "rgba(247, 247, 251, 0.80)",
-      "--text-muted": "rgba(247, 247, 251, 0.68)", "--accent-primary": "#D97757", "--accent-primary-solid": "#B0523A",
-      "--accent-fg-success": "#22c55e", "--accent-fg-error": "#ef4444", "--accent-fg-warning": "#fb923c", "--accent-fg-info": "#3b82f6",
-      "--panel-solid": "rgba(30, 30, 36, 0.92)", "--nested-block-bg": "rgba(255, 255, 255, 0.05)"
+      "--bg-base": "#141418",
+      "--bg-elevated": "#1e1e24",
+      "--bg-card": "rgba(255, 255, 255, 0.08)",
+      "--bg-card-hover": "rgba(255, 255, 255, 0.11)",
+      "--bg-input": "rgba(255, 255, 255, 0.07)",
+      "--border-faint": "rgba(255, 255, 255, 0.08)",
+      "--border-subtle": "rgba(255, 255, 255, 0.12)",
+      "--border-default": "rgba(255, 255, 255, 0.18)",
+      "--text-primary": "#f7f7fb",
+      "--text-secondary": "rgba(247, 247, 251, 0.80)",
+      "--text-muted": "rgba(247, 247, 251, 0.68)",
+      "--accent-primary": "#D97757",
+      "--accent-primary-solid": "#B0523A",
+      "--accent-fg-success": "#22c55e",
+      "--accent-fg-error": "#ef4444",
+      "--accent-fg-warning": "#fb923c",
+      "--accent-fg-info": "#3b82f6",
+      "--panel-solid": "rgba(30, 30, 36, 0.92)",
+      "--nested-block-bg": "rgba(255, 255, 255, 0.05)"
     },
     "light": {
-      "--bg-base": "#EEEAE3", "--bg-elevated": "#E4DED5", "--bg-card": "#F8F5EF", "--bg-card-hover": "rgba(26, 26, 31, 0.04)",
-      "--bg-input": "#FBF8F3", "--border-faint": "rgba(26, 26, 31, 0.08)", "--border-subtle": "rgba(26, 26, 31, 0.12)",
-      "--border-default": "rgba(26, 26, 31, 0.18)", "--text-primary": "#0F172A", "--text-secondary": "rgba(15, 23, 42, 0.78)",
-      "--text-muted": "rgba(15, 23, 42, 0.68)", "--accent-primary": "#3F5D45", "--accent-primary-solid": "#3F5D45",
-      "--accent-fg-success": "#166534", "--accent-fg-error": "#b91c1c", "--accent-fg-warning": "#9a3412", "--accent-fg-info": "#1d4ed8",
-      "--panel-solid": "#F8F5EF", "--nested-block-bg": "rgba(26, 26, 31, 0.04)"
+      "--bg-base": "#EEEAE3",
+      "--bg-elevated": "#E4DED5",
+      "--bg-card": "#F8F5EF",
+      "--bg-card-hover": "rgba(26, 26, 31, 0.04)",
+      "--bg-input": "#FBF8F3",
+      "--border-faint": "rgba(26, 26, 31, 0.08)",
+      "--border-subtle": "rgba(26, 26, 31, 0.12)",
+      "--border-default": "rgba(26, 26, 31, 0.18)",
+      "--text-primary": "#0F172A",
+      "--text-secondary": "rgba(15, 23, 42, 0.78)",
+      "--text-muted": "rgba(15, 23, 42, 0.68)",
+      "--accent-primary": "#3F5D45",
+      "--accent-primary-solid": "#3F5D45",
+      "--accent-fg-success": "#166534",
+      "--accent-fg-error": "#b91c1c",
+      "--accent-fg-warning": "#9a3412",
+      "--accent-fg-info": "#1d4ed8",
+      "--panel-solid": "#F8F5EF",
+      "--nested-block-bg": "rgba(26, 26, 31, 0.04)"
     },
-    "radius": { "--radius-chip": "6px", "--radius-control": "9px", "--radius-field": "10px", "--radius-card": "12px" }
+    "radius": {
+      "--radius-chip": "6px",
+      "--radius-control": "9px",
+      "--radius-field": "10px",
+      "--radius-card": "12px"
+    }
   }
 }
