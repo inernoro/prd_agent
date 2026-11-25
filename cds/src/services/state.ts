@@ -1,4 +1,5 @@
 import type {StorageBinding} from '../types.js';
+import type { ProjectAgentKeyPermissions } from '../shared/project-agent-key.js';
 import {profileStorageTargetKey,profileStorageBranchIdentity,profileStorageDeclarationDigest,type ProfileStorageTarget,type ProfileStorageBinding} from "./profile-storage-provision.js";
 import {storageProvisionDigest,type StorageBirth} from './storage-provision.js';
 import {profileStoragePlan,withRuntimeTmpfs,stableStorageVolumeName,type DeploymentStoragePlan,type StorageBirthRequirements} from './deployment-storage-plan.js';
@@ -3929,7 +3930,7 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
    * Returns null on any failure (malformed prefix, no
    * matching hash, key revoked).
    */
-  findAgentKeyForAuth(plaintextKey: string): ({ projectId: string; keyId: string } & Pick<AgentKey, 'planningAccess' | 'designAccess'>) | null {
+  findAgentKeyForAuth(plaintextKey: string): ({ projectId: string; keyId: string } & ProjectAgentKeyPermissions) | null {
     if (!plaintextKey || !plaintextKey.startsWith('cdsp_')) return null;
     // Strict shape: cdsp_<slugHead>_<suffix>
     const parts = plaintextKey.split('_');
@@ -3963,6 +3964,7 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
           if (entryBuf.length !== hashBuf.length) continue;
           if (crypto.timingSafeEqual(entryBuf, hashBuf)) {
             return { projectId: project.id, keyId: entry.id,
+              ...(entry.projectAccess ? { projectAccess: entry.projectAccess } : {}),
               ...(entry.planningAccess ? { planningAccess: entry.planningAccess } : {}),
               ...(entry.designAccess ? { designAccess: entry.designAccess } : {}) };
           }
@@ -3984,7 +3986,7 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     // Agent 也会在第 30 天被锁在门外，而文档与界面都写着用一次就续期。
     // 存量密钥没有 expiresAt —— 不给它凭空造一个，否则等于给永不过期的密钥
     // 强加一个到期日。slideExpiry 少于一天不返回新值，不会把 state 写爆。
-    if (entry.expiresAt) {
+    if (entry.expiresAt && entry.expiryMode !== 'fixed') {
       const next = slideExpiry(entry.expiresAt, PROJECT_CREDENTIAL_TTL_DAYS);
       if (next) entry.expiresAt = next;
     }

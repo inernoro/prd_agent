@@ -430,6 +430,7 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
         creationTarget: target,
         expiresAt: new Date(now.getTime() + 300_000).toISOString(),
         createdAt: now.toISOString(),
+        issuer: isAuthenticatedHuman(req) ? 'user' : 'unknown',
         createdBy: decidedBy === 'cookie' || decidedBy === 'operator' ? undefined : decidedBy,
       };
       try {
@@ -502,6 +503,7 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
         ...(item.principalId ? { principalId: item.principalId } : {}),
       } : {}),
       createdAt: now.toISOString(),
+      issuer: isAuthenticatedHuman(req) ? 'user' : 'unknown',
       createdBy: decidedBy === 'cookie' || decidedBy === 'operator' ? undefined : decidedBy,
     };
     try {

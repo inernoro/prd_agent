@@ -25,6 +25,7 @@
     "smoke:agent-starter-mobile": "node scripts/agent-starter-mobile-probe.mjs",
     "smoke:agent-setup-scope": "node scripts/agent-setup-scope-probe.mjs",
     "sync:skill-manifest": "tsx scripts/sync-cds-skill-manifest.ts",
+    "sync:menu-routes": "tsx scripts/sync-cds-menu-routes.ts",
     "audit:relation-visual": "node scripts/relation-visual-audit.mjs --no-shots",
     "install:web": "pnpm --dir web install --frozen-lockfile",
     "test": "vitest run",

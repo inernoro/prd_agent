@@ -2772,6 +2772,7 @@ app.MapGet("/gw/logs", async (
         .Limit(ps)
         .ToListAsync();
 
+    await LogAppCallerNames.FillMissingAsync(http, docs, gatewayDatabase, mapDatabase, internalTenantId);
     var data = new LogsListData
     {
         Items = docs.Select(MapListItem).ToList(),
@@ -3052,6 +3053,7 @@ app.MapGet("/gw/overview", async (HttpContext http, string? from, string? to) =>
             .Sort(Builders<BsonDocument>.Sort.Descending("StartedAt"))
             .Limit(5)
             .ToListAsync();
+        await LogAppCallerNames.FillMissingAsync(http, recentDocs, gatewayDatabase, mapDatabase, internalTenantId);
         recentRequests = recentDocs.Select(MapListItem).ToList();
     }
 
@@ -3303,17 +3305,22 @@ app.MapGet("/gw/logs/sessions", async (
         list.Add(d);
     }
 
-    var allItems = groups.Select(g => BuildSessionItem(g.Key, g.Value))
-        .OrderByDescending(s => s.End, StringComparer.Ordinal)
-        .ToList();
-
-    var total = allItems.Count;
-    var pageItems = allItems.Skip((p - 1) * ps).Take(ps).ToList();
+    var pageItems = groups.Select(group =>
+        {
+            var callerLog = group.Value.FirstOrDefault(log => !string.IsNullOrWhiteSpace(log.AsNullableString("AppCallerCode")));
+            return (Session: BuildSessionItem(group.Key, group.Value, callerLog?.AsNullableString("AppCallerCode")), CallerLog: callerLog);
+        })
+        .OrderByDescending(item => item.Session.End, StringComparer.Ordinal)
+        .Skip((p - 1) * ps).Take(ps).ToList();
+    await LogAppCallerNames.FillMissingAsync(http, pageItems.Select(item => item.CallerLog).OfType<BsonDocument>().ToArray(),
+        gatewayDatabase, mapDatabase, internalTenantId);
+    foreach (var (session, callerLog) in pageItems)
+        session.AppCallerCodeDisplayName = callerLog is null ? null : LogAppCallerNames.Snapshot(callerLog);
 
     var data = new SessionsData
     {
-        Items = pageItems,
-        Total = total,
+        Items = pageItems.Select(item => item.Session).ToList(),
+        Total = groups.Count,
         Page = p,
         PageSize = ps,
     };
@@ -3329,6 +3336,7 @@ app.MapGet("/gw/logs/{id}", async (HttpContext http, string id) =>
     {
         return Json(ApiEnvelope<LlmLogDetail>.Fail("NOT_FOUND", "日志不存在"), jsonOptions, statusCode: 404);
     }
+    await LogAppCallerNames.FillMissingAsync(http, [doc], gatewayDatabase, mapDatabase, internalTenantId);
     var detail = MapDetail(doc);
     var logicalRequestId = detail.LogicalRequestId;
     var relatedFilters = new List<FilterDefinition<BsonDocument>>
@@ -9337,12 +9345,12 @@ app.MapGet("/gw/app-callers", async (
 // 密钥失效时自动重签一把，不再需要任何人去改 env。
 var systemSettings = gatewayDatabase.GetCollection<BsonDocument>("llmgw_system_settings");
 // 系统功能自己的调用用途码。前缀 llmgw-console 表示「控制台自身」，与用户业务的 appCaller 分开计费与观测。
-const string SystemIntentDraftAppCaller = "llmgw-console.intent-draft::chat";
+const string SystemIntentDraftAppCaller = SystemIntentDraftCaller.Code;
 // 网关自己签给自己的那把 key 的名字。命名即用途，运维在密钥页一眼能认出「这把不是人签的」。
 const string SystemServiceKeyName = "llmgw-system-internal";
 const string SystemServiceKeyClientCode = "llmgw-console";
 // 与 serving 的 X-Gateway-Source 判据对齐：key 上写什么，请求头就带什么，否则 403 scope-mismatch。
-const string SystemServiceKeySource = "llmgw-console";
+const string SystemServiceKeySource = SystemIntentDraftCaller.SourceSystem;
 // 系统内部消耗单独归一个团队。用户 2026-08-28 的原话：「系统内部的，按照系统内部的团队，
 // 消耗，权限……并且计费方式是单独计费，系统团队的」。
 // 借用「租户里第一个 active 团队」是不行的：那把系统自己的用量记进了某个业务团队的预算，
@@ -9614,9 +9622,7 @@ async Task<(bool Ok, string BaseUrl, string Key, string AppCaller, string? PoolI
         // 存量兼容：标记是这一版才加的，此前系统自建的那条没有它。用它当时就写死的
         // SourceSystem 认亲（业务登记走的是 "external"，不会撞上），认到就顺手补上标记，
         // 之后再判就只看标记了。缺了这一档，已经用过这个功能的部署会被自己的旧文档挡在门外。
-        var callerIsOurs = existingCaller.AsNullableBool("SystemManaged") == true
-            || (!existingCaller.Contains("SystemManaged")
-                && string.Equals(existingCaller.GetStringOrEmpty("SourceSystem"), SystemServiceKeySource, StringComparison.Ordinal));
+        var callerIsOurs = SystemIntentDraftCaller.OwnsRegistration(existingCaller);
         if (!callerIsOurs)
         {
             return (false, baseUrl, "", SystemIntentDraftAppCaller, null, model,
@@ -9686,7 +9692,7 @@ async Task<(bool Ok, string BaseUrl, string Key, string AppCaller, string? PoolI
                 { "SourceSystem", SystemServiceKeySource },
                 { "IngressProtocol", "openai-compatible" },
                 { "ObservedIngressProtocols", new BsonArray() },
-                { "Title", "网关控制台 · 一句话推导调用用途码" },
+                { "Title", SystemIntentDraftCaller.Title },
                 { "Status", "configured" },
                 { "ModelPolicy", "auto" },
                 { "ParameterPolicy", "default-drop" },
@@ -9707,10 +9713,7 @@ async Task<(bool Ok, string BaseUrl, string Key, string AppCaller, string? PoolI
             // 后面签出来的系统密钥会在 serving 的归属比对上一路 403，而凭据自愈修不好
             // 「这条码不归我」这件事。所以回读胜者，按同一套归属判据复判一次。
             var winner = await gwAppCallers.Find(callerFilter).FirstOrDefaultAsync();
-            var winnerIsOurs = winner is not null
-                && (winner.AsNullableBool("SystemManaged") == true
-                    || (!winner.Contains("SystemManaged")
-                        && string.Equals(winner.GetStringOrEmpty("SourceSystem"), SystemServiceKeySource, StringComparison.Ordinal)));
+            var winnerIsOurs = winner is not null && SystemIntentDraftCaller.OwnsRegistration(winner);
             if (!winnerIsOurs)
             {
                 return (false, baseUrl, "", SystemIntentDraftAppCaller, null, model,
@@ -17653,7 +17656,7 @@ static string? NormalizeResolutionMode(string? raw, string? reason)
 }
 
 // 把一个会话内的多条日志聚合成 SessionItem。primaryModel = 出现次数最多的 Model。
-static SessionItem BuildSessionItem(string sessionId, List<BsonDocument> docs)
+static SessionItem BuildSessionItem(string sessionId, List<BsonDocument> docs, string? appCallerCode)
 {
     var models = docs
         .Select(x => x.GetStringOrEmpty("Model"))
@@ -17680,10 +17683,6 @@ static SessionItem BuildSessionItem(string sessionId, List<BsonDocument> docs)
     }
     primaryProvider ??= docs.Select(x => x.AsNullableString("Provider")).FirstOrDefault(p => !string.IsNullOrEmpty(p));
 
-    var appCaller = docs
-        .Select(x => x.AsNullableString("AppCallerCode"))
-        .FirstOrDefault(a => !string.IsNullOrEmpty(a));
-
     var starts = docs.Select(x => x.AsNullableUtcDateTime("StartedAt")).Where(t => t is not null).Select(t => t!.Value).ToList();
     DateTime? start = starts.Count > 0 ? starts.Min() : null;
 
@@ -17698,7 +17697,7 @@ static SessionItem BuildSessionItem(string sessionId, List<BsonDocument> docs)
         RequestCount = docs.Count,
         Start = start.ToIso(),
         End = end.ToIso(),
-        AppCallerCode = appCaller,
+        AppCallerCode = appCallerCode,
         PrimaryModel = primaryModel,
         PrimaryProvider = primaryProvider,
         SupportingModels = supporting,
@@ -19373,7 +19372,7 @@ static GatewayAppCallerItem MapGatewayAppCaller(BsonDocument d) => new()
     SourceSystem = d.GetStringOrEmpty("SourceSystem"),
     IngressProtocol = d.GetStringOrEmpty("IngressProtocol"),
     ObservedIngressProtocols = GetObservedIngressProtocols(d),
-    Title = d.AsNullableString("Title"),
+    Title = SystemIntentDraftCaller.ReadTitle(d),
     Status = d.AsNullableString("Status") ?? "discovered",
     ModelPoolId = d.AsNullableString("ModelPoolId"),
     AllowedModelPoolIds = GetStringArray(d, "AllowedModelPoolIds"),

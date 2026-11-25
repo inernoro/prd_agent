@@ -374,7 +374,7 @@ export default function SettingsPage() {
 
   return (
     <div className="h-full min-h-0 flex flex-col gap-5">
-      <TabBar items={tabs} activeKey={activeTab} onChange={handleTabChange} />
+      <TabBar items={tabs} activeKey={visibleTab} onChange={handleTabChange} tabGroupLabel="设置分区" />
 
       <div className="flex-1 min-h-0">
         {visibleTab === 'user-space' && <UserSpaceSettings />}

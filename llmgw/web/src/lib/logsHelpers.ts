@@ -173,9 +173,11 @@ export function appDisplayName(item: {
   appCallerCodeDisplayName?: string | null;
   appCallerTitle?: string | null;
 }): string {
-  const displayName = item.appCallerCodeDisplayName?.trim() || item.appCallerTitle?.trim();
-  if (displayName) return displayName;
-  return item.appCallerCode?.trim() || DASH;
+  const code = item.appCallerCode?.trim();
+  const displayName = [item.appCallerCodeDisplayName, item.appCallerTitle]
+    .map(value => value?.trim())
+    .find(value => value && value.toLowerCase() !== code?.toLowerCase());
+  return displayName || (code ? '未命名 App' : DASH);
 }
 
 // ── 仅注册后端有真实数据来源的视图 ──

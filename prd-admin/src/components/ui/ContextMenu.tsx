@@ -19,9 +19,10 @@ type ContextMenuProps = {
   anchorRef?: RefObject<HTMLElement | null>;
   label?: string;
   minWidth?: number;
+  className?: string;
 };
 
-function ContextMenuPortal({ items, x, y, onClose, anchorRef, label = '操作菜单', minWidth = 140 }: ContextMenuProps) {
+function ContextMenuPortal({ items, x, y, onClose, anchorRef, label = '操作菜单', minWidth = 140, className }: ContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState({ x, y });
 
@@ -80,7 +81,7 @@ function ContextMenuPortal({ items, x, y, onClose, anchorRef, label = '操作菜
         const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length;
         buttons[next]?.focus();
       }}
-      className="surface-popover fixed z-[9999] min-w-[140px] py-1 rounded-[14px]"
+      className={['surface-popover fixed z-[9999] min-w-[140px] py-1 rounded-[14px]', className].filter(Boolean).join(' ')}
       style={{
         left: pos.x,
         top: pos.y,

@@ -512,6 +512,7 @@ export type SessionItem = {
   start?: string | null;
   end?: string | null;
   appCallerCode?: string | null;
+  appCallerCodeDisplayName?: string | null;
   primaryModel?: string | null;
   primaryProvider?: string | null;
   supportingModels: string[];

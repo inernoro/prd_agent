@@ -1,4 +1,5 @@
 import '@/components/workspace/workspace.css';
+import '@/components/web-hosting/web-hosting-toolbar.css';
 import { HostedCollectionEditor, HostedCollectionLibrary } from '@/components/web-hosting/HostedCollectionManager';
 import { getWebHostingUploadError, WEB_HOSTING_UPLOAD_ACCEPT, WEB_HOSTING_UPLOAD_EXTENSIONS } from '@/lib/webHostingUploadLimits';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -1350,15 +1351,13 @@ export default function WebPagesPage() {
       </div>
       <Button size="sm" variant="ghost" onClick={() => setShowCollectionLibrary(true)}><FolderOpen size={14} />我的合集</Button>
                 {/* 语境两档：资产库 / 分享。分享档按钮上的数字与分享档结论句同口径（未过期且未撤销） */}
-                <div className="inline-flex items-center gap-1 rounded-lg p-1" style={{ background: 'var(--bg-input)' }}>
+                <div className="surface-choice-group" role="group" aria-label="工作区">
                   <button
                     type="button"
                     data-tour-id="webpages-tab-library"
                     onClick={() => setWorkspaceTab('library')}
-                    className="inline-flex h-7 items-center gap-1.5 rounded-md px-3 text-[12px] font-semibold transition-colors"
-                    style={workspaceTab === 'library'
-                      ? { background: 'var(--accent-primary)', color: 'var(--accent-on-solid)' }
-                      : { color: 'var(--text-muted)' }}
+                    aria-pressed={workspaceTab === 'library'}
+                    className="surface-choice inline-flex h-7 items-center gap-1.5 rounded-md px-3 text-[12px]"
                   >
                     <FolderOpen size={13} /> 资产库
                   </button>
@@ -1366,10 +1365,8 @@ export default function WebPagesPage() {
                     type="button"
                     data-tour-id="webpages-tab-shares"
                     onClick={() => setWorkspaceTab('shares')}
-                    className="inline-flex h-7 items-center gap-1.5 rounded-md px-3 text-[12px] font-semibold transition-colors"
-                    style={workspaceTab === 'shares'
-                      ? { background: 'var(--accent-primary)', color: 'var(--accent-on-solid)' }
-                      : { color: 'var(--text-muted)' }}
+                    aria-pressed={workspaceTab === 'shares'}
+                    className="surface-choice inline-flex h-7 items-center gap-1.5 rounded-md px-3 text-[12px]"
                   >
                     <Link2 size={13} /> 分享
                     {/* 设计稿写的是「分享 有效 7」：数字要说清是哪一档，否则用户不知道过期的算不算 */}
@@ -1408,125 +1405,109 @@ export default function WebPagesPage() {
                 那是定位信息，用户全程都得看得见，收进气泡等于每次都要点开才知道自己在哪。
                 留在这一行的是「怎么看」与「加东西」。
               */}
-              <div className="surface-nav-bar flex items-center gap-3" style={{ overflow: 'visible' }}>
-                <div className="relative shrink-0" style={{ width: 280 }}>
-                  <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-token-muted" />
+              <div className="surface-nav-bar web-hosting-toolbar" data-variant="plain">
+                <div className="web-hosting-toolbar-search">
+                  <Search size={14} aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-token-muted" />
                   <input
                     type="text"
                     placeholder="搜索标题、描述、标签"
                     value={keyword}
                     onChange={e => setKeyword(e.target.value)}
-                    className="w-full outline-none"
-                    style={{
-                      height: 34, padding: '0 34px 0 32px', borderRadius: 'var(--radius-field)', fontSize: 13,
-                      background: 'var(--bg-input)', color: 'var(--text-primary)',
-                      border: '1px solid var(--border-subtle)', boxShadow: 'var(--shadow-input-inset)',
-                    }}
+                    className="web-hosting-toolbar-input"
                   />
                   {/* 设计稿右端的 `/` 快捷键提示片 */}
                   <span
-                    className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2"
-                    style={{ fontFamily: 'var(--font-code)', fontSize: 10, padding: '0 4px', borderRadius: 'var(--radius-2xs)', border: '1px solid var(--border-subtle)', color: 'var(--text-tertiary)' }}
+                    className="web-hosting-toolbar-shortcut pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2"
                   >
                     /
                   </span>
                 </div>
 
-                <div
-                  data-tour-id="webpages-group-pills"
-                  className="flex shrink-0 items-center"
-                  style={{ padding: 3, gap: 2, borderRadius: 'var(--radius-control)', background: 'var(--bg-secondary)', border: '1px solid var(--border-subtle)' }}
-                >
-                  {ALL_GROUP_MODES.map((m) => {
-                    const avail = groupModeAvailability(m, currentSpace.kind);
-                    const on = groupMode === m;
-                    return (
-                      <button
-                        key={m}
-                        type="button"
-                        disabled={!avail.ok}
-                        title={avail.reason}
-                        onClick={() => setGroupMode(m)}
-                        className="flex items-center whitespace-nowrap transition-colors"
-                        style={{
-                          height: 26, padding: '0 11px', borderRadius: 'var(--radius-pill)', fontSize: 12.5,
-                          cursor: avail.ok ? 'pointer' : 'not-allowed',
-                          ...(on
-                            ? { background: 'var(--accent-primary)', color: 'var(--accent-on-primary)', fontWeight: 600 }
-                            : { background: 'transparent', color: avail.ok ? 'var(--text-muted)' : 'var(--text-disabled)' }),
-                        }}
-                      >
-                        {GROUP_MODE_LABELS[m]}
-                      </button>
-                    );
-                  })}
-                </div>
+                <div className="web-hosting-toolbar-browse">
+                  <div data-tour-id="webpages-group-pills" className="surface-choice-group" role="group" aria-label="组织方式">
+                    {ALL_GROUP_MODES.map((m) => {
+                      const avail = groupModeAvailability(m, currentSpace.kind);
+                      return (
+                        <button
+                          key={m}
+                          type="button"
+                          disabled={!avail.ok}
+                          title={avail.reason}
+                          aria-pressed={groupMode === m}
+                          onClick={() => setGroupMode(m)}
+                          className="surface-choice web-hosting-toolbar-group-choice"
+                        >
+                          {GROUP_MODE_LABELS[m]}
+                        </button>
+                      );
+                    })}
+                  </div>
 
-
-                <ToolbarPopover
-                  label="显示"
-                  summary={`${activeSortLabel} · ${CARD_SIZE_OPTIONS.find((o) => o.value === cardSize)?.label ?? '中'}`}
-                  tourId="webpages-display-popover"
-                  open={openToolbarPanel === 'display'}
-                  onOpenChange={(v) => setOpenToolbarPanel(v ? 'display' : null)}
-                >
-                  <ListDisplayOptions sortOptions={SORT_OPTIONS} sort={sort} onSortChange={setSort}
-                    cardSizeOptions={CARD_SIZE_OPTIONS} cardSize={cardSize} onCardSizeChange={setCardSize}
-                    sortTourId="webpages-sort-pills" cardSizeTourId="webpages-card-size-pills" rememberPreferences>
-                    <div className="space-y-1">
-                      <div className="text-[11px] font-semibold text-token-muted">来源筛选</div>
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        {SOURCE_FILTER_OPTIONS.map((opt) => (
-                          <button
-                            key={opt.value}
-                            type="button"
-                            onClick={() => setActiveSource(activeSource === opt.value ? null : opt.value)}
-                            className="h-7 rounded-full px-2.5 text-[12px] transition-colors"
-                            style={
-                              activeSource === opt.value
-                                ? { background: 'var(--selection-bg)', border: '1px solid var(--selection-border)', color: 'var(--selection-text)' }
-                                : { background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }
-                            }
-                          >
-                            {opt.label}
-                          </button>
-                        ))}
+                  <ToolbarPopover
+                    label="显示"
+                    summary={`${activeSortLabel} · ${CARD_SIZE_OPTIONS.find((o) => o.value === cardSize)?.label ?? '中'}`}
+                    tourId="webpages-display-popover"
+                    open={openToolbarPanel === 'display'}
+                    onOpenChange={(v) => setOpenToolbarPanel(v ? 'display' : null)}
+                  >
+                    <ListDisplayOptions sortOptions={SORT_OPTIONS} sort={sort} onSortChange={setSort}
+                      cardSizeOptions={CARD_SIZE_OPTIONS} cardSize={cardSize} onCardSizeChange={setCardSize}
+                      sortTourId="webpages-sort-pills" cardSizeTourId="webpages-card-size-pills" rememberPreferences>
+                      <div className="space-y-1">
+                        <div className="text-[11px] font-semibold text-token-muted">来源筛选</div>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {SOURCE_FILTER_OPTIONS.map((opt) => (
+                            <button
+                              key={opt.value}
+                              type="button"
+                              onClick={() => setActiveSource(activeSource === opt.value ? null : opt.value)}
+                              className="h-7 rounded-full px-2.5 text-[12px] transition-colors"
+                              style={
+                                activeSource === opt.value
+                                  ? { background: 'var(--selection-bg)', border: '1px solid var(--selection-border)', color: 'var(--selection-text)' }
+                                  : { background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }
+                              }
+                            >
+                              {opt.label}
+                            </button>
+                          ))}
+                        </div>
                       </div>
-                    </div>
-                  </ListDisplayOptions>
-                </ToolbarPopover>
+                    </ListDisplayOptions>
+                  </ToolbarPopover>
 
-                <div data-tour-id="webpages-view-toggle" className="inline-flex shrink-0 items-center overflow-hidden rounded-lg border border-token-default">
-                  <button
-                    type="button"
-                    onClick={() => setViewMode('grid')}
-                    title="网格视图"
-                    aria-label="网格视图"
-                    className="h-8 w-9 inline-flex items-center justify-center transition-colors"
-                    style={{ background: viewMode === 'grid' ? 'var(--bg-elevated)' : 'transparent', color: 'var(--text-primary)' }}
-                  >
-                    <Grid3X3 size={14} />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setViewMode('list')}
-                    title="列表视图"
-                    aria-label="列表视图"
-                    className="h-8 w-9 inline-flex items-center justify-center transition-colors"
-                    style={{ background: viewMode === 'list' ? 'var(--bg-elevated)' : 'transparent', color: 'var(--text-primary)' }}
-                  >
-                    <List size={14} />
-                  </button>
+                  <div data-tour-id="webpages-view-toggle" className="surface-choice-group" role="group" aria-label="视图">
+                    <button
+                      type="button"
+                      onClick={() => setViewMode('grid')}
+                      title="网格视图"
+                      aria-label="网格视图"
+                      aria-pressed={viewMode === 'grid'}
+                      className="surface-choice web-hosting-toolbar-view-choice"
+                    >
+                      <Grid3X3 size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setViewMode('list')}
+                      title="列表视图"
+                      aria-label="列表视图"
+                      aria-pressed={viewMode === 'list'}
+                      className="surface-choice web-hosting-toolbar-view-choice"
+                    >
+                      <List size={14} />
+                    </button>
+                  </div>
                 </div>
 
                 {/* 上传按设计稿落在工具条右端：它是「往这批里加东西」，
                     跟顶栏的语境切换（资产库 / 分享）不是一类动作。
                     「从个人空间添加」只留左栏底部那一处，不在两个地方各摆一遍。 */}
                 {(currentSpace.kind !== 'team' || canEditInWebHosting(myWebHostingRole)) && (
-                  <div className="ml-auto flex shrink-0 items-center gap-2">
+                  <div className="web-hosting-toolbar-actions">
                     {/* 设计稿 Main：「生成网页」是主操作，下拉选素材来源，旁边齿轮进设置；「上传网页」退为次操作。 */}
-                    <Button size="sm" variant="secondary" onClick={() => navigate("/web-pages/new-document")}>按模版新建文档</Button>
-                    <Button size="sm" variant="secondary" onClick={() => navigate("/web-pages/collections")}>合集</Button>
+                    <Button size="sm" variant="ghost" onClick={() => navigate("/web-pages/new-document")}>按模版新建文档</Button>
+                    <Button size="sm" variant="ghost" onClick={() => navigate("/web-pages/collections")}>合集</Button>
                     <GenerateSiteMenu
                       onGenerate={openGenerateDialog}
                       onOpenSettings={() => setShowGenerationSettings(true)}
@@ -2082,8 +2063,7 @@ export default function WebPagesPage() {
         <div className="flex-1 min-w-0 flex flex-col min-h-0">
         {!isMobile && (
           <div
-            className="shrink-0 flex items-center gap-2.5"
-            style={{ height: 56, padding: '0 18px', borderBottom: '1px solid var(--border-subtle)', background: 'var(--bg-toolbar)' }}
+            className="web-hosting-toolbar-strip shrink-0 flex flex-wrap items-center gap-2.5"
           >
             {desktopToolbar}
           </div>

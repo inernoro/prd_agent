@@ -6196,7 +6196,6 @@ public static class GatewayHttpEndpoints
             .Set(x => x.SourceSystem, string.IsNullOrWhiteSpace(ingress.SourceSystem) ? "external" : ingress.SourceSystem)
             .Set(x => x.IngressProtocol, ingressProtocol)
             .AddToSet(x => x.ObservedIngressProtocols, ingressProtocol)
-            .Set(x => x.Title, string.IsNullOrWhiteSpace(ingress.AppCallerTitle) ? appCallerCode : ingress.AppCallerTitle)
             .Set(x => x.LastObservedModelPolicy, modelPolicy)
             .Set(x => x.LastObservedModelPoolId, modelPoolId)
             .Set(x => x.LastObservedParameterPolicy, parameterPolicy)
@@ -6209,6 +6208,12 @@ public static class GatewayHttpEndpoints
             .AddToSet(x => x.ObservedModelPolicies, modelPolicy)
             .AddToSet(x => x.ObservedParameterPolicies, parameterPolicy)
         };
+        var reportedTitle = ingress.AppCallerTitle?.Trim();
+        // 无标题的观测只在新建记录时填入编号，保留已经登记的名称。
+        updates.Add(!string.IsNullOrEmpty(reportedTitle)
+            && !string.Equals(reportedTitle, appCallerCode, StringComparison.OrdinalIgnoreCase)
+            ? Builders<GatewayAppCallerRecord>.Update.Set(x => x.Title, reportedTitle)
+            : Builders<GatewayAppCallerRecord>.Update.SetOnInsert(x => x.Title, appCallerCode));
         if (modelPoolId is not null)
         {
             updates.Add(Builders<GatewayAppCallerRecord>.Update.SetOnInsert(x => x.ModelPoolId, modelPoolId));

@@ -371,6 +371,78 @@
   border: 1px solid var(--border-secondary);
 }
 
+/* Alternate views share the same selected surface across themes. */
+.surface-choice-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border-radius: var(--radius-control);
+  background: var(--bg-secondary);
+}
+
+.surface-choice {
+  color: var(--text-secondary);
+  font-weight: 550;
+  white-space: nowrap;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.surface-choice:hover:not(:disabled, [aria-pressed='true']) {
+  background: var(--bg-card-hover);
+  color: var(--text-primary);
+}
+
+.surface-choice:enabled {
+  cursor: pointer;
+}
+
+.surface-choice[aria-pressed='true'] {
+  background: var(--panel-solid);
+  color: var(--text-primary);
+  box-shadow: inset 0 0 0 1px var(--border-default);
+}
+
+.surface-choice:focus-visible {
+  outline: 2px solid var(--text-secondary);
+  outline-offset: -2px;
+}
+
+.surface-choice:disabled {
+  color: var(--text-disabled);
+  cursor: not-allowed;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .surface-choice {
+    transition: none;
+  }
+}
+
+.surface-search-field {
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-control);
+  background: var(--bg-secondary);
+}
+
+.surface-search-field:hover {
+  border-color: var(--border-hover);
+}
+
+.surface-search-field:focus-within {
+  border-color: var(--border-focus);
+  background: var(--panel-solid);
+  box-shadow: 0 0 0 2px var(--selection-bg);
+}
+
+.surface-search-icon {
+  color: var(--text-secondary);
+}
+
+.surface-search-field:focus-within .surface-search-icon {
+  color: var(--text-primary);
+}
+
 .surface-nav-bar {
   min-height: 46px;
   padding: 0 16px;
@@ -417,6 +489,11 @@
   max-width: 100%;
   overflow-x: auto;
   scrollbar-width: none;
+}
+
+.surface-nav-tabs.surface-choice-group {
+  gap: 2px;
+  min-width: 0;
 }
 
 .surface-nav-tabs::-webkit-scrollbar {
@@ -492,6 +569,13 @@
     overscroll-behavior-x: contain;
     -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 26px), transparent);
     mask-image: linear-gradient(to right, #000 calc(100% - 26px), transparent);
+  }
+
+  .surface-nav-actions[data-fit='true'] {
+    max-width: none;
+    overflow: visible;
+    -webkit-mask-image: none;
+    mask-image: none;
   }
 
   .surface-nav-actions > * {

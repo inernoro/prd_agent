@@ -5,10 +5,12 @@
  * 项目内 9 个模块在项目层左侧导航）。布局复用 AgentFullscreenLayout，蓝色强调。
  */
 import { useCallback, useEffect, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { FolderKanban, Plus, Trash2, TrendingUp, Lightbulb, ChevronUp, ChevronDown, ShieldCheck, Home, BarChart3, ArrowLeft, Library, Globe } from 'lucide-react';
 import { Button } from '@/components/design/Button';
+import { SegmentPills, type SegmentOption } from '@/components/design/SegmentPills';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
+import { useApplyDocumentTheme } from '@/hooks/useApplyDocumentTheme';
 import { AgentFullscreenLayout, type NavItem } from '@/components/agent-shell/AgentFullscreenLayout';
 import '@/components/agent-shell/agent-cards.css';
 import { toast } from '@/lib/toast';
@@ -31,8 +33,16 @@ type WorkspaceNav = 'home' | 'projects' | 'reports' | 'global' | 'dashboard' | '
 
 const NAV_KEYS = new Set<WorkspaceNav>(['home', 'projects', 'reports', 'global', 'dashboard', 'knowledge', 'audit']);
 
+const PROJECT_SCOPES: readonly SegmentOption<PmProjectScope>[] = [
+  { value: 'managed', label: '我管理的' },
+  { value: 'related', label: '我相关的' },
+  { value: 'all', label: '全部' },
+];
+
 export function PmAgentPage() {
   const navigate = useNavigate();
+  const { pathname } = useLocation();
+  useApplyDocumentTheme(pathname);
   const [searchParams, setSearchParams] = useSearchParams();
   // 组织 NPSS 看板仅对管理层开放（pm-agent.dashboard），与普通的 pm-agent.use 区分
   const canViewDashboard = useAuthStore((s) => {
@@ -166,7 +176,7 @@ function ProjectsSection({ onOpen }: { onOpen: (id: string) => void }) {
           <p className="text-[12px]" style={{ color: 'var(--text-muted)' }}>把「有明确目标、有起止时间」的临时性工作当作项目来管</p>
         </div>
         <TipsEntryButton compact />
-        <button onClick={toggleGuide} className="flex items-center gap-1 text-[12px] px-2 py-1 rounded hover:opacity-70" style={{ color: 'var(--text-muted)' }} title="使用说明">
+        <button type="button" onClick={toggleGuide} aria-expanded={guideOpen} className="hover-bg-soft flex items-center gap-1 rounded-md px-2 py-1 text-[12px] text-token-secondary" title="使用说明">
           <Lightbulb size={14} />说明{guideOpen ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
         </button>
         <Button variant="primary" onClick={() => setShowCreate(true)}><Plus size={15} />立项</Button>
@@ -174,9 +184,9 @@ function ProjectsSection({ onOpen }: { onOpen: (id: string) => void }) {
 
       {/* 使用说明（引导区） */}
       {guideOpen && (
-        <div className="shrink-0 rounded-xl border p-4" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)' }}>
+        <div className="shrink-0 rounded-xl border border-token-subtle bg-token-nested p-4">
           <div className="flex items-start gap-2">
-            <Lightbulb size={16} className="mt-0.5 shrink-0" style={{ color: '#F59E0B' }} />
+            <Lightbulb size={16} className="mt-0.5 shrink-0 text-token-warning" />
             <div className="flex-1 min-w-0">
               <div className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>项目管理能帮你做什么</div>
               <div className="text-[12px] mt-1" style={{ color: 'var(--text-secondary)' }}>
@@ -189,9 +199,9 @@ function ProjectsSection({ onOpen }: { onOpen: (id: string) => void }) {
                   { n: '3', t: '推进', d: '用里程碑 + 任务（看板 / 列表 / 甘特）排期跟踪，或 AI 拆解需求成任务' },
                   { n: '4', t: '结案', d: '维护干系人打分得 NPSS，看板汇总成功度与奖金' },
                 ].map((s) => (
-                  <div key={s.n} className="rounded-lg p-2.5" style={{ background: 'var(--bg-base)' }}>
+                  <div key={s.n} className="rounded-lg border border-token-subtle bg-[var(--bg-base)] p-2.5">
                     <div className="flex items-center gap-1.5">
-                      <span className="w-4 h-4 rounded-full flex items-center justify-center text-[10px] font-bold" style={{ background: 'rgba(59,130,246,0.2)', color: '#3B82F6' }}>{s.n}</span>
+                      <span className="flex h-4 w-4 items-center justify-center rounded-full bg-token-nested text-[10px] font-bold text-token-secondary">{s.n}</span>
                       <span className="text-[12px] font-medium" style={{ color: 'var(--text-primary)' }}>{s.t}</span>
                     </div>
                     <div className="text-[11px] mt-1" style={{ color: 'var(--text-muted)' }}>{s.d}</div>
@@ -204,24 +214,8 @@ function ProjectsSection({ onOpen }: { onOpen: (id: string) => void }) {
       )}
 
       {/* 范围分段：我管理的 / 我相关的 / 全部 */}
-      <div className="shrink-0 flex items-center gap-1 rounded-lg p-1 w-fit" style={{ background: 'var(--bg-base)' }}>
-        {([
-          { key: 'managed' as const, label: '我管理的' },
-          { key: 'related' as const, label: '我相关的' },
-          { key: 'all' as const, label: '全部' },
-        ]).map((s) => {
-          const active = scope === s.key;
-          return (
-            <button
-              key={s.key}
-              onClick={() => setScope(s.key)}
-              className="px-3 py-1.5 rounded-md text-[12px] transition-colors"
-              style={{ background: active ? 'var(--bg-card)' : 'transparent', color: active ? 'var(--text-primary)' : 'var(--text-muted)' }}
-            >
-              {s.label}
-            </button>
-          );
-        })}
+      <div className="shrink-0">
+        <SegmentPills options={PROJECT_SCOPES} value={scope} onChange={setScope} ariaLabel="项目范围" />
       </div>
 
       {/* 列表 */}
