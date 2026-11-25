@@ -189,6 +189,18 @@ describe('quality browser public-file and egress boundary', () => {
 });
 
 describe('isolated Chromium quality measurements', () => {
+  it('measures the root background when the body is transparent', async () => {
+    const referenceHtml = `<!doctype html><html><head><style>
+      html{background:#f1ede0} body{background:transparent}
+      @media(prefers-color-scheme:dark){html{background:#13241d}}
+    </style></head><body><main><h1>A document</h1></main></body></html>`;
+    const sample = workspace(referenceHtml);
+    const { referenceStyle } = await runBrowserWorker({ ...sample, repairAttempt: 0, referenceHtml });
+    expect(referenceStyle?.map(view => view.background)).toEqual([
+      'rgb(241, 237, 224)', 'rgb(19, 36, 29)', 'rgb(241, 237, 224)', 'rgb(19, 36, 29)',
+    ]);
+  });
+
   it('flags a landing-page headline on a same-color document reference in both themes', async () => {
     const ref = `<!doctype html><html><head><style>
       body{margin:0;font:17px/1.85 Georgia,serif;color:#1d2421;background:#fbfcfa}

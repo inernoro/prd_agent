@@ -78,6 +78,14 @@ describe('生成工作台布局契约', () => {
     expect(newStage).toContain('title={sampleTitle}');
   });
 
+  it('选中的参考页沿用托管页预览的相对资源规则和直链回退', () => {
+    expect(newStage).toContain('getSite(referenceSiteId)');
+    expect(newStage).toContain('useSitePreviewHtml(referencePreviewSite, !run.generating)');
+    expect(newStage).toContain('src={referenceSrcDoc ? undefined : referencePreviewSite.siteUrl}');
+    expect(newStage).toContain('srcDoc={referenceSrcDoc ?? undefined}');
+    expect(newStage).not.toContain('previewableAiStreamHtml');
+  });
+
   it('新建和修改不暴露执行器选择，OpenDesign 不可用时直接阻断', () => {
     expect(newStage).toContain("requiredWebPageRuntime(capabilities, 'generate')");
     expect(editStage).toContain('requestRuntime');

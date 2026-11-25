@@ -8,14 +8,16 @@ import {
   getDesignGenerationSettings,
   getDesignRuntimeCapabilities,
   getDesignTimingStats,
-  getSiteContent,
+  getSite,
   type DesignGenerationStyle,
   type DesignArtifactRunSummary,
   type DesignRuntimeCapability,
   type DesignTimingStats,
+  type HostedSite,
 } from '@/services/real/webPages';
 import KnowledgeInlineBrowser from '../KnowledgeInlineBrowser';
-import { AI_STREAM_PREVIEW_SANDBOX, previewableAiStreamHtml, REQUIRED_WEB_PAGE_RUNTIME, displayedDesignRuntime, requiredWebPageRuntime } from '../siteEditPreview';
+import { AI_STREAM_PREVIEW_SANDBOX, REQUIRED_WEB_PAGE_RUNTIME, displayedDesignRuntime, requiredWebPageRuntime } from '../siteEditPreview';
+import { useSitePreviewHtml } from '../useSitePreviewHtml';
 import {
   formatGenerationClock,
   formatCompletedRunDuration,
@@ -125,7 +127,7 @@ export default function NewSiteStage({
   /** 选中的风格：管理员预设（按 styleId 冻结）或目录里的设计系统（按 designSystemId 冻结）。 */
   const [styleSelection, setStyleSelection] = useState<StyleGallerySelection | null>(null);
   const [referenceSite, setReferenceSite] = useState<{ id: string; title: string } | null>(null);
-  const [referencePreview, setReferencePreview] = useState<{ siteId: string; html: string } | null>(null);
+  const [referencePreview, setReferencePreview] = useState<{ siteId: string; site: HostedSite | null } | null>(null);
   const [referencePreviewAttempt, setReferencePreviewAttempt] = useState(0);
   const [referencePickerOpen, setReferencePickerOpen] = useState(false);
   const [showReferenceExample, setShowReferenceExample] = useState(false);
@@ -143,15 +145,14 @@ export default function NewSiteStage({
   const { reset: resetRun } = run;
 
   const referenceSiteId = referenceSite?.id;
+  const referencePreviewSite = referencePreview?.siteId === referenceSiteId ? referencePreview?.site ?? null : null;
+  const { srcDoc: referenceSrcDoc, settled: referencePreviewSettled } = useSitePreviewHtml(referencePreviewSite, !run.generating);
   useEffect(() => {
     if (!referenceSiteId) return;
     let current = true;
-    void getSiteContent(referenceSiteId).then((result) => {
-      if (!current) return;
-      const raw = result.success ? result.data.html : '';
-      const html = raw.trim() ? previewableAiStreamHtml(raw) || previewableAiStreamHtml(`<html><body>${raw}</body></html>`) : '';
-      setReferencePreview({ siteId: referenceSiteId, html });
-    }).catch(() => { if (current) setReferencePreview({ siteId: referenceSiteId, html: '' }); });
+    void getSite(referenceSiteId).then((result) => {
+      if (current) setReferencePreview({ siteId: referenceSiteId, site: result.success ? result.data : null });
+    }).catch(() => { if (current) setReferencePreview({ siteId: referenceSiteId, site: null }); });
     return () => { current = false; };
   }, [referenceSiteId, referencePreviewAttempt]);
 
@@ -659,10 +660,17 @@ export default function NewSiteStage({
           重试后，生成的页面会显示在这里。
         </div>
       ) : referenceSite && !run.generating && !run.completedSite ? (
-        referencePreview?.siteId !== referenceSite.id ? (
+        referencePreview?.siteId !== referenceSite.id || !referencePreviewSettled ? (
           <PageSkeleton caption="正在打开参考网页" />
-        ) : referencePreview.html ? (
-          <iframe srcDoc={referencePreview.html} sandbox={AI_STREAM_PREVIEW_SANDBOX} referrerPolicy="no-referrer" title="参考网页预览" className="h-full w-full bg-white" />
+        ) : referencePreviewSite?.siteUrl ? (
+          <iframe
+            src={referenceSrcDoc ? undefined : referencePreviewSite.siteUrl}
+            srcDoc={referenceSrcDoc ?? undefined}
+            sandbox={AI_STREAM_PREVIEW_SANDBOX}
+            referrerPolicy="no-referrer"
+            title="参考网页预览"
+            className="h-full w-full bg-white"
+          />
         ) : (
           <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center text-[13px] text-token-secondary">
             <p>暂时打不开参考网页的预览。</p>
