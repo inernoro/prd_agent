@@ -112,7 +112,7 @@ const manifest = {
   source: 'src',
   docs: ['设计文档/源码差异.diff', '设计文档/目标与验收.md', 'spec/rules.md'],
   notes: '快捷版：一份文档 + 一个模板 → 视频或网页，发布到网页托管。未来逐幕创作只给概念稿（concept-*），不交接实现。',
-  demoData: { file: 'src/fixtures.ts', sha256: createHash('sha256').update(fixtures).digest('hex'), note: '虚构稿件《需求评审的三个习惯》与虚构成员；实现方取证时用同一份数据' },
+  demoData: { file: 'src/fixtures.ts', note: `虚构稿件《需求评审的三个习惯》与虚构成员，覆盖排队、生成、单幕失败、超时、发布失败与成功、30 条作品；原型与实现取证都用这一份（sha256 ${createHash('sha256').update(fixtures).digest('hex').slice(0, 16)}）` },
   screens: screens.map(s => ({ ...s, impl: null })),
   acceptance,
   goals,
