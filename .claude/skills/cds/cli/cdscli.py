@@ -56,7 +56,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Optional
 
-VERSION = "0.26.10"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.26.11"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -901,12 +901,12 @@ def cmd_setup_check(args: argparse.Namespace) -> None:
         fail("project", "project_mismatch", "当前仓库绑定了其他项目，先确认项目范围；尚未发送任何请求。")
     checks.append({"stage": "credentials", "passed": True})
 
-    skill_keys = ("cds", "cds-project-scan", "cds-deploy-pipeline", "cds-release", "preview-url")
+    skill_keys = ("cds", "cds-design", "cds-project-scan", "cds-deploy-pipeline", "cds-release", "preview-url")
     selected = [key.strip() for key in args.skills.split(",")]
     if not selected or any(key not in skill_keys for key in selected):
         fail("skills", "unknown_skill", "从接入页面重新复制当前任务的技能选择。")
     skills_root = Path(__file__).resolve().parents[2]
-    install_bundle = (f"从 {expected_host}/api/skills/cds-pack/download 下载并核对完整五技能包，"
+    install_bundle = (f"从 {expected_host}/api/skills/cds-pack/download 下载并核对完整技能包（六个技能），"
                       "用本机工具解压到当前工作区的技能根，之后复用现有授权重新自检。")
     missing = [key for key in skill_keys if not (skills_root / key / "SKILL.md").is_file()]
     if missing:
@@ -11032,7 +11032,7 @@ def cmd_update(args: argparse.Namespace) -> None:
         die(f"cdscli.py 不在期望的 <skills>/cds/cli/ 位置（实际: {cli_path}）。"
             f"请用 Dashboard 的 (zip) 按钮重新下载完整包。", code=1)
     skills_root = os.path.dirname(skill_root)
-    bundle_skills = ["cds", "cds-project-scan", "cds-deploy-pipeline", "cds-release", "preview-url"]
+    bundle_skills = ["cds", "cds-design", "cds-project-scan", "cds-deploy-pipeline", "cds-release", "preview-url"]
 
     # 1. 下载
     url = _cds_base() + "/api/export-skill"
@@ -11084,7 +11084,7 @@ def cmd_update(args: argparse.Namespace) -> None:
                 src_skills_dir = root
                 break
         if not src_skills_dir:
-            die("tar.gz 内找不到完整的五技能包。升级失败（已保留备份）。",
+            die("tar.gz 内找不到完整的技能包（六个技能）。升级失败（已保留备份）。",
                 code=3, extra={"backupAt": bak_root})
 
         # 5. 用内容同步：五个技能统一更新，保留用户自定义的额外文件。

@@ -67,7 +67,7 @@ describe('Agent public bootstrap through the real auth gate', () => {
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body).toMatchObject({ version: 'cds-agent-setup.v1', target: { kind: 'existing', projectId: 'does-not-exist' }, skills: ['preview-url'], minCliVersion: '0.17.5', cliVersion: shippedCliVersion, authentication: 'existing-page-approval' });
-    expect(body.installedSkills).toHaveLength(5);
+    expect(body.installedSkills).toHaveLength(6);
     expect(body.project).toBeUndefined();
     expect(body.authorizationKey).toBeUndefined();
     expect((await fetch(`${origin}/api/private`)).status).toBe(401);
@@ -84,7 +84,7 @@ describe('Agent public bootstrap through the real auth gate', () => {
     expect(command).toMatch(/--design-access (?:publish|'publish'|"publish")(?=\s|$)/);
     expect(guide).toContain('右下角');
     expect(guide).toContain('批准');
-    expect(guide).toContain('0.26.9');
+    expect(guide).toContain('0.26.11');
     expect(guide).toContain(`${origin}/api/skills/cds-pack/download`);
     expect(guide).toContain('用本机工具解压');
     expect(guide).toMatch(/Windows[^\n]*0\.26\.10[^\n]*CRLF/);
@@ -95,7 +95,7 @@ describe('Agent public bootstrap through the real auth gate', () => {
     expect(manifest.status).toBe(200);
     const body = await manifest.json();
     expect(body).toMatchObject({ target: { kind: 'existing', projectId: 'proj-a' }, mission: 'design-publish',
-      minCliVersion: '0.26.9', cliVersion: shippedCliVersion, authentication: 'existing-page-approval' });
+      minCliVersion: '0.26.11', cliVersion: shippedCliVersion, authentication: 'existing-page-approval' });
     expect(body.skills).toContain('cds');
     expect(body).not.toHaveProperty('authorizationKey');
 
@@ -304,7 +304,7 @@ describe('setup version follows the actual distributed skill bundle', () => {
     const root = tempRoot();
     const parentSkills = path.join(root, '.claude/skills');
     fs.mkdirSync(parentSkills, { recursive: true });
-    for (const skill of ['cds', 'cds-project-scan', 'cds-deploy-pipeline', 'cds-release', 'preview-url']) {
+    for (const skill of ['cds', 'cds-design', 'cds-project-scan', 'cds-deploy-pipeline', 'cds-release', 'preview-url']) {
       fs.cpSync(path.resolve(process.cwd(), '../.claude/skills', skill), path.join(parentSkills, skill), { recursive: true });
     }
     const child = path.join(root, 'cds');
@@ -349,7 +349,7 @@ describe('setup version follows the actual distributed skill bundle', () => {
     const upstreamRoot = tempRoot();
     const skills = path.join(upstreamRoot, '.claude/skills');
     fs.mkdirSync(skills, { recursive: true });
-    for (const skill of ['cds', 'cds-project-scan', 'cds-deploy-pipeline', 'cds-release', 'preview-url']) {
+    for (const skill of ['cds', 'cds-design', 'cds-project-scan', 'cds-deploy-pipeline', 'cds-release', 'preview-url']) {
       fs.cpSync(path.resolve(process.cwd(), '../.claude/skills', skill), path.join(skills, skill), { recursive: true });
     }
     const cli = path.join(skills, 'cds/cli/cdscli.py');
@@ -368,7 +368,7 @@ describe('setup version follows the actual distributed skill bundle', () => {
     const upstreamRoot = tempRoot();
     const skills = path.join(upstreamRoot, '.claude/skills');
     fs.mkdirSync(skills, { recursive: true });
-    for (const skill of ['cds', 'cds-project-scan', 'cds-deploy-pipeline', 'cds-release', 'preview-url']) {
+    for (const skill of ['cds', 'cds-design', 'cds-project-scan', 'cds-deploy-pipeline', 'cds-release', 'preview-url']) {
       fs.cpSync(path.resolve(process.cwd(), '../.claude/skills', skill), path.join(skills, skill), { recursive: true });
     }
     const cli = path.join(skills, 'cds/cli/cdscli.py');
@@ -381,6 +381,6 @@ describe('setup version follows the actual distributed skill bundle', () => {
     expect(await general.json()).toMatchObject({ minCliVersion: '0.17.5', cliVersion: '0.26.8' });
     const scoped = await fetch(`${entry}&mission=design-publish`);
     expect(scoped.status).toBe(503);
-    expect(await scoped.json()).toMatchObject({ error: 'skill_bundle_incompatible', minCliVersion: '0.26.9', cliVersion: '0.26.8' });
+    expect(await scoped.json()).toMatchObject({ error: 'skill_bundle_incompatible', minCliVersion: '0.26.11', cliVersion: '0.26.8' });
   });
 });

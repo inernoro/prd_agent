@@ -98,7 +98,7 @@ export type CdsCapabilityAccess = 'public' | 'project' | 'system' | 'human-only'
 export type CdsMcpExposure = 'read-only-candidate' | 'approval-required' | 'not-exposed' | 'available';
 
 export interface CdsAgentSkillDefinition {
-  id: 'cds' | 'cds-project-scan' | 'cds-deploy-pipeline' | 'cds-release' | 'preview-url';
+  id: 'cds' | 'cds-design' | 'cds-project-scan' | 'cds-deploy-pipeline' | 'cds-release' | 'preview-url';
   label: string;
   role: string;
   required: boolean;
@@ -139,6 +139,7 @@ export const AGENT_MISSION_CATEGORY_DEFINITIONS: readonly AgentMissionCategoryDe
 
 export const CDS_AGENT_SKILL_DEFINITIONS: readonly CdsAgentSkillDefinition[] = [
   { id: 'cds', label: 'CDS 核心技能', role: '认证、能力分诊、环境变量、系统维护和共享 CLI', required: true },
+  { id: 'cds-design', label: '设计技能', role: '出稿、门禁、私有发布稿件并给出稿件地址，生成交接清单，实现方按清单实现', required: true },
   { id: 'cds-project-scan', label: '项目扫描技能', role: '扫描仓库、生成和校验 Compose、提交项目接入', required: true },
   { id: 'cds-deploy-pipeline', label: '部署排障技能', role: '部署、日志、诊断、冒烟和灰度状态', required: true },
   { id: 'cds-release', label: '正式发布技能', role: '生产目标发现、预检、发布、回滚和证据归档', required: true },
@@ -563,14 +564,15 @@ export const AGENT_MISSION_DEFINITIONS: Record<AgentPageContextId, AgentMissionD
     title: '发布或修订设计稿',
     summary: '把工作区的设计交付内容归档到当前 CDS 项目，保留可追溯版本。',
     goal: '交付新稿或修订同稿，返回稿件编号、版本和服务端回执。',
-    steps: ['读取 CDS 技能的 reference/design-intake.md 和当前项目设计接入清单',
+    requiredSkills: ['cds-design'],
+    steps: ['读取 cds-design 技能，先跑 cds/scripts/skill-fresh.mjs 确认技能最新，再读当前项目设计接入清单；没有设计发布授权先申请',
       '按稳定稿件键查重，区分新稿与已有稿件的修订，有歧义先澄清稿件归属',
       '核对当前工作树，只在本地提交用户授权的稿件目录',
       '发布前运行 CDS 技能的 scripts/design/release.mjs check，门禁不通过不发布',
       '用 cds_design_publish 的 sourceMode=private 或 cdscli design publish --private 提交项目私有归档，回读稿件和版本，再用 release.mjs register 登记版本'],
     checks: ['同稿修订使用原稿编号和当前版本', '先核对交付资料、稿件目录和本地提交，缺失时说明需补充的信息',
       '超时使用原请求编号继续，角色权限以该项目的设计接入清单为准'],
-    completion: ['在服务端核对项目、来源提交和归档摘要', '同稿修订可读回原编号和新增版本', '返回稿件入口和发布回执'],
+    completion: ['在服务端核对项目、来源提交和归档摘要', '同稿修订可读回原编号和新增版本', '把稿件地址交给用户（release.mjs register 会打印），稿件发布前不改正式代码'],
     pagePath: projectId => projectQueryPath('/design', projectId),
   },
   branches: {

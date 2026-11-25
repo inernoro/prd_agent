@@ -22833,7 +22833,7 @@ router.post('/branches/:id/storage/provision',async(req,res)=>{
       // 要打包的技能列表
       const skillsToCopy: string[] = useLegacy
         ? ['cds-project-scan']
-        : ['cds', 'cds-project-scan', 'cds-deploy-pipeline', 'cds-release', 'preview-url'];
+        : ['cds', 'cds-design', 'cds-project-scan', 'cds-deploy-pipeline', 'cds-release', 'preview-url'];
 
       let copiedCount = 0;
       for (const skillName of skillsToCopy) {

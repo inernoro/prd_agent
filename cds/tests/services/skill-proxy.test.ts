@@ -440,7 +440,7 @@ describe('CDS 技能包缓存（匿名端点的放大防护）', () => {
       fs.writeFileSync(path.join(base, key, 'cli/cdscli.py'), 'VERSION = "9.8.7"\n');
     }
   };
-  const ALL = ['cds', 'cds-project-scan', 'cds-deploy-pipeline', 'cds-release', 'preview-url'];
+  const ALL = ['cds', 'cds-design', 'cds-project-scan', 'cds-deploy-pipeline', 'cds-release', 'preview-url'];
 
   beforeEach(() => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-skills-root-'));

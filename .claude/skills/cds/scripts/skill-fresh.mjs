@@ -10,9 +10,11 @@
 //   一致 → 退出码 0。
 //   不一致且本地落后 → 退出码 1：先看当前工作目录（工作树）里有没有和 origin/main 一致的技能，有就给出路径；
 //     没有就给用户一条 git pull 命令。不自己 pull，不改主检出。
-//   不是 git 检出、离线、本地有未提交改动 → 退出码 0 并说明原因（不拦）。
+//   不是 git 检出（通过「接入 CDS」下载安装的技能）或连不上 origin → 改问 CDS：比较本地 cdscli 版本和
+//     <CDS>/api/agent/setup.json 的 cliVersion，落后就退出码 1，请运行 cdscli update。拿不到 CDS 地址时不拦。
+//   本地有未提交改动 → 退出码 0 并说明原因（不拦）。
 import { execFileSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -21,10 +23,31 @@ const git = (cwd, ...args) => execFileSync('git', ['-C', cwd, ...args], { encodi
 const tryGit = (cwd, ...args) => { try { return git(cwd, ...args); } catch { return null; } };
 const say = (code, text, extra = {}) => { console.log(JSON.stringify({ fresh: code === 0, ...extra })); console.log(text); process.exit(code); };
 
+/* 外部接入：技能是从 CDS 下载的，对照 CDS 正在提供的技能包版本 */
+async function againstCds(why) {
+  const local = (readFileSync(path.join(skillDir, 'cli', 'cdscli.py'), 'utf8').match(/^VERSION = "([\d.]+)"/m) ?? [])[1];
+  let host = process.env.CDS_HOST;
+  for (let dir = process.cwd(); !host; dir = path.dirname(dir)) {
+    const file = path.join(dir, '.cds', 'credentials.json');
+    if (existsSync(file)) { try { host = JSON.parse(readFileSync(file, 'utf8')).host; } catch { /* 读不了就当没有 */ } }
+    if (path.dirname(dir) === dir) break;
+  }
+  if (!local || !host) say(0, `${why}，也拿不到 CDS 地址，跳过新旧检查。`, { reason: 'no-host' });
+  let remote;
+  try {
+    const res = await fetch(`${String(host).replace(/\/+$/, '')}/api/agent/setup.json?target=system&skills=cds`, { signal: AbortSignal.timeout(15000) });
+    remote = (await res.json()).cliVersion;
+  } catch { say(0, `${why}，连不上 CDS，跳过新旧检查。`, { reason: 'offline' }); }
+  const older = (a, b) => { const x = a.split('.').map(Number), y = b.split('.').map(Number); for (let i = 0; i < 3; i++) if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) < (y[i] ?? 0); return false; };
+  if (!remote || !older(local, remote)) say(0, '技能是最新的（对照 CDS 的技能包）。', { skillDir, local, remote });
+  say(1, [`技能过期：本地 ${local}，CDS 提供 ${remote}。不要用已加载的旧内容干活。`,
+    '先运行 cdscli update 更新完整技能包（六个技能），再重新加载技能。'].join('\n'), { skillDir, local, remote });
+}
+
 const root = tryGit(skillDir, 'rev-parse', '--show-toplevel');
-if (!root) say(0, '技能不在 git 检出里，跳过新旧检查。', { reason: 'not-git' });
+if (!root) await againstCds('技能不在 git 检出里（通过接入 CDS 安装）');
 const rel = path.relative(root, skillDir).split(path.sep).join('/');
-if (tryGit(root, 'fetch', '--quiet', 'origin', 'main') === null) say(0, '连不上 origin，跳过新旧检查（用的是本地技能）。', { reason: 'offline' });
+if (tryGit(root, 'fetch', '--quiet', 'origin', 'main') === null) await againstCds('连不上 origin');
 const local = tryGit(root, 'rev-parse', `HEAD:${rel}`);
 const remote = tryGit(root, 'rev-parse', `origin/main:${rel}`);
 if (!local || !remote) say(0, '找不到技能目录的版本记录，跳过新旧检查。', { reason: 'no-tree' });
