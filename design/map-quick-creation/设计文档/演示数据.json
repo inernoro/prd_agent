@@ -1,0 +1,1795 @@
+{
+ "note": "虚构演示数据：稿件、成员与作品均为示例。原型 dist/index.html 与实现取证共用这一份（源文件 src/fixtures.ts）。",
+ "templates": [
+  {
+   "id": "tpl-visual-note",
+   "kind": "video",
+   "name": "视觉笔记",
+   "tagline": "点阵纸、手绘线条、暖黄强调",
+   "goodFor": "适合讲概念、流程和注意事项",
+   "frame": "visual-note"
+  },
+  {
+   "id": "tpl-whiteboard",
+   "kind": "video",
+   "name": "白板速讲",
+   "tagline": "白底蓝色马克笔，一屏一个结论",
+   "goodFor": "适合复盘与汇报",
+   "frame": "whiteboard"
+  },
+  {
+   "id": "tpl-dark-notes",
+   "kind": "video",
+   "name": "深色讲义",
+   "tagline": "深底等宽字",
+   "goodFor": "适合技术约定与代码说明",
+   "frame": "dark-notes"
+  },
+  {
+   "id": "tpl-guide-page",
+   "kind": "web",
+   "name": "导读长页",
+   "tagline": "左侧目录、页首三个重点、正文分节",
+   "goodFor": "适合规范、手册和长文档",
+   "frame": "guide-page"
+  },
+  {
+   "id": "tpl-card-digest",
+   "kind": "web",
+   "name": "卡片速览",
+   "tagline": "一屏卡片，点开看细节",
+   "goodFor": "适合清单、要点和公告",
+   "frame": "card-digest"
+  }
+ ],
+ "attachments": [
+  {
+   "id": "att-doc-habits",
+   "kind": "doc",
+   "name": "需求评审的三个习惯.md",
+   "meta": "Markdown · 6.2 KB",
+   "status": "ready",
+   "chars": 1840,
+   "excerpt": "刚加入团队的同学，第一次参加需求评审时常常不知道该看什么。这份说明只讲三个习惯，养成之后，评审会快很多。\n\n习惯一：先读目标\n打开需求，先找「这次要解决谁的什么问题」。如果一句话说不清，先别讨论方案，请提出人补一句目标。\n\n习惯二：再画边界\n写清楚这次不做什么。边界没写的需求，评审时最容易越聊越大。\n\n习惯三：最后对验收\n问一句：怎样算真的做完？能被别人照着检查的标准，才算验收标准。"
+  },
+  {
+   "id": "att-kb-checklist",
+   "kind": "kb",
+   "name": "评审检查清单",
+   "meta": "知识库 · 产品知识库 / 流程规范",
+   "status": "ready",
+   "chars": 920,
+   "excerpt": "1. 目标是否一句话说清\n2. 是否列出不做的事\n3. 验收标准能否被别人照着检查"
+  },
+  {
+   "id": "att-img-board",
+   "kind": "image",
+   "name": "评审白板照片.png",
+   "meta": "图片 · 1.4 MB",
+   "status": "ready",
+   "note": "作为第 3 幕画面参考"
+  },
+  {
+   "id": "att-doc-faq",
+   "kind": "doc",
+   "name": "附录：新同事常见问题.md",
+   "meta": "Markdown · 2.1 KB",
+   "status": "ready",
+   "chars": 610,
+   "excerpt": "问：评审要准备什么？答：读一遍目标和边界即可。"
+  },
+  {
+   "id": "att-doc-minutes",
+   "kind": "doc",
+   "name": "评审会议纪要.txt",
+   "meta": "TXT · 3.4 KB",
+   "status": "failed",
+   "error": "没读出文字：文件编码无法识别。可另存为 UTF-8 后重新上传，或点重试。"
+  },
+  {
+   "id": "att-kb-glossary",
+   "kind": "kb",
+   "name": "术语表（产品部）",
+   "meta": "知识库 · 产品知识库 / 术语",
+   "status": "reading",
+   "progress": 62
+  },
+  {
+   "id": "att-img-sketch",
+   "kind": "image",
+   "name": "流程草图.jpg",
+   "meta": "图片 · 860 KB",
+   "status": "ready",
+   "note": "作为第 4 幕画面参考"
+  }
+ ],
+ "runs": {
+  "run-queued": {
+   "id": "run-queued",
+   "title": "需求评审的三个习惯",
+   "kind": "video",
+   "templateId": "tpl-visual-note",
+   "ask": "稍微快一点，先提醒我三个重点，给新同事看",
+   "attachments": [
+    {
+     "id": "att-doc-habits",
+     "kind": "doc",
+     "name": "需求评审的三个习惯.md",
+     "meta": "Markdown · 6.2 KB",
+     "status": "ready",
+     "chars": 1840,
+     "excerpt": "刚加入团队的同学，第一次参加需求评审时常常不知道该看什么。这份说明只讲三个习惯，养成之后，评审会快很多。\n\n习惯一：先读目标\n打开需求，先找「这次要解决谁的什么问题」。如果一句话说不清，先别讨论方案，请提出人补一句目标。\n\n习惯二：再画边界\n写清楚这次不做什么。边界没写的需求，评审时最容易越聊越大。\n\n习惯三：最后对验收\n问一句：怎样算真的做完？能被别人照着检查的标准，才算验收标准。"
+    },
+    {
+     "id": "att-kb-checklist",
+     "kind": "kb",
+     "name": "评审检查清单",
+     "meta": "知识库 · 产品知识库 / 流程规范",
+     "status": "ready",
+     "chars": 920,
+     "excerpt": "1. 目标是否一句话说清\n2. 是否列出不做的事\n3. 验收标准能否被别人照着检查"
+    },
+    {
+     "id": "att-img-board",
+     "kind": "image",
+     "name": "评审白板照片.png",
+     "meta": "图片 · 1.4 MB",
+     "status": "ready",
+     "note": "作为第 3 幕画面参考"
+    },
+    {
+     "id": "att-doc-faq",
+     "kind": "doc",
+     "name": "附录：新同事常见问题.md",
+     "meta": "Markdown · 2.1 KB",
+     "status": "ready",
+     "chars": 610,
+     "excerpt": "问：评审要准备什么？答：读一遍目标和边界即可。"
+    },
+    {
+     "id": "att-img-sketch",
+     "kind": "image",
+     "name": "流程草图.jpg",
+     "meta": "图片 · 860 KB",
+     "status": "ready",
+     "note": "作为第 4 幕画面参考"
+    }
+   ],
+   "status": "queued",
+   "stages": [
+    {
+     "key": "queued",
+     "label": "排队",
+     "status": "running",
+     "detail": "等待开始"
+    },
+    {
+     "key": "storyboard",
+     "label": "分镜",
+     "status": "pending",
+     "detail": "已拆成 6 幕，正在画第 4 幕的画面"
+    },
+    {
+     "key": "voice",
+     "label": "配音",
+     "status": "pending",
+     "detail": "正在为第 3 / 6 幕配旁白，字幕与旁白同步生成"
+    },
+    {
+     "key": "compose",
+     "label": "合成",
+     "status": "pending",
+     "detail": "正在合成 1080p 成片"
+    },
+    {
+     "key": "done",
+     "label": "已生成",
+     "status": "pending"
+    }
+   ],
+   "elapsedSec": 22,
+   "publish": {
+    "status": "none"
+   },
+   "createdAt": "今天 14:02",
+   "updatedAt": "今天 14:02",
+   "voice": "女声 · 稍快",
+   "keyPoints": [
+    {
+     "text": "先读目标：这次要解决谁的问题",
+     "atSec": 26
+    },
+    {
+     "text": "再画边界：哪些这次不做",
+     "atSec": 40
+    },
+    {
+     "text": "最后对验收：怎样算真的做完",
+     "atSec": 68
+    }
+   ],
+   "queue": {
+    "position": 4,
+    "ahead": 3,
+    "running": 4,
+    "capacity": 4,
+    "startInSec": 100
+   },
+   "remainSec": 290,
+   "estimateBasis": "最近 20 次同模板任务的中位数",
+   "scenes": [
+    {
+     "index": 1,
+     "title": "片头",
+     "frameScene": 1,
+     "startSec": 0,
+     "caption": "需求评审，其实只要养成三个习惯。",
+     "status": "waiting"
+    },
+    {
+     "index": 2,
+     "title": "三个重点",
+     "frameScene": 2,
+     "startSec": 12,
+     "caption": "先记住三件事：目标、边界、验收。",
+     "status": "waiting"
+    },
+    {
+     "index": 3,
+     "title": "先读目标",
+     "frameScene": 3,
+     "startSec": 26,
+     "caption": "第一分钟只问一句：做完之后，谁的什么会变好？",
+     "status": "waiting"
+    },
+    {
+     "index": 4,
+     "title": "再画边界",
+     "frameScene": 2,
+     "startSec": 40,
+     "caption": "第二个习惯：写清楚这次不做什么。",
+     "status": "waiting"
+    },
+    {
+     "index": 5,
+     "title": "最后对验收",
+     "frameScene": 3,
+     "startSec": 68,
+     "caption": "最后问一句：怎样算真的做完？",
+     "status": "waiting"
+    },
+    {
+     "index": 6,
+     "title": "收尾",
+     "frameScene": 1,
+     "startSec": 86,
+     "caption": "目标、边界、验收，下次评审试试看。",
+     "status": "waiting"
+    }
+   ]
+  },
+  "run-voicing": {
+   "id": "run-voicing",
+   "title": "需求评审的三个习惯",
+   "kind": "video",
+   "templateId": "tpl-visual-note",
+   "ask": "稍微快一点，先提醒我三个重点，给新同事看",
+   "attachments": [
+    {
+     "id": "att-doc-habits",
+     "kind": "doc",
+     "name": "需求评审的三个习惯.md",
+     "meta": "Markdown · 6.2 KB",
+     "status": "ready",
+     "chars": 1840,
+     "excerpt": "刚加入团队的同学，第一次参加需求评审时常常不知道该看什么。这份说明只讲三个习惯，养成之后，评审会快很多。\n\n习惯一：先读目标\n打开需求，先找「这次要解决谁的什么问题」。如果一句话说不清，先别讨论方案，请提出人补一句目标。\n\n习惯二：再画边界\n写清楚这次不做什么。边界没写的需求，评审时最容易越聊越大。\n\n习惯三：最后对验收\n问一句：怎样算真的做完？能被别人照着检查的标准，才算验收标准。"
+    },
+    {
+     "id": "att-kb-checklist",
+     "kind": "kb",
+     "name": "评审检查清单",
+     "meta": "知识库 · 产品知识库 / 流程规范",
+     "status": "ready",
+     "chars": 920,
+     "excerpt": "1. 目标是否一句话说清\n2. 是否列出不做的事\n3. 验收标准能否被别人照着检查"
+    },
+    {
+     "id": "att-img-board",
+     "kind": "image",
+     "name": "评审白板照片.png",
+     "meta": "图片 · 1.4 MB",
+     "status": "ready",
+     "note": "作为第 3 幕画面参考"
+    },
+    {
+     "id": "att-doc-faq",
+     "kind": "doc",
+     "name": "附录：新同事常见问题.md",
+     "meta": "Markdown · 2.1 KB",
+     "status": "ready",
+     "chars": 610,
+     "excerpt": "问：评审要准备什么？答：读一遍目标和边界即可。"
+    },
+    {
+     "id": "att-img-sketch",
+     "kind": "image",
+     "name": "流程草图.jpg",
+     "meta": "图片 · 860 KB",
+     "status": "ready",
+     "note": "作为第 4 幕画面参考"
+    }
+   ],
+   "status": "running",
+   "stages": [
+    {
+     "key": "queued",
+     "label": "排队",
+     "status": "done",
+     "detail": "等了 4 分 06 秒，曾排第 4 位"
+    },
+    {
+     "key": "storyboard",
+     "label": "分镜",
+     "status": "done",
+     "detail": "6 幕分镜已保存"
+    },
+    {
+     "key": "voice",
+     "label": "配音",
+     "status": "running",
+     "detail": "正在为第 3 / 6 幕配旁白，字幕与旁白同步生成",
+     "progress": 42
+    },
+    {
+     "key": "compose",
+     "label": "合成",
+     "status": "pending",
+     "detail": "正在合成 1080p 成片"
+    },
+    {
+     "key": "done",
+     "label": "已生成",
+     "status": "pending"
+    }
+   ],
+   "elapsedSec": 440,
+   "publish": {
+    "status": "none"
+   },
+   "createdAt": "今天 14:02",
+   "updatedAt": "今天 14:02",
+   "voice": "女声 · 稍快",
+   "keyPoints": [
+    {
+     "text": "先读目标：这次要解决谁的问题",
+     "atSec": 26
+    },
+    {
+     "text": "再画边界：哪些这次不做",
+     "atSec": 40
+    },
+    {
+     "text": "最后对验收：怎样算真的做完",
+     "atSec": 68
+    }
+   ],
+   "remainSec": 90,
+   "estimateBasis": "最近 20 次同模板任务的中位数",
+   "scenes": [
+    {
+     "index": 1,
+     "title": "片头",
+     "frameScene": 1,
+     "startSec": 0,
+     "caption": "需求评审，其实只要养成三个习惯。",
+     "status": "ready"
+    },
+    {
+     "index": 2,
+     "title": "三个重点",
+     "frameScene": 2,
+     "startSec": 12,
+     "caption": "先记住三件事：目标、边界、验收。",
+     "status": "ready"
+    },
+    {
+     "index": 3,
+     "title": "先读目标",
+     "frameScene": 3,
+     "startSec": 26,
+     "caption": "第一分钟只问一句：做完之后，谁的什么会变好？",
+     "status": "voicing"
+    },
+    {
+     "index": 4,
+     "title": "再画边界",
+     "frameScene": 2,
+     "startSec": 40,
+     "caption": "第二个习惯：写清楚这次不做什么。",
+     "status": "drawn"
+    },
+    {
+     "index": 5,
+     "title": "最后对验收",
+     "frameScene": 3,
+     "startSec": 68,
+     "caption": "最后问一句：怎样算真的做完？",
+     "status": "drawn"
+    },
+    {
+     "index": 6,
+     "title": "收尾",
+     "frameScene": 1,
+     "startSec": 86,
+     "caption": "目标、边界、验收，下次评审试试看。",
+     "status": "drawn"
+    }
+   ]
+  },
+  "run-failed": {
+   "id": "run-failed",
+   "title": "需求评审的三个习惯",
+   "kind": "video",
+   "templateId": "tpl-visual-note",
+   "ask": "稍微快一点，先提醒我三个重点，给新同事看",
+   "attachments": [
+    {
+     "id": "att-doc-habits",
+     "kind": "doc",
+     "name": "需求评审的三个习惯.md",
+     "meta": "Markdown · 6.2 KB",
+     "status": "ready",
+     "chars": 1840,
+     "excerpt": "刚加入团队的同学，第一次参加需求评审时常常不知道该看什么。这份说明只讲三个习惯，养成之后，评审会快很多。\n\n习惯一：先读目标\n打开需求，先找「这次要解决谁的什么问题」。如果一句话说不清，先别讨论方案，请提出人补一句目标。\n\n习惯二：再画边界\n写清楚这次不做什么。边界没写的需求，评审时最容易越聊越大。\n\n习惯三：最后对验收\n问一句：怎样算真的做完？能被别人照着检查的标准，才算验收标准。"
+    },
+    {
+     "id": "att-kb-checklist",
+     "kind": "kb",
+     "name": "评审检查清单",
+     "meta": "知识库 · 产品知识库 / 流程规范",
+     "status": "ready",
+     "chars": 920,
+     "excerpt": "1. 目标是否一句话说清\n2. 是否列出不做的事\n3. 验收标准能否被别人照着检查"
+    },
+    {
+     "id": "att-img-board",
+     "kind": "image",
+     "name": "评审白板照片.png",
+     "meta": "图片 · 1.4 MB",
+     "status": "ready",
+     "note": "作为第 3 幕画面参考"
+    },
+    {
+     "id": "att-doc-faq",
+     "kind": "doc",
+     "name": "附录：新同事常见问题.md",
+     "meta": "Markdown · 2.1 KB",
+     "status": "ready",
+     "chars": 610,
+     "excerpt": "问：评审要准备什么？答：读一遍目标和边界即可。"
+    },
+    {
+     "id": "att-img-sketch",
+     "kind": "image",
+     "name": "流程草图.jpg",
+     "meta": "图片 · 860 KB",
+     "status": "ready",
+     "note": "作为第 4 幕画面参考"
+    }
+   ],
+   "status": "failed",
+   "stages": [
+    {
+     "key": "queued",
+     "label": "排队",
+     "status": "done",
+     "detail": "等了 4 分 06 秒，曾排第 4 位"
+    },
+    {
+     "key": "storyboard",
+     "label": "分镜",
+     "status": "done",
+     "detail": "6 幕分镜已保存"
+    },
+    {
+     "key": "voice",
+     "label": "配音",
+     "status": "failed",
+     "detail": "第 4 幕配音等了 3 分钟没有返回，这一幕先停下"
+    },
+    {
+     "key": "compose",
+     "label": "合成",
+     "status": "pending",
+     "detail": "正在合成 1080p 成片"
+    },
+    {
+     "key": "done",
+     "label": "已生成",
+     "status": "pending"
+    }
+   ],
+   "elapsedSec": 856,
+   "publish": {
+    "status": "none"
+   },
+   "createdAt": "今天 14:02",
+   "updatedAt": "今天 14:02",
+   "voice": "女声 · 稍快",
+   "keyPoints": [
+    {
+     "text": "先读目标：这次要解决谁的问题",
+     "atSec": 26
+    },
+    {
+     "text": "再画边界：哪些这次不做",
+     "atSec": 40
+    },
+    {
+     "text": "最后对验收：怎样算真的做完",
+     "atSec": 68
+    }
+   ],
+   "scenes": [
+    {
+     "index": 1,
+     "title": "片头",
+     "frameScene": 1,
+     "startSec": 0,
+     "caption": "需求评审，其实只要养成三个习惯。",
+     "status": "ready"
+    },
+    {
+     "index": 2,
+     "title": "三个重点",
+     "frameScene": 2,
+     "startSec": 12,
+     "caption": "先记住三件事：目标、边界、验收。",
+     "status": "ready"
+    },
+    {
+     "index": 3,
+     "title": "先读目标",
+     "frameScene": 3,
+     "startSec": 26,
+     "caption": "第一分钟只问一句：做完之后，谁的什么会变好？",
+     "status": "ready"
+    },
+    {
+     "index": 4,
+     "title": "再画边界",
+     "frameScene": 2,
+     "startSec": 40,
+     "caption": "第二个习惯：写清楚这次不做什么。",
+     "status": "failed"
+    },
+    {
+     "index": 5,
+     "title": "最后对验收",
+     "frameScene": 3,
+     "startSec": 68,
+     "caption": "最后问一句：怎样算真的做完？",
+     "status": "ready"
+    },
+    {
+     "index": 6,
+     "title": "收尾",
+     "frameScene": 1,
+     "startSec": 86,
+     "caption": "目标、边界、验收，下次评审试试看。",
+     "status": "ready"
+    }
+   ],
+   "failure": {
+    "stageKey": "voice",
+    "unitIndex": 4,
+    "message": "第 4 幕配音没有完成",
+    "saved": [
+     "原稿与要求",
+     "6 幕分镜与画面",
+     "第 1–3、5–6 幕旁白与字幕"
+    ],
+    "actions": [
+     "retry-unit",
+     "skip-unit"
+    ]
+   }
+  },
+  "run-timeout": {
+   "id": "run-timeout",
+   "title": "需求评审的三个习惯",
+   "kind": "video",
+   "templateId": "tpl-visual-note",
+   "ask": "稍微快一点，先提醒我三个重点，给新同事看",
+   "attachments": [
+    {
+     "id": "att-doc-habits",
+     "kind": "doc",
+     "name": "需求评审的三个习惯.md",
+     "meta": "Markdown · 6.2 KB",
+     "status": "ready",
+     "chars": 1840,
+     "excerpt": "刚加入团队的同学，第一次参加需求评审时常常不知道该看什么。这份说明只讲三个习惯，养成之后，评审会快很多。\n\n习惯一：先读目标\n打开需求，先找「这次要解决谁的什么问题」。如果一句话说不清，先别讨论方案，请提出人补一句目标。\n\n习惯二：再画边界\n写清楚这次不做什么。边界没写的需求，评审时最容易越聊越大。\n\n习惯三：最后对验收\n问一句：怎样算真的做完？能被别人照着检查的标准，才算验收标准。"
+    },
+    {
+     "id": "att-kb-checklist",
+     "kind": "kb",
+     "name": "评审检查清单",
+     "meta": "知识库 · 产品知识库 / 流程规范",
+     "status": "ready",
+     "chars": 920,
+     "excerpt": "1. 目标是否一句话说清\n2. 是否列出不做的事\n3. 验收标准能否被别人照着检查"
+    },
+    {
+     "id": "att-img-board",
+     "kind": "image",
+     "name": "评审白板照片.png",
+     "meta": "图片 · 1.4 MB",
+     "status": "ready",
+     "note": "作为第 3 幕画面参考"
+    },
+    {
+     "id": "att-doc-faq",
+     "kind": "doc",
+     "name": "附录：新同事常见问题.md",
+     "meta": "Markdown · 2.1 KB",
+     "status": "ready",
+     "chars": 610,
+     "excerpt": "问：评审要准备什么？答：读一遍目标和边界即可。"
+    },
+    {
+     "id": "att-img-sketch",
+     "kind": "image",
+     "name": "流程草图.jpg",
+     "meta": "图片 · 860 KB",
+     "status": "ready",
+     "note": "作为第 4 幕画面参考"
+    }
+   ],
+   "status": "failed",
+   "stages": [
+    {
+     "key": "queued",
+     "label": "排队",
+     "status": "done",
+     "detail": "等了 4 分 06 秒，曾排第 4 位"
+    },
+    {
+     "key": "storyboard",
+     "label": "分镜",
+     "status": "failed",
+     "detail": "生成超过 15 分钟没有完成，已停止；已画好的 3 幕已保存"
+    },
+    {
+     "key": "voice",
+     "label": "配音",
+     "status": "pending",
+     "detail": "正在为第 3 / 6 幕配旁白，字幕与旁白同步生成"
+    },
+    {
+     "key": "compose",
+     "label": "合成",
+     "status": "pending",
+     "detail": "正在合成 1080p 成片"
+    },
+    {
+     "key": "done",
+     "label": "已生成",
+     "status": "pending"
+    }
+   ],
+   "elapsedSec": 900,
+   "publish": {
+    "status": "none"
+   },
+   "createdAt": "今天 14:02",
+   "updatedAt": "今天 14:02",
+   "voice": "女声 · 稍快",
+   "keyPoints": [
+    {
+     "text": "先读目标：这次要解决谁的问题",
+     "atSec": 26
+    },
+    {
+     "text": "再画边界：哪些这次不做",
+     "atSec": 40
+    },
+    {
+     "text": "最后对验收：怎样算真的做完",
+     "atSec": 68
+    }
+   ],
+   "scenes": [
+    {
+     "index": 1,
+     "title": "片头",
+     "frameScene": 1,
+     "startSec": 0,
+     "caption": "需求评审，其实只要养成三个习惯。",
+     "status": "drawn"
+    },
+    {
+     "index": 2,
+     "title": "三个重点",
+     "frameScene": 2,
+     "startSec": 12,
+     "caption": "先记住三件事：目标、边界、验收。",
+     "status": "drawn"
+    },
+    {
+     "index": 3,
+     "title": "先读目标",
+     "frameScene": 3,
+     "startSec": 26,
+     "caption": "第一分钟只问一句：做完之后，谁的什么会变好？",
+     "status": "drawn"
+    },
+    {
+     "index": 4,
+     "title": "再画边界",
+     "frameScene": 2,
+     "startSec": 40,
+     "caption": "第二个习惯：写清楚这次不做什么。",
+     "status": "waiting"
+    },
+    {
+     "index": 5,
+     "title": "最后对验收",
+     "frameScene": 3,
+     "startSec": 68,
+     "caption": "最后问一句：怎样算真的做完？",
+     "status": "waiting"
+    },
+    {
+     "index": 6,
+     "title": "收尾",
+     "frameScene": 1,
+     "startSec": 86,
+     "caption": "目标、边界、验收，下次评审试试看。",
+     "status": "waiting"
+    }
+   ],
+   "failure": {
+    "stageKey": "storyboard",
+    "message": "生成超时，已停止",
+    "saved": [
+     "原稿与要求",
+     "已画好的第 1–3 幕分镜"
+    ],
+    "actions": [
+     "requeue",
+     "retry-step"
+    ]
+   }
+  },
+  "run-done": {
+   "id": "run-done",
+   "title": "需求评审的三个习惯",
+   "kind": "video",
+   "templateId": "tpl-visual-note",
+   "ask": "稍微快一点，先提醒我三个重点，给新同事看",
+   "attachments": [
+    {
+     "id": "att-doc-habits",
+     "kind": "doc",
+     "name": "需求评审的三个习惯.md",
+     "meta": "Markdown · 6.2 KB",
+     "status": "ready",
+     "chars": 1840,
+     "excerpt": "刚加入团队的同学，第一次参加需求评审时常常不知道该看什么。这份说明只讲三个习惯，养成之后，评审会快很多。\n\n习惯一：先读目标\n打开需求，先找「这次要解决谁的什么问题」。如果一句话说不清，先别讨论方案，请提出人补一句目标。\n\n习惯二：再画边界\n写清楚这次不做什么。边界没写的需求，评审时最容易越聊越大。\n\n习惯三：最后对验收\n问一句：怎样算真的做完？能被别人照着检查的标准，才算验收标准。"
+    },
+    {
+     "id": "att-kb-checklist",
+     "kind": "kb",
+     "name": "评审检查清单",
+     "meta": "知识库 · 产品知识库 / 流程规范",
+     "status": "ready",
+     "chars": 920,
+     "excerpt": "1. 目标是否一句话说清\n2. 是否列出不做的事\n3. 验收标准能否被别人照着检查"
+    },
+    {
+     "id": "att-img-board",
+     "kind": "image",
+     "name": "评审白板照片.png",
+     "meta": "图片 · 1.4 MB",
+     "status": "ready",
+     "note": "作为第 3 幕画面参考"
+    },
+    {
+     "id": "att-doc-faq",
+     "kind": "doc",
+     "name": "附录：新同事常见问题.md",
+     "meta": "Markdown · 2.1 KB",
+     "status": "ready",
+     "chars": 610,
+     "excerpt": "问：评审要准备什么？答：读一遍目标和边界即可。"
+    },
+    {
+     "id": "att-img-sketch",
+     "kind": "image",
+     "name": "流程草图.jpg",
+     "meta": "图片 · 860 KB",
+     "status": "ready",
+     "note": "作为第 4 幕画面参考"
+    }
+   ],
+   "status": "done",
+   "stages": [
+    {
+     "key": "queued",
+     "label": "排队",
+     "status": "done",
+     "detail": "等了 4 分 06 秒，曾排第 4 位"
+    },
+    {
+     "key": "storyboard",
+     "label": "分镜",
+     "status": "done",
+     "detail": "6 幕分镜已保存"
+    },
+    {
+     "key": "voice",
+     "label": "配音",
+     "status": "done",
+     "detail": "6 幕旁白与字幕已完成"
+    },
+    {
+     "key": "compose",
+     "label": "合成",
+     "status": "done",
+     "detail": "1 分 36 秒 · 1080p"
+    },
+    {
+     "key": "done",
+     "label": "已生成",
+     "status": "done"
+    }
+   ],
+   "elapsedSec": 190,
+   "publish": {
+    "status": "none"
+   },
+   "createdAt": "今天 14:02",
+   "updatedAt": "今天 14:02",
+   "voice": "女声 · 稍快",
+   "keyPoints": [
+    {
+     "text": "先读目标：这次要解决谁的问题",
+     "atSec": 26
+    },
+    {
+     "text": "再画边界：哪些这次不做",
+     "atSec": 40
+    },
+    {
+     "text": "最后对验收：怎样算真的做完",
+     "atSec": 68
+    }
+   ],
+   "durationSec": 96,
+   "scenes": [
+    {
+     "index": 1,
+     "title": "片头",
+     "frameScene": 1,
+     "startSec": 0,
+     "caption": "需求评审，其实只要养成三个习惯。",
+     "status": "ready"
+    },
+    {
+     "index": 2,
+     "title": "三个重点",
+     "frameScene": 2,
+     "startSec": 12,
+     "caption": "先记住三件事：目标、边界、验收。",
+     "status": "ready"
+    },
+    {
+     "index": 3,
+     "title": "先读目标",
+     "frameScene": 3,
+     "startSec": 26,
+     "caption": "第一分钟只问一句：做完之后，谁的什么会变好？",
+     "status": "ready"
+    },
+    {
+     "index": 4,
+     "title": "再画边界",
+     "frameScene": 2,
+     "startSec": 40,
+     "caption": "第二个习惯：写清楚这次不做什么。",
+     "status": "ready"
+    },
+    {
+     "index": 5,
+     "title": "最后对验收",
+     "frameScene": 3,
+     "startSec": 68,
+     "caption": "最后问一句：怎样算真的做完？",
+     "status": "ready"
+    },
+    {
+     "index": 6,
+     "title": "收尾",
+     "frameScene": 1,
+     "startSec": 86,
+     "caption": "目标、边界、验收，下次评审试试看。",
+     "status": "ready"
+    }
+   ]
+  },
+  "run-publish-failed": {
+   "id": "run-publish-failed",
+   "title": "需求评审的三个习惯",
+   "kind": "video",
+   "templateId": "tpl-visual-note",
+   "ask": "稍微快一点，先提醒我三个重点，给新同事看",
+   "attachments": [
+    {
+     "id": "att-doc-habits",
+     "kind": "doc",
+     "name": "需求评审的三个习惯.md",
+     "meta": "Markdown · 6.2 KB",
+     "status": "ready",
+     "chars": 1840,
+     "excerpt": "刚加入团队的同学，第一次参加需求评审时常常不知道该看什么。这份说明只讲三个习惯，养成之后，评审会快很多。\n\n习惯一：先读目标\n打开需求，先找「这次要解决谁的什么问题」。如果一句话说不清，先别讨论方案，请提出人补一句目标。\n\n习惯二：再画边界\n写清楚这次不做什么。边界没写的需求，评审时最容易越聊越大。\n\n习惯三：最后对验收\n问一句：怎样算真的做完？能被别人照着检查的标准，才算验收标准。"
+    },
+    {
+     "id": "att-kb-checklist",
+     "kind": "kb",
+     "name": "评审检查清单",
+     "meta": "知识库 · 产品知识库 / 流程规范",
+     "status": "ready",
+     "chars": 920,
+     "excerpt": "1. 目标是否一句话说清\n2. 是否列出不做的事\n3. 验收标准能否被别人照着检查"
+    },
+    {
+     "id": "att-img-board",
+     "kind": "image",
+     "name": "评审白板照片.png",
+     "meta": "图片 · 1.4 MB",
+     "status": "ready",
+     "note": "作为第 3 幕画面参考"
+    },
+    {
+     "id": "att-doc-faq",
+     "kind": "doc",
+     "name": "附录：新同事常见问题.md",
+     "meta": "Markdown · 2.1 KB",
+     "status": "ready",
+     "chars": 610,
+     "excerpt": "问：评审要准备什么？答：读一遍目标和边界即可。"
+    },
+    {
+     "id": "att-img-sketch",
+     "kind": "image",
+     "name": "流程草图.jpg",
+     "meta": "图片 · 860 KB",
+     "status": "ready",
+     "note": "作为第 4 幕画面参考"
+    }
+   ],
+   "status": "done",
+   "stages": [
+    {
+     "key": "queued",
+     "label": "排队",
+     "status": "done",
+     "detail": "等了 4 分 06 秒，曾排第 4 位"
+    },
+    {
+     "key": "storyboard",
+     "label": "分镜",
+     "status": "done",
+     "detail": "6 幕分镜已保存"
+    },
+    {
+     "key": "voice",
+     "label": "配音",
+     "status": "done",
+     "detail": "6 幕旁白与字幕已完成"
+    },
+    {
+     "key": "compose",
+     "label": "合成",
+     "status": "done",
+     "detail": "1 分 36 秒 · 1080p"
+    },
+    {
+     "key": "done",
+     "label": "已生成",
+     "status": "done"
+    }
+   ],
+   "elapsedSec": 190,
+   "publish": {
+    "status": "failed",
+    "error": "网页托管这次没有响应（14:21）"
+   },
+   "createdAt": "今天 14:02",
+   "updatedAt": "今天 14:02",
+   "voice": "女声 · 稍快",
+   "keyPoints": [
+    {
+     "text": "先读目标：这次要解决谁的问题",
+     "atSec": 26
+    },
+    {
+     "text": "再画边界：哪些这次不做",
+     "atSec": 40
+    },
+    {
+     "text": "最后对验收：怎样算真的做完",
+     "atSec": 68
+    }
+   ],
+   "durationSec": 96,
+   "scenes": [
+    {
+     "index": 1,
+     "title": "片头",
+     "frameScene": 1,
+     "startSec": 0,
+     "caption": "需求评审，其实只要养成三个习惯。",
+     "status": "ready"
+    },
+    {
+     "index": 2,
+     "title": "三个重点",
+     "frameScene": 2,
+     "startSec": 12,
+     "caption": "先记住三件事：目标、边界、验收。",
+     "status": "ready"
+    },
+    {
+     "index": 3,
+     "title": "先读目标",
+     "frameScene": 3,
+     "startSec": 26,
+     "caption": "第一分钟只问一句：做完之后，谁的什么会变好？",
+     "status": "ready"
+    },
+    {
+     "index": 4,
+     "title": "再画边界",
+     "frameScene": 2,
+     "startSec": 40,
+     "caption": "第二个习惯：写清楚这次不做什么。",
+     "status": "ready"
+    },
+    {
+     "index": 5,
+     "title": "最后对验收",
+     "frameScene": 3,
+     "startSec": 68,
+     "caption": "最后问一句：怎样算真的做完？",
+     "status": "ready"
+    },
+    {
+     "index": 6,
+     "title": "收尾",
+     "frameScene": 1,
+     "startSec": 86,
+     "caption": "目标、边界、验收，下次评审试试看。",
+     "status": "ready"
+    }
+   ]
+  },
+  "run-published": {
+   "id": "run-published",
+   "title": "需求评审的三个习惯",
+   "kind": "video",
+   "templateId": "tpl-visual-note",
+   "ask": "稍微快一点，先提醒我三个重点，给新同事看",
+   "attachments": [
+    {
+     "id": "att-doc-habits",
+     "kind": "doc",
+     "name": "需求评审的三个习惯.md",
+     "meta": "Markdown · 6.2 KB",
+     "status": "ready",
+     "chars": 1840,
+     "excerpt": "刚加入团队的同学，第一次参加需求评审时常常不知道该看什么。这份说明只讲三个习惯，养成之后，评审会快很多。\n\n习惯一：先读目标\n打开需求，先找「这次要解决谁的什么问题」。如果一句话说不清，先别讨论方案，请提出人补一句目标。\n\n习惯二：再画边界\n写清楚这次不做什么。边界没写的需求，评审时最容易越聊越大。\n\n习惯三：最后对验收\n问一句：怎样算真的做完？能被别人照着检查的标准，才算验收标准。"
+    },
+    {
+     "id": "att-kb-checklist",
+     "kind": "kb",
+     "name": "评审检查清单",
+     "meta": "知识库 · 产品知识库 / 流程规范",
+     "status": "ready",
+     "chars": 920,
+     "excerpt": "1. 目标是否一句话说清\n2. 是否列出不做的事\n3. 验收标准能否被别人照着检查"
+    },
+    {
+     "id": "att-img-board",
+     "kind": "image",
+     "name": "评审白板照片.png",
+     "meta": "图片 · 1.4 MB",
+     "status": "ready",
+     "note": "作为第 3 幕画面参考"
+    },
+    {
+     "id": "att-doc-faq",
+     "kind": "doc",
+     "name": "附录：新同事常见问题.md",
+     "meta": "Markdown · 2.1 KB",
+     "status": "ready",
+     "chars": 610,
+     "excerpt": "问：评审要准备什么？答：读一遍目标和边界即可。"
+    },
+    {
+     "id": "att-img-sketch",
+     "kind": "image",
+     "name": "流程草图.jpg",
+     "meta": "图片 · 860 KB",
+     "status": "ready",
+     "note": "作为第 4 幕画面参考"
+    }
+   ],
+   "status": "done",
+   "stages": [
+    {
+     "key": "queued",
+     "label": "排队",
+     "status": "done",
+     "detail": "等了 4 分 06 秒，曾排第 4 位"
+    },
+    {
+     "key": "storyboard",
+     "label": "分镜",
+     "status": "done",
+     "detail": "6 幕分镜已保存"
+    },
+    {
+     "key": "voice",
+     "label": "配音",
+     "status": "done",
+     "detail": "6 幕旁白与字幕已完成"
+    },
+    {
+     "key": "compose",
+     "label": "合成",
+     "status": "done",
+     "detail": "1 分 36 秒 · 1080p"
+    },
+    {
+     "key": "done",
+     "label": "已生成",
+     "status": "done"
+    }
+   ],
+   "elapsedSec": 190,
+   "publish": {
+    "status": "done",
+    "siteId": "site-habits",
+    "siteTitle": "需求评审的三个习惯",
+    "at": "14:23"
+   },
+   "createdAt": "今天 14:02",
+   "updatedAt": "今天 14:02",
+   "voice": "女声 · 稍快",
+   "keyPoints": [
+    {
+     "text": "先读目标：这次要解决谁的问题",
+     "atSec": 26
+    },
+    {
+     "text": "再画边界：哪些这次不做",
+     "atSec": 40
+    },
+    {
+     "text": "最后对验收：怎样算真的做完",
+     "atSec": 68
+    }
+   ],
+   "durationSec": 96,
+   "scenes": [
+    {
+     "index": 1,
+     "title": "片头",
+     "frameScene": 1,
+     "startSec": 0,
+     "caption": "需求评审，其实只要养成三个习惯。",
+     "status": "ready"
+    },
+    {
+     "index": 2,
+     "title": "三个重点",
+     "frameScene": 2,
+     "startSec": 12,
+     "caption": "先记住三件事：目标、边界、验收。",
+     "status": "ready"
+    },
+    {
+     "index": 3,
+     "title": "先读目标",
+     "frameScene": 3,
+     "startSec": 26,
+     "caption": "第一分钟只问一句：做完之后，谁的什么会变好？",
+     "status": "ready"
+    },
+    {
+     "index": 4,
+     "title": "再画边界",
+     "frameScene": 2,
+     "startSec": 40,
+     "caption": "第二个习惯：写清楚这次不做什么。",
+     "status": "ready"
+    },
+    {
+     "index": 5,
+     "title": "最后对验收",
+     "frameScene": 3,
+     "startSec": 68,
+     "caption": "最后问一句：怎样算真的做完？",
+     "status": "ready"
+    },
+    {
+     "index": 6,
+     "title": "收尾",
+     "frameScene": 1,
+     "startSec": 86,
+     "caption": "目标、边界、验收，下次评审试试看。",
+     "status": "ready"
+    }
+   ]
+  },
+  "run-web-running": {
+   "id": "run-web-running",
+   "title": "需求评审的三个习惯",
+   "kind": "web",
+   "templateId": "tpl-guide-page",
+   "ask": "稍微快一点，先提醒我三个重点，给新同事看",
+   "attachments": [
+    {
+     "id": "att-doc-habits",
+     "kind": "doc",
+     "name": "需求评审的三个习惯.md",
+     "meta": "Markdown · 6.2 KB",
+     "status": "ready",
+     "chars": 1840,
+     "excerpt": "刚加入团队的同学，第一次参加需求评审时常常不知道该看什么。这份说明只讲三个习惯，养成之后，评审会快很多。\n\n习惯一：先读目标\n打开需求，先找「这次要解决谁的什么问题」。如果一句话说不清，先别讨论方案，请提出人补一句目标。\n\n习惯二：再画边界\n写清楚这次不做什么。边界没写的需求，评审时最容易越聊越大。\n\n习惯三：最后对验收\n问一句：怎样算真的做完？能被别人照着检查的标准，才算验收标准。"
+    },
+    {
+     "id": "att-kb-checklist",
+     "kind": "kb",
+     "name": "评审检查清单",
+     "meta": "知识库 · 产品知识库 / 流程规范",
+     "status": "ready",
+     "chars": 920,
+     "excerpt": "1. 目标是否一句话说清\n2. 是否列出不做的事\n3. 验收标准能否被别人照着检查"
+    },
+    {
+     "id": "att-img-board",
+     "kind": "image",
+     "name": "评审白板照片.png",
+     "meta": "图片 · 1.4 MB",
+     "status": "ready",
+     "note": "作为第 3 幕画面参考"
+    },
+    {
+     "id": "att-doc-faq",
+     "kind": "doc",
+     "name": "附录：新同事常见问题.md",
+     "meta": "Markdown · 2.1 KB",
+     "status": "ready",
+     "chars": 610,
+     "excerpt": "问：评审要准备什么？答：读一遍目标和边界即可。"
+    },
+    {
+     "id": "att-img-sketch",
+     "kind": "image",
+     "name": "流程草图.jpg",
+     "meta": "图片 · 860 KB",
+     "status": "ready",
+     "note": "作为第 4 幕画面参考"
+    }
+   ],
+   "status": "running",
+   "stages": [
+    {
+     "key": "queued",
+     "label": "排队",
+     "status": "done",
+     "detail": "等了 1 分 12 秒"
+    },
+    {
+     "key": "outline",
+     "label": "大纲",
+     "status": "done",
+     "detail": "4 节，页首 3 个重点"
+    },
+    {
+     "key": "layout",
+     "label": "版式",
+     "status": "done",
+     "detail": "版式已确定"
+    },
+    {
+     "key": "render",
+     "label": "生成页面",
+     "status": "running",
+     "detail": "正在生成第 3 / 4 节",
+     "progress": 64
+    },
+    {
+     "key": "done",
+     "label": "已生成",
+     "status": "pending"
+    }
+   ],
+   "elapsedSec": 96,
+   "publish": {
+    "status": "none"
+   },
+   "createdAt": "今天 14:02",
+   "updatedAt": "今天 14:02",
+   "keyPoints": [
+    {
+     "text": "先读目标",
+     "anchor": "goal"
+    },
+    {
+     "text": "再画边界",
+     "anchor": "scope"
+    },
+    {
+     "text": "最后对验收",
+     "anchor": "accept"
+    }
+   ],
+   "remainSec": 25,
+   "estimateBasis": "最近 20 次同模板任务的中位数",
+   "sections": [
+    {
+     "anchor": "points",
+     "title": "先记住三件事",
+     "body": "目标、边界、验收。评审时按这个顺序问，十分钟就能对齐。"
+    },
+    {
+     "anchor": "goal",
+     "title": "习惯一：先读目标",
+     "body": "打开需求，先找这次要解决谁的什么问题；一句话说不清，先请提出人补一句目标。"
+    },
+    {
+     "anchor": "scope",
+     "title": "习惯二：再画边界",
+     "body": "写清楚这次不做什么，把「以后再说」的想法记进待办，不塞进本次。"
+    },
+    {
+     "anchor": "accept",
+     "title": "习惯三：最后对验收",
+     "body": "问一句：怎样算真的做完？能被别人照着检查的标准，才算验收标准。"
+    }
+   ]
+  },
+  "run-web-done": {
+   "id": "run-web-done",
+   "title": "需求评审的三个习惯",
+   "kind": "web",
+   "templateId": "tpl-guide-page",
+   "ask": "稍微快一点，先提醒我三个重点，给新同事看",
+   "attachments": [
+    {
+     "id": "att-doc-habits",
+     "kind": "doc",
+     "name": "需求评审的三个习惯.md",
+     "meta": "Markdown · 6.2 KB",
+     "status": "ready",
+     "chars": 1840,
+     "excerpt": "刚加入团队的同学，第一次参加需求评审时常常不知道该看什么。这份说明只讲三个习惯，养成之后，评审会快很多。\n\n习惯一：先读目标\n打开需求，先找「这次要解决谁的什么问题」。如果一句话说不清，先别讨论方案，请提出人补一句目标。\n\n习惯二：再画边界\n写清楚这次不做什么。边界没写的需求，评审时最容易越聊越大。\n\n习惯三：最后对验收\n问一句：怎样算真的做完？能被别人照着检查的标准，才算验收标准。"
+    },
+    {
+     "id": "att-kb-checklist",
+     "kind": "kb",
+     "name": "评审检查清单",
+     "meta": "知识库 · 产品知识库 / 流程规范",
+     "status": "ready",
+     "chars": 920,
+     "excerpt": "1. 目标是否一句话说清\n2. 是否列出不做的事\n3. 验收标准能否被别人照着检查"
+    },
+    {
+     "id": "att-img-board",
+     "kind": "image",
+     "name": "评审白板照片.png",
+     "meta": "图片 · 1.4 MB",
+     "status": "ready",
+     "note": "作为第 3 幕画面参考"
+    },
+    {
+     "id": "att-doc-faq",
+     "kind": "doc",
+     "name": "附录：新同事常见问题.md",
+     "meta": "Markdown · 2.1 KB",
+     "status": "ready",
+     "chars": 610,
+     "excerpt": "问：评审要准备什么？答：读一遍目标和边界即可。"
+    },
+    {
+     "id": "att-img-sketch",
+     "kind": "image",
+     "name": "流程草图.jpg",
+     "meta": "图片 · 860 KB",
+     "status": "ready",
+     "note": "作为第 4 幕画面参考"
+    }
+   ],
+   "status": "done",
+   "stages": [
+    {
+     "key": "queued",
+     "label": "排队",
+     "status": "done",
+     "detail": "等了 1 分 12 秒"
+    },
+    {
+     "key": "outline",
+     "label": "大纲",
+     "status": "done",
+     "detail": "4 节，页首 3 个重点"
+    },
+    {
+     "key": "layout",
+     "label": "版式",
+     "status": "done",
+     "detail": "版式已确定"
+    },
+    {
+     "key": "render",
+     "label": "生成页面",
+     "status": "done",
+     "detail": "页面已生成"
+    },
+    {
+     "key": "done",
+     "label": "已生成",
+     "status": "done"
+    }
+   ],
+   "elapsedSec": 128,
+   "publish": {
+    "status": "none"
+   },
+   "createdAt": "今天 14:02",
+   "updatedAt": "今天 14:02",
+   "keyPoints": [
+    {
+     "text": "先读目标",
+     "anchor": "goal"
+    },
+    {
+     "text": "再画边界",
+     "anchor": "scope"
+    },
+    {
+     "text": "最后对验收",
+     "anchor": "accept"
+    }
+   ],
+   "sections": [
+    {
+     "anchor": "points",
+     "title": "先记住三件事",
+     "body": "目标、边界、验收。评审时按这个顺序问，十分钟就能对齐。"
+    },
+    {
+     "anchor": "goal",
+     "title": "习惯一：先读目标",
+     "body": "打开需求，先找这次要解决谁的什么问题；一句话说不清，先请提出人补一句目标。"
+    },
+    {
+     "anchor": "scope",
+     "title": "习惯二：再画边界",
+     "body": "写清楚这次不做什么，把「以后再说」的想法记进待办，不塞进本次。"
+    },
+    {
+     "anchor": "accept",
+     "title": "习惯三：最后对验收",
+     "body": "问一句：怎样算真的做完？能被别人照着检查的标准，才算验收标准。"
+    }
+   ]
+  }
+ },
+ "works": [
+  {
+   "runId": "run-voicing",
+   "title": "需求评审的三个习惯",
+   "kind": "video",
+   "templateId": "tpl-visual-note",
+   "status": "running",
+   "publishStatus": "none",
+   "summary": "配音第 3 / 6 幕",
+   "updatedAt": "刚刚"
+  },
+  {
+   "runId": "run-web-running",
+   "title": "需求评审的三个习惯（网页版）",
+   "kind": "web",
+   "templateId": "tpl-guide-page",
+   "status": "running",
+   "publishStatus": "none",
+   "summary": "生成页面第 3 / 4 节",
+   "updatedAt": "1 分钟前"
+  },
+  {
+   "runId": "run-queued",
+   "title": "接口命名约定（给后端新人）",
+   "kind": "video",
+   "templateId": "tpl-dark-notes",
+   "status": "queued",
+   "publishStatus": "none",
+   "summary": "排在第 4 位",
+   "updatedAt": "3 分钟前"
+  },
+  {
+   "runId": "run-failed",
+   "title": "新版报销流程，一分钟看懂",
+   "kind": "video",
+   "templateId": "tpl-visual-note",
+   "status": "failed",
+   "publishStatus": "none",
+   "summary": "第 4 幕配音超时，已保存稿件与其余 5 幕",
+   "updatedAt": "今天 11:40"
+  },
+  {
+   "runId": "run-timeout",
+   "title": "线上故障复盘模板怎么填",
+   "kind": "video",
+   "templateId": "tpl-dark-notes",
+   "status": "failed",
+   "publishStatus": "none",
+   "summary": "生成超时，已保存稿件与 3 幕分镜",
+   "updatedAt": "今天 09:52"
+  },
+  {
+   "runId": "run-publish-failed",
+   "title": "周会怎么开得更短",
+   "kind": "video",
+   "templateId": "tpl-whiteboard",
+   "status": "done",
+   "publishStatus": "failed",
+   "summary": "成片可播，发布可重试",
+   "updatedAt": "今天 10:15"
+  },
+  {
+   "runId": "run-published",
+   "title": "设计走查的五个检查点",
+   "kind": "video",
+   "templateId": "tpl-visual-note",
+   "status": "done",
+   "publishStatus": "done",
+   "summary": "1 分 22 秒 · 访问 46 次",
+   "updatedAt": "昨天 18:40"
+  },
+  {
+   "runId": "run-web-done",
+   "title": "客户来访接待流程",
+   "kind": "web",
+   "templateId": "tpl-card-digest",
+   "status": "done",
+   "publishStatus": "none",
+   "summary": "4 节 · 适配手机",
+   "updatedAt": "昨天 16:02"
+  },
+  {
+   "runId": "run-published",
+   "title": "第三季度客服复盘：三条可以立刻做的改进，以及我们为什么决定暂停两项旧流程",
+   "kind": "video",
+   "templateId": "tpl-visual-note",
+   "status": "done",
+   "publishStatus": "done",
+   "summary": "1 分 10 秒",
+   "updatedAt": "11-24"
+  },
+  {
+   "runId": "run-done",
+   "title": "新版报销流程，一分钟看懂",
+   "kind": "video",
+   "templateId": "tpl-whiteboard",
+   "status": "done",
+   "publishStatus": "none",
+   "summary": "2 分 11 秒",
+   "updatedAt": "11-24"
+  },
+  {
+   "runId": "run-published",
+   "title": "周会怎么开得更短",
+   "kind": "web",
+   "templateId": "tpl-guide-page",
+   "status": "done",
+   "publishStatus": "done",
+   "summary": "4 节 · 适配手机",
+   "updatedAt": "11-23"
+  },
+  {
+   "runId": "run-done",
+   "title": "线上故障复盘模板怎么填",
+   "kind": "video",
+   "templateId": "tpl-visual-note",
+   "status": "done",
+   "publishStatus": "none",
+   "summary": "2 分 13 秒",
+   "updatedAt": "11-23"
+  },
+  {
+   "runId": "run-published",
+   "title": "客户来访接待流程",
+   "kind": "video",
+   "templateId": "tpl-whiteboard",
+   "status": "done",
+   "publishStatus": "done",
+   "summary": "1 分 14 秒",
+   "updatedAt": "11-22"
+  },
+  {
+   "runId": "run-done",
+   "title": "设计走查的五个检查点",
+   "kind": "web",
+   "templateId": "tpl-card-digest",
+   "status": "done",
+   "publishStatus": "none",
+   "summary": "4 节 · 适配手机",
+   "updatedAt": "11-22"
+  },
+  {
+   "runId": "run-published",
+   "title": "新同事第一周：账号、权限与常用工具全清单（含常见问题与找谁帮忙）",
+   "kind": "video",
+   "templateId": "tpl-visual-note",
+   "status": "done",
+   "publishStatus": "done",
+   "summary": "1 分 16 秒",
+   "updatedAt": "11-21"
+  },
+  {
+   "runId": "run-done",
+   "title": "版本发布前的检查清单",
+   "kind": "video",
+   "templateId": "tpl-whiteboard",
+   "status": "done",
+   "publishStatus": "none",
+   "summary": "2 分 17 秒",
+   "updatedAt": "11-21"
+  },
+  {
+   "runId": "run-published",
+   "title": "如何写一份让人读得下去的周报",
+   "kind": "web",
+   "templateId": "tpl-guide-page",
+   "status": "done",
+   "publishStatus": "done",
+   "summary": "4 节 · 适配手机",
+   "updatedAt": "11-20"
+  },
+  {
+   "runId": "run-done",
+   "title": "数据看板指标口径说明",
+   "kind": "video",
+   "templateId": "tpl-visual-note",
+   "status": "done",
+   "publishStatus": "none",
+   "summary": "2 分 19 秒",
+   "updatedAt": "11-20"
+  },
+  {
+   "runId": "run-published",
+   "title": "会议纪要模板与示例",
+   "kind": "video",
+   "templateId": "tpl-whiteboard",
+   "status": "done",
+   "publishStatus": "done",
+   "summary": "1 分 20 秒",
+   "updatedAt": "11-19"
+  },
+  {
+   "runId": "run-done",
+   "title": "跨部门协作的沟通约定",
+   "kind": "web",
+   "templateId": "tpl-card-digest",
+   "status": "done",
+   "publishStatus": "none",
+   "summary": "4 节 · 适配手机",
+   "updatedAt": "11-19"
+  },
+  {
+   "runId": "run-published",
+   "title": "产品术语表速览",
+   "kind": "video",
+   "templateId": "tpl-visual-note",
+   "status": "done",
+   "publishStatus": "done",
+   "summary": "1 分 22 秒",
+   "updatedAt": "11-18"
+  },
+  {
+   "runId": "run-done",
+   "title": "用户访谈怎么做记录",
+   "kind": "video",
+   "templateId": "tpl-whiteboard",
+   "status": "done",
+   "publishStatus": "none",
+   "summary": "2 分 23 秒",
+   "updatedAt": "11-18"
+  },
+  {
+   "runId": "run-published",
+   "title": "缺陷提交的正确姿势",
+   "kind": "web",
+   "templateId": "tpl-guide-page",
+   "status": "done",
+   "publishStatus": "done",
+   "summary": "4 节 · 适配手机",
+   "updatedAt": "11-17"
+  },
+  {
+   "runId": "run-done",
+   "title": "年度目标拆解方法",
+   "kind": "video",
+   "templateId": "tpl-visual-note",
+   "status": "done",
+   "publishStatus": "none",
+   "summary": "2 分 25 秒",
+   "updatedAt": "11-17"
+  },
+  {
+   "runId": "run-published",
+   "title": "移动端适配常见问题",
+   "kind": "video",
+   "templateId": "tpl-whiteboard",
+   "status": "done",
+   "publishStatus": "done",
+   "summary": "1 分 26 秒",
+   "updatedAt": "11-16"
+  },
+  {
+   "runId": "run-done",
+   "title": "知识库目录整理规范",
+   "kind": "web",
+   "templateId": "tpl-card-digest",
+   "status": "done",
+   "publishStatus": "none",
+   "summary": "4 节 · 适配手机",
+   "updatedAt": "11-16"
+  },
+  {
+   "runId": "run-published",
+   "title": "新功能上线公告写法",
+   "kind": "video",
+   "templateId": "tpl-visual-note",
+   "status": "done",
+   "publishStatus": "done",
+   "summary": "1 分 28 秒",
+   "updatedAt": "11-15"
+  },
+  {
+   "runId": "run-done",
+   "title": "安全意识十分钟：密码、钓鱼邮件与外部分享链接的那些坑",
+   "kind": "video",
+   "templateId": "tpl-whiteboard",
+   "status": "done",
+   "publishStatus": "none",
+   "summary": "2 分 29 秒",
+   "updatedAt": "11-15"
+  },
+  {
+   "runId": "run-published",
+   "title": "代码评审礼仪",
+   "kind": "web",
+   "templateId": "tpl-guide-page",
+   "status": "done",
+   "publishStatus": "done",
+   "summary": "4 节 · 适配手机",
+   "updatedAt": "11-14"
+  },
+  {
+   "runId": "run-done",
+   "title": "如何申请测试环境",
+   "kind": "video",
+   "templateId": "tpl-visual-note",
+   "status": "done",
+   "publishStatus": "none",
+   "summary": "2 分 31 秒",
+   "updatedAt": "11-14"
+  }
+ ]
+}

@@ -1,7 +1,6 @@
 // 生成 design.json（画面、验收项、目标）。画面与验收是同一份数据的两面，用脚本写，避免手改 JSON 时编号对不上。
 //   node tools/manifest-src.mjs
-import { createHash } from 'node:crypto';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -97,7 +96,6 @@ const goals = [
   { id: 'G-09', goal: '未来的逐幕深入创作（本稿只给概念稿，不交接实现）', doneWhen: '开放前另起稿件：设置面板、逐幕编辑与版本、模板库分类', items: [], where: '后续稿件 map/quick-creation-studio；本稿画面 concept-settings、concept-studio 仅作方向参考' },
 ];
 
-const fixtures = readFileSync(path.join(dir, 'src/fixtures.ts'));
 const manifest = {
   project: 'prd-agent',
   title: 'MAP 快速创作',
@@ -110,9 +108,9 @@ const manifest = {
   prototype: 'dist/index.html',
   checks: 'checks/result.json',
   source: 'src',
-  docs: ['设计文档/源码差异.diff', '设计文档/目标与验收.md', 'spec/rules.md'],
-  notes: '快捷版：一份文档 + 一个模板 → 视频或网页，发布到网页托管。未来逐幕创作只给概念稿（concept-*），不交接实现。',
-  demoData: { file: 'src/fixtures.ts', note: `虚构稿件《需求评审的三个习惯》与虚构成员，覆盖排队、生成、单幕失败、超时、发布失败与成功、30 条作品；原型与实现取证都用这一份（sha256 ${createHash('sha256').update(fixtures).digest('hex').slice(0, 16)}）` },
+  docs: ['设计文档/源码差异.diff', '设计文档/目标与验收.md', '设计文档/演示数据.json', 'spec/rules.md'],
+  notes: '快捷版：一份文档 + 一个模板 → 视频或网页，发布到网页托管。未来逐幕创作只给概念稿（concept-*），不交接实现。演示数据见 设计文档/演示数据.json（虚构稿件与成员），原型与实现取证共用。',
+  /* 演示数据：CDS 发布接口当前不接受 demoData 字段，数据文件放进 docs（原型与实现取证共用这一份） */
   screens: screens.map(s => ({ ...s, impl: null })),
   acceptance,
   goals,

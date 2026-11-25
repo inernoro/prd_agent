@@ -142,9 +142,10 @@ const items = design.acceptance.map(a => {
   const auto = measure[a.id];
   const human = walkthrough[a.id];
   const status = auto ? (auto.pass ? 'passed' : 'failed') : human ? human.status : 'unverified';
-  return { id: a.id, ...(a.ruleId ? { ruleId: a.ruleId } : {}), name: `${a.id}${a.ruleId ? ' ' + a.ruleId : ''} ${a.rule}`.slice(0, 160), status, how: auto ? 'measure' : a.how, note: auto ? auto.note : human?.note ?? '' };
+  return { id: a.id, name: `${a.id}${a.ruleId ? ' ' + a.ruleId : ''} ${a.rule}`.slice(0, 160), pass: status === 'passed', note: auto ? `测量：${auto.note}` : human?.note ?? '未走查' };
 });
-items.push({ id: 'C-01', name: 'C-01 预览容器零报错（所有画面 × 主题）', status: errorsTotal ? 'failed' : 'passed', how: 'measure', note: errorsTotal ? results.screens.filter(s => s.errors.length).map(s => `${s.id}/${s.theme}：${s.errors[0]}`).join('；') : `${results.screens.length} 次打开，控制台与 CSP 报错 0 条` });
-const out = { total: items.length, passed: items.filter(i => i.status === 'passed').length, generatedAt: new Date().toISOString(), container: 'CSP 与桥接脚本取自 cds/src/services/design-prototype.ts，sandbox="allow-scripts"', items };
+items.push({ id: 'C-01', name: 'C-01 预览容器零报错（所有画面 × 主题）', pass: !errorsTotal, note: errorsTotal ? results.screens.filter(s => s.errors.length).map(s => `${s.id}/${s.theme}：${s.errors[0]}`).join('；') : `${results.screens.length} 次打开，控制台与 CSP 报错 0 条` });
+/* 字段与 CDS 发布接口一致：runAt、browser、url、total、passed、items[{ id, name, pass, note }] */
+const out = { runAt: new Date().toISOString().slice(0, 10), browser: 'Chromium（Playwright），本机还原 CDS 预览容器（正式 CSP 响应头 + decorateDesignPrototype 桥接脚本、sandbox="allow-scripts"），桌面 1440×900 与手机 390×844、浅色与深色', url: design.prototype, total: items.length, passed: items.filter(i => i.pass).length, items };
 writeFileSync(path.join(dir, 'checks/result.json'), JSON.stringify(out, null, 2) + '\n');
-console.log(JSON.stringify({ passed: out.passed, total: out.total, failed: items.filter(i => i.status !== 'passed').map(i => `${i.id} ${i.status}: ${i.note}`.slice(0, 300)) }, null, 1));
+console.log(JSON.stringify({ passed: out.passed, total: out.total, failed: items.filter(i => !i.pass).map(i => `${i.id}: ${i.note}`.slice(0, 300)) }, null, 1));
