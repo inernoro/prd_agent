@@ -82,6 +82,7 @@ export interface StoredCredential {
   revokedAt?: string;
   /** 身份层签发的凭据带到期时间；存量凭据没有这个字段 = 永不过期。 */
   expiresAt?: string;
+  expiryMode?: 'fixed';
   /** 归属主体。存量凭据没有主体（自检里显示为「未认领」）。 */
   principalId?: string;
 }
@@ -266,6 +267,10 @@ function describeDead(
   facts: CredentialFacts,
 ): CredentialSelfCheckResult {
   if (reason === 'expired') {
+    if (entry.expiryMode === 'fixed') {
+      return describeStored(base(kind, 'expired', `这把凭据已于 ${entry.expiresAt} 到期。`,
+        '请让签发方重新签发所需范围的项目密钥。'), entry);
+    }
     return describeStored(
       base(
         kind,
@@ -436,6 +441,10 @@ export function checkCredential(plaintext: string, facts: CredentialFacts): Cred
           ),
           entry,
         );
+      }
+      if (entry.expiresAt && Date.parse(entry.expiresAt) <= Date.now()) {
+        return describeStored(base('global', 'expired', `这把全局凭据已于 ${entry.expiresAt} 到期。`,
+          '请让签发方重新签发所需范围的密钥。'), entry);
       }
       return describeStored(
         base(
