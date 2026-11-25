@@ -245,7 +245,7 @@ export function fitComposerHeight(element: HTMLTextAreaElement) {
 /**
  * 底部唯一的输入框：一张卡片，输入区占满，左下角是「+」和已放入的资料（引用），右下角是小小的发送按钮。
  * 「+」加资料（知识库、上传、粘贴纪要、截图）是叠加动作不是二选一。
- * 卡片下方一行是本次生成的选项（产出形式、风格、快慢），再下一行写清按下去得到什么。
+ * 上传结果在资料卡内，运行状态在对话里。
  */
 export function WorkbenchComposer({
   id,
@@ -254,15 +254,12 @@ export function WorkbenchComposer({
   placeholder,
   disabled,
   plusItems,
-  showAddLabel,
   chips,
   attachments,
-  options,
   sendLabel,
   sendDisabled,
   sendDisabledReason,
   onSend,
-  hint,
   onPaste,
   onStop,
   stopDisabled,
@@ -273,15 +270,12 @@ export function WorkbenchComposer({
   placeholder: string;
   disabled?: boolean;
   plusItems: PlusMenuItem[];
-  showAddLabel?: boolean;
   chips: ComposerChip[];
   attachments?: { items: readonly DesignAttachmentItem[]; onRemove: (key: string) => void; onRetry: (key: string) => void; onReplace: (key: string) => void };
-  options?: ReactNode;
   sendLabel: string;
   sendDisabled?: boolean;
   sendDisabledReason?: string;
   onSend: () => void;
-  hint: string;
   onPaste?: (event: React.ClipboardEvent<HTMLTextAreaElement>) => void;
   onStop?: () => void;
   stopDisabled?: boolean;
@@ -316,11 +310,10 @@ export function WorkbenchComposer({
       <DropdownMenu.Trigger
         aria-label="添加资料"
         disabled={disabled}
-        className={`flex h-8 items-center justify-center rounded-lg border border-[color:var(--border-subtle)] transition-colors hover-bg-soft disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 ${showAddLabel ? 'gap-1 px-2.5 text-[12px] font-medium' : 'w-8'}`}
+        className="flex h-8 w-8 items-center justify-center rounded-lg border border-[color:var(--border-subtle)] transition-colors hover-bg-soft disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2"
         style={{ color: 'var(--text-primary)', background: plusOpen ? 'var(--bg-tertiary)' : undefined }}
       >
-        <Plus size={showAddLabel ? 15 : 18} />
-        {showAddLabel && <span>添加资料</span>}
+        <Plus size={18} />
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
         <DropdownMenu.Content
@@ -357,123 +350,83 @@ export function WorkbenchComposer({
   const sendTitle = canSend ? `${sendLabel}（Ctrl/⌘ + Enter）` : sendDisabledReason || sendLabel;
 
   return (
-    <div className="flex flex-col gap-2">
-      <div
-        data-composer-state={state}
-        className="flex flex-col rounded-2xl transition-shadow focus-within:ring-2 focus-within:ring-[color:var(--accent-primary)]"
-        style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)' }}
-      >
-        {!disabled && attachments && attachments.items.length > 0 && (
-          <div className="max-h-[min(30dvh,244px)] overflow-y-auto px-3 pt-3">
-            <WorkbenchAttachments {...attachments} />
-          </div>
-        )}
-        {!disabled && chips.length > 0 && (
-          <ul className="flex flex-wrap gap-1.5 px-3 pt-2.5" aria-label="已放入的资料">
-            {chips.map((chip) => (
-              <li key={chip.key} className="flex h-6 max-w-full items-center gap-1.5 rounded-md border border-[color:var(--border-subtle)] px-1.5 text-[11px]" style={{ background: 'var(--selection-bg)' }}>
-                {chip.icon && <chip.icon size={13} className="shrink-0 text-token-secondary" aria-hidden />}
-                {chip.tone === 'busy' && <MapSpinner size={11} />}
-                <span className="truncate text-token-primary" title={chip.label}>{chip.label}</span>
-                {chip.status && <span className="shrink-0 text-token-muted">{chip.status}</span>}
-                {chip.onRemove && (
-                  <button type="button" aria-label={`移除 ${chip.label}`} onClick={chip.onRemove} className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-token-muted hover-bg-soft">
-                    <X size={11} />
-                  </button>
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
-        <label htmlFor={id} className="sr-only">要求</label>
-        <textarea
-          ref={textareaRef}
-          id={id}
-          value={disabled ? '' : value}
-          onChange={(event) => onChange(event.target.value)}
-          onPaste={onPaste}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && canSend) {
-              event.preventDefault();
-              onSend();
-            }
-          }}
-          disabled={disabled}
-          rows={2}
-          maxLength={COMPOSER_MAX_LENGTH}
-          placeholder={placeholder}
-          style={{ minHeight: COMPOSER_MIN_HEIGHT, maxHeight: COMPOSER_MAX_HEIGHT }}
-          className="w-full resize-none overflow-y-auto bg-transparent px-3 pb-1 pt-2 text-base leading-relaxed text-token-primary outline-none placeholder:text-token-muted disabled:opacity-60 sm:text-[14px]"
-        />
-        <div className="flex items-end gap-2 px-2 pb-2 pt-1">
-          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
-            {plusMenu}
-          </div>
-          <div className="flex shrink-0 items-center gap-2">
-            {value.length >= COMPOSER_COUNTER_FROM && (
-              <span className="text-[11px] tabular-nums text-token-muted" aria-live="polite">{value.length}/{COMPOSER_MAX_LENGTH}</span>
-            )}
-            {disabled && onStop ? (
-              <button type="button" onClick={onStop} disabled={stopDisabled} aria-label="停止生成" title="停止生成" className="flex h-[34px] w-[34px] items-center justify-center rounded-[9px] bg-[var(--accent-primary)] text-[var(--accent-on-primary)] disabled:opacity-50">
-                {stopDisabled ? <MapSpinner size={13} /> : <Square size={13} fill="currentColor" aria-hidden />}
-              </button>
-            ) : <button
-              type="button"
-              onClick={onSend}
-              disabled={!canSend}
-              aria-label={sendLabel}
-              title={sendTitle}
-              className="flex h-[34px] w-[34px] items-center justify-center rounded-[9px] transition-colors disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2"
-              style={state === 'ready'
-                ? { background: 'var(--accent-primary)', color: 'var(--accent-on-primary)' }
-                : state === 'idle'
-                  ? { background: 'var(--text-primary)', color: 'var(--bg-input)' }
-                  : { background: 'var(--bg-tertiary)', color: 'var(--text-muted)' }}
-            >
-              {state === 'busy' ? <MapSpinner size={15} /> : <ArrowUp size={17} strokeWidth={2.4} />}
-            </button>}
-          </div>
+    <div
+      data-composer-state={state}
+      className="flex flex-col rounded-2xl transition-shadow focus-within:ring-2 focus-within:ring-[color:var(--accent-primary)]"
+      style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)' }}
+    >
+      {!disabled && attachments && attachments.items.length > 0 && (
+        <div className="max-h-[min(30dvh,244px)] overflow-y-auto px-3 pt-3">
+          <WorkbenchAttachments {...attachments} />
+        </div>
+      )}
+      {!disabled && chips.length > 0 && (
+        <ul className="flex flex-wrap gap-1.5 px-3 pt-2.5" aria-label="已放入的资料">
+          {chips.map((chip) => (
+            <li key={chip.key} className="flex h-6 max-w-full items-center gap-1.5 rounded-md border border-[color:var(--border-subtle)] px-1.5 text-[11px]" style={{ background: 'var(--selection-bg)' }}>
+              {chip.icon && <chip.icon size={13} className="shrink-0 text-token-secondary" aria-hidden />}
+              {chip.tone === 'busy' && <MapSpinner size={11} />}
+              <span className="truncate text-token-primary" title={chip.label}>{chip.label}</span>
+              {chip.status && <span className="shrink-0 text-token-muted">{chip.status}</span>}
+              {chip.onRemove && (
+                <button type="button" aria-label={`移除 ${chip.label}`} onClick={chip.onRemove} className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-token-muted hover-bg-soft">
+                  <X size={11} />
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      <label htmlFor={id} className="sr-only">要求</label>
+      <textarea
+        ref={textareaRef}
+        id={id}
+        value={disabled ? '' : value}
+        onChange={(event) => onChange(event.target.value)}
+        onPaste={onPaste}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && canSend) {
+            event.preventDefault();
+            onSend();
+          }
+        }}
+        disabled={disabled}
+        rows={2}
+        maxLength={COMPOSER_MAX_LENGTH}
+        placeholder={placeholder}
+        style={{ minHeight: COMPOSER_MIN_HEIGHT, maxHeight: COMPOSER_MAX_HEIGHT }}
+        className="w-full resize-none overflow-y-auto bg-transparent px-3 pb-1 pt-2 text-base leading-relaxed text-token-primary outline-none placeholder:text-token-muted disabled:opacity-60 sm:text-[14px]"
+      />
+      <div className="flex items-end gap-2 px-2 pb-2 pt-1">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+          {plusMenu}
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          {value.length >= COMPOSER_COUNTER_FROM && (
+            <span className="text-[11px] tabular-nums text-token-muted" aria-live="polite">{value.length}/{COMPOSER_MAX_LENGTH}</span>
+          )}
+          {disabled && onStop ? (
+            <button type="button" onClick={onStop} disabled={stopDisabled} aria-label="停止生成" title="停止生成" className="flex h-[34px] w-[34px] items-center justify-center rounded-[9px] bg-[var(--accent-primary)] text-[var(--accent-on-primary)] disabled:opacity-50">
+              {stopDisabled ? <MapSpinner size={13} /> : <Square size={13} fill="currentColor" aria-hidden />}
+            </button>
+          ) : <button
+            type="button"
+            onClick={onSend}
+            disabled={!canSend}
+            aria-label={sendLabel}
+            title={sendTitle}
+            className="flex h-[34px] w-[34px] items-center justify-center rounded-[9px] transition-colors disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2"
+            style={state === 'ready'
+              ? { background: 'var(--accent-primary)', color: 'var(--accent-on-primary)' }
+              : state === 'idle'
+                ? { background: 'var(--text-primary)', color: 'var(--bg-input)' }
+                : { background: 'var(--bg-tertiary)', color: 'var(--text-muted)' }}
+          >
+            {state === 'busy' ? <MapSpinner size={15} /> : <ArrowUp size={17} strokeWidth={2.4} />}
+          </button>}
         </div>
       </div>
-      {options && <div className="flex flex-wrap items-center gap-1.5">{options}</div>}
-      <p className="text-[11px] leading-relaxed text-token-muted">
-        {state === 'blocked' && sendDisabledReason
-          ? sendDisabledReason
-          : state === 'busy'
-            ? <span className="font-medium text-token-secondary">{sendLabel}</span>
-            // 按钮只剩图标，按下去得到什么由说明行交代；调用方的说明本身已含预计耗时与出处，不再拼按钮文字，免得耗时说两遍。
-            : hint}
-      </p>
     </div>
-  );
-}
-
-/** 输入框下方的选项块：点开显示当前值，与「+」一样只在需要时出现。 */
-export function OptionChip({ label, value, onClick, pressed, disabled, children }: {
-  label: string;
-  value?: ReactNode;
-  onClick?: () => void;
-  pressed?: boolean;
-  disabled?: boolean;
-  children?: ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      aria-label={label}
-      aria-pressed={pressed}
-      onClick={onClick}
-      disabled={disabled}
-      className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-[12px] transition-colors hover-bg-soft disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2"
-      style={{
-        border: '1px solid var(--border-default)',
-        color: 'var(--text-primary)',
-        background: pressed ? 'var(--bg-elevated)' : undefined,
-      }}
-    >
-      {children}
-      {value}
-    </button>
   );
 }
 

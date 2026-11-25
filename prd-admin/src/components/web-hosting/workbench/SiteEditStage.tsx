@@ -14,7 +14,6 @@ import { useOfflineExport } from '../useOfflineExport';
 import {
   AI_STREAM_PREVIEW_SANDBOX,
   DESIGN_PREVIEW_EVENT_SANDBOX,
-  REQUIRED_WEB_PAGE_RUNTIME,
   VERIFIED_PACKAGE_PREVIEW_SANDBOX,
   revisionChangeSummary,
   revisionLabel,
@@ -22,7 +21,7 @@ import {
 } from '../siteEditPreview';
 import { formatGenerationClock, runProvenanceText } from '../siteGenerateProgress';
 import { DESIGN_ATTACHMENT_ACCEPT, DESIGN_ATTACHMENT_DESCRIPTION, MAX_EDIT_SCREENSHOTS, recordedDesignAttachments, sentDesignAttachments, type DesignAttachmentItem } from '../designAttachments';
-import { RUNTIME_CARD_REGISTRY, runtimeCardTitle } from '../siteGenerateOptions';
+import { runtimeCardTitle } from '../siteGenerateOptions';
 import {
   GENERATION_STAGES,
   createRevisionMutationIdempotencyKey,
@@ -219,7 +218,6 @@ export default function SiteEditStage({
     })),
   ];
 
-  const runtimeCopy = RUNTIME_CARD_REGISTRY[REQUIRED_WEB_PAGE_RUNTIME];
   const sendBlocker = !requestRuntime
     ? missingRuntimeBlocker(runtimesLoaded)
     : screenshots.busy ? '截图上传完成后可发送'
@@ -334,6 +332,11 @@ export default function SiteEditStage({
           stopHint="线上版本不变，客户看到的还是原来那版；可以关掉窗口，回来接着看。"
         />
       )}
+      {runtimesLoaded && !requestRuntime && !generating && !recoveryNotice && (
+        <AssistantBubble tone="warning">
+          <p role="status">设计服务暂时不可用。你可以先写下修改要求，服务恢复后再发送。</p>
+        </AssistantBubble>
+      )}
       {recoveryNotice && (
         <AssistantBubble tone="warning">
           <p className="font-semibold">{recoveryNotice.title}</p>
@@ -382,7 +385,6 @@ export default function SiteEditStage({
         onSend={send}
         onStop={() => void stopGeneration()}
         stopDisabled={!activeRunId || stopRequested}
-        hint={`只改你点名的地方，先出草稿再发布${runtimeCopy ? ` · ${runtimeCopy.footnote}` : ''}`}
       />
       <input
         ref={screenshotInputRef}

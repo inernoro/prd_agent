@@ -13,10 +13,8 @@ function render(overrides: Partial<Parameters<typeof WorkbenchComposer>[0]> = {}
       placeholder="说说要做成什么样"
       plusItems={[{ id: 'upload', title: '上传文件', description: '文档或纪要', icon: FileText, onPick: () => undefined }]}
       chips={[]}
-      sendLabel="生成网页 · 约 9–12 分钟"
+      sendLabel="生成网页"
       onSend={() => undefined}
-      hint="点下去：对话里一步步显示进度"
-      options={<span data-testid="options">产出形式</span>}
       {...overrides}
     />,
   );
@@ -57,16 +55,15 @@ describe('WorkbenchComposer 状态', () => {
 });
 
 describe('WorkbenchComposer 布局', () => {
-  it('输入区、左下角的「+」与资料、右下角的发送按钮同在一张卡片里；选项在卡片之外', () => {
+  it('资料、文本输入与工具都在同一张卡片内', () => {
     const html = render({ value: '给合作方看', chips: [chip] });
     const inside = card(html);
     expect(inside).toContain('<textarea');
     expect(inside).toContain('aria-label="添加资料"');
     expect(inside).toContain('aria-label="已放入的资料"');
     expect(inside).toContain('会议纪要-1.md');
-    expect(inside).toContain('aria-label="生成网页 · 约 9–12 分钟"');
-    expect(inside).not.toContain('data-testid="options"');
-    expect(html).toContain('data-testid="options"');
+    expect(inside).toContain('aria-label="生成网页"');
+    expect(html).toBe(inside);
     expect(inside.indexOf('会议纪要-1.md')).toBeLessThan(inside.indexOf('<textarea'));
   });
 
@@ -99,21 +96,11 @@ describe('WorkbenchComposer 布局', () => {
     expect(inside).toContain('重新选择');
   });
 
-  it('发送按钮只放图标，按下去得到什么写在卡片下方的说明行，且不重复按钮文字', () => {
-    const html = render({ value: '给合作方看', hint: '点下去：对话里一步步显示进度；按经验值约 9–12 分钟' });
-    expect(html).toContain('data-composer-state="ready"');
-    const hintLine = html.slice(html.lastIndexOf('<p'));
-    expect(hintLine).toContain('点下去：对话里一步步显示进度；按经验值约 9–12 分钟');
-    // 耗时只说一次：按钮文字（含耗时）只在读屏标签与悬停提示里。
-    expect(hintLine).not.toContain('生成网页 · 约 9–12 分钟');
-  });
-
-  it('不能发送时按钮置灰，说明行换成原因', () => {
+  it('不能发送时按钮置灰，原因放在按钮提示中', () => {
     const html = render({ sendDisabled: true, sendDisabledReason: '资料还在上传，传完就能生成' });
     expect(html).toContain('data-composer-state="blocked"');
-    expect(html).toMatch(/<button[^>]*disabled=""[^>]*aria-label="生成网页 · 约 9–12 分钟"/);
-    expect(html).toContain('资料还在上传，传完就能生成');
-    expect(html).not.toContain('点下去：对话里一步步显示进度');
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*aria-label="生成网页"/);
+    expect(html).toContain('title="资料还在上传，传完就能生成"');
   });
 
   it('生成中输入与发送都锁住', () => {

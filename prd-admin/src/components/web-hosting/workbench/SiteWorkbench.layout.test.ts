@@ -66,12 +66,13 @@ describe('生成工作台布局契约', () => {
     expect(run).toContain('styleId: request.styleId');
   });
 
-  it('风格：画廊里预设与我的风格按 styleId、目录风格按 designSystemId 交给服务端；生成前右边是真实样张', () => {
+  it('风格：保留默认或恢复的风格契约与真实样张；风格参考从添加资料进入', () => {
     // 哪些选择带 styleId 的判据收在 StyleGallery.selectionStyleId 一处，行为由 StyleGallery.test 断言。
     expect(newStage).toContain('styleId: selectionStyleId(styleSelection),');
     expect(newStage).toContain("designSystemId: styleSelection?.kind === 'design-system' ? styleSelection.designSystemId : null,");
     expect(run).toContain('designSystemId: request.designSystemId ?? null,');
-    expect(newStage).toContain('<StyleGallery');
+    expect(newStage).not.toMatch(/<StyleGallery[\s/>]/);
+    expect(newStage).toContain("title: '参考网页'");
     expect(newStage).toContain('<StyleThumbnail');
     // 样张标题先换成资料的标题，让人预判成品长什么样。
     expect(newStage).toContain('title={sampleTitle}');
