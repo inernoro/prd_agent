@@ -418,9 +418,8 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
         var d = string.IsNullOrWhiteSpace(domain) ? null : AppDomainPaths.NormDomain(domain);
         var t = string.IsNullOrWhiteSpace(type) ? null : AppDomainPaths.NormType(type);
 
-        // 视频域只探测成片扩展，避免对其他安全护栏路径发起无效请求。
-        var exts = string.Equals(d, AppDomainPaths.DomainVideoAgent, StringComparison.Ordinal)
-                   && string.Equals(t, AppDomainPaths.TypeVideo, StringComparison.Ordinal)
+        // 成片按视频类型读取，兼容独立创作和网页托管保存的 MP4。
+        var exts = string.Equals(t, AppDomainPaths.TypeVideo, StringComparison.Ordinal)
             ? new[] { "mp4" }
             : new[] { "png", "jpg", "jpeg", "webp", "gif", "ttf", "otf", "woff", "woff2", "txt" };
         foreach (var ext in exts)

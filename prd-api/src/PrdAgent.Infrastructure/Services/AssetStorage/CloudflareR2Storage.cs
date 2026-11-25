@@ -126,7 +126,8 @@ public sealed class CloudflareR2Storage : IAssetStorage, IDisposable
         var d = string.IsNullOrWhiteSpace(domain) ? null : AppDomainPaths.NormDomain(domain);
         var t = string.IsNullOrWhiteSpace(type) ? null : AppDomainPaths.NormType(type);
 
-        var exts = CandidateExtensions(d, t);
+        var exts = string.Equals(t, AppDomainPaths.TypeVideo, StringComparison.Ordinal)
+            ? ["mp4"] : CandidateExtensions(d, t);
         foreach (var ext in exts)
         {
             if (!string.IsNullOrWhiteSpace(d) && !string.IsNullOrWhiteSpace(t))
