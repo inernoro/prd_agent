@@ -59,26 +59,37 @@ export function verifyCodeFilmInput(
  * promote arbitrary assistant prose into the user's reply.
  */
 export function codeFilmDefaultAnswers(content: string): string | undefined {
-  const formBlocks = [...content.matchAll(/<question-form>\s*([\s\S]{1,8192}?)\s*<\/question-form>/gi)];
+  const formBlocks = [...content.matchAll(/<(question-form|ask-question)\b([^>]{0,512})>\s*([\s\S]{1,8192}?)\s*<\/\1>/gi)];
   if (formBlocks.length !== 1) return undefined;
+  const [, , attributes, body] = formBlocks[0];
   let candidate: unknown;
   try {
-    candidate = JSON.parse(formBlocks[0][1]);
+    candidate = JSON.parse(body.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, ''));
   } catch {
     return undefined;
   }
   if (!candidate || typeof candidate !== 'object') return undefined;
   const form = candidate as Record<string, unknown>;
   const token = (value: unknown): value is string => typeof value === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,64}$/.test(value);
-  const questions = form.questions ?? form.fields;
-  const formId = token(form.id) ? form.id : 'brief';
+  const questions = Array.isArray(candidate) ? candidate : form.questions;
+  const id = /(?:^|\s)id=(?:"([^"]+)"|'([^']+)')/i.exec(attributes);
+  const candidateId = id?.[1] ?? id?.[2] ?? form.id;
+  const formId = token(candidateId) ? candidateId : 'discovery';
   if (!Array.isArray(questions) || questions.length < 1 || questions.length > 6) return undefined;
   const values = new Map<string, string>();
   for (const entry of questions) {
     if (!entry || typeof entry !== 'object') return undefined;
     const field = entry as Record<string, unknown>;
-    if ((field.type !== 'radio' && field.type !== 'select') || !token(field.id) || !token(field.defaultValue)
-        || values.has(field.id) || !Array.isArray(field.options)
+    if (!token(field.id) || values.has(field.id)) return undefined;
+    // OpenDesign's untouched optional free-text fields are submitted as skipped.
+    // A required free-text question needs an actual user answer.
+    if (field.type === 'text' || field.type === 'textarea') {
+      if (field.required === true) return undefined;
+      values.set(field.id, '(skipped)');
+      continue;
+    }
+    if ((field.type !== 'radio' && field.type !== 'select') || !token(field.defaultValue)
+        || !Array.isArray(field.options)
         || !field.options.some(option => option && option.value === field.defaultValue)) return undefined;
     values.set(field.id, field.defaultValue);
   }

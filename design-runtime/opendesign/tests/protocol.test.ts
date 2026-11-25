@@ -176,9 +176,23 @@ ${JSON.stringify(value)}
     );
   });
 
+  it('uses the native tagged form identity and leaves optional text unanswered', () => {
+    const questions = [
+      { ...form.questions[0], defaultValue: '90s', options: [{ label: '约 90 秒', value: '90s' }] },
+      { id: 'audio', type: 'textarea', defaultValue: '无，按默认方案制作。' },
+      { ...form.questions[2], id: 'storyboard' },
+    ];
+    const markup = `<question-form id="adr-film-brief" title="确认短片制作方向">
+${JSON.stringify({ questions })}
+</question-form>`;
+    expect(codeFilmDefaultAnswers(markup)).toBe(
+      '[form answers — adr-film-brief]\n- duration: 90s\n- audio: (skipped)\n- storyboard: direct',
+    );
+  });
+
   it('skips custom questions, invalid choices and ambiguous forms', () => {
     expect(codeFilmDefaultAnswers(body(form) + body(form))).toBeUndefined();
-    expect(codeFilmDefaultAnswers(body({ ...form, questions: [{ id: 'draft', type: 'textarea' }] }))).toBeUndefined();
+    expect(codeFilmDefaultAnswers(body({ ...form, questions: [{ id: 'draft', type: 'textarea', required: true }] }))).toBeUndefined();
     expect(codeFilmDefaultAnswers(body({
       ...form, questions: [{ ...form.questions[0], defaultValue: '300s' }],
     }))).toBeUndefined();
