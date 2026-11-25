@@ -1,0 +1,3096 @@
+diff --git a/cds/src/routes/access-requests.ts b/cds/src/routes/access-requests.ts
+index f902a787b..12000436b 100644
+--- a/cds/src/routes/access-requests.ts
++++ b/cds/src/routes/access-requests.ts
+@@ -427,6 +427,9 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
+         scope: 'rw',
+         access: { canCreateProjects: true, projects: [] },
+         oneTime: true,
++        issuedVia: 'access-request',
++        accessRequestId: item.id,
++        requesterAgentName: item.agentName,
+         creationTarget: target,
+         expiresAt: new Date(now.getTime() + 300_000).toISOString(),
+         createdAt: now.toISOString(),
+@@ -492,6 +495,9 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
+     const keyEntry: AgentKey = {
+       id: keyId,
+       label: `授权密钥 (申请 ${item.id} · ${item.agentName})`,
++      issuedVia: 'access-request',
++      accessRequestId: item.id,
++      requesterAgentName: item.agentName,
+       hash: sha256(plaintext),
+       scope: 'rw',
+       ...(item.designAccess ? {
+diff --git a/cds/src/routes/identity-connections.ts b/cds/src/routes/identity-connections.ts
+index 427aa4750..b96a645ba 100644
+--- a/cds/src/routes/identity-connections.ts
++++ b/cds/src/routes/identity-connections.ts
+@@ -91,7 +91,8 @@ export function createIdentityConnectionsRouter({ stateService: state, authServi
+           const user: UserCredential = { id: id('uc_'), principalId, projectIds: [project.id], hash: hash(userPlain),
+             createdAt: new Date().toISOString(), createdBy: r.decidedBy, expiresAt: daysFromNow(USER_CREDENTIAL_TTL_DAYS), issuedCount: 1 };
+           const key: AgentKey = { id: id(''), principalId, hash: hash(projectPlain), scope: 'rw', label: `设备接入 ${r.agentName}`,
+-            createdAt: new Date().toISOString(), createdBy: r.decidedBy, expiresAt: daysFromNow(PROJECT_CREDENTIAL_TTL_DAYS), issuedByCredentialId: user.id };
++            createdAt: new Date().toISOString(), createdBy: r.decidedBy, expiresAt: daysFromNow(PROJECT_CREDENTIAL_TTL_DAYS), issuedByCredentialId: user.id,
++            issuedVia: 'device-recovery', requesterAgentName: r.agentName };
+           const envelope = encrypt({ userCredential: userPlain, authorizationKey: projectPlain,
+             projectId: project.id, projectName: project.aliasName || project.name, projectSlug: project.slug }, token, r.id);
+           try {
+diff --git a/cds/src/routes/identity.ts b/cds/src/routes/identity.ts
+index 0bf16ae01..a27f0d1e1 100644
+--- a/cds/src/routes/identity.ts
++++ b/cds/src/routes/identity.ts
+@@ -247,6 +247,7 @@ export function createIdentityRouter(deps: IdentityRouterDeps): Router {
+       createdAt: new Date().toISOString(),
+       principalId: principalId.principalId,
+       issuedByCredentialId: principalId.credentialId,
++      issuedVia: 'self-service',
+       expiresAt: daysFromNow(PROJECT_CREDENTIAL_TTL_DAYS),
+     };
+     stateService.addAgentKey(project.id, key);
+diff --git a/cds/src/routes/projects.ts b/cds/src/routes/projects.ts
+index dddf6195c..82aa6e148 100644
+--- a/cds/src/routes/projects.ts
++++ b/cds/src/routes/projects.ts
+@@ -82,10 +82,11 @@ import * as nodeFs from 'node:fs';
+ import * as nodePath from 'node:path';
+ import * as nodeOs from 'node:os';
+ import { spawn } from 'node:child_process';
+-import type { IShellExecutor, Project, ProjectAgentProfile, CdsConfig, AgentKey, AgentKeyAccess, BuildProfile, InfraService } from '../types.js';
++import type { IShellExecutor, Project, ProjectAgentProfile, CdsConfig, AgentKey, AgentKeyAccess, GlobalAgentKey, BuildProfile, InfraService } from '../types.js';
+ import { combinedOutput } from '../types.js';
+ import { workloadCgroupFlags } from '../services/workload-cgroup.js';
+ import { isAuthenticatedHuman, isHumanSystemOwner, type HumanAuthContext } from '../services/human-auth.js';
++import { buildAgentKeyCatalog, parseRequestedKeyExpiry } from '../services/agent-key-catalog.js';
+ import { canHumanAccessProject, isScopedHuman } from '../services/human-project-access.js';
+ 
+ type OnboardingRuntime = NonNullable<Project['onboardingRuntime']>;
+@@ -339,7 +340,7 @@ function mintProjectAgentKey(
+   project: Project,
+   label: string,
+   createdBy?: string,
+-  restrictions: Pick<AgentKey, 'planningAccess' | 'designAccess'> = {},
++  restrictions: Pick<AgentKey, 'planningAccess' | 'designAccess' | 'issuedVia' | 'issuedByGlobalKeyId' | 'requesterAgentName' | 'expiresAt' | 'expiryMode'> = {},
+ ): { keyId: string; plaintext: string; preview: string } {
+   const slugHead = project.slug.slice(0, 12).toLowerCase();
+   const suffix = randomBytes(32).toString('base64url');
+@@ -3408,11 +3409,17 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
+         && callerAccess.access.projects.includes(newProject.id);
+       if (!already) {
+         try {
++          const parentKey = stateService.getGlobalAgentKeys().find((key) => key.id === callerAccess.keyId);
+           issuedProjectKey = mintProjectAgentKey(
+             stateService,
+             newProject,
+             `建项目时签发 ${new Date().toISOString().replace('T', ' ').slice(0, 16)}`,
+             (req as unknown as { cdsUser?: { login?: string } }).cdsUser?.login,
++            {
++              issuedVia: 'project-create',
++              issuedByGlobalKeyId: callerAccess.keyId,
++              ...(parentKey?.requesterAgentName ? { requesterAgentName: parentKey.requesterAgentName } : {}),
++            },
+           );
+         } catch {
+           // 签发失败不阻断建项目本身:项目已建好,用户仍可去项目卡手动签 key。
+@@ -4543,7 +4550,11 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
+       return;
+     }
+ 
+-    const body = (req.body || {}) as { label?: string; planningAccess?: unknown; designAccess?: unknown };
++    const body = (req.body || {}) as { label?: string; planningAccess?: unknown; designAccess?: unknown; expiresAt?: unknown };
++    const expiry = parseRequestedKeyExpiry(body.expiresAt);
++    if (expiry && typeof expiry === 'object') {
++      return res.status(400).json({ error: 'invalid_expires_at', message: expiry.error });
++    }
+     if (body.planningAccess !== undefined && body.planningAccess !== 'read' && body.planningAccess !== 'propose') {
+       return res.status(400).json({ error: 'invalid_planning_access', message: '请选择工程规划只读或提案权限' });
+     }
+@@ -4570,7 +4581,12 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
+     let minted: { keyId: string; plaintext: string; preview: string };
+     try {
+       minted = mintProjectAgentKey(stateService, project, label, account?.githubLogin || account?.login || account?.username, {
+-        planningAccess: body.planningAccess, designAccess: body.designAccess,
++        ...(body.planningAccess ? { planningAccess: body.planningAccess } : {}),
++        ...(body.designAccess ? { designAccess: body.designAccess } : {}),
++        // 有人类会话 = 用户在页面签发；没有 = 机器凭据（项目 Key / 全局 Key /
++        // bootstrap 静态 Key）经接口签发，列表里归为 AI Agent 签发。
++        issuedVia: account ? 'console' : 'machine-api',
++        ...(expiry ? { expiresAt: expiry, expiryMode: 'fixed' as const } : {}),
+       });
+     } catch (err) {
+       res.status(500).json({
+@@ -4670,7 +4686,13 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
+     const body = (req.body || {}) as {
+       label?: string;
+       access?: { canCreateProjects?: unknown; projects?: unknown };
++      expiresAt?: unknown;
+     };
++    const expiry = parseRequestedKeyExpiry(body.expiresAt);
++    if (expiry && typeof expiry === 'object') {
++      res.status(400).json({ error: 'invalid_expires_at', message: expiry.error });
++      return;
++    }
+     const now = new Date();
+     const defaultLabel = 'Global 签发于 ' + now.toISOString().replace('T', ' ').slice(0, 16);
+     const label = typeof body.label === 'string' && body.label.trim()
+@@ -4728,16 +4750,21 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
+     const hash = createHash('sha256').update(plaintext).digest('hex');
+     const keyId = randomBytes(4).toString('hex');
+ 
+-    const ghUser = (req as unknown as { cdsUser?: { login?: string } }).cdsUser;
++    const ghUser = isAuthenticatedHuman(req) ? (req as HumanAuthContext).cdsUser : undefined;
+ 
+-    const entry = {
++    const entry: GlobalAgentKey = {
+       id: keyId,
+       label,
+       hash,
+       scope: 'rw' as const,
+       access,
++      // 签发全局 Key 已拒绝所有机器 Agent Key；剩下没有人类会话的只可能是
++      // bootstrap 静态 Key，归为机器接口签发。
++      issuedVia: isAuthenticatedHuman(req) ? 'console' : 'machine-api',
++      ...(expiry ? { expiresAt: expiry } : {}),
+       createdAt: now.toISOString(),
+-      createdBy: ghUser?.login || undefined,
++      // 与项目 Key 签发同一取名口径：本地账号没有 login，只取 login 会让签发人留空。
++      createdBy: ghUser?.githubLogin || ghUser?.login || ghUser?.username || undefined,
+     };
+     try {
+       stateService.addGlobalAgentKey(entry);
+@@ -4757,6 +4784,30 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
+     });
+   });
+ 
++  // GET /api/global-agent-keys/catalog?project=<id> — Agent Key 管理页的合并列表。
++  //
++  // 项目级 + 全局 Key 一张表，服务端给出签发来源、与鉴权同口径的当前状态、
++  // 项目名和到期方式（services/agent-key-catalog.ts）。挂在 global-agent-keys
++  // 前缀下是刻意的：这个前缀已经接入成员拒绝（human-project-access 未知路由
++  // 一律拒）、集群主节点统一授权（clusterAuthorityPath）和嵌入式小组件的硬拒绝
++  // 清单，换一个新前缀就得在三处各补一次，漏一处就是一条越权读口。
++  //
++  // 它暴露全部项目的 Key 元数据，所以任何机器 Agent Key 都不能读（与签发、吊销
++  // 全局 Key 同一道门）；人类系统所有者与 bootstrap 静态 Key 可读。
++  router.get('/global-agent-keys/catalog', (req, res) => {
++    const machineKey = assertNotMachineAgentKey(req as unknown as { cdsProjectKey?: unknown; cdsAccess?: unknown });
++    if (machineKey) {
++      res.status(machineKey.status).json(machineKey.body);
++      return;
++    }
++    const projectId = typeof req.query.project === 'string' && req.query.project ? req.query.project : undefined;
++    if (projectId && !stateService.getProject(projectId)) {
++      res.status(404).json({ error: 'project_not_found', message: `项目 ${projectId} 不存在，请从项目列表重新进入。` });
++      return;
++    }
++    res.json({ keys: buildAgentKeyCatalog({ state: stateService, projectId }) });
++  });
++
+   router.get('/global-agent-keys', (_req, res) => {
+     const entries = stateService.getGlobalAgentKeys();
+     res.json({
+diff --git a/cds/src/server.ts b/cds/src/server.ts
+index 97c43d624..c8089ca98 100644
+--- a/cds/src/server.ts
++++ b/cds/src/server.ts
+@@ -1355,6 +1355,7 @@ export function resolveApiLabel(method: string, path: string): string {
+     // Global / 自更新 / 其他
+     'GET /global-agent-keys': '列出全局 Agent Keys',
+     'POST /global-agent-keys': '创建全局 Agent Key',
++    'GET /global-agent-keys/catalog': '列出全部 Agent Key',
+     'POST /self-update-dry-run': '自更新预检',
+     'POST /self-force-sync': '自更新强制更新',
+     'POST /accept-invite': '接受邀请',
+diff --git a/cds/src/services/agent-key-catalog.ts b/cds/src/services/agent-key-catalog.ts
+new file mode 100644
+index 000000000..6ea92d116
+--- /dev/null
++++ b/cds/src/services/agent-key-catalog.ts
+@@ -0,0 +1,286 @@
++/**
++ * Agent Key 目录（2026-11-25，Agent Key 管理一期）。
++ *
++ * 把项目级 Key（cdsp_）和全局 Key（cdsg_）合成一张列表，并在服务端给出三件
++ * 前端不该自己猜的事：
++ *
++ * 1. **签发来源**：用户签发 / AI Agent 签发 / 来源未记录。新 Key 读 issuedVia；
++ *    存量 Key 只读结构化字段，其余如实标为未记录，**不解析标签文字**。
++ * 2. **当前状态**：与鉴权同一判据（StateService.agentKeyUsability /
++ *    globalAgentKeyUsability）。旧列表只看 revokedAt，把已过期、随主体停用的
++ *    Key 报成「未吊销」。
++ * 3. **范围与到期方式**：项目名、能否建项目、受限权限、永久 / 固定 / 滑动续期。
++ *
++ * 纯函数，不写状态；路由层只负责鉴权与筛选参数。
++ */
++import type { AgentKey, AgentKeyIssuedVia, GlobalAgentKey, Principal, Project } from '../types.js';
++import { StateService } from './state.js';
++
++/** 「即将过期」提示的窗口。固定到期日在这之内才提醒，避免新签的 7 天 Key 一出生就报警。 */
++export const AGENT_KEY_EXPIRING_WINDOW_MS = 3 * 24 * 60 * 60 * 1000;
++
++export type AgentKeySourceView =
++  | { type: 'user'; via: 'console'; actor?: string }
++  | {
++    type: 'agent';
++    via: Exclude<AgentKeyIssuedVia, 'console'> | 'user-credential';
++    agentName?: string;
++    approvedBy?: string;
++    requestId?: string;
++    credentialId?: string;
++    parentKeyId?: string;
++  }
++  | { type: 'unknown'; recordedAccount?: string; claimedBy?: string; claimedAt?: string };
++
++export type AgentKeyStatusCode =
++  | 'active'
++  | 'expiring'
++  | 'expired'
++  | 'revoked'
++  | 'principal-disabled'
++  | 'principal-missing'
++  | 'grant-revoked'
++  | 'grant-pending';
++
++export type AgentKeyPermission =
++  | 'full'
++  | 'planning-read'
++  | 'planning-propose'
++  | 'design-read'
++  | 'design-feedback'
++  | 'design-publish';
++
++export interface AgentKeyCatalogEntry {
++  id: string;
++  kind: 'project' | 'global';
++  label: string;
++  /** 项目级 Key 的归属项目；全局 Key 无。 */
++  projectId?: string;
++  access: {
++    /** project = 指定项目；all = 全部项目（含以后新建的）；create = 只能创建新项目。 */
++    scope: 'project' | 'all' | 'create';
++    projects: Array<{ id: string; name: string; missing?: true }>;
++    canCreateProjects: boolean;
++    permission: AgentKeyPermission;
++    /** 存量全局 Key 没有 access 字段，鉴权按全权解析；如实告诉用户。 */
++    legacyFullAccess?: true;
++    /** 一次性建项目授权：建成首个项目后自动吊销。 */
++    oneTime?: true;
++  };
++  createdAt: string;
++  createdBy?: string;
++  lastUsedAt?: string;
++  revokedAt?: string;
++  expiresAt?: string;
++  /** never = 永久；fixed = 到点失效；sliding = 闲置到期，使用即续期。 */
++  expiry: 'never' | 'fixed' | 'sliding';
++  source: AgentKeySourceView;
++  status: { code: AgentKeyStatusCode; usable: boolean };
++}
++
++export interface AgentKeyCatalogInput {
++  state: StateService;
++  /** 只看能访问该项目的 Key（项目级 + 覆盖它的全局 Key）。 */
++  projectId?: string;
++  now?: number;
++}
++
++function projectName(p: Project): string {
++  return p.aliasName || p.name || p.slug || p.id;
++}
++
++function principalName(principals: readonly Principal[], id?: string): string | undefined {
++  if (!id) return undefined;
++  return principals.find((p) => p.id === id)?.name;
++}
++
++/** 签发来源的唯一判定。导出给单测；路由与前端都不另写一份。 */
++export function deriveAgentKeySource(
++  entry: Pick<AgentKey, 'issuedVia' | 'createdBy' | 'requesterAgentName' | 'accessRequestId' | 'issuedByCredentialId' | 'issuedByGlobalKeyId' | 'designAccessRequestId' | 'claimedBy' | 'claimedAt' | 'principalId'>,
++  principals: readonly Principal[] = [],
++): AgentKeySourceView {
++  const agentName = entry.requesterAgentName || principalName(principals, entry.principalId);
++  const withName = agentName ? { agentName } : {};
++  switch (entry.issuedVia) {
++    case 'console':
++      return { type: 'user', via: 'console', ...(entry.createdBy ? { actor: entry.createdBy } : {}) };
++    case 'machine-api':
++      return { type: 'agent', via: 'machine-api', ...withName };
++    case 'access-request':
++      return {
++        type: 'agent', via: 'access-request', ...withName,
++        ...(entry.createdBy ? { approvedBy: entry.createdBy } : {}),
++        ...(entry.accessRequestId ? { requestId: entry.accessRequestId } : {}),
++      };
++    case 'self-service':
++      return {
++        type: 'agent', via: 'self-service', ...withName,
++        ...(entry.issuedByCredentialId ? { credentialId: entry.issuedByCredentialId } : {}),
++      };
++    case 'device-recovery':
++      return {
++        type: 'agent', via: 'device-recovery', ...withName,
++        ...(entry.createdBy ? { approvedBy: entry.createdBy } : {}),
++        ...(entry.issuedByCredentialId ? { credentialId: entry.issuedByCredentialId } : {}),
++      };
++    case 'project-create':
++      return {
++        type: 'agent', via: 'project-create', ...withName,
++        ...(entry.issuedByGlobalKeyId ? { parentKeyId: entry.issuedByGlobalKeyId } : {}),
++      };
++    default:
++      break;
++  }
++  // 存量 Key：只认结构化字段。issuedByCredentialId 只可能来自用户级凭据通道
++  // （自助签发或设备接入），但存量数据分不清是哪一条，所以只说到这一层。
++  if (entry.issuedByCredentialId) {
++    return { type: 'agent', via: 'user-credential', ...withName, credentialId: entry.issuedByCredentialId };
++  }
++  // 设计权限只能经 Agent 申请、人批准获得（routes/access-requests.ts）。
++  if (entry.designAccessRequestId) {
++    return {
++      type: 'agent', via: 'access-request', ...withName, requestId: entry.designAccessRequestId,
++      ...(entry.createdBy ? { approvedBy: entry.createdBy } : {}),
++    };
++  }
++  // createdBy 单独存在不足以判定：批准申请签发的存量 Key 也会写 createdBy。
++  return {
++    type: 'unknown',
++    ...(entry.createdBy ? { recordedAccount: entry.createdBy } : {}),
++    ...(entry.claimedBy ? { claimedBy: entry.claimedBy } : {}),
++    ...(entry.claimedAt ? { claimedAt: entry.claimedAt } : {}),
++  };
++}
++
++function statusOf(
++  usability: { usable: true } | { usable: false; reason: string },
++  expiresAt: string | undefined,
++  now: number,
++): AgentKeyCatalogEntry['status'] {
++  if (!usability.usable) {
++    const reason = usability.reason;
++    const code: AgentKeyStatusCode = reason === 'revoked' ? 'revoked'
++      : reason === 'expired' ? 'expired'
++        : reason === 'grant-revoked' ? 'grant-revoked'
++          : reason === 'grant-pending' ? 'grant-pending'
++            : reason === 'principal-missing' ? 'principal-missing'
++              : 'principal-disabled';
++    return { code, usable: false };
++  }
++  const at = expiresAt ? Date.parse(expiresAt) : NaN;
++  if (!Number.isNaN(at) && at - now <= AGENT_KEY_EXPIRING_WINDOW_MS) return { code: 'expiring', usable: true };
++  return { code: 'active', usable: true };
++}
++
++function permissionOf(entry: Pick<AgentKey, 'planningAccess' | 'designAccess'>): AgentKeyPermission {
++  if (entry.planningAccess === 'read') return 'planning-read';
++  if (entry.planningAccess === 'propose') return 'planning-propose';
++  if (entry.designAccess === 'read') return 'design-read';
++  if (entry.designAccess === 'feedback') return 'design-feedback';
++  if (entry.designAccess === 'publish') return 'design-publish';
++  return 'full';
++}
++
++function projectEntry(
++  project: Project,
++  entry: AgentKey,
++  state: StateService,
++  principals: readonly Principal[],
++  now: number,
++): AgentKeyCatalogEntry {
++  return {
++    id: entry.id,
++    kind: 'project',
++    label: entry.label,
++    projectId: project.id,
++    access: {
++      scope: 'project',
++      projects: [{ id: project.id, name: projectName(project) }],
++      canCreateProjects: false,
++      permission: permissionOf(entry),
++    },
++    createdAt: entry.createdAt,
++    ...(entry.createdBy ? { createdBy: entry.createdBy } : {}),
++    ...(entry.lastUsedAt ? { lastUsedAt: entry.lastUsedAt } : {}),
++    ...(entry.revokedAt ? { revokedAt: entry.revokedAt } : {}),
++    ...(entry.expiresAt ? { expiresAt: entry.expiresAt } : {}),
++    expiry: !entry.expiresAt ? 'never' : entry.expiryMode === 'fixed' ? 'fixed' : 'sliding',
++    source: deriveAgentKeySource(entry, principals),
++    status: statusOf(state.agentKeyUsability(project.id, entry, now), entry.expiresAt, now),
++  };
++}
++
++function globalEntry(
++  entry: GlobalAgentKey,
++  projectsById: Map<string, Project>,
++  principals: readonly Principal[],
++  now: number,
++): AgentKeyCatalogEntry {
++  const access = StateService.resolveGlobalAgentKeyAccess(entry);
++  const projects = access.projects === 'all' ? [] : access.projects.map((id) => {
++    const p = projectsById.get(id);
++    return p ? { id, name: projectName(p) } : { id, name: id, missing: true as const };
++  });
++  const scope: AgentKeyCatalogEntry['access']['scope'] = access.projects === 'all'
++    ? 'all'
++    : projects.length > 0 ? 'project' : 'create';
++  return {
++    id: entry.id,
++    kind: 'global',
++    label: entry.label,
++    access: {
++      scope,
++      projects,
++      canCreateProjects: access.canCreateProjects,
++      permission: 'full',
++      ...(entry.access ? {} : { legacyFullAccess: true as const }),
++      ...(entry.oneTime ? { oneTime: true as const } : {}),
++    },
++    createdAt: entry.createdAt,
++    ...(entry.createdBy ? { createdBy: entry.createdBy } : {}),
++    ...(entry.lastUsedAt ? { lastUsedAt: entry.lastUsedAt } : {}),
++    ...(entry.revokedAt ? { revokedAt: entry.revokedAt } : {}),
++    ...(entry.expiresAt ? { expiresAt: entry.expiresAt } : {}),
++    expiry: entry.expiresAt ? 'fixed' : 'never',
++    source: deriveAgentKeySource(entry, principals),
++    status: statusOf(StateService.globalAgentKeyUsability(entry, now), entry.expiresAt, now),
++  };
++}
++
++/** 合并后的 Key 列表，按签发时间倒序（最近签发的在最前）。 */
++export function buildAgentKeyCatalog(input: AgentKeyCatalogInput): AgentKeyCatalogEntry[] {
++  const now = input.now ?? Date.now();
++  const { state } = input;
++  const projects = state.getProjects();
++  const projectsById = new Map(projects.map((p) => [p.id, p]));
++  const principals = state.getPrincipals();
++  const rows: AgentKeyCatalogEntry[] = [];
++  for (const project of projects) {
++    if (input.projectId && project.id !== input.projectId) continue;
++    for (const entry of project.agentKeys || []) rows.push(projectEntry(project, entry, state, principals, now));
++  }
++  for (const entry of state.getGlobalAgentKeys()) {
++    const row = globalEntry(entry, projectsById, principals, now);
++    if (input.projectId && row.access.scope !== 'all'
++      && !row.access.projects.some((p) => p.id === input.projectId)) continue;
++    rows.push(row);
++  }
++  return rows.sort((a, b) => (Date.parse(b.createdAt) || 0) - (Date.parse(a.createdAt) || 0));
++}
++
++/**
++ * 解析页面传来的固定到期时间。返回 undefined = 永久；返回 string = 规范化 ISO；
++ * 返回 { error } = 拒绝（已过去、无法解析或超过 5 年）。
++ */
++export function parseRequestedKeyExpiry(
++  raw: unknown,
++  now: number = Date.now(),
++): undefined | string | { error: string } {
++  if (raw === undefined || raw === null || raw === '') return undefined;
++  if (typeof raw !== 'string') return { error: '失效时间格式无效，请重新选择。' };
++  const at = Date.parse(raw);
++  if (Number.isNaN(at)) return { error: '失效时间格式无效，请重新选择。' };
++  if (at <= now + 60_000) return { error: '失效时间需要晚于当前时间。' };
++  if (at > now + 5 * 366 * 24 * 60 * 60 * 1000) return { error: '失效时间最长 5 年；需要更久请选择永久。' };
++  return new Date(at).toISOString();
++}
+diff --git a/cds/src/services/state.ts b/cds/src/services/state.ts
+index ab94dec9b..b1312b0d6 100644
+--- a/cds/src/services/state.ts
++++ b/cds/src/services/state.ts
+@@ -3920,6 +3920,51 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
+     return true;
+   }
+ 
++  /**
++   * 项目级 Key 此刻能不能通过鉴权，以及不能的原因。
++   *
++   * 这是唯一判据：findAgentKeyForAuth 用它放行，Key 管理列表用它显示状态。
++   * 两处若各写一份，列表就会把鉴权早已拒绝的 Key 显示成「有效」——旧列表
++   * 只看 revokedAt，过期和随主体停用的 Key 一直被报成「未吊销」。
++   */
++  agentKeyUsability(
++    projectId: string,
++    entry: AgentKey,
++    now: number = Date.now(),
++  ): { usable: true } | { usable: false; reason: 'revoked' | 'expired' | 'principal-disabled' | 'principal-missing' | 'grant-revoked' | 'grant-pending' } {
++    if (entry.revokedAt) return { usable: false, reason: 'revoked' };
++    // 身份层（2026-09-01）：新签发的项目级凭证是短命的（用即续）。存量密钥
++    // 没有 expiresAt，这里恒为 false —— 与启用前逐字节一致，零回归。
++    if (entry.expiresAt && Date.parse(entry.expiresAt) <= now) return { usable: false, reason: 'expired' };
++    // 归属主体的凭据，撤销要**当场**生效：界面上写着「停用后它名下所有凭证
++    // 立刻不可用」，撤销授权同理。只按密钥自己的 revokedAt 判，等于让这两条
++    // 承诺落空最长 30 天。判据不在这里另写一份，直接借身份层那一份。
++    //
++    // 只对带 principalId 的密钥生效 —— 存量密钥没有主体、没有授权行，
++    // 这段整个跳过，与启用前逐字节一致。
++    if (entry.principalId) {
++      // 绑定同主体的项目凭据也不能使用尚未确认落盘的临时授权。
++      if (isHumanProjectGrantUpdatePending(this, entry.principalId)) return { usable: false, reason: 'grant-pending' };
++      const principal = (this.state.principals || []).find((p) => p.id === entry.principalId);
++      const principalCheck = credentialUsability(entry, principal, now, true);
++      if (!principalCheck.usable) {
++        return { usable: false, reason: principalCheck.reason === 'principal-missing' ? 'principal-missing' : principalCheck.reason === 'principal-disabled' ? 'principal-disabled' : principalCheck.reason === 'revoked' ? 'revoked' : 'expired' };
++      }
++      if (!hasProjectKeyGrant(this.state.projectGrants || [], entry, projectId)) return { usable: false, reason: 'grant-revoked' };
++    }
++    return { usable: true };
++  }
++
++  /** 全局 Key 此刻能不能通过鉴权；与 findGlobalAgentKeyForAuth 同一判据。 */
++  static globalAgentKeyUsability(
++    entry: Pick<GlobalAgentKey, 'revokedAt' | 'expiresAt'>,
++    now: number = Date.now(),
++  ): { usable: true } | { usable: false; reason: 'revoked' | 'expired' } {
++    if (entry.revokedAt) return { usable: false, reason: 'revoked' };
++    if (entry.expiresAt && Date.parse(entry.expiresAt) <= now) return { usable: false, reason: 'expired' };
++    return { usable: true };
++  }
++
+   /**
+    * Parse an incoming plaintext key `cdsp_<slugHead12>_<suffix>` and find
+    * the matching non-revoked AgentKey across all projects. Uses
+@@ -3941,23 +3986,7 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
+     for (const project of this.state.projects || []) {
+       // 哈希归属才是权限依据；slug 前缀只是签发时的可读提示，改名不会撤销凭据。
+       for (const entry of project.agentKeys || []) {
+-        if (entry.revokedAt) continue;
+-        // 身份层（2026-09-01）：新签发的项目级凭证是短命的（用即续）。存量密钥
+-        // 没有 expiresAt，这里恒为 false —— 与启用前逐字节一致，零回归。
+-        if (entry.expiresAt && Date.parse(entry.expiresAt) <= Date.now()) continue;
+-        // 归属主体的凭据，撤销要**当场**生效：界面上写着「停用后它名下所有凭证
+-        // 立刻不可用」，撤销授权同理。只按密钥自己的 revokedAt 判，等于让这两条
+-        // 承诺落空最长 30 天。判据不在这里另写一份，直接借身份层那一份。
+-        //
+-        // 只对带 principalId 的密钥生效 —— 存量密钥没有主体、没有授权行，
+-        // 这段整个跳过，与启用前逐字节一致。
+-        if (entry.principalId) {
+-          // 绑定同主体的项目凭据也不能使用尚未确认落盘的临时授权。
+-          if (isHumanProjectGrantUpdatePending(this, entry.principalId)) continue;
+-          const principal = (this.state.principals || []).find((p) => p.id === entry.principalId);
+-          if (!credentialUsability(entry, principal, Date.now(), true).usable) continue;
+-          if (!hasProjectKeyGrant(this.state.projectGrants || [], entry, project.id)) continue;
+-        }
++        if (!this.agentKeyUsability(project.id, entry).usable) continue;
+         try {
+           const entryBuf = Buffer.from(entry.hash, 'hex');
+           if (entryBuf.length !== hashBuf.length) continue;
+@@ -3984,7 +4013,9 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
+     // Agent 也会在第 30 天被锁在门外，而文档与界面都写着用一次就续期。
+     // 存量密钥没有 expiresAt —— 不给它凭空造一个，否则等于给永不过期的密钥
+     // 强加一个到期日。slideExpiry 少于一天不返回新值，不会把 state 写爆。
+-    if (entry.expiresAt) {
++    // 用户签发时选定的固定到期日（expiryMode='fixed'）不续期：那是用户的明确
++    // 决定，续期等于让「7 天后失效」在每次使用后又推迟 30 天，永远不会失效。
++    if (entry.expiresAt && entry.expiryMode !== 'fixed') {
+       const next = slideExpiry(entry.expiresAt, PROJECT_CREDENTIAL_TTL_DAYS);
+       if (next) entry.expiresAt = next;
+     }
+@@ -4149,7 +4180,7 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
+     const hash = crypto.createHash('sha256').update(plaintextKey).digest('hex');
+     const hashBuf = Buffer.from(hash, 'hex');
+     for (const entry of this.state.globalAgentKeys || []) {
+-      if (entry.revokedAt || (entry.expiresAt && Date.parse(entry.expiresAt) <= Date.now())) continue;
++      if (!StateService.globalAgentKeyUsability(entry).usable) continue;
+       try {
+         const entryBuf = Buffer.from(entry.hash, 'hex');
+         if (entryBuf.length !== hashBuf.length) continue;
+diff --git a/cds/src/shared/agent-mission-registry.ts b/cds/src/shared/agent-mission-registry.ts
+index 8140d2510..765490c8e 100644
+--- a/cds/src/shared/agent-mission-registry.ts
++++ b/cds/src/shared/agent-mission-registry.ts
+@@ -339,7 +339,7 @@ export const AGENT_MISSION_DEFINITIONS: Record<AgentPageContextId, AgentMissionD
+       '运行 cdscli auth check，再用 cdscli project show <projectId> 验证目标项目权限',
+       '同一 CDS 主机和目标项目都验证通过时直接继续，不要求用户重复认证',
+       '缺少目标项目权限时才运行 connect --project <projectId> 并等待页面批准',
+-      '确需长期跨项目时，引导用户在 CDS 系统设置的 AI Access Key 中明确选择授权范围',
++      '确需长期跨项目时，引导用户在 CDS 系统设置的 Agent Key 中明确选择授权范围',
+     ],
+     checks: [
+       '项目级授权可长期复用直到被吊销，不把它误称为一次性登录',
+diff --git a/cds/src/types.ts b/cds/src/types.ts
+index 8e7aa7df8..a60ca4593 100644
+--- a/cds/src/types.ts
++++ b/cds/src/types.ts
+@@ -4593,6 +4593,29 @@ export interface Project {
+   };
+ }
+ 
++/**
++ * 这把 Key 是从哪条签发通道出来的（2026-11-25，Agent Key 管理一期）。
++ *
++ * 签发时由服务端写入，列表据此回答「是用户签的还是 AI Agent 签的」。存量 Key
++ * 没有这个字段：只按已有的结构化字段（issuedByCredentialId / designAccessRequestId）
++ * 判定，其余一律显示「来源未记录」，**不解析标签文字**——标签是自由文本，拿它
++ * 推断来源等于编造。判定收口在 services/agent-key-catalog.ts。
++ *
++ * - console          已登录用户在 CDS 页面签发
++ * - machine-api      没有人类会话的调用方（bootstrap 静态 Key）经接口签发
++ * - access-request   Agent 发起接入申请，由人在页面批准后签发
++ * - self-service     Agent 用用户级凭据为已授权项目自助签发
++ * - device-recovery  设备接入/恢复申请经管理员批准后签发
++ * - project-create   Agent 用「仅创建新项目」Key 建项目时自动签发
++ */
++export type AgentKeyIssuedVia =
++  | 'console'
++  | 'machine-api'
++  | 'access-request'
++  | 'self-service'
++  | 'device-recovery'
++  | 'project-create';
++
+ /**
+  * A project-scoped Agent Key. Plaintext is never persisted — only the
+  * sha256 hash. Scope is always 'rw' in the current implementation;
+@@ -4611,6 +4634,19 @@ export interface AgentKey {
+   hash: string;
+   /** Permission scope. Always 'rw' — a placeholder for future tiers. */
+   scope: 'rw';
++  /** 签发通道；存量 Key 缺省，见 {@link AgentKeyIssuedVia}。 */
++  issuedVia?: AgentKeyIssuedVia;
++  /** issuedVia=access-request 时的申请编号（结构化留痕，不再只拼进标签）。 */
++  accessRequestId?: string;
++  /** 发起申请或建项目的 Agent 自报名称；只用于展示，不参与鉴权。 */
++  requesterAgentName?: string;
++  /** issuedVia=project-create 时，建项目所用的全局 Key 编号。 */
++  issuedByGlobalKeyId?: string;
++  /**
++   * 到期方式。缺省且有 expiresAt = 滑动续期（用即续，身份层的存量行为）；
++   * 'fixed' = 用户签发时选定的固定到期日，使用时**不续期**。
++   */
++  expiryMode?: 'fixed';
+   /** Optional restriction to this project's planning reads or proposal intake. */
+   planningAccess?: 'read' | 'propose';
+   /** Optional restriction to this project's private design reads or Git-verified publishing. */
+@@ -4882,6 +4918,12 @@ export interface GlobalAgentKey {
+    * state.ts resolveGlobalAgentKeyAccess()。
+    */
+   access?: AgentKeyAccess;
++  /** 签发通道；存量 Key 缺省，见 {@link AgentKeyIssuedVia}。 */
++  issuedVia?: AgentKeyIssuedVia;
++  /** issuedVia=access-request 时的申请编号。 */
++  accessRequestId?: string;
++  /** 发起申请的 Agent 自报名称；只用于展示，不参与鉴权。 */
++  requesterAgentName?: string;
+   /** 一次性 bootstrap 授权：成功创建首个项目后自动吊销。 */
+   oneTime?: boolean;
+   /** 页面批准的唯一创建目标；缺省的一次性旧授权不得继续建项目。 */
+diff --git a/cds/tests/routes/agent-key-catalog.test.ts b/cds/tests/routes/agent-key-catalog.test.ts
+new file mode 100644
+index 000000000..6b6addfac
+--- /dev/null
++++ b/cds/tests/routes/agent-key-catalog.test.ts
+@@ -0,0 +1,264 @@
++/**
++ * Agent Key 目录（GET /api/global-agent-keys/catalog）与签发来源、固定到期。
++ *
++ * 守的是三件事：
++ *   1) 每条签发通道都把 issuedVia 写进去，目录据此分「用户 / AI Agent」；
++ *      存量 Key 没有字段时如实标「来源未记录」，标签写得再像也不推断。
++ *   2) 目录的状态与鉴权同一判据：鉴权拒的 Key 不许显示成有效。
++ *   3) 用户选的固定到期日不随使用续期。
++ */
++import { describe, it, expect, beforeEach, afterEach } from 'vitest';
++import express from 'express';
++import http from 'node:http';
++import { once } from 'node:events';
++import fs from 'node:fs';
++import path from 'node:path';
++import os from 'node:os';
++import crypto from 'node:crypto';
++import { createProjectsRouter } from '../../src/routes/projects.js';
++import { createAccessRequestsRouter } from '../../src/routes/access-requests.js';
++import { StateService } from '../../src/services/state.js';
++import { MockShellExecutor } from '../../src/services/shell-executor.js';
++import { deriveAgentKeySource, parseRequestedKeyExpiry } from '../../src/services/agent-key-catalog.js';
++import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
++import { listenLoopbackFixture } from '../helpers/loopback-http-fixture.js';
++
++async function request(
++  server: http.Server, method: string, urlPath: string, body?: unknown, headers?: Record<string, string>,
++): Promise<{ status: number; body: any }> {
++  return new Promise((resolve, reject) => {
++    const addr = server.address() as { port: number };
++    const payload = body !== undefined ? JSON.stringify(body) : undefined;
++    const req = http.request({
++      hostname: '127.0.0.1', port: addr.port, path: urlPath, method,
++      headers: {
++        'Content-Type': 'application/json',
++        ...(payload ? { 'Content-Length': Buffer.byteLength(payload) } : {}),
++        ...(headers || {}),
++      },
++    }, (res) => {
++      let raw = '';
++      res.on('data', (chunk: Buffer) => (raw += chunk.toString()));
++      res.on('end', () => {
++        try { resolve({ status: res.statusCode!, body: raw ? JSON.parse(raw) : null }); }
++        catch { resolve({ status: res.statusCode!, body: raw }); }
++      });
++    });
++    req.on('error', reject);
++    if (payload) req.write(payload);
++    req.end();
++  });
++}
++
++const sha = (v: string) => crypto.createHash('sha256').update(v).digest('hex');
++const HUMAN = { 'X-Test-Human': 'owner-alice' };
++
++describe('Agent Key 目录', () => {
++  let tmpDir: string;
++  let stateService: StateService;
++  let server: http.Server;
++
++  beforeEach(async () => {
++    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-key-catalog-test-'));
++    stateService = new StateService(path.join(tmpDir, 'state.json'), tmpDir);
++    stateService.load();
++    const now = new Date().toISOString();
++    for (const [id, slug, name] of [['proj-a', 'alpha', 'Alpha'], ['proj-b', 'beta', 'Beta']]) {
++      stateService.addProject({ id, slug, name, kind: 'git', dockerNetwork: `cds-proj-${slug}`, legacyFlag: false, createdAt: now, updatedAt: now });
++    }
++    const shell = new MockShellExecutor();
++    const liveNetworks = new Set<string>();
++    shell.addResponsePattern(/^docker network inspect /, (m) => {
++      const name = m[0].split(/\s+/).pop() || '';
++      return liveNetworks.has(name) ? { stdout: 'exists', stderr: '', exitCode: 0 } : { stdout: '', stderr: 'no network', exitCode: 1 };
++    });
++    shell.addResponsePattern(/^docker network create /, (m) => {
++      liveNetworks.add(m[0].split(/\s+/).pop() || '');
++      return { stdout: 'network-id', stderr: '', exitCode: 0 };
++    });
++    const app = express();
++    app.use(express.json());
++    // 镜像生产鉴权中间件：人类会话 stamp cdsUser，机器 Key stamp cdsProjectKey / cdsAccess。
++    app.use((req, _res, next) => {
++      const human = req.headers['x-test-human'];
++      if (typeof human === 'string') {
++        (req as any).cdsUser = { username: human, isSystemOwner: true, authProvider: 'local' };
++        (req as any)._cdsBasicHumanAuth = true;
++      }
++      const h = req.headers['x-ai-access-key'] as string | undefined;
++      if (h?.startsWith('cdsp_')) {
++        const match = stateService.findAgentKeyForAuth(h);
++        if (match) (req as any).cdsProjectKey = match;
++      } else if (h?.startsWith('cdsg_')) {
++        const g = stateService.findGlobalAgentKeyForAuth(h);
++        if (g) (req as any).cdsAccess = { keyId: g.keyId, access: g.access };
++      }
++      next();
++    });
++    app.use('/api', createAccessRequestsRouter({ stateService, authMode: 'disabled' }));
++    app.use('/api', createProjectsRouter({ stateService, shell, config: { reposBase: tmpDir } as any }));
++    server = listenLoopbackFixture(app);
++    if (!server.address()) await once(server, 'listening');
++  });
++
++  afterEach(async () => {
++    await flushAllJsonStateStores();
++    await new Promise<void>((resolve) => server.close(() => resolve()));
++    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
++  });
++
++  const catalog = async (query = '') => {
++    const res = await request(server, 'GET', `/api/global-agent-keys/catalog${query}`, undefined, HUMAN);
++    expect(res.status).toBe(200);
++    return res.body.keys as any[];
++  };
++
++  it('页面签发的项目 Key 与全局 Key 都标为用户签发，并带项目名', async () => {
++    const p = await request(server, 'POST', '/api/projects/proj-a/agent-keys', { label: '本地调试' }, HUMAN);
++    const g = await request(server, 'POST', '/api/global-agent-keys', { label: '跨项目巡检', access: { canCreateProjects: false, projects: 'all' } }, HUMAN);
++    expect(p.status).toBe(201);
++    expect(g.status).toBe(201);
++    const rows = await catalog();
++    const project = rows.find((r) => r.id === p.body.keyId);
++    const global = rows.find((r) => r.id === g.body.keyId);
++    expect(project).toMatchObject({
++      kind: 'project', projectId: 'proj-a', expiry: 'never',
++      access: { scope: 'project', projects: [{ id: 'proj-a', name: 'Alpha' }], permission: 'full', canCreateProjects: false },
++      source: { type: 'user', via: 'console', actor: 'owner-alice' },
++      status: { code: 'active', usable: true },
++    });
++    expect(global).toMatchObject({ kind: 'global', access: { scope: 'all', permission: 'full' }, source: { type: 'user', actor: 'owner-alice' } });
++    // 没有人类会话的调用方（bootstrap 静态 Key 走的就是这条）不能冒充用户签发。
++    const machine = await request(server, 'POST', '/api/projects/proj-a/agent-keys', {});
++    expect((await catalog()).find((r) => r.id === machine.body.keyId).source).toEqual({ type: 'agent', via: 'machine-api' });
++  });
++
++  it('固定到期日：写入 fixed，使用时不续期；过去的时间被拒绝', async () => {
++    const at = new Date(Date.now() + 7 * 86_400_000).toISOString();
++    const res = await request(server, 'POST', '/api/projects/proj-a/agent-keys', { expiresAt: at }, HUMAN);
++    expect(res.status).toBe(201);
++    const stored = stateService.getAgentKeys('proj-a').find((k) => k.id === res.body.keyId)!;
++    expect(stored).toMatchObject({ expiresAt: at, expiryMode: 'fixed' });
++    stateService.touchAgentKeyLastUsed('proj-a', res.body.keyId);
++    expect(stateService.getAgentKeys('proj-a').find((k) => k.id === res.body.keyId)!.expiresAt).toBe(at);
++    expect((await catalog()).find((r) => r.id === res.body.keyId)).toMatchObject({ expiry: 'fixed', expiresAt: at, status: { code: 'active' } });
++
++    const past = await request(server, 'POST', '/api/projects/proj-a/agent-keys', { expiresAt: new Date(Date.now() - 1000).toISOString() }, HUMAN);
++    expect(past.status).toBe(400);
++    expect(past.body.error).toBe('invalid_expires_at');
++    const pastGlobal = await request(server, 'POST', '/api/global-agent-keys', { expiresAt: 'not-a-date' }, HUMAN);
++    expect(pastGlobal.status).toBe(400);
++
++    // 身份层签发的滑动续期 Key 仍按旧行为续期，零回归。
++    const slidingAt = new Date(Date.now() + 2 * 86_400_000).toISOString();
++    stateService.addAgentKey('proj-a', { id: 'sliding1', label: 's', hash: sha('cdsp_alpha_sliding'), scope: 'rw', createdAt: new Date().toISOString(), expiresAt: slidingAt });
++    stateService.touchAgentKeyLastUsed('proj-a', 'sliding1');
++    expect(Date.parse(stateService.getAgentKeys('proj-a').find((k) => k.id === 'sliding1')!.expiresAt!)).toBeGreaterThan(Date.parse(slidingAt));
++  });
++
++  it('全局 Key 的固定到期日到点后鉴权与目录同时判为过期', async () => {
++    const plaintext = 'cdsg_expired-fixture';
++    stateService.addGlobalAgentKey({ id: 'gexp', label: 'old', hash: sha(plaintext), scope: 'rw', issuedVia: 'console',
++      access: { canCreateProjects: false, projects: ['proj-b'] }, createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() - 1000).toISOString() });
++    expect(stateService.findGlobalAgentKeyForAuth(plaintext)).toBeNull();
++    expect((await catalog()).find((r) => r.id === 'gexp')).toMatchObject({ status: { code: 'expired', usable: false }, expiry: 'fixed' });
++  });
++
++  it('目录状态与鉴权同一判据：主体停用的 Key 不显示为有效', async () => {
++    const plaintext = 'cdsp_alpha_principal-fixture';
++    const now = new Date().toISOString();
++    stateService.addPrincipal({ id: 'pr_agent1', name: 'Codex 工作站', kind: 'agent', status: 'active', createdAt: now });
++    stateService.addProjectGrant({ id: 'pg_1', projectId: 'proj-a', principalId: 'pr_agent1', origin: 'approved', grantedAt: now });
++    stateService.addAgentKey('proj-a', { id: 'pk1', label: 'self', hash: sha(plaintext), scope: 'rw', createdAt: now,
++      principalId: 'pr_agent1', issuedByCredentialId: 'uc_1', issuedVia: 'self-service', expiresAt: new Date(Date.now() + 86_400_000 * 30).toISOString() });
++    expect(stateService.findAgentKeyForAuth(plaintext)).not.toBeNull();
++    expect((await catalog()).find((r) => r.id === 'pk1')).toMatchObject({
++      expiry: 'sliding', status: { code: 'active', usable: true },
++      source: { type: 'agent', via: 'self-service', agentName: 'Codex 工作站', credentialId: 'uc_1' },
++    });
++    stateService.setPrincipalStatus('pr_agent1', 'disabled', 'test');
++    expect(stateService.findAgentKeyForAuth(plaintext)).toBeNull();
++    expect((await catalog()).find((r) => r.id === 'pk1').status).toEqual({ code: 'principal-disabled', usable: false });
++  });
++
++  it('存量 Key 只按结构化字段判来源，标签写得再像也标为未记录', async () => {
++    const now = new Date().toISOString();
++    stateService.addAgentKey('proj-a', { id: 'legacy1', label: '授权密钥 (申请 a1b2 · Codex)', hash: sha('x1'), scope: 'rw', createdAt: now, createdBy: 'bob' });
++    stateService.addAgentKey('proj-a', { id: 'legacy2', label: '设备接入 Cursor', hash: sha('x2'), scope: 'rw', createdAt: now, issuedByCredentialId: 'uc_9' });
++    stateService.addAgentKey('proj-a', { id: 'legacy3', label: '签发于 2026-04-18 10:32', hash: sha('x3'), scope: 'rw', createdAt: now, claimedBy: 'li', claimedAt: now });
++    stateService.addGlobalAgentKey({ id: 'legacyg', label: 'bootstrap', hash: sha('x4'), scope: 'rw', createdAt: now });
++    const rows = await catalog();
++    expect(rows.find((r) => r.id === 'legacy1').source).toEqual({ type: 'unknown', recordedAccount: 'bob' });
++    expect(rows.find((r) => r.id === 'legacy2').source).toEqual({ type: 'agent', via: 'user-credential', credentialId: 'uc_9' });
++    expect(rows.find((r) => r.id === 'legacy3').source).toEqual({ type: 'unknown', claimedBy: 'li', claimedAt: now });
++    // 没有 access 的存量全局 Key 鉴权按全权解析——目录如实标出来。
++    expect(rows.find((r) => r.id === 'legacyg')).toMatchObject({ source: { type: 'unknown' }, access: { scope: 'all', canCreateProjects: true, legacyFullAccess: true } });
++  });
++
++  it('Agent 申请经批准、再用一次性 Key 建项目：两把 Key 都归 AI Agent 并串起来', async () => {
++    const started = await request(server, 'POST', '/api/bootstrap-access-requests', {
++      agentName: 'Claude Code', requestedProject: { name: 'Gamma', repository: 'https://github.com/acme/gamma' },
++    });
++    expect(started.status).toBe(201);
++    expect((await request(server, 'POST', `/api/access-requests/${started.body.requestId}/approve`, {}, HUMAN)).status).toBe(200);
++    const delivered = await request(server, 'GET', `/api/bootstrap-access-requests/${started.body.requestId}`, undefined, { 'X-Poll-Token': started.body.pollToken });
++    const created = await request(server, 'POST', '/api/projects', { name: 'Gamma', gitRepoUrl: 'https://github.com/acme/gamma' }, { 'X-AI-Access-Key': delivered.body.authorizationKey });
++    expect(created.status).toBe(201);
++    const rows = await catalog();
++    const bootstrap = rows.find((r) => r.kind === 'global' && r.source.requestId === started.body.requestId);
++    expect(bootstrap).toMatchObject({ access: { scope: 'create', oneTime: true }, source: { type: 'agent', via: 'access-request', agentName: 'Claude Code' } });
++    const projectKey = rows.find((r) => r.kind === 'project' && r.projectId === created.body.project.id);
++    expect(projectKey.source).toEqual({ type: 'agent', via: 'project-create', agentName: 'Claude Code', parentKeyId: bootstrap.id });
++  });
++
++  it('项目申请经批准签发的 Key 记录申请编号与 Agent 名', async () => {
++    const started = await request(server, 'POST', '/api/projects/proj-b/access-requests', { agentName: 'Codex', purpose: '部署调试' });
++    expect(started.status).toBe(201);
++    expect((await request(server, 'POST', `/api/access-requests/${started.body.requestId}/approve`, {}, HUMAN)).status).toBe(200);
++    const row = (await catalog('?project=proj-b')).find((r) => r.kind === 'project');
++    expect(row.source).toMatchObject({ type: 'agent', via: 'access-request', agentName: 'Codex', requestId: started.body.requestId });
++  });
++
++  it('按项目筛选：只给能访问该项目的 Key，最近签发在前', async () => {
++    const base = Date.now();
++    const at = (offset: number) => new Date(base - offset).toISOString();
++    stateService.addAgentKey('proj-a', { id: 'a-old', label: 'a', hash: sha('a1'), scope: 'rw', createdAt: at(5000) });
++    stateService.addAgentKey('proj-a', { id: 'a-new', label: 'a', hash: sha('a2'), scope: 'rw', createdAt: at(1000) });
++    stateService.addAgentKey('proj-b', { id: 'b-1', label: 'b', hash: sha('b1'), scope: 'rw', createdAt: at(10) });
++    stateService.addGlobalAgentKey({ id: 'g-all', label: 'all', hash: sha('g1'), scope: 'rw', access: { canCreateProjects: false, projects: 'all' }, createdAt: at(3000) });
++    stateService.addGlobalAgentKey({ id: 'g-a', label: 'one', hash: sha('g2'), scope: 'rw', access: { canCreateProjects: false, projects: ['proj-a'] }, createdAt: at(4000) });
++    stateService.addGlobalAgentKey({ id: 'g-b', label: 'one', hash: sha('g3'), scope: 'rw', access: { canCreateProjects: false, projects: ['proj-b'] }, createdAt: at(20) });
++    stateService.addGlobalAgentKey({ id: 'g-create', label: 'create', hash: sha('g4'), scope: 'rw', access: { canCreateProjects: true, projects: [] }, createdAt: at(30) });
++    expect((await catalog('?project=proj-a')).map((r) => r.id)).toEqual(['a-new', 'g-all', 'g-a', 'a-old']);
++    expect((await catalog()).map((r) => r.id)).toEqual(['b-1', 'g-b', 'g-create', 'a-new', 'g-all', 'g-a', 'a-old']);
++    expect((await request(server, 'GET', '/api/global-agent-keys/catalog?project=missing', undefined, HUMAN)).status).toBe(404);
++  });
++
++  it('机器 Agent Key 不能读全部 Key 目录', async () => {
++    const signed = await request(server, 'POST', '/api/projects/proj-a/agent-keys', {}, HUMAN);
++    const res = await request(server, 'GET', '/api/global-agent-keys/catalog', undefined, { 'X-AI-Access-Key': signed.body.plaintext });
++    expect(res.status).toBe(403);
++    expect(res.body.error).toBe('agent_key_cannot_mint_global');
++  });
++});
++
++describe('deriveAgentKeySource / parseRequestedKeyExpiry', () => {
++  it('设计权限的存量 Key 由结构化申请编号判为 Agent 申请', () => {
++    expect(deriveAgentKeySource({ designAccessRequestId: 'req1', createdBy: 'bob' }))
++      .toEqual({ type: 'agent', via: 'access-request', requestId: 'req1', approvedBy: 'bob' });
++  });
++  it('设备接入记录批准人与凭据', () => {
++    expect(deriveAgentKeySource({ issuedVia: 'device-recovery', createdBy: 'admin', issuedByCredentialId: 'uc_2', requesterAgentName: 'Cursor' }))
++      .toEqual({ type: 'agent', via: 'device-recovery', agentName: 'Cursor', approvedBy: 'admin', credentialId: 'uc_2' });
++  });
++  it('到期时间：空为永久，过去、乱码、超过 5 年被拒', () => {
++    const now = Date.parse('2026-11-25T00:00:00Z');
++    expect(parseRequestedKeyExpiry(undefined, now)).toBeUndefined();
++    expect(parseRequestedKeyExpiry('', now)).toBeUndefined();
++    expect(parseRequestedKeyExpiry('2026-12-02T00:00:00Z', now)).toBe('2026-12-02T00:00:00.000Z');
++    expect(parseRequestedKeyExpiry('2026-11-24T00:00:00Z', now)).toHaveProperty('error');
++    expect(parseRequestedKeyExpiry('nope', now)).toHaveProperty('error');
++    expect(parseRequestedKeyExpiry(123, now)).toHaveProperty('error');
++    expect(parseRequestedKeyExpiry('2032-01-01T00:00:00Z', now)).toHaveProperty('error');
++  });
++});
+diff --git a/cds/tests/web/agent-key-catalog.test.ts b/cds/tests/web/agent-key-catalog.test.ts
+new file mode 100644
+index 000000000..41b3f9fe6
+--- /dev/null
++++ b/cds/tests/web/agent-key-catalog.test.ts
+@@ -0,0 +1,104 @@
++/**
++ * Agent Key 管理页的说明函数（web/src/lib/agentKeyCatalog.ts）。
++ *
++ * 签发预览、签发回执、列表详情都调用 describeAgentKey；这里守住它说的话：
++ * 范围、能做 / 不能做、到期、风险等级，以及来源不靠猜。
++ */
++import { describe, expect, it } from 'vitest';
++import fs from 'node:fs';
++import path from 'node:path';
++import {
++  accessShort,
++  describeAgentKey,
++  expiryChoiceToIso,
++  sourceSentence,
++  sourceSteps,
++  statusText,
++  type AgentKeyAccessView,
++} from '../../web/src/lib/agentKeyCatalog';
++
++const project = (permission: AgentKeyAccessView['permission'] = 'full'): AgentKeyAccessView => ({
++  scope: 'project', projects: [{ id: 'p1', name: 'Alpha' }], canCreateProjects: false, permission,
++});
++const NOW = Date.parse('2026-11-25T00:00:00Z');
++
++describe('describeAgentKey', () => {
++  it('单项目完整读写：中风险，说清不能访问其他项目与数据库写入要审批', () => {
++    const d = describeAgentKey({ access: project(), expiry: 'never' }, 5, NOW);
++    expect(d.scope).toBe('只能访问 Alpha');
++    expect(d.can).toContain('修改构建配置与项目环境变量');
++    expect(d.cannot).toEqual(expect.arrayContaining(['不能访问其他项目', '写数据库时，每次都要等系统所有者批准']));
++    expect(d.expiry).toBe('永久有效，直到被吊销');
++    expect(d.risk.level).toBe('mid');
++  });
++
++  it('全部项目一律高风险，并说明包括以后新建的项目', () => {
++    const d = describeAgentKey({ access: { scope: 'all', projects: [], canCreateProjects: false, permission: 'full' }, expiry: 'never' }, 7, NOW);
++    expect(d.scope).toContain('当前 7 个');
++    expect(d.scope).toContain('以后新建的项目也包括在内');
++    expect(d.risk.level).toBe('high');
++  });
++
++  it('只读模块权限是低风险，且明说不能部署或改配置', () => {
++    const d = describeAgentKey({ access: project('planning-read'), expiry: 'never' }, 5, NOW);
++    expect(d.can).toEqual(['读取工程规划与债务']);
++    expect(d.cannot).toContain('不能部署分支，不能修改构建配置或环境变量');
++    expect(d.risk.level).toBe('low');
++  });
++
++  it('仅创建新项目：不能碰现有项目，一次性授权要说明只能用一次', () => {
++    const d = describeAgentKey({ access: { scope: 'create', projects: [], canCreateProjects: true, permission: 'full', oneTime: true }, expiry: 'never' }, 3, NOW);
++    expect(d.scope).toContain('不能访问任何现有项目');
++    expect(d.cannot).toEqual(expect.arrayContaining(['不能读取或修改任何现有项目', '建成第一个项目后自动吊销，只能用一次']));
++    expect(d.risk.level).toBe('mid');
++  });
++
++  it('存量全局 Key 没有授权范围：如实说明是旧版全权', () => {
++    const d = describeAgentKey({ access: { scope: 'all', projects: [], canCreateProjects: true, permission: 'full', legacyFullAccess: true }, expiry: 'never' }, 2, NOW);
++    expect(d.can[0]).toContain('旧版全权');
++    expect(accessShort({ scope: 'all', projects: [], canCreateProjects: true, permission: 'full', legacyFullAccess: true })).toBe('全部项目 · 旧版全权');
++  });
++
++  it('到期说明区分固定与滑动续期', () => {
++    expect(describeAgentKey({ access: project(), expiry: 'fixed', expiresAt: '2026-12-02T00:00:00Z' }, 1, NOW).expiry).toContain('还剩 7 天');
++    expect(describeAgentKey({ access: project(), expiry: 'sliding', expiresAt: '2026-12-20T00:00:00Z' }, 1, NOW).expiry).toContain('每次使用自动续期');
++    expect(describeAgentKey({ access: project(), expiry: 'fixed', expiresAt: '2026-11-20T00:00:00Z' }, 1, NOW).expiry).toContain('已于');
++  });
++});
++
++describe('来源与状态文案', () => {
++  it('Agent 申请经批准：写出 Agent 与批准人', () => {
++    expect(sourceSentence({ type: 'agent', via: 'access-request', agentName: 'Codex', approvedBy: 'alice' })).toBe('Codex 申请，alice 批准');
++  });
++  it('来源未记录不推测签发人，只交代账号字段这一事实', () => {
++    const source = { type: 'unknown' as const, recordedAccount: 'bob' };
++    expect(sourceSentence(source)).toBe('签发时未记录来源，账号字段为 bob');
++    expect(sourceSteps(source).join('')).toContain('无法确认是本人签发还是批准了 Agent 申请');
++  });
++  it('即将过期的 Key 给出剩余时间', () => {
++    expect(statusText({ status: { code: 'expiring', usable: true }, expiresAt: '2026-11-27T00:00:00Z' }, NOW)).toBe('2 天后过期');
++    expect(statusText({ status: { code: 'expiring', usable: true }, expiresAt: '2026-11-25T05:00:00Z' }, NOW)).toBe('5 小时后过期');
++    expect(statusText({ status: { code: 'grant-revoked', usable: false } }, NOW)).toBe('项目授权已收回');
++  });
++});
++
++describe('有效期选择', () => {
++  it('永久不提交到期时间，天数换算成具体时间，指定日期取当天 23:59', () => {
++    expect(expiryChoiceToIso('never', '', NOW)).toBeUndefined();
++    expect(expiryChoiceToIso('7', '', NOW)).toBe('2026-12-02T00:00:00.000Z');
++    expect(expiryChoiceToIso('date', '2026-12-31', NOW)).toBe(new Date('2026-12-31T23:59:00').toISOString());
++    expect(expiryChoiceToIso('date', '', NOW)).toBeNull();
++    expect(expiryChoiceToIso('date', '2026-01-01', NOW)).toBeNull();
++  });
++});
++
++describe('接线：说明只有一个来源', () => {
++  it('签发预览、回执与列表详情都调用 describeAgentKey，页面里没有第二份说明拼装', () => {
++    const page = fs.readFileSync(path.resolve(__dirname, '../../web/src/pages/cds-settings/tabs/AccessKeysTab.tsx'), 'utf8');
++    // 三处：签发表单预览、签发回执、列表行详情（另一处是结果未知时的请求快照摘要）。
++    expect(page.match(/describeAgentKey\(/g)?.length).toBeGreaterThanOrEqual(4);
++    // 列表状态来自服务端判定，页面不再用 revokedAt 自己推「有效」。
++    expect(page).not.toMatch(/revokedAt \? '已吊销' : .*'有效'/);
++    expect(page).toContain('/api/global-agent-keys/catalog');
++  });
++});
+diff --git a/cds/web/src/components/AgentKeyScopePanel.tsx b/cds/web/src/components/AgentKeyScopePanel.tsx
+deleted file mode 100644
+index 9be8be323..000000000
+--- a/cds/web/src/components/AgentKeyScopePanel.tsx
++++ /dev/null
+@@ -1,190 +0,0 @@
+-import { ContentLoading } from '@/components/skeletons/ContentLoading';
+-/**
+- * AgentKeyScopePanel — 统一的 Agent Key 授权作用域勾选面板(2026-07-09)。
+- *
+- * 一把 key 的授权 = { canCreateProjects, projects: 'all' | string[] }。本面板把它
+- * 摊成三组可勾选项,签发全局 Key、项目卡钥匙两个入口共用同一套 UI,只是**默认勾选**
+- * 不同(见各入口):
+- *   - 签发全局 Key:默认只勾「允许创建新项目」(能 bootstrap 建项目,碰不坏现有项目)。
+- *   - 项目卡钥匙:默认勾「当前项目」。
+- *
+- * 主题:所有颜色走 hsl(var(--*)) token(.claude/rules/cds-theme-tokens.md),禁暗色字面量。
+- */
+-import { useEffect, useState } from 'react';
+-import { AlertTriangle, FolderGit2, PlusCircle } from 'lucide-react';
+-
+-import { apiRequest, ApiError } from '@/lib/api';
+-
+-export interface AgentKeyScope {
+-  canCreateProjects: boolean;
+-  /** 'all' = 操作所有现有项目;string[] = 指定项目 id 列表(空 = 不能碰现有项目)。 */
+-  projects: 'all' | string[];
+-}
+-
+-interface ProjectRow {
+-  id: string;
+-  name?: string;
+-  slug?: string;
+-}
+-
+-interface Props {
+-  value: AgentKeyScope;
+-  onChange: (next: AgentKeyScope) => void;
+-  disabled?: boolean;
+-  /** 高亮标注"当前项目"(项目卡入口),仅视觉提示。 */
+-  currentProjectId?: string;
+-}
+-
+-export function AgentKeyScopePanel({ value, onChange, disabled, currentProjectId }: Props): JSX.Element {
+-  const [projects, setProjects] = useState<ProjectRow[]>([]);
+-  const [loadState, setLoadState] = useState<'loading' | 'ok' | 'error'>('loading');
+-  const [loadError, setLoadError] = useState('');
+-
+-  useEffect(() => {
+-    let cancelled = false;
+-    setLoadState('loading');
+-    apiRequest<{ projects: ProjectRow[] }>('/api/projects')
+-      .then((data) => {
+-        if (cancelled) return;
+-        setProjects((data.projects || []).map((p) => ({ id: p.id, name: p.name, slug: p.slug })));
+-        setLoadState('ok');
+-      })
+-      .catch((err) => {
+-        if (cancelled) return;
+-        setLoadError(err instanceof ApiError ? err.message : String(err));
+-        setLoadState('error');
+-      });
+-    return () => {
+-      cancelled = true;
+-    };
+-  }, []);
+-
+-  const allProjects = value.projects === 'all';
+-  const selectedList = allProjects ? [] : (value.projects as string[]);
+-
+-  function toggleCreate(): void {
+-    onChange({ ...value, canCreateProjects: !value.canCreateProjects });
+-  }
+-
+-  function toggleAll(): void {
+-    onChange({ ...value, projects: allProjects ? [] : 'all' });
+-  }
+-
+-  function toggleProject(id: string): void {
+-    if (allProjects) return;
+-    // 单选:选一个项目即替换(多项目 ≥2 作用域后端暂不支持,见 projects.ts 签发校验)。
+-    // 再点已选项 = 取消。
+-    onChange({ ...value, projects: selectedList.includes(id) ? [] : [id] });
+-  }
+-
+-  const rowClass =
+-    'flex items-start gap-2.5 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] px-3 py-2.5';
+-
+-  return (
+-    <div className="space-y-2.5">
+-      <div className="text-sm font-medium text-foreground">授权范围</div>
+-
+-      {/* 1. 允许创建新项目 */}
+-      <label className={rowClass + (disabled ? ' opacity-60' : ' cursor-pointer')}>
+-        <input
+-          type="checkbox"
+-          className="mt-0.5 h-4 w-4 shrink-0 accent-[hsl(var(--primary))]"
+-          checked={value.canCreateProjects}
+-          onChange={toggleCreate}
+-          disabled={disabled}
+-        />
+-        <span className="min-w-0">
+-          <span className="flex items-center gap-1.5 text-sm font-medium text-foreground">
+-            <PlusCircle className="h-3.5 w-3.5 text-primary" />
+-            允许创建新项目
+-          </span>
+-          <span className="mt-0.5 block text-xs leading-relaxed text-muted-foreground">
+-            可调 POST /api/projects 建新项目。建成后 CDS 会返回该新项目的独立 Key，这把 Key
+-            本身碰不到你现有的项目。
+-          </span>
+-        </span>
+-      </label>
+-
+-      {/* 2. 操作所有现有项目(危险) */}
+-      <label className={rowClass + (disabled ? ' opacity-60' : ' cursor-pointer')}>
+-        <input
+-          type="checkbox"
+-          className="mt-0.5 h-4 w-4 shrink-0 accent-[hsl(var(--destructive))]"
+-          checked={allProjects}
+-          onChange={toggleAll}
+-          disabled={disabled}
+-        />
+-        <span className="min-w-0">
+-          <span className="flex items-center gap-1.5 text-sm font-medium text-destructive">
+-            <AlertTriangle className="h-3.5 w-3.5" />
+-            操作所有现有项目（管理员权限，危险）
+-          </span>
+-          <span className="mt-0.5 block text-xs leading-relaxed text-muted-foreground">
+-            等同旧的全权全局 Key，可读写所有项目的构建配置、基础设施与部署。仅在跨项目自动化时勾选。
+-          </span>
+-        </span>
+-      </label>
+-
+-      {/* 3. 指定现有项目(多选) */}
+-      <div className={rowClass.replace('items-start', 'flex-col items-stretch') + (allProjects ? ' opacity-50' : '')}>
+-        <div className="mb-1.5 flex items-center gap-1.5 text-sm font-medium text-foreground">
+-          <FolderGit2 className="h-3.5 w-3.5" />
+-          指定一个现有项目
+-          {allProjects ? <span className="text-xs font-normal text-muted-foreground">（已选「所有项目」，无需再选）</span> : null}
+-        </div>
+-        {loadState === 'loading' ? <ContentLoading label="加载项目列表" variant="rows" /> : null}
+-        {loadState === 'error' ? (
+-          <div className="rounded border border-destructive/30 bg-destructive/10 px-2 py-1.5 text-xs text-destructive">
+-            加载项目失败：{loadError}
+-          </div>
+-        ) : null}
+-        {loadState === 'ok' && projects.length === 0 ? (
+-          <div className="py-1 text-xs text-muted-foreground">还没有任何项目。勾选上方「允许创建新项目」先建第一个。</div>
+-        ) : null}
+-        {loadState === 'ok' && projects.length > 0 ? (
+-          <div className="max-h-44 space-y-1 overflow-y-auto pr-1" style={{ overscrollBehavior: 'contain' }}>
+-            {projects.map((p) => {
+-              const checked = selectedList.includes(p.id);
+-              const isCurrent = currentProjectId === p.id;
+-              return (
+-                <label
+-                  key={p.id}
+-                  className={
+-                    'flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-[hsl(var(--surface-sunken))]' +
+-                    (allProjects || disabled ? ' pointer-events-none' : '')
+-                  }
+-                >
+-                  <input
+-                    type="checkbox"
+-                    className="h-4 w-4 shrink-0 accent-[hsl(var(--primary))]"
+-                    checked={allProjects || checked}
+-                    onChange={() => toggleProject(p.id)}
+-                    disabled={allProjects || disabled}
+-                  />
+-                  <span className="min-w-0 flex-1 truncate text-foreground">{p.name || p.slug || p.id}</span>
+-                  {isCurrent ? (
+-                    <span className="shrink-0 rounded border border-primary/40 bg-primary/10 px-1.5 py-0.5 text-[0.625rem] font-medium text-primary">
+-                      当前项目
+-                    </span>
+-                  ) : null}
+-                </label>
+-              );
+-            })}
+-          </div>
+-        ) : null}
+-      </div>
+-    </div>
+-  );
+-}
+-
+-/** 把作用域转成一行中文摘要,给 key 列表展示用。 */
+-export function describeAgentKeyScope(access?: AgentKeyScope | null): string {
+-  if (!access) return '全权（所有项目 + 建项目）';
+-  const parts: string[] = [];
+-  if (access.canCreateProjects) parts.push('建项目');
+-  if (access.projects === 'all') parts.push('所有现有项目');
+-  else if (Array.isArray(access.projects) && access.projects.length > 0) {
+-    parts.push(`${access.projects.length} 个指定项目`);
+-  }
+-  return parts.length > 0 ? parts.join(' + ') : '（空授权）';
+-}
+diff --git a/cds/web/src/components/CommandPalette.tsx b/cds/web/src/components/CommandPalette.tsx
+index ce19b9178..c0b463c36 100644
+--- a/cds/web/src/components/CommandPalette.tsx
++++ b/cds/web/src/components/CommandPalette.tsx
+@@ -193,7 +193,7 @@ const STATIC_ACTIONS: ResultItem[] = [
+   { key: 'action:storage',          type: 'action', label: '存储后端',           path: 'CDS 系统设置',  hint: 'JSON / Mongo / 切换',            href: '/cds-settings#storage',          icon: 'settings' },
+   { key: 'action:global-vars',      type: 'action', label: 'CDS 全局变量',       path: 'CDS 系统设置',  hint: '所有项目共享的环境变量',         href: '/cds-settings#global-vars',      icon: 'settings' },
+   { key: 'action:auth',             type: 'action', label: '登录与认证',         path: 'CDS 系统设置',  hint: '本地账号 / GitHub OAuth / SSO', href: '/cds-settings#auth',             icon: 'settings' },
+-  { key: 'action:access-keys',      type: 'action', label: 'AI Access Key',     path: 'CDS 系统设置',  hint: 'AI 访问密钥签发与撤销',          href: '/cds-settings#access-keys',      icon: 'settings' },
++  { key: 'action:access-keys',      type: 'action', label: 'Agent Key',         path: 'CDS 系统设置',  hint: 'Agent Key 签发与吊销',            href: '/cds-settings#access-keys',      icon: 'settings' },
+ ];
+ 
+ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () => void }): JSX.Element | null {
+diff --git a/cds/web/src/lib/agentKeyCatalog.ts b/cds/web/src/lib/agentKeyCatalog.ts
+new file mode 100644
+index 000000000..5d0c4838d
+--- /dev/null
++++ b/cds/web/src/lib/agentKeyCatalog.ts
+@@ -0,0 +1,288 @@
++/**
++ * Agent Key 目录的前端类型与「这把 Key 能做什么」说明（2026-11-25，Agent Key 管理一期）。
++ *
++ * 数据契约镜像 cds/src/services/agent-key-catalog.ts：来源与状态由服务端判定，
++ * 这里只负责把它们翻成人话。
++ *
++ * describeAgentKey 是唯一的说明生成函数：签发前的实时预览、签发后的回执、列表
++ * 详情三处都调用它，所以用户签发前读到的内容，就是签发后记录里写的内容。
++ */
++
++export type AgentKeyScope = 'project' | 'all' | 'create';
++export type AgentKeyPermission =
++  | 'full'
++  | 'planning-read'
++  | 'planning-propose'
++  | 'design-read'
++  | 'design-feedback'
++  | 'design-publish';
++export type AgentKeyExpiry = 'never' | 'fixed' | 'sliding';
++
++export type AgentKeySource =
++  | { type: 'user'; via: 'console'; actor?: string }
++  | {
++    type: 'agent';
++    via: 'machine-api' | 'access-request' | 'self-service' | 'device-recovery' | 'project-create' | 'user-credential';
++    agentName?: string;
++    approvedBy?: string;
++    requestId?: string;
++    credentialId?: string;
++    parentKeyId?: string;
++  }
++  | { type: 'unknown'; recordedAccount?: string; claimedBy?: string; claimedAt?: string };
++
++export type AgentKeyStatusCode =
++  | 'active'
++  | 'expiring'
++  | 'expired'
++  | 'revoked'
++  | 'principal-disabled'
++  | 'principal-missing'
++  | 'grant-revoked'
++  | 'grant-pending';
++
++export interface AgentKeyAccessView {
++  scope: AgentKeyScope;
++  projects: Array<{ id: string; name: string; missing?: true }>;
++  canCreateProjects: boolean;
++  permission: AgentKeyPermission;
++  legacyFullAccess?: true;
++  oneTime?: true;
++}
++
++export interface AgentKeyCatalogEntry {
++  id: string;
++  kind: 'project' | 'global';
++  label: string;
++  projectId?: string;
++  access: AgentKeyAccessView;
++  createdAt: string;
++  createdBy?: string;
++  lastUsedAt?: string;
++  revokedAt?: string;
++  expiresAt?: string;
++  expiry: AgentKeyExpiry;
++  source: AgentKeySource;
++  status: { code: AgentKeyStatusCode; usable: boolean };
++}
++
++/** 列表行的稳定身份：项目 Key 的 8 位编号只在项目内唯一。 */
++export function agentKeyRowId(entry: Pick<AgentKeyCatalogEntry, 'kind' | 'projectId' | 'id'>): string {
++  return entry.kind === 'project' ? `project:${entry.projectId}:${entry.id}` : `global:${entry.id}`;
++}
++
++/** 校验接口返回，字段对不上就拒绝显示，不把半截数据当成有效状态。 */
++export function isAgentKeyCatalogEntry(value: unknown): value is AgentKeyCatalogEntry {
++  const v = value as Partial<AgentKeyCatalogEntry> | null;
++  return Boolean(v && typeof v.id === 'string' && (v.kind === 'project' || v.kind === 'global')
++    && typeof v.createdAt === 'string' && v.access && Array.isArray(v.access.projects)
++    && v.source && typeof v.source.type === 'string' && v.status && typeof v.status.code === 'string');
++}
++
++export const PERMISSION_OPTIONS: Array<{ value: AgentKeyPermission; label: string; detail: string }> = [
++  { value: 'full', label: '项目完整读写', detail: '部署与重启分支、修改构建配置和项目环境变量、管理本项目的 Agent Key' },
++  { value: 'planning-read', label: '工程规划只读', detail: '只能读取本项目的工程规划与债务' },
++  { value: 'planning-propose', label: '工程规划提案', detail: '读取工程规划，并提交待人工处理的提案' },
++  { value: 'design-read', label: '设计稿只读', detail: '只能读取本项目的私有设计稿' },
++  { value: 'design-feedback', label: '设计实施反馈', detail: '读取设计稿，并提交实施反馈' },
++  { value: 'design-publish', label: '设计稿件发布', detail: '读取设计稿，并发布经 Git 校验的稿件' },
++];
++
++const CAN: Record<AgentKeyPermission, string[]> = {
++  full: [
++    '部署、重启、停止分支，查看部署记录与容器日志',
++    '修改构建配置与项目环境变量',
++    '为同一项目签发、吊销 Agent Key',
++  ],
++  'planning-read': ['读取工程规划与债务'],
++  'planning-propose': ['读取工程规划与债务', '提交工程规划提案（由人处理后生效）'],
++  'design-read': ['读取私有设计稿'],
++  'design-feedback': ['读取私有设计稿', '提交设计实施反馈'],
++  'design-publish': ['读取私有设计稿', '提交设计实施反馈', '发布经 Git 校验的设计稿件'],
++};
++
++export interface AgentKeyDescription {
++  scope: string;
++  can: string[];
++  cannot: string[];
++  expiry: string;
++  risk: { level: 'low' | 'mid' | 'high'; label: string; reason: string };
++}
++
++export interface DescribeInput {
++  access: AgentKeyAccessView;
++  expiry: AgentKeyExpiry;
++  expiresAt?: string;
++}
++
++const DAY = 86_400_000;
++
++export function formatKeyDateTime(value: string | number): string {
++  const date = new Date(value);
++  if (Number.isNaN(date.getTime())) return String(value);
++  const pad = (n: number) => String(n).padStart(2, '0');
++  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
++}
++
++export function describeExpiry(expiry: AgentKeyExpiry, expiresAt: string | undefined, now: number = Date.now()): string {
++  if (expiry === 'never' || !expiresAt) return '永久有效，直到被吊销';
++  const at = Date.parse(expiresAt);
++  if (Number.isNaN(at)) return '到期时间无法读取，请重新读取列表';
++  if (at <= now) return `已于 ${formatKeyDateTime(at)} 失效`;
++  const days = Math.ceil((at - now) / DAY);
++  if (expiry === 'sliding') return `闲置 30 天自动失效，每次使用自动续期（目前到 ${formatKeyDateTime(at)}）`;
++  return `${formatKeyDateTime(at)} 自动失效（还剩 ${days} 天）`;
++}
++
++/** 唯一说明函数：签发预览、回执、列表详情共用。 */
++export function describeAgentKey(input: DescribeInput, totalProjects?: number, now: number = Date.now()): AgentKeyDescription {
++  const { access } = input;
++  const names = access.projects.map((p) => (p.missing ? `${p.name}（项目已不存在）` : p.name));
++  let scope: string;
++  if (access.scope === 'project') {
++    scope = names.length === 0 ? '尚未选择项目' : names.length === 1 ? `只能访问 ${names[0]}` : `只能访问 ${names.length} 个指定项目：${names.join('、')}`;
++  } else if (access.scope === 'all') {
++    scope = `可访问全部现有项目${typeof totalProjects === 'number' ? `（当前 ${totalProjects} 个）` : ''}，以后新建的项目也包括在内`;
++  } else {
++    scope = '不能访问任何现有项目，只能创建新项目。每建一个项目，CDS 会另发一把只能用于该项目的 Key';
++  }
++  if (access.scope !== 'create' && access.canCreateProjects) scope += '；也可以创建新项目';
++
++  const can: string[] = [];
++  const cannot: string[] = [];
++  if (access.legacyFullAccess) {
++    can.push('旧版全权：读写、配置并部署全部项目，也能创建项目（签发时还没有授权范围）');
++  } else if (access.scope === 'create') {
++    can.push('创建新项目');
++    can.push('每建一个项目，拿到该项目的完整读写 Key');
++  } else {
++    can.push(...CAN[access.permission]);
++    if (access.canCreateProjects) can.push('创建新项目');
++  }
++
++  if (access.scope === 'project' && access.projects.length > 0) cannot.push('不能访问其他项目');
++  if (access.scope === 'create') cannot.push('不能读取或修改任何现有项目');
++  if (access.permission !== 'full') cannot.push('不能部署分支，不能修改构建配置或环境变量');
++  cannot.push('不能签发或吊销全局 Key');
++  if (access.permission === 'full' || access.legacyFullAccess) cannot.push('写数据库时，每次都要等系统所有者批准');
++  if (access.oneTime) cannot.push('建成第一个项目后自动吊销，只能用一次');
++
++  const readOnly = access.permission === 'planning-read' || access.permission === 'design-read';
++  const submitOnly = access.permission === 'planning-propose' || access.permission === 'design-feedback';
++  let risk: AgentKeyDescription['risk'];
++  if (access.scope === 'all' || access.legacyFullAccess) {
++    risk = { level: 'high', label: '高风险', reason: '能改动全部项目，泄露后影响整个 CDS' };
++  } else if (access.scope === 'create' || access.canCreateProjects) {
++    risk = { level: 'mid', label: '中风险', reason: '能创建新项目' };
++  } else if (readOnly || submitOnly) {
++    risk = { level: 'low', label: '低风险', reason: readOnly ? '只读' : '只能提交待人工处理的内容' };
++  } else {
++    risk = { level: 'mid', label: '中风险', reason: access.permission === 'full' ? '能部署并修改这个项目' : '能发布设计稿件' };
++  }
++
++  return { scope, can, cannot, expiry: describeExpiry(input.expiry, input.expiresAt, now), risk };
++}
++
++export function sourceLabel(source: AgentKeySource): string {
++  if (source.type === 'user') return '用户签发';
++  if (source.type === 'agent') return 'AI Agent 签发';
++  return '来源未记录';
++}
++
++/** 来源的一句话说明，列表行与详情共用。 */
++export function sourceSentence(source: AgentKeySource): string {
++  if (source.type === 'user') return source.actor ? `${source.actor} 在页面签发` : '在页面签发';
++  if (source.type === 'agent') {
++    const agent = source.agentName || 'Agent';
++    switch (source.via) {
++      case 'access-request': return `${agent} 申请，${source.approvedBy ? `${source.approvedBy} ` : ''}批准`;
++      case 'self-service': return `${agent} 用用户凭据自助签发`;
++      case 'device-recovery': return `${agent} 设备接入，${source.approvedBy ? `${source.approvedBy} ` : ''}批准`;
++      case 'project-create': return `${agent} 建项目时获得`;
++      case 'user-credential': return '经用户凭据签发，具体通道未记录';
++      default: return '通过接口签发，没有人工会话';
++    }
++  }
++  return source.recordedAccount ? `签发时未记录来源，账号字段为 ${source.recordedAccount}` : '签发时未记录来源';
++}
++
++/** 来源链：详情里逐步讲清这把 Key 是怎么来的。 */
++export function sourceSteps(source: AgentKeySource): string[] {
++  if (source.type === 'user') return [`${source.actor || '已登录用户'} 在 CDS 页面签发`];
++  if (source.type === 'unknown') {
++    const steps = ['这把 Key 签发时，系统还没有记录签发来源。不会根据名称推测来源。'];
++    if (source.recordedAccount) steps.push(`记录里的账号字段是 ${source.recordedAccount}，但无法确认是本人签发还是批准了 Agent 申请。`);
++    if (source.claimedBy) steps.push(`归属已由 ${source.claimedBy} 人工核对${source.claimedAt ? `（${formatKeyDateTime(source.claimedAt)}）` : ''}；核对的是归属，签发来源仍未记录。`);
++    return steps;
++  }
++  const agent = source.agentName || 'Agent';
++  switch (source.via) {
++    case 'access-request':
++      return [
++        `${agent} 发起接入申请${source.requestId ? `（申请编号 ${source.requestId}）` : ''}`,
++        `${source.approvedBy || '有权限的用户'} 在 CDS 页面批准`,
++        'CDS 签发这把 Key，由 CLI 直接保存到项目本地',
++      ];
++    case 'self-service':
++      return [
++        `${agent} 使用用户凭据${source.credentialId ? ` ${source.credentialId}` : ''} 为已授权项目自助签发`,
++        '该用户凭据被吊销或主体停用时，这把 Key 同时失效',
++      ];
++    case 'device-recovery':
++      return [
++        `${agent} 发起设备接入`,
++        `${source.approvedBy || '管理员'} 在用户管理批准`,
++        '设备收到用户凭据和这把项目 Key',
++      ];
++    case 'project-create':
++      return [
++        `${agent} 使用“仅创建新项目”的 Key${source.parentKeyId ? ` ${source.parentKeyId}` : ''} 创建了项目`,
++        'CDS 自动签发这把只能用于该项目的 Key',
++      ];
++    case 'user-credential':
++      return [`经用户凭据${source.credentialId ? ` ${source.credentialId}` : ''} 签发；是自助签发还是设备接入，签发时没有记录`];
++    default:
++      return ['调用方没有人工登录会话（例如 bootstrap 静态 Key），通过接口签发'];
++  }
++}
++
++export const STATUS_TEXT: Record<AgentKeyStatusCode, string> = {
++  active: '有效',
++  expiring: '即将过期',
++  expired: '已过期',
++  revoked: '已吊销',
++  'principal-disabled': '所属主体已停用',
++  'principal-missing': '所属主体不存在',
++  'grant-revoked': '项目授权已收回',
++  'grant-pending': '授权保存中',
++};
++
++export function statusText(entry: Pick<AgentKeyCatalogEntry, 'status' | 'expiresAt'>, now: number = Date.now()): string {
++  if (entry.status.code === 'expiring' && entry.expiresAt) {
++    const left = Date.parse(entry.expiresAt) - now;
++    if (left > 0) return left < DAY ? `${Math.max(1, Math.round(left / 3_600_000))} 小时后过期` : `${Math.ceil(left / DAY)} 天后过期`;
++  }
++  return STATUS_TEXT[entry.status.code];
++}
++
++/** 列表行里的范围与权限缩写。 */
++export function accessShort(access: AgentKeyAccessView): string {
++  const scope = access.scope === 'all' ? '全部项目' : access.scope === 'create' ? '仅创建新项目' : access.projects.map((p) => p.name).join('、') || '未选项目';
++  if (access.legacyFullAccess) return `${scope} · 旧版全权`;
++  if (access.scope === 'create') return scope;
++  const permission = PERMISSION_OPTIONS.find((p) => p.value === access.permission)?.label || '完整读写';
++  return `${scope} · ${permission}${access.canCreateProjects ? ' · 可建项目' : ''}`;
++}
++
++export type ExpiryChoice = 'never' | '1' | '7' | '30' | '90' | 'date';
++
++/** 页面上选的有效期 → 提交给接口的 expiresAt（undefined = 永久）。指定日期取当天 23:59。 */
++export function expiryChoiceToIso(choice: ExpiryChoice, date: string, now: number = Date.now()): string | undefined | null {
++  if (choice === 'never') return undefined;
++  if (choice === 'date') {
++    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
++    const at = new Date(`${date}T23:59:00`).getTime();
++    return Number.isNaN(at) || at <= now ? null : new Date(at).toISOString();
++  }
++  return new Date(now + Number(choice) * DAY).toISOString();
++}
+diff --git a/cds/web/src/lib/settingsSearchIndex.ts b/cds/web/src/lib/settingsSearchIndex.ts
+index 15cabdaae..eec03d55d 100644
+--- a/cds/web/src/lib/settingsSearchIndex.ts
++++ b/cds/web/src/lib/settingsSearchIndex.ts
+@@ -46,7 +46,7 @@ export const SYSTEM_TAB_LABELS: Record<string, string> = {
+   'update-history': '自更新历史',
+   'docker-network': 'Docker 网络容量',
+   danger: '危险操作',
+-  'access-keys': 'AI Access Key',
++  'access-keys': 'Agent Key',
+   overview: '概览',
+   auth: '登录与认证',
+   users: '用户管理',
+@@ -270,11 +270,11 @@ export const SYSTEM_SETTINGS_INDEX: SettingsIndexEntry[] = [
+     keywords: ['痕迹', '操作痕迹', '操作记录', 'activity', '审计', '用户痕迹'],
+   },
+ 
+-  // —— AI Access Key ——
++  // —— Agent Key ——
+   {
+     id: 'sys:access-keys',
+-    label: 'AI Access Key',
+-    hint: 'AI 密钥 · 签发 / 撤销全局 Agent Key',
++    label: 'Agent Key',
++    hint: '签发、查找与吊销项目 Key 和全局 Key，区分用户与 AI Agent 签发',
+     tab: 'access-keys',
+     scope: 'system',
+     keywords: ['access key', 'ai access key', '访问密钥', '密钥', 'agent key', 'global agent key', 'sk-', '签发', '吊销', '撤销密钥'],
+diff --git a/cds/web/src/pages/CdsSettingsPage.tsx b/cds/web/src/pages/CdsSettingsPage.tsx
+index da3add6f5..49d624825 100644
+--- a/cds/web/src/pages/CdsSettingsPage.tsx
++++ b/cds/web/src/pages/CdsSettingsPage.tsx
+@@ -101,7 +101,7 @@ const tabGroups: TabGroup[] = [
+       // 2026-05-28 删:运维控制台 Tab 与弹窗审批流(OperatorApprovalModal)100%
+       // 功能重叠,且暴露面更大。AI 发起请求 → 右下角弹窗 → 一键允许的流程
+       // 已覆盖所有 op,Tab 上点击执行的入口反而有误操作风险。后端注册表保留。
+-      { value: 'access-keys', label: 'AI Access Key', icon: KeyRound },
++      { value: 'access-keys', label: 'Agent Key', icon: KeyRound },
+       { value: 'identity', label: '权限总览', icon: Users },
+       { value: 'github', label: 'GitHub 集成', icon: Github },
+       { value: 'github-whitelist', label: 'GitHub 白名单', icon: ShieldCheck },
+diff --git a/cds/web/src/pages/ProjectListPage.tsx b/cds/web/src/pages/ProjectListPage.tsx
+index 872358ee9..a78d00c00 100644
+--- a/cds/web/src/pages/ProjectListPage.tsx
++++ b/cds/web/src/pages/ProjectListPage.tsx
+@@ -71,7 +71,6 @@ import { useInfraCatalog } from '@/lib/infraCatalog';
+ import { RuntimeValidateButton } from '@/components/deployment/RuntimeValidateButton';
+ import { CodePill, ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
+ import { EnvSetupDialog } from '@/components/env/EnvSetupDialog';
+-import { AgentKeyScopePanel, describeAgentKeyScope, type AgentKeyScope } from '@/components/AgentKeyScopePanel';
+ import { MonitoringDialog } from '@/components/monitoring/MonitoringDialog';
+ import { bottomRightToastStyle } from '@/lib/overlayOffsets';
+ import { RepoSharingInline, RepoSharingConfirmBody, type RepoSharing } from '@/components/project/RepoSharing';
+@@ -313,33 +312,6 @@ function defaultOnboardingServices(): AppServiceDraft[] {
+   ];
+ }
+ 
+-interface AgentKeySummary {
+-  id: string;
+-  label?: string;
+-  scope?: string;
+-  planningAccess?: 'read' | 'propose';
+-  designAccess?: 'read' | 'feedback' | 'publish';
+-  access?: AgentKeyScope;
+-  createdAt?: string;
+-  createdBy?: string;
+-  lastUsedAt?: string;
+-  revokedAt?: string;
+-  status?: 'active' | 'revoked';
+-}
+-
+-const agentDesignAccessLabels = { read: '设计只读', feedback: '设计实施反馈', publish: '设计稿件发布' } as const;
+-
+-interface AgentKeysResponse {
+-  keys: AgentKeySummary[];
+-}
+-
+-interface AgentKeySignResponse {
+-  keyId: string;
+-  plaintext: string;
+-  preview?: string;
+-  access?: AgentKeyScope;
+-}
+-
+ interface LegacyCleanupStatus {
+   legacyInUse: boolean;
+   needsMigration: boolean;
+@@ -482,8 +454,6 @@ export function ProjectListPage(): JSX.Element {
+   const [cloneTarget, setCloneTarget] = useState<ProjectSummary | null>(null);
+   // Phase 8 — clone 完成后的 env 配置弹窗:必填项强制让用户感知,配完跳分支页
+   const [envSetupTarget, setEnvSetupTarget] = useState<ProjectSummary | null>(null);
+-  const [agentKeyProject, setAgentKeyProject] = useState<ProjectSummary | null>(null);
+-  const [globalAgentKeyOpen, setGlobalAgentKeyOpen] = useState(false);
+   const [monitoringOpen, setMonitoringOpen] = useState(false);
+   const [legacyDialogOpen, setLegacyDialogOpen] = useState(false);
+   const [pendingImportOpen, setPendingImportOpen] = useState(false);
+@@ -728,7 +698,7 @@ export function ProjectListPage(): JSX.Element {
+         onCopyName={() => void copyProjectName(project)}
+         environments={environmentStatus === 'ready' ? projectEnvironmentNames(project.id, environmentTargets) : undefined}
+         onClone={() => setCloneTarget(project)}
+-        onAgentKeys={() => setAgentKeyProject(project)}
++        onAgentKeys={() => navigate(`/cds-settings?project=${encodeURIComponent(project.id)}#access-keys`)}
+         onAgentSessions={() => navigate(`/agent-requests/${encodeURIComponent(project.id)}`)}
+         onDelete={() => setDeleteTarget(project)}
+         onTogglePause={() => (project.paused ? void applyPause(project, false) : setPauseTarget(project))}
+@@ -1075,18 +1045,6 @@ export function ProjectListPage(): JSX.Element {
+             navigate(`/branches/${encodeURIComponent(projectId)}`);
+           }}
+         />
+-        <AgentKeyManagerDialog
+-          project={agentKeyProject}
+-          onOpenChange={(open) => {
+-            if (!open) setAgentKeyProject(null);
+-          }}
+-          onToast={setToast}
+-        />
+-        <GlobalAgentKeyManagerDialog
+-          open={globalAgentKeyOpen}
+-          onOpenChange={setGlobalAgentKeyOpen}
+-          onToast={setToast}
+-        />
+         <MonitoringDialog
+           open={monitoringOpen}
+           onOpenChange={setMonitoringOpen}
+@@ -2285,628 +2243,6 @@ function CloneProgressDialog({
+   );
+ }
+ 
+-function AgentKeyManagerDialog({
+-  project,
+-  onOpenChange,
+-  onToast,
+-}: {
+-  project: ProjectSummary | null;
+-  onOpenChange: (open: boolean) => void;
+-  onToast: (message: string) => void;
+-}): JSX.Element {
+-  const [state, setState] = useState<
+-    | { status: 'idle' }
+-    | { status: 'loading' }
+-    | { status: 'error'; message: string }
+-    | { status: 'ok'; keys: AgentKeySummary[] }
+-  >({ status: 'idle' });
+-  const [signOpen, setSignOpen] = useState(false);
+-  const [revokeTarget, setRevokeTarget] = useState<AgentKeySummary | null>(null);
+-
+-  const loadKeys = useCallback(async () => {
+-    if (!project) return;
+-    setState({ status: 'loading' });
+-    try {
+-      const data = await apiRequest<AgentKeysResponse>(`/api/projects/${encodeURIComponent(project.id)}/agent-keys`);
+-      setState({ status: 'ok', keys: data.keys || [] });
+-    } catch (err) {
+-      setState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
+-    }
+-  }, [project]);
+-
+-  useEffect(() => {
+-    if (project) void loadKeys();
+-    else setState({ status: 'idle' });
+-  }, [loadKeys, project]);
+-
+-  return (
+-    <>
+-      <Dialog open={Boolean(project)} onOpenChange={onOpenChange}>
+-        <DialogContent className="max-w-2xl">
+-          <DialogHeader>
+-            <DialogTitle>Agent Key 管理</DialogTitle>
+-            <DialogDescription>
+-              {project ? `${displayName(project)} · 项目级 key 只能操作当前项目。` : ''}
+-            </DialogDescription>
+-          </DialogHeader>
+-
+-          <div className="flex flex-wrap gap-2">
+-            <Button type="button" onClick={() => setSignOpen(true)}>
+-              <KeyRound />
+-              签发新 Key
+-            </Button>
+-            <Button type="button" variant="outline" onClick={() => void loadKeys()}>
+-              <RefreshCw />
+-              刷新
+-            </Button>
+-          </div>
+-
+-          {state.status === 'loading' ? <LoadingBlock label="加载 Agent Keys" /> : null}
+-          {state.status === 'error' ? <ErrorBlock message={state.message} /> : null}
+-          {state.status === 'ok' && state.keys.length === 0 ? (
+-            <div className="rounded-md border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">
+-              还没有项目级 Agent Key。
+-            </div>
+-          ) : null}
+-          {state.status === 'ok' && state.keys.length > 0 ? (
+-            <div className="space-y-2">
+-              {state.keys.map((key) => (
+-                <div key={key.id} className="cds-surface-raised cds-hairline px-3 py-3">
+-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+-                    <div className="min-w-0">
+-                      <div className="flex flex-wrap items-center gap-2">
+-                        <span className="font-medium">{key.label || key.id}</span>
+-                        <CodePill>{key.revokedAt ? '已吊销' : '有效'}</CodePill>
+-                        <CodePill>{key.designAccess ? agentDesignAccessLabels[key.designAccess] : key.scope || 'rw'}</CodePill>
+-                      </div>
+-                      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+-                        {key.planningAccess && <span>{key.planningAccess === 'read' ? '工程规划只读' : '工程规划提案'}</span>}
+-                        <span>签发：{formatDate(key.createdAt)}</span>
+-                        <span>最近使用：{formatDate(key.lastUsedAt)}</span>
+-                        {key.createdBy ? <span>签发人：{key.createdBy}</span> : null}
+-                      </div>
+-                    </div>
+-                    {!key.revokedAt ? (
+-                      <Button type="button" variant="outline" size="sm" onClick={() => setRevokeTarget(key)}>
+-                        <Trash2 />
+-                        吊销
+-                      </Button>
+-                    ) : null}
+-                  </div>
+-                </div>
+-              ))}
+-            </div>
+-          ) : null}
+-
+-          <DialogFooter>
+-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+-              关闭
+-            </Button>
+-          </DialogFooter>
+-        </DialogContent>
+-      </Dialog>
+-
+-      <AgentKeySignDialog
+-        project={project}
+-        open={signOpen}
+-        onOpenChange={setSignOpen}
+-        onSigned={async () => {
+-          await loadKeys();
+-        }}
+-        onToast={onToast}
+-      />
+-      <AgentKeyRevokeDialog
+-        project={project}
+-        target={revokeTarget}
+-        onOpenChange={(open) => {
+-          if (!open) setRevokeTarget(null);
+-        }}
+-        onRevoked={async () => {
+-          setRevokeTarget(null);
+-          await loadKeys();
+-        }}
+-        onToast={onToast}
+-      />
+-    </>
+-  );
+-}
+-function GlobalAgentKeyManagerDialog({
+-  open,
+-  onOpenChange,
+-  onToast,
+-}: {
+-  open: boolean;
+-  onOpenChange: (open: boolean) => void;
+-  onToast: (message: string) => void;
+-}): JSX.Element {
+-  const [state, setState] = useState<
+-    | { status: 'idle' }
+-    | { status: 'loading' }
+-    | { status: 'error'; message: string }
+-    | { status: 'ok'; keys: AgentKeySummary[] }
+-  >({ status: 'idle' });
+-  const [signOpen, setSignOpen] = useState(false);
+-  const [revokeTarget, setRevokeTarget] = useState<AgentKeySummary | null>(null);
+-
+-  const loadKeys = useCallback(async () => {
+-    setState({ status: 'loading' });
+-    try {
+-      const data = await apiRequest<AgentKeysResponse>('/api/global-agent-keys');
+-      setState({ status: 'ok', keys: data.keys || [] });
+-    } catch (err) {
+-      setState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
+-    }
+-  }, []);
+-
+-  useEffect(() => {
+-    if (open) void loadKeys();
+-    else setState({ status: 'idle' });
+-  }, [loadKeys, open]);
+-
+-  return (
+-    <>
+-      <Dialog open={open} onOpenChange={onOpenChange}>
+-        <DialogContent className="max-w-2xl">
+-          <DialogHeader>
+-            <DialogTitle>Agent 全局通行证</DialogTitle>
+-            <DialogDescription>
+-              全局通行证可跨项目操作并创建新项目；优先给自动化引导 Agent 使用，单项目操作仍建议用项目级 Key。
+-            </DialogDescription>
+-          </DialogHeader>
+-
+-          <div className="flex flex-wrap gap-2">
+-            <Button type="button" onClick={() => setSignOpen(true)}>
+-              <KeyRound />
+-              签发全局 Key
+-            </Button>
+-            <Button type="button" variant="outline" onClick={() => void loadKeys()}>
+-              <RefreshCw />
+-              刷新
+-            </Button>
+-          </div>
+-
+-          {state.status === 'loading' ? <LoadingBlock label="加载全局 Agent Keys" /> : null}
+-          {state.status === 'error' ? <ErrorBlock message={state.message} /> : null}
+-          {state.status === 'ok' && state.keys.length === 0 ? (
+-            <div className="rounded-md border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">
+-              还没有全局 Agent Key。
+-            </div>
+-          ) : null}
+-          {state.status === 'ok' && state.keys.length > 0 ? (
+-            <div className="space-y-2">
+-              {state.keys.map((key) => (
+-                <div key={key.id} className="cds-surface-raised cds-hairline px-3 py-3">
+-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+-                    <div className="min-w-0">
+-                      <div className="flex flex-wrap items-center gap-2">
+-                        <span className="font-medium">{key.label || key.id}</span>
+-                        <CodePill>{key.revokedAt ? '已吊销' : '有效'}</CodePill>
+-                        <CodePill>{describeAgentKeyScope(key.access)}</CodePill>
+-                      </div>
+-                      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+-                        <span>签发：{formatDate(key.createdAt)}</span>
+-                        <span>最近使用：{formatDate(key.lastUsedAt)}</span>
+-                        {key.createdBy ? <span>签发人：{key.createdBy}</span> : null}
+-                      </div>
+-                    </div>
+-                    {!key.revokedAt ? (
+-                      <Button type="button" variant="outline" size="sm" onClick={() => setRevokeTarget(key)}>
+-                        <Trash2 />
+-                        吊销
+-                      </Button>
+-                    ) : null}
+-                  </div>
+-                </div>
+-              ))}
+-            </div>
+-          ) : null}
+-
+-          <DialogFooter>
+-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+-              关闭
+-            </Button>
+-          </DialogFooter>
+-        </DialogContent>
+-      </Dialog>
+-
+-      <GlobalAgentKeySignDialog
+-        open={signOpen}
+-        onOpenChange={setSignOpen}
+-        onSigned={async () => {
+-          await loadKeys();
+-        }}
+-        onToast={onToast}
+-      />
+-      <GlobalAgentKeyRevokeDialog
+-        target={revokeTarget}
+-        onOpenChange={(nextOpen) => {
+-          if (!nextOpen) setRevokeTarget(null);
+-        }}
+-        onRevoked={async () => {
+-          setRevokeTarget(null);
+-          await loadKeys();
+-        }}
+-        onToast={onToast}
+-      />
+-    </>
+-  );
+-}
+-
+-function GlobalAgentKeySignDialog({
+-  open,
+-  onOpenChange,
+-  onSigned,
+-  onToast,
+-}: {
+-  open: boolean;
+-  onOpenChange: (open: boolean) => void;
+-  onSigned: () => Promise<void>;
+-  onToast: (message: string) => void;
+-}): JSX.Element {
+-  const [label, setLabel] = useState('');
+-  const [signing, setSigning] = useState(false);
+-  const [error, setError] = useState('');
+-  const [signed, setSigned] = useState<AgentKeySignResponse | null>(null);
+-  // 默认作用域 = 只能创建新项目(用户诉求:签发全局 Key 默认只给建项目,怕别人搞坏现有项目)。
+-  const [scope, setScope] = useState<AgentKeyScope>({ canCreateProjects: true, projects: [] });
+-
+-  useEffect(() => {
+-    if (!open) {
+-      setLabel('');
+-      setError('');
+-      setSigned(null);
+-      setSigning(false);
+-      setScope({ canCreateProjects: true, projects: [] });
+-    }
+-  }, [open]);
+-
+-  // 空授权(既不能建项目、也没选任何现有项目)不允许签发,给按钮兜底禁用。
+-  const emptyScope =
+-    !scope.canCreateProjects && scope.projects !== 'all' && scope.projects.length === 0;
+-
+-  async function sign(): Promise<void> {
+-    setSigning(true);
+-    setError('');
+-    try {
+-      const data = await apiRequest<AgentKeySignResponse>('/api/global-agent-keys', {
+-        method: 'POST',
+-        body: { label: label.trim() || undefined, access: scope },
+-      });
+-      setSigned(data);
+-      await onSigned();
+-    } catch (err) {
+-      setError(err instanceof ApiError ? err.message : String(err));
+-    } finally {
+-      setSigning(false);
+-    }
+-  }
+-
+-  const codeText = signed
+-    ? [`CDS_HOST=${window.location.origin}`, `AI_ACCESS_KEY=${signed.plaintext}`].join('\n')
+-    : '';
+-
+-  return (
+-    <Dialog open={open} onOpenChange={onOpenChange}>
+-      <DialogContent>
+-        <DialogHeader>
+-          <DialogTitle>{signed ? '全局 Key 已签发' : '签发 Agent 全局 Key'}</DialogTitle>
+-          <DialogDescription>
+-            {signed
+-              ? '明文只显示一次。关闭后 CDS 只保留 sha256 摘要，无法再次查看。'
+-              : '按需勾选授权范围。默认「只能创建新项目」——能建项目，但碰不到你现有的项目。'}
+-          </DialogDescription>
+-        </DialogHeader>
+-
+-        {signed ? (
+-          <div className="space-y-4">
+-            <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] px-3 py-2 text-xs text-muted-foreground">
+-              授权范围：<span className="font-medium text-foreground">{describeAgentKeyScope(signed.access)}</span>
+-            </div>
+-            <pre className="cds-surface-raised cds-hairline whitespace-pre-wrap break-all p-3 font-mono text-xs leading-6">
+-              {codeText}
+-            </pre>
+-            <Button
+-              type="button"
+-              onClick={() => {
+-                void navigator.clipboard.writeText(codeText).then(() => onToast('全局 Agent Key 已复制'));
+-              }}
+-            >
+-              <Copy />
+-              复制全部
+-            </Button>
+-          </div>
+-        ) : (
+-          <div className="space-y-4">
+-            <label className="block space-y-1.5">
+-              <span className="text-sm font-medium">标签</span>
+-              <input
+-                className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
+-                value={label}
+-                onChange={(event) => setLabel(event.target.value)}
+-                maxLength={100}
+-                placeholder="例如 Codex 自动接入"
+-              />
+-            </label>
+-
+-            <AgentKeyScopePanel value={scope} onChange={setScope} disabled={signing} />
+-
+-            {scope.projects === 'all' ? (
+-              <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm leading-6 text-destructive">
+-                你勾选了「操作所有现有项目」——这把 Key 等同管理员权限，泄露后果严重。只交给需要跨项目自动化的 Agent，用完立刻吊销。
+-              </div>
+-            ) : (
+-              <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] px-3 py-2 text-sm leading-6 text-muted-foreground">
+-                当前范围：{describeAgentKeyScope(scope)}。
+-              </div>
+-            )}
+-            {error ? (
+-              <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+-                {error}
+-              </div>
+-            ) : null}
+-          </div>
+-        )}
+-
+-        <DialogFooter>
+-          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+-            {signed ? '关闭' : '取消'}
+-          </Button>
+-          {!signed ? (
+-            <Button type="button" onClick={() => void sign()} disabled={signing || emptyScope}>
+-              {signing ? <Loader2 className="animate-spin" /> : <KeyRound />}
+-              确认签发
+-            </Button>
+-          ) : null}
+-        </DialogFooter>
+-      </DialogContent>
+-    </Dialog>
+-  );
+-}
+-
+-function GlobalAgentKeyRevokeDialog({
+-  target,
+-  onOpenChange,
+-  onRevoked,
+-  onToast,
+-}: {
+-  target: AgentKeySummary | null;
+-  onOpenChange: (open: boolean) => void;
+-  onRevoked: () => Promise<void>;
+-  onToast: (message: string) => void;
+-}): JSX.Element {
+-  const [revoking, setRevoking] = useState(false);
+-
+-  async function revoke(): Promise<void> {
+-    if (!target) return;
+-    setRevoking(true);
+-    try {
+-      await apiRequest(`/api/global-agent-keys/${encodeURIComponent(target.id)}`, { method: 'DELETE' });
+-      onToast('全局 Agent Key 已吊销');
+-      await onRevoked();
+-    } catch (err) {
+-      onToast(err instanceof ApiError ? err.message : String(err));
+-    } finally {
+-      setRevoking(false);
+-    }
+-  }
+-
+-  return (
+-    <Dialog open={Boolean(target)} onOpenChange={onOpenChange}>
+-      <DialogContent>
+-        <DialogHeader>
+-          <DialogTitle>吊销全局 Agent Key</DialogTitle>
+-          <DialogDescription>
+-            吊销后该 key 会立即失效，无法恢复。目标：{target?.label || target?.id || ''}
+-          </DialogDescription>
+-        </DialogHeader>
+-        <DialogFooter>
+-          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+-            取消
+-          </Button>
+-          <Button type="button" variant="destructive" onClick={() => void revoke()} disabled={revoking}>
+-            {revoking ? <Loader2 className="animate-spin" /> : <Trash2 />}
+-            确认吊销
+-          </Button>
+-        </DialogFooter>
+-      </DialogContent>
+-    </Dialog>
+-  );
+-}
+-
+-function AgentKeySignDialog({
+-  project,
+-  open,
+-  onOpenChange,
+-  onSigned,
+-  onToast,
+-}: {
+-  project: ProjectSummary | null;
+-  open: boolean;
+-  onOpenChange: (open: boolean) => void;
+-  onSigned: () => Promise<void>;
+-  onToast: (message: string) => void;
+-}): JSX.Element {
+-  const [label, setLabel] = useState('');
+-  const [planningAccess, setPlanningAccess] = useState<AgentKeySummary['planningAccess']>();
+-  const [designAccess, setDesignAccess] = useState<AgentKeySummary['designAccess']>();
+-  const [signing, setSigning] = useState(false);
+-  const [error, setError] = useState('');
+-  const [signed, setSigned] = useState<AgentKeySignResponse | null>(null);
+-
+-  useEffect(() => {
+-    if (!open) {
+-      setLabel('');
+-      setPlanningAccess(undefined);
+-      setDesignAccess(undefined);
+-      setError('');
+-      setSigned(null);
+-      setSigning(false);
+-    }
+-  }, [open]);
+-
+-  async function sign(): Promise<void> {
+-    if (!project) return;
+-    setSigning(true);
+-    setError('');
+-    try {
+-      const data = await apiRequest<AgentKeySignResponse>(
+-        `/api/projects/${encodeURIComponent(project.id)}/agent-keys`,
+-        {
+-          method: 'POST',
+-          body: { label: label.trim() || undefined, planningAccess, designAccess },
+-        },
+-      );
+-      setSigned(data);
+-      await onSigned();
+-    } catch (err) {
+-      setError(err instanceof ApiError ? err.message : String(err));
+-    } finally {
+-      setSigning(false);
+-    }
+-  }
+-
+-  const codeText =
+-    project && signed
+-      ? [`CDS_HOST=${window.location.origin}`, `CDS_PROJECT_ID=${project.id}`, `CDS_PROJECT_KEY=${signed.plaintext}`].join('\n')
+-      : '';
+-
+-  return (
+-    <Dialog open={open} onOpenChange={onOpenChange}>
+-      <DialogContent>
+-        <DialogHeader>
+-          <DialogTitle>{signed ? 'Agent Key 已签发' : '签发项目级 Agent Key'}</DialogTitle>
+-          <DialogDescription>
+-            {signed
+-              ? '明文只显示一次。关闭后 CDS 只保留 sha256 摘要，无法再次查看。'
+-              : '这会创建一把新的项目级访问密钥，持有者可操作当前项目。'}
+-          </DialogDescription>
+-        </DialogHeader>
+-
+-        {signed ? (
+-          <div className="space-y-4">
+-            <pre className="cds-surface-raised cds-hairline whitespace-pre-wrap break-all p-3 font-mono text-xs leading-6">
+-              {codeText}
+-            </pre>
+-            <Button
+-              type="button"
+-              onClick={() => {
+-                void navigator.clipboard.writeText(codeText).then(() => onToast('Agent Key 已复制'));
+-              }}
+-            >
+-              <Copy />
+-              复制全部
+-            </Button>
+-          </div>
+-        ) : (
+-          <div className="space-y-4">
+-            <label className="block space-y-1.5">
+-              <span className="text-sm font-medium">标签</span>
+-              <input
+-                className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
+-                value={label}
+-                onChange={(event) => setLabel(event.target.value)}
+-                maxLength={100}
+-                placeholder="例如 Codex 本地调试"
+-              />
+-            </label>
+-            <label className="block space-y-1.5">
+-              <span className="text-sm font-medium">权限</span>
+-              <select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+-                value={designAccess ? 'design-' + designAccess : planningAccess ?? ''}
+-                onChange={event => {
+-                  const scope = event.target.value;
+-                  setPlanningAccess(scope === 'read' || scope === 'propose' ? scope : undefined);
+-                  setDesignAccess((Object.keys(agentDesignAccessLabels) as Array<keyof typeof agentDesignAccessLabels>)
+-                    .find(access => scope === 'design-' + access));
+-                }}>
+-                <option value="">项目读写</option>
+-                <option value="read">工程规划只读</option>
+-                <option value="propose">工程规划提案</option>
+-                {Object.entries(agentDesignAccessLabels).map(([access, label]) => <option key={access} value={'design-' + access}>{label}</option>)}
+-              </select>
+-            </label>
+-            <div className="rounded-md border border-warn/40 bg-warn-soft px-3 py-2 text-sm text-muted-foreground">
+-              签发后请只交给需要操作此项目的 Agent。用完可在管理列表吊销。
+-            </div>
+-            {error ? (
+-              <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+-                {error}
+-              </div>
+-            ) : null}
+-          </div>
+-        )}
+-
+-        <DialogFooter>
+-          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+-            {signed ? '关闭' : '取消'}
+-          </Button>
+-          {!signed ? (
+-            <Button type="button" onClick={() => void sign()} disabled={signing}>
+-              {signing ? <Loader2 className="animate-spin" /> : <KeyRound />}
+-              确认签发
+-            </Button>
+-          ) : null}
+-        </DialogFooter>
+-      </DialogContent>
+-    </Dialog>
+-  );
+-}
+-
+-function AgentKeyRevokeDialog({
+-  project,
+-  target,
+-  onOpenChange,
+-  onRevoked,
+-  onToast,
+-}: {
+-  project: ProjectSummary | null;
+-  target: AgentKeySummary | null;
+-  onOpenChange: (open: boolean) => void;
+-  onRevoked: () => Promise<void>;
+-  onToast: (message: string) => void;
+-}): JSX.Element {
+-  const [revoking, setRevoking] = useState(false);
+-
+-  async function revoke(): Promise<void> {
+-    if (!project || !target) return;
+-    setRevoking(true);
+-    try {
+-      await apiRequest(
+-        `/api/projects/${encodeURIComponent(project.id)}/agent-keys/${encodeURIComponent(target.id)}`,
+-        { method: 'DELETE' },
+-      );
+-      onToast('Agent Key 已吊销');
+-      await onRevoked();
+-    } catch (err) {
+-      onToast(err instanceof ApiError ? err.message : String(err));
+-    } finally {
+-      setRevoking(false);
+-    }
+-  }
+-
+-  return (
+-    <Dialog open={Boolean(target)} onOpenChange={onOpenChange}>
+-      <DialogContent>
+-        <DialogHeader>
+-          <DialogTitle>吊销 Agent Key</DialogTitle>
+-          <DialogDescription>
+-            吊销后该 key 会立即失效，无法恢复。目标：{target?.label || target?.id || ''}
+-          </DialogDescription>
+-        </DialogHeader>
+-        <DialogFooter>
+-          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+-            取消
+-          </Button>
+-          <Button type="button" variant="destructive" onClick={() => void revoke()} disabled={revoking}>
+-            {revoking ? <Loader2 className="animate-spin" /> : <Trash2 />}
+-            确认吊销
+-          </Button>
+-        </DialogFooter>
+-      </DialogContent>
+-    </Dialog>
+-  );
+-}
+-
+ interface RepoAlreadyLinked {
+   repoFullName: string;
+   /** 兄弟项目明细。机器凭据拿不到，所以可能是空数组——用 projectCount 兜底显示。 */
+diff --git a/cds/web/src/pages/cds-settings/tabs/AccessKeysTab.tsx b/cds/web/src/pages/cds-settings/tabs/AccessKeysTab.tsx
+index 1869e4f4e..cc50382f9 100644
+--- a/cds/web/src/pages/cds-settings/tabs/AccessKeysTab.tsx
++++ b/cds/web/src/pages/cds-settings/tabs/AccessKeysTab.tsx
+@@ -1,138 +1,697 @@
+-import { useCallback, useContext, useEffect, useRef, useState } from 'react';
+-import { Copy, KeyRound, Loader2, Plus, RefreshCw, Trash2 } from 'lucide-react';
++/**
++ * CDS 系统设置 · Agent Key（2026-11-25，Agent Key 管理一期）。
++ *
++ * 一页两件事：找到已有 Key 并管理它（列表是主体），签发一把新 Key（右上角唯一主按钮）。
++ * 项目卡片的「Agent Key」也进到这里，只是带上 ?project= 筛选，签发时默认选中该项目。
++ *
++ * 列表来自 GET /api/global-agent-keys/catalog：签发来源与当前状态由服务端判定（与鉴权
++ * 同一判据），这里不再自己用 revokedAt 推「有效」。「这把 Key 能做什么」统一由
++ * describeAgentKey 生成，签发预览、回执、列表详情三处同源。
++ *
++ * 签发结果未知、明文只显示一次、吊销结果未知这三类保护沿用原实现：结果不明时不允许
++ * 重复提交，必须先重新读取核对。
++ */
++import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
++import { useLocation, useNavigate } from 'react-router-dom';
++import { Bot, ChevronDown, CircleHelp, Copy, KeyRound, Loader2, Plus, RefreshCw, ShieldAlert, Terminal, Trash2, UserRound } from 'lucide-react';
+ 
+ import { useSettingsSessionOwner, useSettingsSessionState } from '../useSettingsSessionState';
+ import { ConsoleAuthContext } from '@/lib/consoleAuthContext';
+ import { Button } from '@/components/ui/button';
+ import { ConfirmAction } from '@/components/ui/confirm-action';
++import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
+ import { ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
+ import { apiRequest, ApiError } from '@/lib/api';
+-import { AgentKeyScopePanel, type AgentKeyScope } from '@/components/AgentKeyScopePanel';
++import {
++  PERMISSION_OPTIONS,
++  accessShort,
++  agentKeyRowId,
++  describeAgentKey,
++  expiryChoiceToIso,
++  formatKeyDateTime,
++  isAgentKeyCatalogEntry,
++  sourceLabel,
++  sourceSentence,
++  sourceSteps,
++  statusText,
++  type AgentKeyAccessView,
++  type AgentKeyCatalogEntry,
++  type AgentKeyDescription,
++  type AgentKeyPermission,
++  type DescribeInput,
++  type ExpiryChoice,
++} from '@/lib/agentKeyCatalog';
+ 
+-interface AgentKeySummary {
+-  id: string; label: string; scope: string; access?: AgentKeyScope;
+-  createdAt: string; createdBy?: string; lastUsedAt?: string; revokedAt?: string;
++interface ProjectOption { id: string; name: string }
++interface SignDraft {
++  label: string;
++  scope: 'project' | 'all' | 'create';
++  projectId: string;
++  alsoCreate: boolean;
++  permission: AgentKeyPermission;
++  expiry: ExpiryChoice;
++  date: string;
+ }
+-interface FreshKey { keyId: string; plaintext: string; preview: string; access?: AgentKeyScope; label: string; scope: object | null; expired?: boolean }
+-type KeysState = { status: 'loading' } | { status: 'error'; message: string } | { status: 'ok'; scope: object | null; keys: AgentKeySummary[]; readError: string };
+-const defaultScope = (): AgentKeyScope => ({ canCreateProjects: true, projects: [] });
+-const actionClass = 'min-h-[3.25rem] text-base lg:min-h-0 lg:text-xs';
+-function scopeDescription(access?: AgentKeyScope): string {
+-  if (!access || typeof access.canCreateProjects !== 'boolean' || !(access.projects === 'all' || Array.isArray(access.projects))) return '权限范围未确认，请重新读取；勿按前缀判断权限';
+-  const projects = access.projects === 'all' ? '全部项目读写、配置与部署' : access.projects.length ? `指定项目：${access.projects.join('、')}` : '不授予已有项目访问';
+-  return `${access.canCreateProjects ? '可创建项目' : '不可创建项目'} · ${projects}`;
++interface FreshKey {
++  keyId: string;
++  plaintext: string;
++  label: string;
++  rowId: string;
++  describe: DescribeInput;
++  scope: object | null;
++  expired?: boolean;
+ }
++type KeysState =
++  | { status: 'loading' }
++  | { status: 'error'; message: string }
++  | { status: 'ok'; scope: object | null; filter: string; keys: AgentKeyCatalogEntry[]; readError: string };
++type SourceFilter = 'all' | 'user' | 'agent' | 'unknown';
++type StatusFilter = 'all' | 'active' | 'inactive';
++
++const defaultDraft = (projectId = ''): SignDraft => ({
++  label: '', scope: 'project', projectId, alsoCreate: false, permission: 'full', expiry: 'never', date: '',
++});
++const actionClass = 'min-h-[3.25rem] text-base lg:min-h-0 lg:text-sm';
+ const knownRejection = (err: unknown) => err instanceof ApiError && err.status >= 400 && err.status < 500 && err.status !== 408;
++const DAY = 86_400_000;
++
++/** 签发草稿 → 与列表同形的范围描述，喂给同一个说明函数。 */
++function draftAccess(draft: SignDraft, projects: ProjectOption[]): AgentKeyAccessView {
++  const picked = projects.find((p) => p.id === draft.projectId);
++  const projectKey = draft.scope === 'project' && !draft.alsoCreate;
++  return {
++    scope: draft.scope,
++    projects: draft.scope === 'project' && draft.projectId ? [{ id: draft.projectId, name: picked?.name || draft.projectId }] : [],
++    canCreateProjects: draft.scope === 'create' || draft.alsoCreate,
++    // 全局 Key 暂不能限制操作类别；只有单项目 Key 能选受限权限。
++    permission: projectKey ? draft.permission : 'full',
++  };
++}
++
++function draftExpiryIso(draft: SignDraft): string | undefined | null {
++  return expiryChoiceToIso(draft.expiry, draft.date);
++}
++
++function draftBlocker(draft: SignDraft): string {
++  if (draft.scope === 'project' && !draft.projectId) return '请在第 1 步选择一个项目';
++  if (draft.expiry === 'date' && draftExpiryIso(draft) === null) return '请选择晚于今天的失效日期';
++  return '';
++}
+ 
+ export function AccessKeysTab({ onToast }: { onToast: (message: string) => void }): JSX.Element {
+   const { status: scope } = useContext(ConsoleAuthContext);
+   const sessionOwner = useSettingsSessionOwner();
++  const location = useLocation();
++  const navigate = useNavigate();
++  const projectFilter = new URLSearchParams(location.search).get('project') || '';
++
+   const alive = useRef(true);
+   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+   const currentScope = useRef(scope); currentScope.current = scope;
+-  const generation = useRef(0), receipt = useRef<HTMLTextAreaElement>(null);
+-  const [state, setState] = useSettingsSessionState<KeysState>('keys:read-state', { status: 'loading' });
++  const generation = useRef(0);
++  const receipt = useRef<HTMLTextAreaElement>(null);
++
++  const [state, setState] = useSettingsSessionState<KeysState>('keys:catalog-state', { status: 'loading' });
++  const [projects, setProjects] = useState<ProjectOption[] | null>(null);
++  const [projectsError, setProjectsError] = useState('');
+   const [query, setQuery] = useState('');
+-  const [keyFilter, setKeyFilter] = useState<'active' | 'revoked' | 'all'>('active');
+-  const [signOpen, setSignOpen] = useSettingsSessionState<boolean>('keys:sign-open', false), [signing, setSigning] = useSettingsSessionState<boolean>('keys:signing', false, Boolean);
+-  const [signLabel, setSignLabel] = useSettingsSessionState<string>('keys:sign-label', ''), [signScope, setSignScope] = useSettingsSessionState<AgentKeyScope>('keys:sign-scope', defaultScope());
+-  const [signError, setSignError] = useSettingsSessionState<string>('keys:sign-error', '', undefined, { keepSession: true }), [signUnknown, setSignUnknown] = useSettingsSessionState<boolean>('keys:sign-unknown', false, Boolean);
++  const [sourceFilter, setSourceFilter] = useState<SourceFilter>('all');
++  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
++  const [expanded, setExpanded] = useState<string>('');
++  const [askOpen, setAskOpen] = useState(false);
++  const [copyHint, setCopyHint] = useState('');
++
++  const [signOpen, setSignOpen] = useSettingsSessionState<boolean>('keys:sign-open', false);
++  const [signing, setSigning] = useSettingsSessionState<boolean>('keys:signing', false, Boolean);
++  const [draft, setDraft] = useSettingsSessionState<SignDraft>('keys:sign-draft', defaultDraft());
++  const [signError, setSignError] = useSettingsSessionState<string>('keys:sign-error', '', undefined, { keepSession: true });
++  const [signUnknown, setSignUnknown] = useSettingsSessionState<boolean>('keys:sign-unknown', false, Boolean);
+   const [listSnapshotAvailable, setListSnapshotAvailable] = useSettingsSessionState<boolean>('keys:unknown-read', false);
+-  const [unknownAttempt, setUnknownAttempt] = useSettingsSessionState<{ label: string; access: AgentKeyScope; startedAt: string } | null>('keys:unknown-attempt', null, undefined, { keepSession: true });
+-  const [freshKey, setFreshKey] = useSettingsSessionState<FreshKey | null>('keys:fresh', null, Boolean, { expireTo: value => value ? { ...value, plaintext: '', expired: true } : null }), [copyHint, setCopyHint] = useState('');
+-  const [revoking, setRevoking] = useSettingsSessionState<string>('keys:revoking', '', Boolean), [revokeUnknown, setRevokeUnknown] = useSettingsSessionState<string[]>('keys:revoke-unknown', [], value => value.length > 0), [revokeError, setRevokeError] = useSettingsSessionState<string>('keys:revoke-error', '', undefined, { keepSession: true });
++  const [unknownAttempt, setUnknownAttempt] = useSettingsSessionState<{ label: string; summary: string; startedAt: string } | null>('keys:unknown-attempt', null, undefined, { keepSession: true });
++  const [freshKey, setFreshKey] = useSettingsSessionState<FreshKey | null>('keys:fresh', null, Boolean, { expireTo: (value) => (value ? { ...value, plaintext: '', expired: true } : null) });
++  const [highlight, setHighlight] = useState('');
++  const [revoking, setRevoking] = useSettingsSessionState<string>('keys:revoking', '', Boolean);
++  const [revokeUnknown, setRevokeUnknown] = useSettingsSessionState<string[]>('keys:revoke-unknown', [], (value) => value.length > 0);
++  const [revokeError, setRevokeError] = useSettingsSessionState<string>('keys:revoke-error', '', undefined, { keepSession: true });
+   const revokeUnknownRef = useRef(revokeUnknown); revokeUnknownRef.current = revokeUnknown;
++
+   const visibleFresh = freshKey?.scope === sessionOwner ? freshKey : null;
+-  const ready = state.status === 'ok' && state.scope === scope ? state : null;
++  const ready = state.status === 'ok' && state.scope === scope && state.filter === projectFilter ? state : null;
+ 
+   const loadKeys = useCallback(async (preserve = false) => {
+     const run = ++generation.current;
+     if (!preserve) setState({ status: 'loading' });
+     try {
+-      const data = await apiRequest<{ keys: AgentKeySummary[] }>('/api/global-agent-keys');
++      const suffix = projectFilter ? `?project=${encodeURIComponent(projectFilter)}` : '';
++      const data = await apiRequest<{ keys: unknown[] }>(`/api/global-agent-keys/catalog${suffix}`);
+       if (run !== generation.current || currentScope.current !== scope) return;
+-      if (!Array.isArray(data.keys)) throw new Error('未读取到 Key 列表');
+-      setState({ status: 'ok', scope, keys: data.keys, readError: '' });
+-      const unresolved = revokeUnknownRef.current.filter(id => !data.keys.some(key => key.id === id && Boolean(key.revokedAt)));
++      if (!Array.isArray(data.keys) || !data.keys.every(isAgentKeyCatalogEntry)) throw new Error('Key 列表格式无法识别，请刷新页面后重试');
++      const keys = data.keys as AgentKeyCatalogEntry[];
++      setState({ status: 'ok', scope, filter: projectFilter, keys, readError: '' });
++      const unresolved = revokeUnknownRef.current.filter((id) => !keys.some((key) => agentKeyRowId(key) === id && Boolean(key.revokedAt)));
+       if (revokeUnknownRef.current.length > 0 && unresolved.length === 0) setRevokeError('');
+       setRevokeUnknown(unresolved);
+       setListSnapshotAvailable(true);
+     } catch (err) {
+       if (run !== generation.current || currentScope.current !== scope) return;
+       const message = err instanceof Error ? err.message : String(err);
+-      setState(current => preserve && current.status === 'ok' && current.scope === scope ? { ...current, readError: message } : { status: 'error', message });
++      setState((current) => (preserve && current.status === 'ok' && current.scope === scope && current.filter === projectFilter
++        ? { ...current, readError: message }
++        : { status: 'error', message }));
+     }
+-  }, [scope]);
++  }, [scope, projectFilter]);
++
+   useEffect(() => {
+-    setListSnapshotAvailable(false); setQuery(''); setKeyFilter('active');
+-    void loadKeys(true); return () => { generation.current++; };
++    setListSnapshotAvailable(false); setQuery(''); setSourceFilter('all'); setStatusFilter('all'); setExpanded('');
++    void loadKeys(true);
++    return () => { generation.current++; };
+   }, [loadKeys]);
+-  useEffect(() => { if (visibleFresh) { receipt.current?.scrollIntoView({ block: 'nearest' }); receipt.current?.focus({ preventScroll: true }); } }, [visibleFresh]);
++
++  useEffect(() => {
++    let cancelled = false;
++    apiRequest<{ projects?: Array<{ id: string; name?: string; aliasName?: string; slug?: string }> }>('/api/projects')
++      .then((data) => {
++        if (cancelled) return;
++        setProjects((data.projects || []).map((p) => ({ id: p.id, name: p.aliasName || p.name || p.slug || p.id })));
++      })
++      .catch((err) => { if (!cancelled) setProjectsError(err instanceof Error ? err.message : String(err)); });
++    return () => { cancelled = true; };
++  }, [scope]);
++
++  useEffect(() => {
++    if (visibleFresh) { receipt.current?.scrollIntoView({ block: 'nearest' }); receipt.current?.focus({ preventScroll: true }); }
++  }, [visibleFresh]);
+   useEffect(() => {
+     if (!visibleFresh && !signing && !signUnknown && revokeUnknown.length === 0) return;
+     const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
+-    window.addEventListener('beforeunload', warn); return () => window.removeEventListener('beforeunload', warn);
++    window.addEventListener('beforeunload', warn);
++    return () => window.removeEventListener('beforeunload', warn);
+   }, [visibleFresh, signing, signUnknown, revokeUnknown]);
+-
+   useEffect(() => { if (visibleFresh && alive.current) void loadKeys(true); }, [visibleFresh?.keyId, loadKeys]);
+ 
+-  const emptyScope = !signScope.canCreateProjects && signScope.projects !== 'all' && signScope.projects.length === 0;
++  const projectName = (id: string) => projects?.find((p) => p.id === id)?.name || id;
++
++  function openSign(): void {
++    setSignError('');
++    // 从项目卡进来时默认选中该项目；草稿里已有选择就尊重用户的选择。
++    setDraft((current) => (current.projectId || !projectFilter ? current : { ...current, scope: 'project', projectId: projectFilter }));
++    setSignOpen(true);
++  }
++
+   async function signKey(): Promise<void> {
+-    if (signing || visibleFresh || signUnknown || !ready || ready.readError || emptyScope) return;
+-    const requestScope = scope, label = signLabel.trim(), access = { ...signScope, projects: signScope.projects === 'all' ? 'all' as const : [...signScope.projects] };
++    if (signing || visibleFresh || signUnknown || !ready || ready.readError || draftBlocker(draft)) return;
++    const requestScope = scope;
++    const label = draft.label.trim();
++    const access = draftAccess(draft, projects || []);
++    const expiresAt = draftExpiryIso(draft) || undefined;
++    const describe: DescribeInput = { access, expiry: expiresAt ? 'fixed' : 'never', ...(expiresAt ? { expiresAt } : {}) };
++    const projectKey = draft.scope === 'project' && !draft.alsoCreate;
+     const startedAt = new Date().toISOString();
+     generation.current++; setSigning(true); setSignError('');
+     try {
+-      const res = await apiRequest<{ keyId: string; plaintext: string; preview: string; access?: AgentKeyScope }>('/api/global-agent-keys', { method: 'POST', body: { label: label || undefined, access } });
+-      if (!res.keyId || !res.plaintext || !res.preview) throw new Error('签发响应不完整，无法确认明文');
+-      setFreshKey({ ...res, label: label || res.keyId, scope: sessionOwner }); setSignOpen(false);
++      let keyId: string; let plaintext: string;
++      if (projectKey) {
++        const permission = draft.permission;
++        const res = await apiRequest<{ keyId: string; plaintext: string }>(`/api/projects/${encodeURIComponent(draft.projectId)}/agent-keys`, {
++          method: 'POST',
++          body: {
++            label: label || undefined,
++            ...(permission === 'planning-read' || permission === 'planning-propose' ? { planningAccess: permission.slice('planning-'.length) } : {}),
++            ...(permission.startsWith('design-') ? { designAccess: permission.slice('design-'.length) } : {}),
++            ...(expiresAt ? { expiresAt } : {}),
++          },
++        });
++        keyId = res.keyId; plaintext = res.plaintext;
++      } else {
++        const res = await apiRequest<{ keyId: string; plaintext: string }>('/api/global-agent-keys', {
++          method: 'POST',
++          body: {
++            label: label || undefined,
++            access: {
++              canCreateProjects: access.canCreateProjects,
++              projects: draft.scope === 'all' ? 'all' : draft.scope === 'project' ? [draft.projectId] : [],
++            },
++            ...(expiresAt ? { expiresAt } : {}),
++          },
++        });
++        keyId = res.keyId; plaintext = res.plaintext;
++      }
++      if (!keyId || !plaintext) throw new Error('签发响应不完整，无法确认明文');
++      const rowId = projectKey ? agentKeyRowId({ kind: 'project', projectId: draft.projectId, id: keyId }) : agentKeyRowId({ kind: 'global', id: keyId });
++      setFreshKey({ keyId, plaintext, label: label || keyId, rowId, describe, scope: sessionOwner });
++      setHighlight(rowId);
++      setSignOpen(false);
+       if (currentScope.current === requestScope) setCopyHint('');
+-      setSignLabel(''); setSignScope(defaultScope());
++      setDraft(defaultDraft());
+       if (!alive.current || currentScope.current !== requestScope) return;
+-      onToast(`已签发 ${label || res.keyId}，请保存本次明文`);
++      onToast(`已签发 ${label || keyId}，请保存本次明文`);
+     } catch (err) {
+-      const unknown = !knownRejection(err); setSignUnknown(unknown); setListSnapshotAvailable(false);
+-      if (unknown) setUnknownAttempt({ label: label || '未填写标签', access, startedAt });
+-      setSignError(`${unknown ? '签发结果未确认，可能已生成 Key。请先重新读取列表核对标签、编号和时间，勿重复签发；丢失的明文无法读回，确认无用后可吊销再签发' : '签发被拒绝，输入已保留'}：${err instanceof Error ? err.message : String(err)}`);
++      const unknown = !knownRejection(err);
++      setSignUnknown(unknown); setListSnapshotAvailable(false);
++      if (unknown) setUnknownAttempt({ label: label || '未填写名称', summary: describeAgentKey(describe).scope, startedAt });
++      setSignError(`${unknown ? '签发结果未确认，可能已生成 Key。请先重新读取列表核对名称、编号和时间，勿重复签发；丢失的明文无法读回，确认无用后可吊销再签发' : '签发被拒绝，输入已保留'}：${err instanceof Error ? err.message : String(err)}`);
+     } finally { setSigning(false); }
+   }
+-  async function revokeKey(key: AgentKeySummary): Promise<void> {
+-    if (revoking || signing || revokeUnknown.includes(key.id)) return;
+-    const requestScope = scope; generation.current++; setRevoking(key.id); setRevokeError('');
++
++  async function revokeKey(key: AgentKeyCatalogEntry): Promise<void> {
++    const rowId = agentKeyRowId(key);
++    if (revoking || signing || revokeUnknown.includes(rowId)) return;
++    const requestScope = scope;
++    generation.current++; setRevoking(rowId); setRevokeError('');
+     try {
+-      await apiRequest(`/api/global-agent-keys/${encodeURIComponent(key.id)}`, { method: 'DELETE' });
++      const url = key.kind === 'project'
++        ? `/api/projects/${encodeURIComponent(key.projectId || '')}/agent-keys/${encodeURIComponent(key.id)}`
++        : `/api/global-agent-keys/${encodeURIComponent(key.id)}`;
++      await apiRequest(url, { method: 'DELETE' });
+       if (alive.current && currentScope.current === requestScope) generation.current++;
+-      setState(current => current.status === 'ok' && current.scope === requestScope ? { ...current, keys: current.keys.map(item => item.id === key.id ? { ...item, revokedAt: new Date().toISOString() } : item) } : current);
+       if (!alive.current || currentScope.current !== requestScope) return;
+-      onToast(`已吊销 ${key.label || key.id}`); void loadKeys(true);
++      onToast(`已吊销 ${key.label || key.id}`);
++      void loadKeys(true);
+     } catch (err) {
+-      const unknown = !knownRejection(err); if (unknown) setRevokeUnknown(current => [...current, key.id]);
++      const unknown = !knownRejection(err);
++      if (unknown) setRevokeUnknown((current) => [...current, rowId]);
+       setRevokeError(`${key.label || key.id}：${unknown ? '吊销结果未确认，请重新读取核对，不要根据旧状态判断仍有效' : '吊销被拒绝'}。${err instanceof Error ? err.message : String(err)}`);
+     } finally { setRevoking(''); }
+   }
++
+   async function copyFresh(): Promise<void> {
+     if (!visibleFresh) return;
+     const plaintext = visibleFresh.plaintext, requestScope = scope;
+     try { await navigator.clipboard.writeText(plaintext); if (currentScope.current === requestScope) setCopyHint('已复制，请存入安全位置'); }
+     catch { if (currentScope.current === requestScope) { setCopyHint('复制失败，请在完整明文框内全选复制'); receipt.current?.focus(); receipt.current?.select(); } }
+   }
++
++  const clearProjectFilter = () => navigate({ pathname: location.pathname, search: '', hash: location.hash }, { replace: true });
++
+   const canPrepareNewIssuance = signUnknown && listSnapshotAvailable && Boolean(ready && !ready.readError);
++  const allKeys = ready?.keys || [];
++  const sourceCounts = useMemo(() => {
++    const counts = { all: allKeys.length, user: 0, agent: 0, unknown: 0 };
++    for (const key of allKeys) counts[key.source.type]++;
++    return counts;
++  }, [allKeys]);
+   const needle = query.trim().toLocaleLowerCase();
+-  const keys = ready ? ready.keys.filter(key => (keyFilter === 'all' || (keyFilter === 'active' ? !key.revokedAt : Boolean(key.revokedAt))) && (!needle || [key.id, key.label, key.createdBy, scopeDescription(key.access)].some(value => value?.toLocaleLowerCase().includes(needle)))) : [];
+-  return <div className="space-y-5">
+-    <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="flex items-center gap-2 text-base font-semibold"><KeyRound />AI Access Key</h2><p className="mt-1 max-w-3xl text-sm text-muted-foreground">供 cdscli / curl 自动化使用。权限由每个 Key 的授权范围决定，可并存轮换；本页不修改环境中的 bootstrap Key。</p></div><Button type="button" className={actionClass} disabled={signing || Boolean(visibleFresh) || signUnknown} onClick={() => setSignOpen(value => !value)}><Plus />{signUnknown?'签发待核对':signOpen ? '收起签发' : '签发新 Key'}</Button></div>
+-    <p className="text-sm text-warn">Key 是访问凭据，不应进入截图、公开内容或 Git。新签发的明文只显示一次，离开前请安全保存。</p>
+-    {visibleFresh ? <section className="space-y-3 rounded-md border border-warn/60 bg-warn-soft p-4" aria-label="本次签发结果"><h3 className="font-semibold">已签发 {visibleFresh.label} · 请保存明文</h3><p className="break-all text-sm text-muted-foreground">编号 {visibleFresh.keyId} · {scopeDescription(visibleFresh.access)}</p>{visibleFresh.expired ? <p role="alert" className="text-sm text-warn">明文临时保留已到期，无法恢复。请核对上方编号；未安全保存的 Key 应先吊销，再明确签发替代凭据。</p> : <textarea ref={receipt} aria-label="完整 Key 明文" readOnly value={visibleFresh.plaintext} rows={3} className="w-full resize-y rounded-md border border-input bg-background p-3 font-mono text-sm" onFocus={event => event.currentTarget.select()} />}<div className="flex flex-wrap items-center gap-3"><Button type="button" className={actionClass} variant="outline" disabled={visibleFresh.expired} onClick={() => void copyFresh()}><Copy />复制完整明文</Button><Button type="button" className={actionClass} variant="ghost" onClick={() => { setFreshKey(null); setCopyHint(''); }}>{visibleFresh.expired ? '我已核对并处理，关闭结果' : '我已安全保存，关闭明文'}</Button></div>{copyHint ? <p role="status" className="text-sm">{copyHint}</p> : null}<p className="text-sm text-muted-foreground">{visibleFresh.expired ? '请先确认已安全保存，或吊销未领取的凭据，再关闭本次结果；不会自动重复签发。' : '明文不能再次读取。完成保存后才可继续签发。切换标签仅在本次登录会话内最多临时保留 30 分钟；刷新或关闭页面后无法恢复明文。'}</p></section> : null}
+-    {signError ? <div className="space-y-2"><p role="alert" className={`text-sm ${signUnknown?'text-warn':'text-destructive'}`}>{signUnknown?'签发结果未确认，可能已生成 Key。明文无法再次读取，请先核对原请求与现有记录，勿重复提交。':signError}</p>{signUnknown?<details><summary className="min-h-[3.25rem] cursor-pointer py-3 text-sm text-muted-foreground">查看签发错误详情</summary><p className="break-words text-sm text-muted-foreground">{signError}</p></details>:null}</div> : null}
+-    {unknownAttempt ? <p className="break-words text-sm text-muted-foreground">原请求快照：{unknownAttempt.label} · {formatDate(unknownAttempt.startedAt)} · {scopeDescription(unknownAttempt.access)}。</p> : null}
+-    {canPrepareNewIssuance ? <div className="space-y-2"><p className="text-sm text-muted-foreground">请核对下方记录的编号、标签和签发时间；无法使用的 Key 应先吊销，处理后再准备新的签发。</p><Button type="button" className={actionClass} variant="outline" disabled={signing} onClick={() => { setSignUnknown(false); setSignOpen(true); setSignError('原请求结果仍未确认。你已选择在人工核对后准备新的签发；本页不会自动重复上一请求。'); }}>我已核对并处理，重新准备签发</Button></div> : null}
+-    {signOpen && !signUnknown ? <section className="space-y-3 rounded-md border border-[hsl(var(--hairline))] p-4" aria-label="签发新 Key"><h3 className="font-semibold">签发范围</h3><label className="grid gap-2 text-sm">标签<input className="min-h-[3.25rem] w-full rounded-md border border-input bg-background px-3" placeholder="例如生产部署机器人" value={signLabel} onChange={event => setSignLabel(event.target.value)} maxLength={100} disabled={signing || signUnknown || Boolean(visibleFresh)} /></label><AgentKeyScopePanel value={signScope} onChange={setSignScope} disabled={signing || signUnknown || Boolean(visibleFresh)} /><p className="break-words text-sm text-muted-foreground">将授予：{scopeDescription(signScope)}</p>{signScope.projects === 'all' ? <p role="alert" className="text-sm text-destructive">此 Key 可读写、配置并部署全部项目。仅授予可信自动化，泄露会影响全部项目。</p> : null}<Button type="button" className={actionClass} onClick={() => void signKey()} disabled={signing || signUnknown || Boolean(visibleFresh) || emptyScope || !ready || Boolean(ready.readError)}>{signing ? <Loader2 className="animate-spin" /> : <Plus />}{signing ? '正在签发' : '按所选范围签发'}</Button></section> : null}
+-    <section aria-label="已签发 Key" className="space-y-3"><div className="flex flex-wrap items-center justify-between gap-3"><h3 className="font-semibold">已签发 Key{ready ? `（${ready.keys.filter(key => !key.revokedAt).length} 个未吊销、${ready.keys.filter(key => key.revokedAt).length} 个已吊销）` : ''}</h3><Button type="button" variant="outline" size="sm" className={actionClass} disabled={signing || Boolean(revoking)} onClick={() => void loadKeys(true)}><RefreshCw />重新读取列表</Button></div>
+-      {ready && ready.keys.length > 0 ? <div className="flex flex-wrap gap-3"><label className="min-w-0 flex-1"><span className="sr-only">搜索 Key</span><input aria-label="搜索 Key" value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索标签、Key 编号、项目编号或签发者" className="min-h-[3.25rem] w-full rounded-md border border-input bg-background px-3 text-sm" /></label><label className="flex items-center gap-2 text-sm">状态<select aria-label="Key 状态" value={keyFilter} onChange={event => setKeyFilter(event.target.value as 'active' | 'revoked' | 'all')} className="min-h-[3.25rem] rounded-md border border-input bg-background px-3"><option value="active">未吊销</option><option value="revoked">已吊销</option><option value="all">全部</option></select></label></div> : null}
+-      {state.status === 'loading' || state.status === 'ok' && !ready ? <LoadingBlock label="读取 Key 列表" /> : null}{state.status === 'error' ? <ErrorBlock message={state.message} /> : null}{ready?.readError ? <p role="alert" className="text-sm text-destructive">读取失败：{ready.readError}。以下为上次读取，不代表当前有效状态。</p> : null}{revokeError ? <p role="alert" className="text-sm text-destructive">{revokeError}</p> : null}
+-      {ready && keys.length === 0 ? <p className="rounded-md border border-dashed border-border p-4 text-sm text-muted-foreground">{ready.keys.length ? '没有匹配的 Key，请调整搜索或状态。' : '尚无 Key。需要自动化访问时，点击「签发新 Key」选择范围。'}</p> : null}
+-      {keys.map(key => <article data-agent-key-id={key.id} key={key.id} className="space-y-2 border-b border-[hsl(var(--hairline))] py-3"><div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><span className="break-all font-medium">{key.label || key.id}</span><span className={`text-sm ${revokeUnknown.includes(key.id) ? 'text-warn' : 'text-muted-foreground'}`}>{revokeUnknown.includes(key.id) ? '吊销结果未确认' : key.revokedAt ? '已吊销' : ready?.readError ? '上次读取：未吊销' : '未吊销'}</span></div><p className="mt-1 break-all text-sm text-muted-foreground">编号 {key.id}</p></div>{!key.revokedAt ? <ConfirmAction scopeKey={key.id} title={`吊销 ${key.label || key.id}？`} description={`编号 ${key.id}。吊销后，使用此 Key 的自动化将无法继续认证。轮换时请先配置替代 Key。`} confirmLabel="确认吊销" onConfirm={() => revokeKey(key)} disabled={Boolean(revoking) || signing || revokeUnknown.includes(key.id) || Boolean(ready?.readError)} trigger={<Button type="button" className={actionClass} variant="outline" size="sm"><Trash2 />{revoking === key.id ? '正在吊销' : '吊销'}</Button>} /> : null}</div><p className="break-words text-sm">{scopeDescription(key.access)}</p>{key.access?.projects === 'all' && !key.revokedAt ? <p className="text-sm text-warn">全部项目授权，请仅交给可信自动化使用。</p> : null}<p className="break-words text-sm text-muted-foreground">签发 {formatDate(key.createdAt)}{key.createdBy ? ` · 签发者 ${key.createdBy}` : ''}{key.lastUsedAt ? ` · 最近使用 ${formatDate(key.lastUsedAt)}` : ''}{key.revokedAt ? ` · 吊销 ${formatDate(key.revokedAt)}` : ''}</p></article>)}
+-    </section>
+-  </div>;
++  const keys = allKeys.filter((key) => {
++    if (sourceFilter !== 'all' && key.source.type !== sourceFilter) return false;
++    if (statusFilter === 'active' && !key.status.usable) return false;
++    if (statusFilter === 'inactive' && key.status.usable) return false;
++    if (!needle) return true;
++    return [key.id, key.label, key.createdBy, accessShort(key.access), sourceSentence(key.source)]
++      .some((value) => value?.toLocaleLowerCase().includes(needle));
++  });
++  const groups = groupByRecency(keys);
++  const filterName = projectFilter ? projectName(projectFilter) : '';
++
++  return (
++    <div className="space-y-5">
++      <div className="flex flex-wrap items-start justify-between gap-3">
++        <div className="min-w-0">
++          <h2 className="flex items-center gap-2 text-base font-semibold"><KeyRound />{filterName ? `${filterName} 的 Agent Key` : 'Agent Key'}</h2>
++          <p className="mt-1 max-w-3xl text-sm text-muted-foreground">供 Agent 和 cdscli / curl 自动化访问 CDS。点开一行查看这把 Key 能做什么、从哪来；明文只在签发时显示一次。</p>
++        </div>
++        <div className="flex flex-wrap gap-2">
++          <Button type="button" variant="ghost" className={actionClass} aria-expanded={askOpen} onClick={() => setAskOpen((value) => !value)}><Terminal />让 Agent 自己申请</Button>
++          <Button type="button" className={actionClass} disabled={signing || Boolean(visibleFresh) || signUnknown} onClick={openSign}><Plus />{signUnknown ? '签发待核对' : '签发新 Key'}</Button>
++        </div>
++      </div>
++
++      {askOpen ? (
++        <section aria-label="让 Agent 自己申请" className="space-y-2 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-4 text-sm">
++          <p className="font-medium">更推荐：让 Agent 在仓库里发起申请</p>
++          <pre className="whitespace-pre-wrap break-all rounded-md border border-[hsl(var(--hairline))] bg-background p-3 font-mono text-xs">{`cdscli connect --host ${window.location.origin} --project ${projectFilter || '<项目 ID>'} --agent "<Agent 名称>"`}</pre>
++          <p className="text-muted-foreground">Agent 发起后，在 CDS 右下角批准一次即可。Key 由 CLI 直接保存到项目本地，不经过对话和剪贴板；列表里会标为 AI Agent 签发，并记下是谁批准的。</p>
++        </section>
++      ) : null}
++
++      {projectFilter ? (
++        <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
++          <span>只显示能访问 {filterName} 的 Key，包括全部项目授权的 Key。签发时默认选中这个项目。</span>
++          <Button type="button" variant="outline" size="sm" className={actionClass} onClick={clearProjectFilter}>显示全部 Key</Button>
++        </div>
++      ) : null}
++
++      {visibleFresh ? (
++        <section className="space-y-3 rounded-md border border-warn/60 bg-warn-soft p-4" aria-label="本次签发结果">
++          <h3 className="font-semibold">已签发 {visibleFresh.label} · 请保存明文</h3>
++          <p className="break-all text-sm text-muted-foreground">编号 {visibleFresh.keyId}</p>
++          {visibleFresh.expired
++            ? <p role="alert" className="text-sm text-warn">明文临时保留已到期，无法恢复。请核对上方编号；未安全保存的 Key 应先吊销，再明确签发替代凭据。</p>
++            : <textarea ref={receipt} aria-label="完整 Key 明文" readOnly value={visibleFresh.plaintext} rows={3} className="w-full resize-y rounded-md border border-input bg-background p-3 font-mono text-sm" onFocus={(event) => event.currentTarget.select()} />}
++          <div className="flex flex-wrap items-center gap-3">
++            <Button type="button" className={actionClass} variant="outline" disabled={visibleFresh.expired} onClick={() => void copyFresh()}><Copy />复制完整明文</Button>
++            <Button type="button" className={actionClass} variant="ghost" onClick={() => { setFreshKey(null); setCopyHint(''); }}>{visibleFresh.expired ? '我已核对并处理，关闭结果' : '我已安全保存，关闭明文'}</Button>
++          </div>
++          {copyHint ? <p role="status" className="text-sm">{copyHint}</p> : null}
++          <KeySummary description={describeAgentKey(visibleFresh.describe, projects?.length)} compact />
++          <p className="text-sm text-muted-foreground">{visibleFresh.expired ? '请先确认已安全保存，或吊销未领取的凭据，再关闭本次结果；不会自动重复签发。' : '这段说明与签发前看到的一致。明文不能再次读取，保存后才可继续签发；切换页签最多临时保留 30 分钟，刷新或关闭页面后无法恢复。'}</p>
++        </section>
++      ) : null}
++
++      {signError ? (
++        <div className="space-y-2">
++          <p role="alert" className={`text-sm ${signUnknown ? 'text-warn' : 'text-destructive'}`}>{signUnknown ? '签发结果未确认，可能已生成 Key。明文无法再次读取，请先核对原请求与现有记录，勿重复提交。' : signError}</p>
++          {signUnknown ? <details><summary className="min-h-[3.25rem] cursor-pointer py-3 text-sm text-muted-foreground lg:min-h-0 lg:py-1">查看签发错误详情</summary><p className="break-words text-sm text-muted-foreground">{signError}</p></details> : null}
++        </div>
++      ) : null}
++      {unknownAttempt && signUnknown ? <p className="break-words text-sm text-muted-foreground">未确认请求快照：{unknownAttempt.label} · {formatKeyDateTime(unknownAttempt.startedAt)} · {unknownAttempt.summary}。</p> : null}
++      {canPrepareNewIssuance ? (
++        <div className="space-y-2">
++          <p className="text-sm text-muted-foreground">请核对下方记录的编号、名称和签发时间；无法使用的 Key 应先吊销，处理后再准备新的签发。</p>
++          <Button type="button" className={actionClass} variant="outline" disabled={signing} onClick={() => { setSignUnknown(false); setUnknownAttempt(null); setSignOpen(true); setSignError('原请求结果仍未确认。你已选择在人工核对后准备新的签发；本页不会自动重复上一请求。'); }}>我已核对并处理，重新准备签发</Button>
++        </div>
++      ) : null}
++
++      <section aria-label="已签发 Key" className="space-y-3">
++        <div className="flex flex-wrap items-center gap-3">
++          <label className="min-w-0 flex-1 basis-56">
++            <span className="sr-only">搜索 Key</span>
++            <input aria-label="搜索 Key" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索名称、项目、签发人、Agent 或编号" className="min-h-[3.25rem] w-full rounded-md border border-input bg-background px-3 text-sm lg:min-h-10" />
++          </label>
++          <div role="group" aria-label="签发来源" className="flex max-w-full flex-wrap gap-1 rounded-md border border-input p-1">
++            {([['all', '全部'], ['user', '用户签发'], ['agent', 'AI Agent'], ['unknown', '来源未记录']] as Array<[SourceFilter, string]>).map(([value, text]) => (
++              <button key={value} type="button" aria-pressed={sourceFilter === value} onClick={() => setSourceFilter(value)}
++                className={`min-h-[2.75rem] rounded px-3 text-sm lg:min-h-8 ${sourceFilter === value ? 'bg-primary-soft font-semibold text-primary' : 'text-muted-foreground hover:text-foreground'}`}>
++                {text} {sourceCounts[value]}
++              </button>
++            ))}
++          </div>
++          <label className="flex items-center gap-2 text-sm">状态
++            <select aria-label="Key 状态" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as StatusFilter)} className="min-h-[3.25rem] rounded-md border border-input bg-background px-3 lg:min-h-10">
++              <option value="all">全部</option>
++              <option value="active">有效</option>
++              <option value="inactive">已失效</option>
++            </select>
++          </label>
++          <Button type="button" variant="outline" size="sm" className={actionClass} disabled={signing || Boolean(revoking)} onClick={() => void loadKeys(true)}><RefreshCw />重新读取列表</Button>
++        </div>
++
++        {state.status === 'loading' || (state.status === 'ok' && !ready) ? <LoadingBlock label="读取 Key 列表" /> : null}
++        {state.status === 'error' ? <ErrorBlock message={state.message} /> : null}
++        {ready?.readError ? <p role="alert" className="text-sm text-destructive">读取失败：{ready.readError}。以下为上次读取，不代表当前状态。</p> : null}
++        {revokeError ? <p role="alert" className="text-sm text-destructive">{revokeError}</p> : null}
++        {ready && keys.length === 0 ? (
++          <p className="rounded-md border border-dashed border-border p-4 text-sm text-muted-foreground">
++            {allKeys.length ? '没有符合条件的 Key，请调整搜索或筛选。' : projectFilter ? `还没有能访问 ${filterName} 的 Key。点击「签发新 Key」，或让 Agent 自己申请。` : '还没有 Key。需要自动化访问时，点击「签发新 Key」，或让 Agent 自己申请。'}
++          </p>
++        ) : null}
++
++        {groups.map((group) => (
++          <div key={group.title} className="space-y-1">
++            <h3 className="flex items-center gap-2 pt-2 text-xs font-semibold tracking-wide text-muted-foreground after:h-px after:flex-1 after:bg-[hsl(var(--hairline))]">{group.title} · {group.items.length}</h3>
++            {group.items.map((key) => {
++              const rowId = agentKeyRowId(key);
++              return (
++                <KeyRow
++                  key={rowId}
++                  entry={key}
++                  rowId={rowId}
++                  open={expanded === rowId}
++                  fresh={highlight === rowId}
++                  totalProjects={projects?.length}
++                  revokeUnknown={revokeUnknown.includes(rowId)}
++                  revoking={revoking === rowId}
++                  revokeDisabled={Boolean(revoking) || signing || revokeUnknown.includes(rowId) || Boolean(ready?.readError)}
++                  staleRead={Boolean(ready?.readError)}
++                  onToggle={() => setExpanded((current) => (current === rowId ? '' : rowId))}
++                  onRevoke={() => revokeKey(key)}
++                />
++              );
++            })}
++          </div>
++        ))}
++      </section>
++
++      <Dialog open={signOpen && !signUnknown && !visibleFresh} onOpenChange={(open) => { if (!signing) setSignOpen(open); }}>
++        <DialogContent frame className="max-w-[62.5rem]" style={{ width: '62.5rem' }} aria-describedby="agent-key-sign-desc">
++          <div className="shrink-0 border-b border-[hsl(var(--hairline))] px-5 py-4 pr-12">
++            <DialogTitle className="text-base font-semibold">签发新 Key</DialogTitle>
++            <DialogDescription id="agent-key-sign-desc" className="mt-1 text-sm text-muted-foreground">依次回答三个问题；「拿到这把 Key 的 Agent」一栏会随选择实时说明它能做什么、不能做什么。</DialogDescription>
++          </div>
++          <SignForm
++            draft={draft}
++            setDraft={setDraft}
++            projects={projects}
++            projectsError={projectsError}
++            disabled={signing}
++          />
++          <div className="flex shrink-0 flex-wrap items-center justify-end gap-3 border-t border-[hsl(var(--hairline))] px-5 py-3">
++            <p className="min-w-0 flex-1 basis-48 text-sm text-muted-foreground">{draftBlocker(draft) || signError || '确认说明无误后签发。明文只显示一次。'}</p>
++            <Button type="button" variant="outline" className={actionClass} disabled={signing} onClick={() => setSignOpen(false)}>取消</Button>
++            <Button type="button" className={actionClass} disabled={signing || Boolean(draftBlocker(draft)) || !ready || Boolean(ready.readError)} onClick={() => void signKey()}>
++              {signing ? <Loader2 className="animate-spin" /> : <KeyRound />}{signing ? '正在签发' : '签发'}
++            </Button>
++          </div>
++        </DialogContent>
++      </Dialog>
++    </div>
++  );
++}
++
++function groupByRecency(keys: AgentKeyCatalogEntry[]): Array<{ title: string; items: AgentKeyCatalogEntry[] }> {
++  const now = Date.now();
++  const today = new Date(now).toDateString();
++  const buckets: Array<{ title: string; items: AgentKeyCatalogEntry[] }> = [
++    { title: '今天', items: [] }, { title: '最近 7 天', items: [] }, { title: '更早', items: [] },
++  ];
++  for (const key of keys) {
++    const at = Date.parse(key.createdAt);
++    if (!Number.isNaN(at) && new Date(at).toDateString() === today) buckets[0].items.push(key);
++    else if (!Number.isNaN(at) && now - at < 7 * DAY) buckets[1].items.push(key);
++    else buckets[2].items.push(key);
++  }
++  return buckets.filter((bucket) => bucket.items.length > 0);
++}
++
++function relativeTime(value?: string): string {
++  if (!value) return '';
++  const at = Date.parse(value);
++  if (Number.isNaN(at)) return value;
++  const diff = Date.now() - at;
++  if (diff < 60_000) return '刚刚';
++  if (diff < 3_600_000) return `${Math.round(diff / 60_000)} 分钟前`;
++  if (diff < DAY) return `${Math.round(diff / 3_600_000)} 小时前`;
++  if (diff < 30 * DAY) return `${Math.round(diff / DAY)} 天前`;
++  return formatKeyDateTime(at).slice(0, 10);
++}
++
++function SourceChip({ entry }: { entry: AgentKeyCatalogEntry }): JSX.Element {
++  const { type } = entry.source;
++  const Icon = type === 'user' ? UserRound : type === 'agent' ? Bot : CircleHelp;
++  const tone = type === 'user'
++    ? 'border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] text-foreground'
++    : type === 'agent' ? 'bg-info-soft text-info' : 'border border-dashed border-[hsl(var(--hairline-strong))] text-muted-foreground';
++  return <span className={`inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-xs font-medium ${tone}`}><Icon className="h-3.5 w-3.5" />{sourceLabel(entry.source)}</span>;
++}
++
++function StatusPill({ entry }: { entry: AgentKeyCatalogEntry }): JSX.Element {
++  const tone = entry.status.code === 'active' ? 'bg-ok-soft text-ok'
++    : entry.status.code === 'expiring' ? 'bg-warn-soft text-warn'
++      : 'border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] text-muted-foreground';
++  return <span className={`inline-flex shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold ${tone}`}>{statusText(entry)}</span>;
++}
++
++function RiskBadge({ risk }: { risk: AgentKeyDescription['risk'] }): JSX.Element {
++  const tone = risk.level === 'high' ? 'bg-bad-soft text-bad' : risk.level === 'mid' ? 'bg-warn-soft text-warn' : 'bg-ok-soft text-ok';
++  return <span className={`inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs font-semibold ${tone}`}><ShieldAlert className="h-3.5 w-3.5" />{risk.label} · {risk.reason}</span>;
++}
++
++function KeySummary({ description, compact }: { description: AgentKeyDescription; compact?: boolean }): JSX.Element {
++  const block = 'space-y-1';
++  const heading = 'text-xs font-semibold tracking-wide text-muted-foreground';
++  return (
++    <div className={compact ? 'grid gap-3 sm:grid-cols-2' : 'space-y-4'}>
++      <div className={block}><h4 className={heading}>能访问</h4><p className="text-sm">{description.scope}</p></div>
++      <div className={block}><h4 className={heading}>何时失效</h4><p className="text-sm">{description.expiry}</p></div>
++      <div className={block}><h4 className={heading}>能做什么</h4><ul className="list-disc space-y-0.5 pl-5 text-sm marker:text-ok">{description.can.map((line) => <li key={line}>{line}</li>)}</ul></div>
++      <div className={block}><h4 className={heading}>不能做什么</h4><ul className="list-disc space-y-0.5 pl-5 text-sm marker:text-bad">{description.cannot.map((line) => <li key={line}>{line}</li>)}</ul></div>
++    </div>
++  );
++}
++
++function KeyRow({ entry, rowId, open, fresh, totalProjects, revokeUnknown, revoking, revokeDisabled, staleRead, onToggle, onRevoke }: {
++  entry: AgentKeyCatalogEntry; rowId: string; open: boolean; fresh: boolean; totalProjects?: number;
++  revokeUnknown: boolean; revoking: boolean; revokeDisabled: boolean; staleRead: boolean;
++  onToggle: () => void; onRevoke: () => Promise<void>;
++}): JSX.Element {
++  const described = describeAgentKey({ access: entry.access, expiry: entry.expiry, expiresAt: entry.expiresAt }, totalProjects);
++  // 已失效的 Key 不再讲「还剩几天」，直接说它现在的状态，避免把吊销的 Key 读成还在倒计时。
++  const description = entry.status.usable ? described : { ...described, expiry: `${statusText(entry)}，不能再用于认证` };
++  const detailsId = `agent-key-details-${rowId.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
++  const expiryShort = entry.expiry === 'never' ? '永久' : entry.expiresAt ? `到 ${formatKeyDateTime(entry.expiresAt).slice(5, 10)}` : '';
++  return (
++    <article data-agent-key-id={entry.id} className={`rounded-md border-b border-[hsl(var(--hairline))] ${fresh ? 'bg-primary-soft' : ''}`}>
++      <button type="button" aria-expanded={open} aria-controls={detailsId} onClick={onToggle}
++        className="grid min-h-[3.25rem] w-full grid-cols-[minmax(0,1fr)_auto] items-start gap-x-4 gap-y-1 rounded-md px-2 py-3 text-left hover:bg-[hsl(var(--surface-sunken))] focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary">
++        <span className="min-w-0">
++          <span className="flex flex-wrap items-center gap-2">
++            <span className={`break-all font-medium ${entry.status.usable ? '' : 'text-muted-foreground'}`}>{entry.label || entry.id}</span>
++            {fresh ? <span className="rounded-full bg-primary px-2 py-0.5 text-xs font-semibold text-primary-foreground">刚签发</span> : null}
++            {revokeUnknown ? <span className="text-sm text-warn">吊销结果未确认</span> : <StatusPill entry={entry} />}
++            {staleRead ? <span className="text-xs text-muted-foreground">（上次读取）</span> : null}
++          </span>
++          <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground">
++            <SourceChip entry={entry} />
++            <span>{sourceSentence(entry.source)}</span>
++            <span aria-hidden="true">·</span>
++            <span className="break-words">{accessShort(entry.access)}</span>
++          </span>
++        </span>
++        <span className="flex flex-col items-end gap-0.5 whitespace-nowrap text-xs text-muted-foreground">
++          <span>签发 {relativeTime(entry.createdAt)}</span>
++          <span className="flex items-center gap-1">{expiryShort}<ChevronDown className={`h-4 w-4 transition-transform ${open ? 'rotate-180' : ''}`} /></span>
++        </span>
++      </button>
++      {open ? (
++        <div id={detailsId} className="space-y-4 px-2 pb-4 pt-1">
++          {entry.status.usable ? <RiskBadge risk={description.risk} /> : null}
++          <KeySummary description={description} compact />
++          <div className="space-y-1">
++            <h4 className="text-xs font-semibold tracking-wide text-muted-foreground">签发来源</h4>
++            <ol className="list-decimal space-y-0.5 pl-5 text-sm">{sourceSteps(entry.source).map((line) => <li key={line}>{line}</li>)}</ol>
++          </div>
++          <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 text-sm">
++            <dt className="text-muted-foreground">签发时间</dt><dd>{formatKeyDateTime(entry.createdAt)}</dd>
++            <dt className="text-muted-foreground">最近使用</dt><dd>{entry.lastUsedAt ? `${relativeTime(entry.lastUsedAt)}（${formatKeyDateTime(entry.lastUsedAt)}）` : '从未使用'}</dd>
++            {entry.revokedAt ? <><dt className="text-muted-foreground">吊销时间</dt><dd>{formatKeyDateTime(entry.revokedAt)}</dd></> : null}
++            <dt className="text-muted-foreground">编号</dt><dd className="break-all font-mono text-xs">{entry.id}{entry.kind === 'global' ? '（全局 Key）' : '（项目 Key）'}</dd>
++          </dl>
++          {!entry.revokedAt ? (
++            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[hsl(var(--hairline))] pt-3">
++              <p className="min-w-0 flex-1 basis-56 text-sm text-muted-foreground">
++                吊销后立即失效，正在使用它的自动化会认证失败，记录会保留。{entry.lastUsedAt ? `最近一次使用在 ${relativeTime(entry.lastUsedAt)}。` : ''}
++              </p>
++              <ConfirmAction
++                scopeKey={rowId}
++                title={`吊销 ${entry.label || entry.id}？`}
++                description={`编号 ${entry.id}。吊销后无法恢复；如果还有自动化在用它，请先配置替代 Key。`}
++                confirmLabel="确认吊销"
++                onConfirm={onRevoke}
++                disabled={revokeDisabled}
++                trigger={<Button type="button" className={actionClass} variant="outline" size="sm"><Trash2 />{revoking ? '正在吊销' : '吊销'}</Button>}
++              />
++            </div>
++          ) : null}
++        </div>
++      ) : null}
++    </article>
++  );
++}
++
++function SignForm({ draft, setDraft, projects, projectsError, disabled }: {
++  draft: SignDraft;
++  setDraft: (update: (current: SignDraft) => SignDraft) => void;
++  projects: ProjectOption[] | null;
++  projectsError: string;
++  disabled: boolean;
++}): JSX.Element {
++  const [projectQuery, setProjectQuery] = useState('');
++  const patch = (next: Partial<SignDraft>) => setDraft((current) => ({ ...current, ...next }));
++  const projectKey = draft.scope === 'project' && !draft.alsoCreate;
++  const description = describeAgentKey(
++    { access: draftAccess(draft, projects || []), expiry: draftExpiryIso(draft) ? 'fixed' : 'never', expiresAt: draftExpiryIso(draft) || undefined },
++    projects?.length,
++  );
++  const needle = projectQuery.trim().toLocaleLowerCase();
++  const visibleProjects = (projects || []).filter((p) => !needle || p.name.toLocaleLowerCase().includes(needle) || p.id.toLocaleLowerCase().includes(needle));
++  const scopeOptions: Array<{ value: SignDraft['scope']; title: string; detail: string }> = [
++    { value: 'project', title: '指定项目', detail: '只能访问你选的项目' },
++    { value: 'all', title: '全部项目', detail: '包括以后新建的项目' },
++    { value: 'create', title: '仅创建新项目', detail: '不能访问现有项目' },
++  ];
++  const expiryOptions: Array<[ExpiryChoice, string]> = [['never', '永久（默认）'], ['1', '1 天'], ['7', '7 天'], ['30', '30 天'], ['90', '90 天'], ['date', '指定日期']];
++  const stepTitle = 'flex flex-wrap items-baseline gap-x-2 text-sm';
++  const choice = (selected: boolean, danger = false) => `rounded-md border p-3 text-left ${selected ? (danger ? 'border-bad bg-bad-soft' : 'border-primary bg-primary-soft') : 'border-input hover:border-foreground/40'} disabled:opacity-60`;
++
++  return (
++    <div className="min-h-0 flex-1 overflow-y-auto lg:grid lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)] lg:overflow-hidden">
++      <div className="space-y-6 px-5 py-4 lg:overflow-y-auto">
++        <label className="grid gap-2 text-sm font-medium">名称（可选）
++          <input className="min-h-[3.25rem] w-full rounded-md border border-input bg-background px-3 font-normal lg:min-h-10" placeholder="写明用途，例如 Claude Code 部署调试" value={draft.label} maxLength={100} disabled={disabled} onChange={(event) => patch({ label: event.target.value })} />
++        </label>
++
++        <fieldset className="space-y-3" disabled={disabled}>
++          <legend className={stepTitle}><span className="font-mono text-xs text-primary">1/3</span><span className="font-semibold">能访问哪些项目</span></legend>
++          <div className="grid gap-2 sm:grid-cols-3">
++            {scopeOptions.map((option) => (
++              <button key={option.value} type="button" aria-pressed={draft.scope === option.value} className={choice(draft.scope === option.value, option.value === 'all')}
++                onClick={() => patch({ scope: option.value, ...(option.value === 'create' ? { alsoCreate: false } : {}) })}>
++                <span className="block text-sm font-semibold">{option.title}</span>
++                <span className="block text-xs text-muted-foreground">{option.detail}</span>
++              </button>
++            ))}
++          </div>
++          {draft.scope === 'project' ? (
++            <div className="space-y-2">
++              {projects && projects.length > 6 ? (
++                <input aria-label="搜索项目" value={projectQuery} onChange={(event) => setProjectQuery(event.target.value)} placeholder="搜索项目" className="min-h-[3.25rem] w-full rounded-md border border-input bg-background px-3 text-sm lg:min-h-9" />
++              ) : null}
++              {projects === null && !projectsError ? <p className="text-sm text-muted-foreground">正在读取项目列表…</p> : null}
++              {projectsError ? <p role="alert" className="text-sm text-destructive">项目列表读取失败：{projectsError}</p> : null}
++              {projects && projects.length === 0 ? <p className="text-sm text-muted-foreground">还没有项目。可以选“仅创建新项目”，让 Agent 先建第一个项目。</p> : null}
++              <div role="radiogroup" aria-label="选择项目" className="flex max-h-48 flex-wrap gap-2 overflow-y-auto">
++                {visibleProjects.map((p) => (
++                  <button key={p.id} type="button" role="radio" aria-checked={draft.projectId === p.id} onClick={() => patch({ projectId: p.id })}
++                    className={`min-h-[2.75rem] rounded-full border px-3 text-sm lg:min-h-8 ${draft.projectId === p.id ? 'border-primary bg-primary-soft font-semibold text-primary' : 'border-input'}`}>
++                    {p.name}
++                  </button>
++                ))}
++              </div>
++              <p className="text-xs text-muted-foreground">一把 Key 暂时只能指定一个项目；需要多个项目时，可以分别签发，或选“全部项目”。</p>
++            </div>
++          ) : null}
++          {draft.scope !== 'create' ? (
++            <label className="flex items-start gap-2 text-sm">
++              <input type="checkbox" className="mt-1 h-4 w-4 accent-[hsl(var(--primary))]" checked={draft.alsoCreate} onChange={(event) => patch({ alsoCreate: event.target.checked })} />
++              <span>同时允许创建新项目</span>
++            </label>
++          ) : null}
++        </fieldset>
++
++        <fieldset className="space-y-3" disabled={disabled}>
++          <legend className={stepTitle}><span className="font-mono text-xs text-primary">2/3</span><span className="font-semibold">能执行哪些操作</span></legend>
++          {projectKey ? (
++            <div role="radiogroup" aria-label="权限" className="grid gap-2">
++              {PERMISSION_OPTIONS.map((option, index) => (
++                <div key={option.value}>
++                  {index === 1 ? <p className="pb-1 pt-2 text-xs font-semibold text-muted-foreground">只开放一个模块（由系统所有者签发）</p> : null}
++                  <button type="button" role="radio" aria-checked={draft.permission === option.value} className={`w-full ${choice(draft.permission === option.value)}`} onClick={() => patch({ permission: option.value })}>
++                    <span className="block text-sm font-semibold">{option.label}</span>
++                    <span className="block text-xs text-muted-foreground">{option.detail}</span>
++                  </button>
++                </div>
++              ))}
++            </div>
++          ) : (
++            <p className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-3 text-sm text-muted-foreground">
++              {draft.scope === 'create'
++                ? '只能创建新项目。每建一个项目，Agent 会拿到该项目的完整读写 Key。'
++                : '跨项目或可建项目的 Key 目前只能是完整读写；需要只开放工程规划或设计稿时，请选“指定项目”并取消“同时允许创建新项目”。'}
++            </p>
++          )}
++        </fieldset>
++
++        <fieldset className="space-y-3" disabled={disabled}>
++          <legend className={stepTitle}><span className="font-mono text-xs text-primary">3/3</span><span className="font-semibold">何时失效</span><span className="text-xs text-muted-foreground">临时调试建议设置期限</span></legend>
++          <div role="radiogroup" aria-label="有效期" className="flex flex-wrap gap-2">
++            {expiryOptions.map(([value, text]) => (
++              <button key={value} type="button" role="radio" aria-checked={draft.expiry === value} onClick={() => patch({ expiry: value })}
++                className={`min-h-[2.75rem] rounded-full border px-3 text-sm lg:min-h-8 ${draft.expiry === value ? 'border-primary bg-primary-soft font-semibold text-primary' : 'border-input'}`}>
++                {text}
++              </button>
++            ))}
++          </div>
++          {draft.expiry === 'date' ? (
++            <input type="date" aria-label="失效日期" value={draft.date} onChange={(event) => patch({ date: event.target.value })} className="min-h-[3.25rem] rounded-md border border-input bg-background px-3 text-sm lg:min-h-10" />
++          ) : null}
++        </fieldset>
++      </div>
++
++      <aside aria-label="这把 Key 能做什么" aria-live="polite" className="space-y-4 border-t border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-5 py-4 lg:overflow-y-auto lg:border-l lg:border-t-0">
++        <p className="text-sm font-semibold">拿到这把 Key 的 Agent</p>
++        <RiskBadge risk={description.risk} />
++        {draft.scope === 'all' ? <p className="text-sm text-warn">全部项目授权包括以后新建的项目。只有一两个项目需要访问时，选“指定项目”更安全。</p> : null}
++        <KeySummary description={description} />
++      </aside>
++    </div>
++  );
+ }
+-function formatDate(value: string): string { const date = new Date(value); return Number.isNaN(date.getTime()) ? value : date.toLocaleString(); }
+diff --git a/changelogs/2026-11-25_cds-agent-key-management.md b/changelogs/2026-11-25_cds-agent-key-management.md
+new file mode 100644
+index 000000000..02368ea53
+--- /dev/null
++++ b/changelogs/2026-11-25_cds-agent-key-management.md
+@@ -0,0 +1,6 @@
++| feat | cds | Agent Key 管理合并为一页：项目卡片的 Agent Key 进入同一页并按项目筛选，列表按签发时间分组，点开一行查看能访问的项目、能做与不能做的操作、何时失效和签发来源 |
++| feat | cds | 签发新 Key 改为三步（项目范围、权限、有效期），实时说明拿到手后能做什么并标风险等级；签发后回执与列表详情使用同一份说明 |
++| feat | cds | 签发时可设置固定到期日，默认永久；固定到期的 Key 使用时不续期 |
++| feat | cds | 新增 GET /api/global-agent-keys/catalog：合并项目 Key 与全局 Key，服务端给出签发来源（用户 / AI Agent / 来源未记录）与和鉴权一致的当前状态 |
++| fix | cds | Key 列表不再把已过期、主体停用或项目授权收回的 Key 显示为有效 |
++| feat | cds | 六条签发通道写入签发来源；历史 Key 只按结构化字段判定，查不到的如实显示「来源未记录」，不根据名称推测 |
