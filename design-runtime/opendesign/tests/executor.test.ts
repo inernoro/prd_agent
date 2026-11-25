@@ -909,7 +909,7 @@ function committedHtml(commit: { files: Array<{ path: string; contentBase64: str
 }
 
 describe('public output boundary', () => {
-  it('keeps the native deck assets README private without allowing public Markdown', async () => {
+  it('keeps known OpenDesign workspace notes private without allowing public Markdown', async () => {
     harness = await startHarness();
     const pkg = buildPackage([]);
     harness.daemon.onRun = ({ workspaceDir, index }) => {
@@ -918,6 +918,7 @@ describe('public output boundary', () => {
         fs.writeFileSync(path.join(workspaceDir, 'index.html'), '<!doctype html><html><head><link rel="stylesheet" href="assets/deck.css"></head><body><main><h1>Native deck</h1><p>完整可见正文。</p></main></body></html>');
         fs.writeFileSync(path.join(workspaceDir, 'assets/deck.css'), 'body { color: #123; }');
         fs.writeFileSync(path.join(workspaceDir, 'assets/README.md'), '# Agent workspace notes\nThis file is not a public page resource.\n');
+        fs.writeFileSync(path.join(workspaceDir, 'brand-spec.md'), '# Internal reference-style notes\n');
       }
       return { status: 'succeeded', deliverableEntryFile: 'index.html' };
     };
@@ -927,6 +928,7 @@ describe('public output boundary', () => {
     const committedPaths = map!.commits[0].files.map((file: { path: string }) => file.path);
     expect(committedPaths).toContain('assets/deck.css');
     expect(committedPaths).not.toContain('assets/README.md');
+    expect(committedPaths).not.toContain('brand-spec.md');
 
     const markdown = Buffer.from('# Public notes');
     expect(() => buildGeneratedPublicArtifactPackage('<!doctype html><html><body>Public</body></html>', [{
@@ -936,6 +938,21 @@ describe('public output boundary', () => {
       size: markdown.length,
       mediaType: 'text/markdown; charset=utf-8',
     }])).toThrow(AgentWorkspaceRuntimeError);
+  });
+
+  it('still rejects arbitrary files outside the public output paths', async () => {
+    harness = await startHarness();
+    harness.daemon.onRun = ({ workspaceDir }) => {
+      fs.writeFileSync(path.join(workspaceDir, 'index.html'), '<!doctype html><html><body><h1>Deliverable</h1></body></html>');
+      fs.mkdirSync(path.join(workspaceDir, 'notes'), { recursive: true });
+      fs.writeFileSync(path.join(workspaceDir, 'notes/brand-spec.md'), '# Unrecognized scratch path\n');
+      return { status: 'succeeded', deliverableEntryFile: 'index.html' };
+    };
+    const view = await runToEnd(buildPackage([]));
+    expect(view.state).toBe('failed');
+    expect(view.error?.code).toBe('design_output_invalid');
+    expect(view.error?.details?.rejectedPath).toBe('notes/brand-spec.md');
+    expect(map?.commits).toHaveLength(0);
   });
 });
 
