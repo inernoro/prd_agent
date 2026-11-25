@@ -60,7 +60,8 @@ for (const s of screens) {
   if (!['desktop', 'phone'].includes(s.viewport)) reject('G-02', `${s.id} 的视口只能是 desktop 或 phone`);
   if (!Array.isArray(s.themes) || !s.themes.length || s.themes.some(t => !['light', 'dark'].includes(t))) reject('G-02', `${s.id} 的主题只能是 light、dark`);
   if (s.entryActions !== undefined && (!Array.isArray(s.entryActions) || s.entryActions.length > 6 || s.entryActions.some(a => typeof a !== 'string' || !a.trim() || a.length > 300))) reject('G-02', `${s.id} 的 entryActions 必须是不超过 6 个、每个不超过 300 字的选择器`);
-  if (s.entryActions?.length && (typeof s.entryReadySelector !== 'string' || !s.entryReadySelector)) reject('G-02', `${s.id} 有交互入口，要写 entryReadySelector`);
+  /* CDS 服务端要求每个画面都有就绪选择器（2026-11-25 DSN-2A3B7293 首发被拒），不只是有交互入口的画面 */
+  if (typeof s.entryReadySelector !== 'string' || !s.entryReadySelector.trim()) reject('G-02', `${s.id} 要写 entryReadySelector（每个画面都要，CDS 用它判断画面已就绪）`);
 }
 
 /* G-03 验收项：不超过 60 条（CDS 上限）、编号唯一、指向存在的画面、写了规则；测量项写清楚测什么。级别、适用视口、文字长度和 CDS 服务端一致 */
@@ -69,9 +70,12 @@ const acceptance = Array.isArray(d?.acceptance) ? d.acceptance : [];
 if (acceptance.length > 60) reject('G-03', `验收项 ${acceptance.length} 条，超过 CDS 上限 60`);
 const ruleIds = new Set();
 for (const a of acceptance) {
-  if (!/^[A-Z]+[-_]\d{2,3}$/.test(a.id ?? '')) reject('G-03', `验收项编号不合法：${a.id}`);
+  /* 和 CDS 服务端一致：编号是 A-xx；每条都要引用画面、写预期和适用视口（2026-11-25 DSN-2A3B7293 首发被拒） */
+  if (!/^A-\d{2,3}$/.test(a.id ?? '')) reject('G-03', `验收项编号要写成 A-01 这样：${a.id}`);
   if (ruleIds.has(a.id)) reject('G-03', `验收项编号重复：${a.id}`); ruleIds.add(a.id);
-  if (a.screenId !== undefined && !screenIds.has(a.screenId)) reject('G-03', `${a.id} 指向不存在的画面：${a.screenId}`);
+  if (!a.screenId) reject('G-03', `${a.id} 要引用一个画面（screenId）`);
+  else if (!screenIds.has(a.screenId)) reject('G-03', `${a.id} 指向不存在的画面：${a.screenId}`);
+  if (!(a.expected ?? '').trim()) reject('G-03', `${a.id} 要写预期（expected）`);
   if (!['measure', 'human', 'screenshot'].includes(a.how)) reject('G-03', `${a.id} 的检查方式只能是 measure、human、screenshot`);
   if (!(a.rule ?? '').trim()) reject('G-03', `${a.id} 要写规则`);
   if ((a.rule ?? '').length > 600 || (a.expected ?? '').length > 800) reject('G-03', `${a.id} 的规则不超过 600 字、预期不超过 800 字`);
@@ -137,12 +141,23 @@ else {
 /* G-08 隐私：稿件包只放虚构数据。不出现真实站点、邮箱、密钥样式的字符串 */
 const textExt = /\.(md|json|ts|tsx|jsx|mjs|js|css|html|diff|txt|ya?ml|svg)$/;
 const secret = /(cdsk_[A-Za-z0-9]{8,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----)/;
+/* 写成赋值的凭据（Bearer 头、apiKey/secret/token/password/projectKey = "…"），不区分大小写；和上面分开，免得把上面的规则也变成不区分大小写 */
+const assigned = /(Bearer\s+[A-Za-z0-9._~+/-]{24,}|(?:api[_-]?key|secret|token|password|projectKey)["']?\s*[:=]\s*["'][A-Za-z0-9._~+/-]{16,}["'])/i;
 const email = /[A-Za-z0-9._%+-]+@(?!example\.)[A-Za-z0-9.-]+\.[a-z]{2,}/g;
-const hosts = [...(allow.forbiddenHosts ?? []), ...String(process.env.CDS_DESIGN_FORBIDDEN_HOSTS ?? '').split(',')].map(h => h.trim()).filter(Boolean);
+/* 真实站点：除了环境变量和例外登记，默认禁止本机授权里的 CDS 地址（2026-11-25 DSN-2A3B7293 把带正式站点地址的框架资料
+ * 原样拷进了包，本地没拦住，CDS 拒绝）。只读 host 一项，不读密钥。 */
+const cdsHosts = process.env.CDS_HOST ? [process.env.CDS_HOST] : [];
+for (let at = root; ; at = path.dirname(at)) {
+  const file = path.join(at, '.cds', 'credentials.json');
+  if (existsSync(file)) { try { const host = JSON.parse(readFileSync(file, 'utf8')).host; if (host) cdsHosts.push(host); } catch { /* 读不了就跳过 */ } break; }
+  if (path.dirname(at) === at) break;
+}
+const hostOf = value => { try { return new URL(value).host; } catch { return String(value).replace(/^https?:\/\//, '').replace(/\/.*$/, ''); } };
+const hosts = [...(allow.forbiddenHosts ?? []), ...String(process.env.CDS_DESIGN_FORBIDDEN_HOSTS ?? '').split(','), ...cdsHosts.map(hostOf)].map(h => h.trim()).filter(Boolean);
 const realHost = hosts.length ? new RegExp(hosts.map(h => h.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'i') : null;
 for (const rel of files.filter(f => textExt.test(f) && !/\.min\.js$/.test(f) && f !== allowFile)) {
   const text = read(rel);
-  if (secret.test(text)) reject('G-08', `${rel} 含有像密钥的字符串`);
+  if (secret.test(text) || assigned.test(text)) reject('G-08', `${rel} 含有像密钥的字符串`);
   const mail = (text.match(email) ?? []).find(m => !(allow.emails ?? []).includes(m) && !/\.(png|jpe?g|svg|webp|gif)$/i.test(m));
   if (mail) reject('G-08', `${rel} 含有邮箱：${mail}`);
   if (realHost?.test(text)) reject('G-08', `${rel} 含有真实站点地址`);

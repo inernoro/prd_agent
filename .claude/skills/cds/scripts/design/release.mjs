@@ -39,7 +39,8 @@ if (command === 'check') {
   if (run('changes-index.mjs', ['--dir', dir, '--to', String(version), ...(full ? ['--full', full] : [])])) fail('生成版本差异失败', 1);
   /* 交接清单：按目标生成给实现方的唯一一份清单；基线取 --baseline，没给就取 --full 的第一个起点 */
   const baseline = Number(opt('baseline') ?? String(full).split(',')[0]);
-  if (baseline && baseline < version && run('handoff.mjs', ['--dir', dir, '--to', String(version), '--from', String(baseline)])) process.exit(1);
+  /* 首版（没有旧版本）也生成：基线记为 0，所有验收项算新增 */
+  if (Number.isInteger(baseline) && baseline >= 0 && baseline < version && run('handoff.mjs', ['--dir', dir, '--to', String(version), '--from', String(baseline)])) process.exit(1);
   if (run('gate.mjs', ['--dir', dir, '--expect', String(version)])) process.exit(1);
   const rel = path.relative(process.cwd(), dir).split(path.sep).join('/') || '.';
   console.log(last
