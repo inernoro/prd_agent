@@ -864,6 +864,8 @@ function ScenarioTags(props: { onSelect: (prompt: string) => void; activeKey: st
   return (
     <div
       data-tour-id="visual-scenarios"
+      role="group"
+      aria-label="创作预设"
       className="mt-3 grid grid-flow-col auto-cols-[minmax(96px,1fr)] sm:grid-flow-row sm:auto-cols-auto sm:grid-cols-6 gap-1.5 overflow-x-auto no-scrollbar"
       // 与上面输入台同宽，两者必须一起改——预设行比输入框宽或窄都会露出错位的边。
       style={{ width: 'min(880px, 100%)' }}
@@ -876,25 +878,17 @@ function ScenarioTags(props: { onSelect: (prompt: string) => void; activeKey: st
             key={tag.key}
             type="button"
             data-tour-id={tag.isPro ? 'visual-pro' : undefined}
+            aria-pressed={isActive}
             // MAP Pro 也要能点。它的高亮条件本来就是 activeKey === null，
             // 语义即「没选任何预设」——所以点它 = 清空输入回到自由描述。
             // 上一版这里写的是 if (!tag.isPro)，六格里默认高亮的第一格点了没有任何反应。
             onClick={() => onSelect(tag.prompt)}
-            className={`${isActive ? '' : 'glass-sub '}inline-flex min-w-0 items-center justify-center gap-1.5 rounded-md px-[7px] text-[9px] shrink-0 transition-colors`}
-            style={{
-              minHeight: 38,
-              // 选中态保持实心卡面：它要从这一排里跳出来，磨砂会把它压回去。
-              background: isActive ? 'var(--bg-card)' : undefined,
-              color: isActive ? 'var(--text-primary)' : 'var(--text-muted)',
-              boxShadow: isActive
-                ? `inset 0 0 0 1px ${tag.hue}, var(--shadow-card-sm)`
-                : undefined,
-            }}
+            className="glass-sub surface-choice inline-flex min-h-[38px] min-w-0 shrink-0 items-center justify-center gap-1.5 rounded-md px-[7px] text-[11px]"
           >
             <i
               aria-hidden
               className="block shrink-0 rounded-[3px]"
-              style={{ width: 8, height: 22, background: tag.hue }}
+              style={{ width: 4, height: 16, background: tag.hue }}
             />
             <Icon size={11} className="shrink-0" style={{ opacity: isActive ? 1 : 0.7 }} />
             <span className="truncate">{tag.label}</span>

@@ -129,10 +129,11 @@ export function CardMoreButton({ actions, touchActions = 0, onScrim, contextTarg
         const rect = event.currentTarget.getBoundingClientRect();
         setPoint(current => current ? null : { x: rect.left, y: rect.bottom + 4 });
       }}
-      className="pointer-events-auto inline-flex h-7 min-h-7 w-[26px] min-w-[26px] shrink-0 cursor-pointer items-center justify-center rounded-md transition-colors hover-bg-soft max-sm:h-11 max-sm:min-h-11 max-sm:w-11 max-sm:min-w-11"
+      className="web-hosting-card-more-trigger pointer-events-auto inline-flex h-7 min-h-7 w-[26px] min-w-[26px] shrink-0 cursor-pointer items-center justify-center rounded-md transition-colors hover-bg-soft max-sm:h-11 max-sm:min-h-11 max-sm:w-11 max-sm:min-w-11"
       style={onScrim ? { color: 'var(--text-primary)', background: 'var(--scrim-button-bg)', border: '1px solid var(--border-strong)' } : { color: 'var(--text-secondary)' }}>
       <MoreHorizontal size={14} />
     </button>
-    {point && <ContextMenu items={items} x={point.x} y={point.y} anchorRef={anchorRef} minWidth={190} label="网页操作" onClose={() => setPoint(null)} />}
+    {point && <ContextMenu items={items} x={point.x} y={point.y} anchorRef={anchorRef} minWidth={208}
+      label="网页操作" className="web-hosting-card-menu" onClose={() => setPoint(null)} />}
   </>;
 }

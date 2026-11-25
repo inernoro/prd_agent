@@ -738,8 +738,8 @@ export default function AgentLauncherPage() {
           {/* ── 台面：上层唯一的容器。命令条 + 用量 + 常去 + 在办 + 动态全在里面 ── */}
           <div className="home-desk-deck">
             <div className="home-desk-deck-top">
-              <div className="home-desk-command-field">
-                <Search size={16} className="home-desk-command-icon" aria-hidden />
+              <div className="home-desk-command-field surface-search-field">
+                <Search size={16} className="surface-search-icon shrink-0" aria-hidden />
                 <input
                   ref={searchRef}
                   data-tour-id="home-search"

@@ -19,12 +19,16 @@ interface TabBarProps {
   items?: TabBarItem[];
   activeKey?: string;
   onChange?: (key: string) => void;
+  /** 用带名称的分段控件呈现当前分区。 */
+  tabGroupLabel?: string;
   /** 右侧操作按钮 */
   actions?: React.ReactNode;
+  /** 操作按钮在窄屏也能完整排下时，关闭右侧滚动和渐隐。 */
+  actionsFit?: boolean;
   variant?: 'default' | 'gold' | 'plain';
 }
 
-export function TabBar({ title, icon, items, activeKey, onChange, actions, variant = 'default' }: TabBarProps) {
+export function TabBar({ title, icon, items, activeKey, onChange, tabGroupLabel, actions, actionsFit, variant = 'default' }: TabBarProps) {
   const isMobile = useIsMobile();
   const [internalKey, setInternalKey] = useState(items?.[0]?.key ?? '');
   const currentKey = activeKey ?? internalKey;
@@ -41,9 +45,14 @@ export function TabBar({ title, icon, items, activeKey, onChange, actions, varia
   // 是否为切换模式
   const hasTabs = items && items.length > 0;
 
+  useEffect(() => {
+    if (!tabGroupLabel) return;
+    buttonsRef.current.get(currentKey)?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+  }, [currentKey, tabGroupLabel]);
+
   // 更新滑块位置
   const updateIndicator = useCallback(() => {
-    if (!hasTabs) return;
+    if (!hasTabs || tabGroupLabel) return;
     const activeButton = buttonsRef.current.get(currentKey);
     const tabs = tabsRef.current;
     if (activeButton && tabs) {
@@ -59,7 +68,7 @@ export function TabBar({ title, icon, items, activeKey, onChange, actions, varia
       });
       setIsReady(true);
     }
-  }, [currentKey, hasTabs, isMobile]);
+  }, [currentKey, hasTabs, isMobile, tabGroupLabel]);
 
   // 初始化和 currentKey 变化时更新
   useEffect(() => {
@@ -88,17 +97,14 @@ export function TabBar({ title, icon, items, activeKey, onChange, actions, varia
       <div className="surface-nav-content">
         {/* 左侧：标题或切换栏 */}
         {hasTabs ? (
-          <div ref={tabsRef} className="surface-nav-tabs" onScroll={updateIndicator}>
-            <div
-              className="surface-nav-indicator"
-              data-ready={isReady}
-              style={{
-                left: indicatorStyle.left,
-                width: indicatorStyle.width,
-                opacity: indicatorStyle.opacity,
-              }}
-            />
-
+          <div
+            ref={tabsRef}
+            className={tabGroupLabel ? 'surface-nav-tabs surface-choice-group' : 'surface-nav-tabs'}
+            role={tabGroupLabel ? 'group' : undefined}
+            aria-label={tabGroupLabel}
+            onScroll={tabGroupLabel ? undefined : updateIndicator}
+          >
+            {!tabGroupLabel && <div className="surface-nav-indicator" data-ready={isReady} style={indicatorStyle} />}
             {/* Tab 按钮 */}
             {items.map((item) => {
               const isActive = item.key === currentKey;
@@ -116,7 +122,8 @@ export function TabBar({ title, icon, items, activeKey, onChange, actions, varia
                   onClick={() => handleChange(item.key)}
                   data-active={isActive}
                   data-tour-id={item.dataTourId}
-                  className="surface-nav-button"
+                  aria-pressed={tabGroupLabel ? isActive : undefined}
+                  className={tabGroupLabel ? 'surface-nav-button surface-choice' : 'surface-nav-button'}
                 >
                   {item.icon}
                   {item.label}
@@ -143,7 +150,7 @@ export function TabBar({ title, icon, items, activeKey, onChange, actions, varia
         {/* 右侧：本页教程入口(内嵌页头,非悬浮) + 操作按钮。
             移动端隐藏教程 pill（用户要求；教程仍可从「我的 → 学习中心」进入），让出顶部空间给操作。 */}
         {(actions || (!isMobile && (title || (items && items.length > 0)))) && (
-          <div className="surface-nav-actions">
+          <div className="surface-nav-actions" data-fit={actionsFit || undefined}>
             {!isMobile && (title || (items && items.length > 0)) && <TipsEntryButton compact />}
             {actions}
           </div>
