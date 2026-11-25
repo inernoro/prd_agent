@@ -94,7 +94,7 @@ const goals = [
   { id: 'G-06', goal: '同一入口同时支持生成视频与生成网页', doneWhen: '产出切到网页后模板、过程与预览都换成网页形态', items: ['A-32'] },
   { id: 'G-07', goal: '手机上创作与预览都可用', doneWhen: '390 宽下切换创作 / 预览，底部动作可达，头部与播放器不挤压，30 条作品稳定', items: ['A-34', 'A-35', 'A-36', 'A-37'] },
   { id: 'G-08', goal: '作为独立智能体进入 MAP', doneWhen: '百宝箱有独立入口卡片，路由按 navRegistry 注册并带 wip', items: ['A-38'] },
-  { id: 'G-09', goal: '未来的逐幕深入创作（本稿只给概念稿，不交接实现）', doneWhen: '开放前另起稿件：设置面板、逐幕编辑与版本、模板库分类', where: '后续稿件 map/quick-creation-studio；本稿画面 concept-settings、concept-studio 仅作方向参考' },
+  { id: 'G-09', goal: '未来的逐幕深入创作（本稿只给概念稿，不交接实现）', doneWhen: '开放前另起稿件：设置面板、逐幕编辑与版本、模板库分类', items: [], where: '后续稿件 map/quick-creation-studio；本稿画面 concept-settings、concept-studio 仅作方向参考' },
 ];
 
 const fixtures = readFileSync(path.join(dir, 'src/fixtures.ts'));
