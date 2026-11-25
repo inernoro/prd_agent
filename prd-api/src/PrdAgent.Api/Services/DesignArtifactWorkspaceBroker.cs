@@ -50,7 +50,7 @@ public interface IDesignArtifactWorkspaceBroker
     Task<byte[]> ReadInputPackageAsync(string runId, string token, CancellationToken ct);
 
     /// <summary>校验 CDS 推来的实时预览：同一张工作区凭证、任务仍在运行窗口内。</summary>
-    Task ValidatePreviewAsync(string runId, string token, CancellationToken ct);
+    Task<long> ValidatePreviewAsync(string runId, string token, CancellationToken ct);
 
     Task<DesignArtifactResultCommit> CommitResultAsync(
         string runId,
@@ -84,6 +84,7 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
     // published-file contract at 6 MiB while allowing that same package to cross the runtime API.
     public const long MaxPublicOutputBytes = 6_291_456;
     public const long MaxOutputBytes = 20L * 1024 * 1024;
+    public const long MaxCodeFilmOutputBytes = 80L * 1024 * 1024;
     private static readonly TimeSpan TicketTtl = TimeSpan.FromMinutes(25);
     internal static string CurrentProcessEpoch { get; } = $"{Environment.ProcessId}:{Guid.NewGuid():N}";
     private static readonly string[] AllowedOutputPaths = ["index.html", "manifest.json", "assets/**"];
@@ -265,9 +266,9 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
             modelGrant.Model,
             package.BaseRevision,
             MaxInputBytes,
-            MaxOutputBytes,
+            ResultLimit(run),
             isCodeFilm ? ["film.mp4"] : AllowedOutputPaths,
-            isCodeFilm ? MaxOutputBytes : MaxPublicOutputBytes);
+            isCodeFilm ? MaxCodeFilmOutputBytes : MaxPublicOutputBytes);
     }
 
     private async Task<IReadOnlyList<DesignWorkspaceFile>?> ReadCurrentFilesAsync(
@@ -490,12 +491,16 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
         return bytes;
     }
 
-    public async Task ValidatePreviewAsync(string runId, string token, CancellationToken ct)
+    private static long ResultLimit(DesignArtifactRun run) =>
+        run.ArtifactType == DesignArtifactTypes.CodeFilm ? MaxCodeFilmOutputBytes : MaxOutputBytes;
+
+    public async Task<long> ValidatePreviewAsync(string runId, string token, CancellationToken ct)
     {
         ValidateTicket(token, runId, "workspace");
         var run = await _db.DesignArtifactRuns.Find(item => item.DeploymentSlug == DeploymentScope.Current && (item.Id == runId)).FirstOrDefaultAsync(ct)
             ?? throw new KeyNotFoundException("设计任务不存在");
         EnsureActiveWorkspaceWindow(run);
+        return ResultLimit(run);
     }
 
     public async Task<DesignArtifactResultCommit> CommitResultAsync(
@@ -505,8 +510,6 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
         CancellationToken ct)
     {
         ValidateTicket(token, runId, "workspace");
-        if (packageBytes.LongLength == 0 || packageBytes.LongLength > MaxOutputBytes)
-            throw new InvalidOperationException("远程设计结果大小不符合要求，请重新生成");
         var run = await _db.DesignArtifactRuns.Find(item => item.DeploymentSlug == DeploymentScope.Current && (item.Id == runId)).FirstOrDefaultAsync(ct)
             ?? throw new KeyNotFoundException("设计任务不存在");
         EnsureActiveWorkspaceWindow(run);
@@ -514,7 +517,7 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
             packageBytes,
             runId,
             run.WorkspaceBaseRevision ?? string.Empty,
-            MaxOutputBytes,
+            ResultLimit(run),
             run.ArtifactType == DesignArtifactTypes.CodeFilm);
         var packageSha = Sha256Hex(packageBytes);
         var manifestSha = parsed.Files.Single(file => file.Path ==
@@ -726,7 +729,7 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
                 bytes,
                 runId,
                 run.WorkspaceBaseRevision ?? string.Empty,
-                MaxOutputBytes,
+                ResultLimit(run),
                 run.ArtifactType == DesignArtifactTypes.CodeFilm);
         return parsed with
         {

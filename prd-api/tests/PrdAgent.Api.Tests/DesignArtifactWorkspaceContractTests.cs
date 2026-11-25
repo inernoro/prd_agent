@@ -25,6 +25,24 @@ namespace PrdAgent.Api.Tests;
 
 public sealed class DesignArtifactWorkspaceContractTests
 {
+    [Fact]
+    public void CodeFilmResult_AcceptsMasterAboveWebPackageLimitAndKeepsOriginalBytes()
+    {
+        var video = new byte[16 * 1024 * 1024];
+        "ftyp"u8.CopyTo(video.AsSpan(4));
+        var film = DesignArtifactWorkspaceContract.ToFile("film.mp4", "video/mp4", video);
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(
+            new DesignWorkspacePackage(DesignArtifactWorkspaceBroker.SchemaVersion, "film-run", "film-base", [film]),
+            DesignArtifactWorkspaceContract.JsonOptions);
+
+        Assert.Throws<InvalidOperationException>(() => DesignArtifactWorkspaceContract.ParseAndValidateResult(
+            bytes, "film-run", "film-base", DesignArtifactWorkspaceBroker.MaxOutputBytes));
+        var accepted = DesignArtifactWorkspaceContract.ParseAndValidateResult(
+            bytes, "film-run", "film-base", DesignArtifactWorkspaceBroker.MaxCodeFilmOutputBytes, isCodeFilm: true);
+        Assert.Equal(film, Assert.Single(accepted.Files));
+        Assert.Empty(accepted.IndexHtml);
+    }
+
     [Theory]
     [InlineData(DesignArtifactOperations.Generate)]
     [InlineData(DesignArtifactOperations.Edit)]
