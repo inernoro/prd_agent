@@ -8,6 +8,7 @@ using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Api.Services;
 using PrdAgent.Core.Interfaces;
+using PrdAgent.Core.LlmGateway;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
@@ -73,6 +74,7 @@ public sealed class DesignArtifactsController : ControllerBase
     private readonly ILogger<DesignArtifactsController>? _logger;
     private readonly IDesignGenerationSettingsService? _generationSettings;
     private readonly IPersonalStyleDerivationService? _styleDerivation;
+    private readonly IModelResolver? _modelResolver;
 
     public DesignArtifactsController(
         MongoDbContext db,
@@ -86,7 +88,8 @@ public sealed class DesignArtifactsController : ControllerBase
         IHostedSiteService sites,
         ILogger<DesignArtifactsController>? logger = null,
         IDesignGenerationSettingsService? generationSettings = null,
-        IPersonalStyleDerivationService? styleDerivation = null)
+        IPersonalStyleDerivationService? styleDerivation = null,
+        IModelResolver? modelResolver = null)
     {
         _db = db;
         _events = events;
@@ -100,6 +103,18 @@ public sealed class DesignArtifactsController : ControllerBase
         _logger = logger;
         _generationSettings = generationSettings;
         _styleDerivation = styleDerivation;
+        _modelResolver = modelResolver;
+    }
+
+    [HttpGet("model-options")]
+    public async Task<IActionResult> ModelOptions([FromQuery] string operation, CancellationToken ct)
+    {
+        if (operation is not (DesignArtifactOperations.Generate or DesignArtifactOperations.Edit))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "任务类型只能是 generate 或 edit"));
+        var items = _modelResolver is null
+            ? []
+            : await DesignArtifactModelSelection.ListWebPageModelsAsync(_modelResolver, operation, ct);
+        return Ok(ApiResponse<object>.Ok(new { items }));
     }
 
     [HttpGet("runtime-capabilities")]
@@ -236,6 +251,8 @@ public sealed class DesignArtifactsController : ControllerBase
                 if (_styleDerivation == null || _generationSettings == null)
                     return Conflict(ApiResponse<object>.Fail("REFERENCE_STYLE_UNAVAILABLE", "暂时无法读取网页样式，请稍后重试或选择另一种风格"));
                 var draft = await _styleDerivation.DeriveAsync(userId, request.ReferenceSiteId, null, CancellationToken.None);
+                if (draft.ReferenceVisualHtml == null)
+                    return Conflict(ApiResponse<object>.Fail("REFERENCE_STYLE_UNAVAILABLE", "这张网页暂时无法量取首屏样式，请换一张参考网页"));
                 designDirection = await _generationSettings.FreezeReferenceSiteAsync(draft, CancellationToken.None);
             }
             else if (!string.IsNullOrWhiteSpace(request.StyleId) && !string.IsNullOrWhiteSpace(request.DesignSystemId))
@@ -289,7 +306,15 @@ public sealed class DesignArtifactsController : ControllerBase
         var runId = Guid.NewGuid().ToString("N");
         var createdAt = DateTime.UtcNow;
         DesignArtifactLlmRequestPolicy requestPolicy;
-        try { requestPolicy = DesignArtifactModelSelection.CaptureForNewRun(_configuration); }
+        try
+        {
+            requestPolicy = await DesignArtifactModelSelection.CaptureForWebPageAsync(_configuration,
+                _modelResolver, request.ModelOptionId, DesignArtifactOperations.Generate, CancellationToken.None);
+        }
+        catch (DesignArtifactModelUnavailableException ex)
+        {
+            return Conflict(ApiResponse<object>.Fail(DesignArtifactModelUnavailableException.Code, ex.Message));
+        }
         catch (InvalidOperationException ex)
         {
             return Conflict(ApiResponse<object>.Fail("DESIGN_MODEL_POLICY_INVALID", ex.Message));
@@ -1592,6 +1617,7 @@ public sealed class CreateDesignArtifactRunRequest
     public string? ArtifactType { get; set; }
     public string? SourceSurface { get; set; }
     public string? Runtime { get; set; }
+    public string? ModelOptionId { get; set; }
     public string? Instruction { get; set; }
     public string? Title { get; set; }
 

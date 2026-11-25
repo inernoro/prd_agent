@@ -83,8 +83,9 @@ describe('生成失败后的恢复', () => {
       onEvent({ event: 'error', data: JSON.stringify({ message: 'raw service diagnostic' }) });
     });
     await act(async () => {
-      await current.start({ instruction: '面向工程团队', sourceSurface: 'web-hosting', knowledge: [], styleId: null, attachmentIds: ['file-1'] });
+      await current.start({ instruction: '面向工程团队', sourceSurface: 'web-hosting', knowledge: [], styleId: null, attachmentIds: ['file-1'], modelOptionId: 'editor-model' });
     });
+    expect(api.createDesignArtifactRun).toHaveBeenCalledWith(expect.objectContaining({ modelOptionId: 'editor-model' }));
     expect(current.notice?.text).toContain('整理页面产物时出错');
     expect(current.notice?.text).not.toContain('raw service diagnostic');
     expect(current.previewHtml).toBe('');

@@ -55,6 +55,16 @@ describe('WorkbenchComposer 状态', () => {
 });
 
 describe('WorkbenchComposer 布局', () => {
+  it('模型选择与发送在同一张输入卡片，并保留服务器提供的选项', () => {
+    const html = card(render({ modelPicker: {
+      items: [{ id: 'editor', label: '设计模型' }], status: 'ready',
+      value: 'editor', setValue: () => undefined, selectionUnavailable: false, retry: () => undefined,
+    } }));
+    expect(html).toContain('aria-label="选择模型"');
+    expect(html).toContain('<option value="editor" selected="">设计模型</option>');
+    expect(html).toContain('默认模型');
+  });
+
   it('资料、文本输入与工具都在同一张卡片内', () => {
     const html = render({ value: '给合作方看', chips: [chip] });
     const inside = card(html);

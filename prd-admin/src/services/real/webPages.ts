@@ -112,6 +112,7 @@ export interface HostedSiteRevision {
     instruction: string;
     attachments: Array<{ attachmentId: string; fileName: string; size?: number | null }>;
     chips: string[];
+    referenceStyleCheck?: 'matched' | 'mismatch' | 'unavailable' | null;
   } | null;
   basedOnContentVersion: string;
   publishedContentVersion?: string | null;
@@ -227,6 +228,7 @@ export interface DesignArtifactRunSummary {
     finalScore: number;
     viewports: string[];
     evidenceRef: string;
+    referenceStyleCheck?: 'matched' | 'mismatch' | null;
   } | null;
   restartedFromRunId?: string | null;
   artifactSiteId?: string | null;
@@ -1947,8 +1949,18 @@ export async function resolveDesignKnowledgeReferences(
   });
 }
 
+export interface DesignModelOption {
+  id: string;
+  label: string;
+}
+
+export function listDesignModelOptions(operation: 'generate' | 'edit'): Promise<ApiResponse<{ items: DesignModelOption[] }>> {
+  return apiRequest(api.designArtifacts.modelOptions(operation));
+}
+
 export async function createDesignArtifactRun(input: {
   instruction: string;
+  modelOptionId?: string;
   title?: string;
   sourceSurface: 'web-hosting' | 'knowledge-base';
   /**
@@ -2042,6 +2054,7 @@ export async function streamDesignArtifactRun(input: {
 }
 
 export interface HostedSiteEditRunExtras {
+  modelOptionId?: string;
   /** 「附上截图」：用户圈出问题的图片附件，最多 3 张。 */
   screenshotAttachmentIds?: string[];
   /** 补充资料附件。 */
@@ -2063,6 +2076,7 @@ export async function createHostedSiteEditRun(
     method: 'POST',
     body: {
       instruction,
+      ...(extras.modelOptionId ? { modelOptionId: extras.modelOptionId } : {}),
       knowledgeReferences: resolved.data.items.map(({ entryId, storeId, contentHash }) => ({
         entryId,
         storeId,

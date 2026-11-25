@@ -95,6 +95,7 @@ export interface GenerationNotice {
 
 export interface GenerationRequest {
   instruction: string;
+  modelOptionId?: string;
   title?: string;
   sourceSurface: 'knowledge-base' | 'web-hosting';
   knowledge: KnowledgeEntrySelection[];
@@ -109,6 +110,7 @@ export interface CompletedGeneration {
   id: string;
   url?: string;
   durationSeconds: number | null;
+  referenceStyleCheck?: 'matched' | 'mismatch' | 'unavailable';
 }
 
 interface Options {
@@ -188,7 +190,8 @@ export function useSiteGenerationRun({ destinationTeamId, hasInitialSource, init
     const durationSeconds = completedRunDurationSeconds(run);
     const completedAtMs = run.completedAt ? Date.parse(run.completedAt) : Number.NaN;
     if (Number.isFinite(completedAtMs)) setStages((current) => closeGenerationStages(current, completedAtMs));
-    setCompletedSite({ id: siteId, durationSeconds });
+    const referenceStyleCheck = run.browserQuality?.referenceStyleCheck ?? (run.referenceSiteId ? 'unavailable' : undefined);
+    setCompletedSite({ id: siteId, durationSeconds, ...(referenceStyleCheck ? { referenceStyleCheck } : {}) });
     setFailedRun(null);
     setProgress(100);
     setPhase('网页已生成并保存到网页托管');
@@ -424,6 +427,7 @@ export function useSiteGenerationRun({ destinationTeamId, hasInitialSource, init
     }));
     const created = await createDesignArtifactRun({
       instruction: text,
+      ...(request.modelOptionId ? { modelOptionId: request.modelOptionId } : {}),
       title: request.title?.trim() || undefined,
       sourceSurface: request.sourceSurface,
       // 目标空间跟着请求走，不再等完成回调——用户中途离开时那条回调根本不会执行。

@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, Check, FileText, Sparkles } from 'lucide-react';
+import { ArrowLeft, Check, Sparkles } from 'lucide-react';
+import { SitePreview } from '@/components/SitePreview';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { Dialog } from '@/components/ui/Dialog';
 import { useAuthStore } from '@/stores/authStore';
-import { listSites } from '@/services/real/webPages';
+import { listSites, type HostedSite } from '@/services/real/webPages';
 import { listDesignSystems, type DesignSystemItem } from '@/services/real/designSystems';
 import {
   createPersonalStyle,
@@ -198,7 +199,7 @@ export function PersonalStyleDialog({
           </div>
         )}
         {sites.status === 'ready' && sites.items.length > 0 && (
-          <div className="grid max-h-56 grid-cols-1 gap-1.5 overflow-y-auto sm:grid-cols-2" style={{ overscrollBehavior: 'contain' }} role="radiogroup" aria-label="选一张网页">
+          <div className="grid max-h-[min(52dvh,400px)] grid-cols-2 gap-2 overflow-y-auto p-0.5" style={{ overscrollBehavior: 'contain' }} role="radiogroup" aria-label="选一张网页">
             {sites.items.map((site) => {
               const selected = site.id === siteId;
               return (
@@ -207,13 +208,16 @@ export function PersonalStyleDialog({
                   type="button"
                   role="radio"
                   aria-checked={selected}
+                  aria-label={site.title || '未命名网页'}
                   onClick={() => setSiteId(selected ? null : site.id)}
-                  className="flex min-w-0 items-center gap-2 rounded-lg px-2.5 py-2 text-left hover-bg-soft"
+                  className="min-w-0 overflow-hidden rounded-lg text-left hover-bg-soft focus-visible:outline-none focus-visible:ring-2"
                   style={{ border: `1px solid ${selected ? 'var(--accent-primary)' : 'var(--border-subtle)'}` }}
                 >
-                  <FileText size={14} className="shrink-0 text-token-muted" />
-                  <span className="min-w-0 flex-1 truncate text-[12px] text-token-primary">{site.title || '未命名网页'}</span>
-                  {selected && <Check size={12} style={{ color: 'var(--accent-primary)' }} />}
+                  <ReferenceSiteThumbnail site={site} />
+                  <span className="flex min-h-9 min-w-0 items-center gap-2 px-2.5">
+                    <span className="min-w-0 flex-1 truncate text-[12px] text-token-primary" title={site.title}>{site.title || '未命名网页'}</span>
+                    {selected && <Check size={14} className="shrink-0" style={{ color: 'var(--accent-primary)' }} />}
+                  </span>
                 </button>
               );
             })}
@@ -389,6 +393,20 @@ export function PersonalStyleDialog({
         </>
       )}
     />
+  );
+}
+
+function ReferenceSiteThumbnail({ site }: { site: HostedSite }) {
+  const [failedCover, setFailedCover] = useState<string>();
+  return (
+    <div aria-hidden="true" className="pointer-events-none aspect-[8/5] overflow-hidden border-b border-[color:var(--border-subtle)] bg-[var(--bg-well)]">
+      {site.coverImageUrl && failedCover !== site.coverImageUrl ? (
+        <img src={site.coverImageUrl} alt="" loading="lazy" decoding="async" className="h-full w-full object-cover object-top"
+          onError={() => setFailedCover(site.coverImageUrl)} />
+      ) : (
+        <SitePreview site={site} url={site.siteUrl} className="h-full w-full" decorative />
+      )}
+    </div>
   );
 }
 

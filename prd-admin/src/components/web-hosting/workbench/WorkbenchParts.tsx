@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { ArrowUp, Circle, CircleCheck, Clock3, Plus, Square, X, type LucideIcon } from 'lucide-react';
+import { ArrowUp, Circle, CircleCheck, Clock3, Plus, RefreshCw, Square, X, type LucideIcon } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import type { DesignAttachmentItem } from '../designAttachments';
 import { WorkbenchAttachments } from './WorkbenchAttachments';
+import type { WorkbenchModelPickerState } from './useWorkbenchModelPicker';
 
 /**
  * 生成工作台的公共部件：一个对话 + 一个预览。
@@ -256,6 +257,7 @@ export function WorkbenchComposer({
   plusItems,
   chips,
   attachments,
+  modelPicker,
   sendLabel,
   sendDisabled,
   sendDisabledReason,
@@ -272,6 +274,7 @@ export function WorkbenchComposer({
   plusItems: PlusMenuItem[];
   chips: ComposerChip[];
   attachments?: { items: readonly DesignAttachmentItem[]; onRemove: (key: string) => void; onRetry: (key: string) => void; onReplace: (key: string) => void };
+  modelPicker?: WorkbenchModelPickerState;
   sendLabel: string;
   sendDisabled?: boolean;
   sendDisabledReason?: string;
@@ -401,9 +404,32 @@ export function WorkbenchComposer({
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
           {plusMenu}
         </div>
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex min-w-0 shrink-0 items-center gap-2">
           {value.length >= COMPOSER_COUNTER_FROM && (
             <span className="text-[11px] tabular-nums text-token-muted" aria-live="polite">{value.length}/{COMPOSER_MAX_LENGTH}</span>
+          )}
+          {modelPicker && (
+            <div className="flex min-w-0 items-center gap-1">
+              <select
+                aria-label="选择模型"
+                value={modelPicker.value}
+                onChange={(event) => modelPicker.setValue(event.target.value)}
+                disabled={disabled || modelPicker.status === 'loading'}
+                className="h-[34px] max-w-[min(38vw,168px)] cursor-pointer truncate rounded-md bg-[var(--bg-input)] px-1 text-[12px] text-token-secondary hover-bg-soft focus-visible:outline-none focus-visible:ring-2"
+              >
+                <option value="">{modelPicker.status === 'loading' ? '读取模型…' : '默认模型'}</option>
+                {modelPicker.value && !modelPicker.items.some((item) => item.id === modelPicker.value) && (
+                  <option value={modelPicker.value} disabled>{modelPicker.value}（暂不可用）</option>
+                )}
+                {modelPicker.items.map((item) => <option value={item.id} key={item.id}>{item.label}</option>)}
+              </select>
+              {modelPicker.status === 'failed' && !disabled && (
+                <button type="button" onClick={modelPicker.retry} aria-label="重新加载模型" title="模型列表读取失败，点击重试"
+                  className="flex h-8 w-8 items-center justify-center rounded-md text-token-secondary hover-bg-soft">
+                  <RefreshCw size={13} aria-hidden />
+                </button>
+              )}
+            </div>
           )}
           {disabled && onStop ? (
             <button type="button" onClick={onStop} disabled={stopDisabled} aria-label="停止生成" title="停止生成" className="flex h-[34px] w-[34px] items-center justify-center rounded-[9px] bg-[var(--accent-primary)] text-[var(--accent-on-primary)] disabled:opacity-50">

@@ -236,7 +236,7 @@ public sealed class DesignGenerationSettingsService : IDesignGenerationSettingsS
             Fonts = draft.Fonts,
             BaseDesignSystemId = draft.BaseDesignSystemId,
             SourceSiteId = draft.SourceSiteId,
-        }, draft.SourceSiteTitle);
+        }, draft.SourceSiteTitle, draft.ReferenceVisualHtml);
 
     /// <summary>
     /// 生成请求 → 冻结的设计方向。分支只有三条，且判据都在这里：
@@ -272,7 +272,7 @@ public sealed class DesignGenerationSettingsService : IDesignGenerationSettingsS
     /// </summary>
     internal static DesignArtifactDesignDirection FreezePersonalStyle(
         DesignGenerationEffectiveSettings settings, IDesignSystemCatalog catalog, PersonalDesignStyle style,
-        string? referenceSiteTitle = null)
+        string? referenceSiteTitle = null, string? referenceVisualHtml = null)
     {
         var baseEntry = catalog.Find(style.BaseDesignSystemId)
             ?? throw new DesignGenerationSettingsException(
@@ -298,6 +298,7 @@ public sealed class DesignGenerationSettingsService : IDesignGenerationSettingsS
             StyleDescription = instruction,
             ReferenceSiteId = reference ? style.SourceSiteId : null,
             ReferenceSiteTitle = referenceSiteTitle,
+            ReferenceVisualHtml = referenceVisualHtml,
             DesignSystemId = baseEntry.Id,
             ReviewMode = settings.ReviewMode,
             GeneratePrompt = generatePrompt,
@@ -556,6 +557,8 @@ public sealed class DesignGenerationSettingsService : IDesignGenerationSettingsS
             string.Join('\u001e', direction.BrandColors),
             string.Join('\u001e', direction.BrandFonts),
             string.Join('\u001e', direction.BrandExamples));
+        if (direction.ReferenceVisualHtml is { } visual)
+            material += "\u001f" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(visual)));
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(material))).ToLowerInvariant()[..12];
     }
 

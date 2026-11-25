@@ -328,6 +328,9 @@ public class PoolModelInfo
     /// <summary>实际平台快照；仅用于能力说明，不用于业务侧钉死路由。</summary>
     public string? ActualPlatformId { get; init; }
 
+    /// <summary>当前可运行线路与无状态 Responses 原生请求兼容。</summary>
+    public bool SupportsNativeResponses { get; init; }
+
     /// <summary>实际模型的参数能力快照；只读目录与真正发送共用同一解析结果来源。</summary>
     public Dictionary<string, bool>? ParameterCapabilities { get; init; }
 

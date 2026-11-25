@@ -171,6 +171,7 @@ export function revisionHistoryErrorMessage(error: unknown): string {
 
 export interface SiteEditSessionOptions {
   onPublished: (site: HostedSite) => void;
+  modelOptionId?: string;
   /**
    * 打开一个待发布草稿时，把它当时的修改要求回填进输入框（默认开）。
    * 旧面板靠它「按原要求再来一次」；工作台里那一轮已经作为对话气泡摆着，再回填就是重复，所以关掉。
@@ -178,7 +179,7 @@ export interface SiteEditSessionOptions {
   prefillInstructionFromDraft?: boolean;
 }
 
-export function useSiteEditSession(site: HostedSite, { onPublished, prefillInstructionFromDraft = true }: SiteEditSessionOptions) {
+export function useSiteEditSession(site: HostedSite, { onPublished, modelOptionId, prefillInstructionFromDraft = true }: SiteEditSessionOptions) {
   const [instruction, setInstruction] = useState('');
   const prefillFromDraftRef = useRef(prefillInstructionFromDraft);
   prefillFromDraftRef.current = prefillInstructionFromDraft;
@@ -630,6 +631,7 @@ export function useSiteEditSession(site: HostedSite, { onPublished, prefillInstr
     }));
     const created = await createHostedSiteEditRun(site.id, text, knowledgeReferences, {
       screenshotAttachmentIds: screenshots.readyIds,
+      ...(modelOptionId ? { modelOptionId } : {}),
     });
     // 创建期间工作台被关掉或重开：这个实例已经不是用户眼前那一个，交出去，别再往下走。
     if (abort.signal.aborted) {

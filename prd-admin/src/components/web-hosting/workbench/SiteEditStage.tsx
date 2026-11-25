@@ -46,6 +46,7 @@ import {
   type PlusMenuItem,
   type WorkbenchPane,
 } from './WorkbenchParts';
+import { useWorkbenchModelPicker } from './useWorkbenchModelPicker';
 
 const MAX_KNOWLEDGE = 3;
 
@@ -75,9 +76,11 @@ export default function SiteEditStage({
   onOpenShareSettings?: (site: HostedSite) => void;
   onBusyChange?: (busy: boolean) => void;
 }) {
+  const modelPicker = useWorkbenchModelPicker('edit');
   const session = useSiteEditSession(site, {
     onPublished: onSiteChanged,
     prefillInstructionFromDraft: false,
+    modelOptionId: modelPicker.value || undefined,
   });
   const {
     instruction, setInstruction, phase, elapsedSeconds, resolvedModel,
@@ -171,7 +174,7 @@ export default function SiteEditStage({
   }, [generating, revisions.length, recoveryNotice]);
 
   const send = () => {
-    if (!instruction.trim() || generating) return;
+    if (!instruction.trim() || generating || sendBlocker) return;
     setSentRound({
       text: instruction.trim(),
       chips: selectedKnowledge.map((item) => `知识库 · ${item.title}`),
@@ -221,7 +224,8 @@ export default function SiteEditStage({
   const sendBlocker = !requestRuntime
     ? missingRuntimeBlocker(runtimesLoaded)
     : screenshots.busy ? '截图上传完成后可发送'
-      : screenshots.hasFailed ? '请处理或移除失败的截图后再发送' : '';
+      : screenshots.hasFailed ? '请处理或移除失败的截图后再发送'
+        : modelPicker.selectionUnavailable ? '请重新选择可用模型' : '';
 
   const steps = GENERATION_STAGES.map((stage, index) => {
     const { complete, current } = siteEditStageState(index, generationStageIndex, generating, progress);
@@ -271,6 +275,12 @@ export default function SiteEditStage({
               {previewing ? '正在看' : '看这版'}
             </button>
           </div>
+          {(showIntro ? intro.referenceStyleCheck : revision.sourceInputs?.referenceStyleCheck) === 'mismatch' && (
+            <p role="status" className="text-[12px] text-token-secondary">网页已保存。首屏样式和参考网页仍有偏差，可以继续调整标题、留白或正文宽度。</p>
+          )}
+          {(showIntro ? intro.referenceStyleCheck : revision.sourceInputs?.referenceStyleCheck) === 'unavailable' && (
+            <p role="status" className="text-[12px] text-token-secondary">这版网页缺少参考风格的对照结果，可打开参考网页并排检查。</p>
+          )}
           {canRollback && (confirmRollbackId === revision.id ? (
             <div className="flex flex-wrap items-center gap-2 rounded-lg p-2" style={{ background: 'var(--bg-card)' }}>
               <span className="text-[12px] text-token-secondary">确认换回？客户打开同一个链接会看到这一版，现有版本都会保留。</span>
@@ -365,6 +375,7 @@ export default function SiteEditStage({
         placeholder={generating ? '修改完成后可继续调整…' : '想改哪里？比如「把首屏标题改短」'}
         disabled={generating}
         plusItems={plusItems}
+        modelPicker={modelPicker}
         chips={chips}
         attachments={{
           items: [...screenshots.items, ...screenshots.rejections],

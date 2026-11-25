@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
@@ -284,7 +285,11 @@ public sealed record PersonalStyleDraft(
     string? SourceSiteId,
     string? SourceSiteTitle,
     string? SourceNote,
-    List<string> SystemFilledFields);
+    List<string> SystemFilledFields)
+{
+    [JsonIgnore]
+    public string? ReferenceVisualHtml { get; init; }
+}
 
 public interface IPersonalStyleDerivationService
 {
@@ -387,6 +392,9 @@ public sealed class PersonalStyleDerivationService : IPersonalStyleDerivationSer
             site?.Id,
             site?.Title,
             string.IsNullOrEmpty(trimmedNote) ? null : trimmedNote,
-            filled);
+            filled)
+        {
+            ReferenceVisualHtml = PersonalStyleDeriver.BuildVisualReference(html, linkedCss),
+        };
     }
 }

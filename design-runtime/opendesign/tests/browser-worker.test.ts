@@ -189,6 +189,25 @@ describe('quality browser public-file and egress boundary', () => {
 });
 
 describe('isolated Chromium quality measurements', () => {
+  it('flags a landing-page headline on a same-color document reference in both themes', async () => {
+    const ref = `<!doctype html><html><head><style>
+      body{margin:0;font:17px/1.85 Georgia,serif;color:#1d2421;background:#fbfcfa}
+      @media(prefers-color-scheme:dark){body{color:#e7ece9;background:#141917}}
+      main{max-width:656px;margin:auto;padding:76px 32px}h1{font-size:38px}
+    </style></head><body><main><h1>Example document</h1><p>Document introduction in a compact reading column.</p></main></body></html>`;
+    const sample = workspace(ref.replace('font-size:38px', 'font-size:64px').replace('padding:76px', 'padding:180px'));
+    const { referenceStyle } = await runBrowserWorker({ ...sample, repairAttempt: 0, referenceHtml: ref });
+    expect(referenceStyle).toHaveLength(4);
+    expect(referenceStyle?.find(x => x.viewport === 'desktop' && x.scheme === 'dark')?.background).toBe('rgb(20, 25, 23)');
+    const result = await runBrowserWorker({ ...sample, repairAttempt: 0, referenceStyle });
+    expect(result.measurements).toHaveLength(4);
+    expect(result.measurements.every(x => x.issues.some(issue => issue.issueCode === 'reference_style_mismatch'
+      && String(issue.actual.differences).includes('heading size 64px; reference 38px')))).toBe(true);
+    fs.writeFileSync(path.join(sample.workspaceDir, 'index.html'), ref);
+    const matching = await runBrowserWorker({ ...sample, repairAttempt: 1, referenceStyle });
+    expect(matching.measurements.every(x => x.issues.every(issue => issue.issueCode !== 'reference_style_mismatch'))).toBe(true);
+  }, 30_000);
+
   it('detects every deterministic hard-gate category from a fixed broken sample', async () => {
     const sample = workspace(`<!doctype html><html><head><style>
       body{margin:0}.wide{width:1600px}.cta{position:absolute;left:1500px;background:#111;color:#fff}

@@ -8,6 +8,7 @@ using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Api.Services;
 using PrdAgent.Core.Interfaces;
+using PrdAgent.Core.LlmGateway;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
@@ -35,6 +36,7 @@ public sealed class HostedSiteEditsController : ControllerBase
     private readonly IConfiguration _configuration;
     private readonly IDesignGenerationSettingsService? _generationSettings;
     private readonly IHostedSitePrivateSourceGate? _privateSources;
+    private readonly IModelResolver? _modelResolver;
 
     public HostedSiteEditsController(
         IHostedSiteService sites,
@@ -49,7 +51,8 @@ public sealed class HostedSiteEditsController : ControllerBase
         IDesignArtifactCancellationCoordinator cancellation,
         IConfiguration configuration,
         IDesignGenerationSettingsService? generationSettings = null,
-        IHostedSitePrivateSourceGate? privateSources = null)
+        IHostedSitePrivateSourceGate? privateSources = null,
+        IModelResolver? modelResolver = null)
     {
         _sites = sites;
         _revisions = revisions;
@@ -65,6 +68,7 @@ public sealed class HostedSiteEditsController : ControllerBase
         _generationSettings = generationSettings;
         // 生产由 Program.cs 注册（HostedSitePrivateSourceGateTests 的接线守卫盯着）；只有不涉及发布的单测构造才为 null。
         _privateSources = privateSources;
+        _modelResolver = modelResolver;
     }
 
     [HttpGet("runtime-capabilities")]
@@ -194,7 +198,15 @@ public sealed class HostedSiteEditsController : ControllerBase
         var runId = Guid.NewGuid().ToString("N");
         var createdAt = DateTime.UtcNow;
         DesignArtifactLlmRequestPolicy requestPolicy;
-        try { requestPolicy = DesignArtifactModelSelection.CaptureForNewRun(_configuration); }
+        try
+        {
+            requestPolicy = await DesignArtifactModelSelection.CaptureForWebPageAsync(_configuration,
+                _modelResolver, request.ModelOptionId, DesignArtifactOperations.Edit, CancellationToken.None);
+        }
+        catch (DesignArtifactModelUnavailableException ex)
+        {
+            return Conflict(ApiResponse<object>.Fail(DesignArtifactModelUnavailableException.Code, ex.Message));
+        }
         catch (InvalidOperationException ex)
         {
             return Conflict(ApiResponse<object>.Fail("DESIGN_MODEL_POLICY_INVALID", ex.Message));
@@ -743,6 +755,8 @@ public sealed class HostedSiteEditsController : ControllerBase
             var inputProjection = Builders<DesignArtifactRun>.Projection
                 .Include(x => x.Id)
                 .Include(x => x.Instruction)
+                .Include(x => x.BrowserQuality)
+                .Include(x => x.DesignDirection!.ReferenceSiteId)
                 .Include($"{nameof(DesignArtifactRun.UploadedSources)}.{nameof(DesignUploadedSource.AttachmentId)}")
                 .Include($"{nameof(DesignArtifactRun.UploadedSources)}.{nameof(DesignUploadedSource.FileName)}")
                 .Include($"{nameof(DesignArtifactRun.ReferenceImages)}.{nameof(DesignReferenceImage.AttachmentId)}")
@@ -1012,6 +1026,8 @@ public sealed class HostedSiteEditsController : ControllerBase
     private static object ToSourceInputs(DesignArtifactRun run) => new
     {
         run.Instruction,
+        referenceStyleCheck = run.BrowserQuality?.ReferenceStyleCheck
+            ?? (run.DesignDirection?.ReferenceSiteId == null ? null : "unavailable"),
         attachments = (run.UploadedSources ?? []).Select(file => new
         {
             file.AttachmentId, file.FileName, Size = (long?)null,
@@ -1154,6 +1170,7 @@ public sealed class CreateHostedSiteEditRunRequest
 {
     public string? Instruction { get; set; }
     public string? Runtime { get; set; }
+    public string? ModelOptionId { get; set; }
     public List<HostedSiteKnowledgeReference>? KnowledgeReferences { get; set; }
 
     /// <summary>截图（附件编号，最多 3 张，仅 OpenDesign）：放进工作区 reference/ 作视觉参考。</summary>

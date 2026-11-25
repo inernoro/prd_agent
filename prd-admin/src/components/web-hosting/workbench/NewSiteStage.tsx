@@ -54,6 +54,7 @@ import {
   type PlusMenuItem,
   type WorkbenchPane,
 } from './WorkbenchParts';
+import { useWorkbenchModelPicker } from './useWorkbenchModelPicker';
 
 /** 知识库的一篇稿子，从知识库页「做成网页」带进来时预先放好。 */
 export interface WorkbenchSource {
@@ -71,6 +72,7 @@ export interface GenerationIntro {
   durationText: string;
   runtimeLabel: string;
   styleName?: string | null;
+  referenceStyleCheck?: 'matched' | 'mismatch' | 'unavailable';
   preview?: { html: string; sandbox: string };
 }
 
@@ -99,6 +101,7 @@ export default function NewSiteStage({
   onBusyChange?: (busy: boolean) => void;
 }) {
   const [instruction, setInstruction] = useState('');
+  const modelPicker = useWorkbenchModelPicker('generate');
   const [recentKnowledge, setRecentKnowledge] = useState<RecentDocumentEntry[]>([]);
   const [loadingKnowledge, setLoadingKnowledge] = useState(true);
   const [selectedKnowledge, setSelectedKnowledge] = useState<KnowledgeEntrySelection[]>(() => (source ? [{
@@ -257,6 +260,7 @@ export default function NewSiteStage({
       durationText: formatCompletedRunDuration(done.durationSeconds),
       runtimeLabel: sent?.runtimeLabel || (visibleRuntime ? runtimeCardTitle(visibleRuntime) : '设计执行器'),
       styleName: run.runInfo?.styleName ?? sent?.styleName,
+      referenceStyleCheck: done.referenceStyleCheck,
       preview: run.previewHtml ? { html: run.previewHtml, sandbox: run.previewSandbox } : undefined,
     });
   }, [onGenerated, run.completedSite, run.previewHtml, run.previewSandbox, run.recoveredRun, run.recoveredTitle, run.runInfo?.styleName, sent, visibleRuntime]);
@@ -325,7 +329,8 @@ export default function NewSiteStage({
       ? '请处理或移除失败的附件后再发送'
       : !requestRuntime
         ? missingRuntimeBlocker(runtimesLoaded)
-        : !hasSources ? '添加至少一份资料后即可生成' : '';
+        : !hasSources ? '添加至少一份资料后即可生成'
+          : modelPicker.selectionUnavailable ? '请重新选择可用模型' : '';
 
   const restoreInputs = () => {
     if (!failedRun || !savedRequest) return;
@@ -362,6 +367,7 @@ export default function NewSiteStage({
     handedOffRef.current = false;
     void run.start({
       instruction: text,
+      modelOptionId: modelPicker.value || undefined,
       title,
       sourceSurface: source ? 'knowledge-base' : 'web-hosting',
       knowledge: selectedKnowledge,
@@ -516,6 +522,7 @@ export default function NewSiteStage({
         placeholder={run.generating ? '生成完成后可继续修改…' : '说说想做什么网页，也可以只添加资料'}
         disabled={run.generating}
         plusItems={plusItems}
+        modelPicker={modelPicker}
         chips={referenceSite ? [...materialChips, {
           key: 'reference-site', label: referenceSite.title, status: '风格参考', icon: PanelsTopLeft, onRemove: () => setReferenceSite(null),
         }] : materialChips}

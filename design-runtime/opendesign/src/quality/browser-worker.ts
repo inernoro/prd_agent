@@ -15,6 +15,7 @@ import {
   type BrowserViewportMeasurement,
 } from './browser-contract.js';
 import { resolveBrowserExecutablePath, summarizeBrowserWorkerFailure } from './browser-runner.js';
+import { compareVisualReference, measureVisualReference, type VisualReferenceMetrics } from './visual-reference.js';
 
 const MIME: Record<string, string> = {
   '.css': 'text/css; charset=utf-8',
@@ -367,6 +368,28 @@ export async function runBrowserWorker(job: BrowserQualityWorkerJob): Promise<Br
   });
   try {
     const measurements: BrowserViewportMeasurement[] = [];
+    if (job.referenceHtml) {
+      const referenceStyle: VisualReferenceMetrics[] = [];
+      for (const viewport of BROWSER_QUALITY_VIEWPORTS) {
+        for (const scheme of ['light', 'dark'] as const) {
+          const context = await browser.newContext({
+            viewport: { width: viewport.width, height: viewport.height },
+            colorScheme: scheme, javaScriptEnabled: false, serviceWorkers: 'block',
+          });
+          try {
+            await context.route('**/*', (route) => route.abort('blockedbyclient'));
+            await context.routeWebSocket('**/*', (socket) => socket.close({ code: 1008, reason: 'Network disabled' }));
+            const page = await context.newPage();
+            await page.setContent(job.referenceHtml, { waitUntil: 'domcontentloaded', timeout: 10_000 });
+            const facts = await measureVisualReference(page, viewport.name, scheme);
+            if (facts) referenceStyle.push(facts);
+          } finally {
+            await context.close();
+          }
+        }
+      }
+      return { browserVersion: browser.version(), measurements, referenceStyle };
+    }
     const taskPath = path.join(job.workspaceDir, 'brief', 'task.json');
     const task = fs.existsSync(taskPath)
       ? JSON.parse(fs.readFileSync(taskPath, 'utf8')) as { presentationContract?: { targetPages?: number } }
@@ -374,9 +397,16 @@ export async function runBrowserWorker(job: BrowserQualityWorkerJob): Promise<Br
     const targetPages = Number.isSafeInteger(task.presentationContract?.targetPages)
       ? Number(task.presentationContract?.targetPages)
       : 0;
-    for (const viewport of BROWSER_QUALITY_VIEWPORTS) {
+    const targets = BROWSER_QUALITY_VIEWPORTS.flatMap<{
+      viewport: typeof BROWSER_QUALITY_VIEWPORTS[number];
+      scheme?: VisualReferenceMetrics['scheme'];
+    }>((viewport) => job.referenceStyle?.length
+      ? (['light', 'dark'] as const).map((scheme) => ({ viewport, scheme }))
+      : [{ viewport, scheme: undefined }]);
+    for (const { viewport, scheme } of targets) {
       const context = await browser.newContext({
         viewport: { width: viewport.width, height: viewport.height },
+        ...(scheme ? { colorScheme: scheme } : {}),
         deviceScaleFactor: 1,
         serviceWorkers: 'block',
       });
@@ -431,7 +461,7 @@ export async function runBrowserWorker(job: BrowserQualityWorkerJob): Promise<Br
           }, index);
           await page.waitForTimeout(40);
         }
-        const suffix = targetPages > 0 ? `-slide-${index + 1}` : '';
+        const suffix = targetPages > 0 ? `-slide-${index + 1}` : scheme ? `-${scheme}` : '';
         const relativeScreenshot = `assets/quality/attempt-${job.repairAttempt}-${viewport.name}${suffix}.png`;
         const screenshotPath = path.join(job.evidenceDir, path.basename(relativeScreenshot));
         const measurement = await measurePage(
@@ -450,6 +480,19 @@ export async function runBrowserWorker(job: BrowserQualityWorkerJob): Promise<Br
             viewport: viewport.name,
             actual: { slideIndex: index + 1, canNavigate: false },
             target: 'every frozen slide is reachable through the presentation controller',
+          });
+        }
+        const reference = scheme && job.referenceStyle?.find((item) => item.viewport === viewport.name && item.scheme === scheme);
+        if (reference) {
+          const actual = await measureVisualReference(page, viewport.name, reference.scheme);
+          const differences = compareVisualReference(reference, actual);
+          if (differences.length) measurement.issues.push({
+            issueCode: 'reference_style_mismatch',
+            severity: 'hard',
+            ruleVersion: BROWSER_QUALITY_RULE_VERSION,
+            viewport: viewport.name,
+            actual: { scheme: reference.scheme, differences: differences.join(' | ').slice(0, 800) },
+            target: 'the generated page preserves the measured visual reference on this viewport and color scheme',
           });
         }
         measurements.push({ ...measurement, screenshotPath: relativeScreenshot });

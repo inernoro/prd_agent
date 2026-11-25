@@ -7,7 +7,10 @@ import SiteEditStage from './SiteEditStage';
 
 const mock = vi.hoisted(() => ({ openRevision: vi.fn(), loadShares: vi.fn(), events: [] as string[] }));
 vi.mock('@/services', () => ({ listSiteShares: mock.loadShares }));
-vi.mock('@/services/real/webPages', () => ({ downloadSiteOfflineHtml: vi.fn(), getDesignArtifactRun: vi.fn() }));
+vi.mock('@/services/real/webPages', () => ({
+  downloadSiteOfflineHtml: vi.fn(), getDesignArtifactRun: vi.fn(),
+  listDesignModelOptions: vi.fn().mockResolvedValue({ success: true, data: { items: [] } }),
+}));
 vi.mock('../KnowledgeInlineBrowser', () => ({ default: () => null }));
 vi.mock('../QuickSharePopover', () => ({ QuickSharePopover: () => null }));
 vi.mock('../useOfflineExport', () => ({ useOfflineExport: () => ({ busy: false, label: '', run: vi.fn() }) }));

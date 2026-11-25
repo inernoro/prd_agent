@@ -49,6 +49,7 @@ export function SitePreview({
   site,
   className,
   style,
+  decorative = false,
 }: {
   url: string;
   /**
@@ -58,6 +59,7 @@ export function SitePreview({
   site?: SitePreviewHtmlSite;
   className?: string;
   style?: React.CSSProperties;
+  decorative?: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [loaded, setLoaded] = useState(false);
@@ -183,6 +185,7 @@ export function SitePreview({
           src={srcDoc ? undefined : src}
           srcDoc={srcDoc || undefined}
           title="preview"
+          tabIndex={decorative ? -1 : undefined}
           sandbox={srcDoc ? SRCDOC_PREVIEW_SANDBOX : directPreviewSandbox(src)}
           loading="lazy"
           onLoad={() => setLoaded(true)}

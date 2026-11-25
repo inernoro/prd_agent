@@ -1,6 +1,8 @@
 using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
+using AngleSharp.Dom;
+using AngleSharp.Html.Parser;
 using PrdAgent.Core.Models;
 
 namespace PrdAgent.Api.Services;
@@ -30,6 +32,7 @@ public sealed record PersonalStyleBaseChoice(string DesignSystemId, string Reaso
 public static class PersonalStyleDeriver
 {
     public const int MaxInstructionLength = 1500;
+    private const int MaxVisualReferenceBytes = 512 * 1024;
 
     private static readonly Regex CommentPattern = new(@"/\*.*?\*/", RegexOptions.Singleline | RegexOptions.CultureInvariant);
     private static readonly Regex StyleBlockPattern = new(@"<style\b[^>]*>(?<css>.*?)</style\s*>", RegexOptions.Singleline | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
@@ -61,6 +64,40 @@ public static class PersonalStyleDeriver
 
     /// <summary>一条 CSS 规则（选择器 + 已解析的声明，属性名小写）。</summary>
     internal sealed record CssRule(string Selector, IReadOnlyList<KeyValuePair<string, string>> Declarations);
+
+    internal static string? BuildVisualReference(string? html, IReadOnlyList<string> linkedCss)
+    {
+        if (string.IsNullOrWhiteSpace(html) || Encoding.UTF8.GetByteCount(html) > MaxVisualReferenceBytes)
+            return null;
+        var document = new HtmlParser().ParseDocument(html);
+        if (document.Body == null || document.Head == null || document.DocumentElement == null) return null;
+        foreach (var element in document.QuerySelectorAll("script, noscript, iframe, frame, object, embed, template, base, link, meta, title"))
+            element.Remove();
+        foreach (var element in document.QuerySelectorAll("*"))
+        {
+            foreach (var attribute in element.Attributes.ToArray())
+            {
+                if (attribute.Name.StartsWith("on", StringComparison.OrdinalIgnoreCase)
+                    || attribute.Name is "src" or "srcset" or "poster" or "action" or "formaction" or "ping")
+                    element.RemoveAttribute(attribute.Name);
+            }
+            if (element.HasAttribute("href")) element.SetAttribute("href", "#");
+            if (!string.Equals(element.LocalName, "style", StringComparison.OrdinalIgnoreCase))
+            {
+                foreach (var text in element.ChildNodes.OfType<IText>())
+                    text.Data = new string(text.Data.Select(c => char.IsWhiteSpace(c) ? c
+                        : c is >= '\u2e80' and <= '\u9fff' ? '文' : char.IsLetterOrDigit(c) ? 'a' : c).ToArray());
+            }
+        }
+        foreach (var stylesheet in linkedCss)
+        {
+            var style = document.CreateElement("style");
+            style.TextContent = stylesheet.Replace("</style", "<\\/style", StringComparison.OrdinalIgnoreCase);
+            document.Head.AppendChild(style);
+        }
+        var reference = "<!doctype html>" + document.DocumentElement.OuterHtml;
+        return Encoding.UTF8.GetByteCount(reference) <= MaxVisualReferenceBytes ? reference : null;
+    }
 
     /// <summary>
     /// 从一张网页的样式里提取风格。<paramref name="linkedCss"/> 是站内 CSS 文件的正文（调用方负责读取与限量）；

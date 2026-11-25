@@ -56,6 +56,7 @@ import {
   type BrowserQualityAttemptEvidence,
 } from './quality/browser-contract.js';
 import { SubprocessBrowserQualityRunner, type BrowserQualityRunner } from './quality/browser-runner.js';
+import { visualReferenceBrief, type VisualReferenceMetrics } from './quality/visual-reference.js';
 import { exportValidatedOutputs, readRegularFileNoFollow } from './workspace/output-preflight.js';
 import { SHA256_RE, normalizeRelativePath, sha256 } from './workspace/primitives.js';
 import {
@@ -191,6 +192,7 @@ export interface DesignTaskResult {
 interface PreparedWorkspace {
   mapRunId: string;
   inputFiles: Array<{ path: string; sha256: string; size: number }>;
+  visualReferenceHtml?: string;
 }
 
 interface PreviewPusher {
@@ -308,7 +310,9 @@ export class DesignTaskExecutor {
         'workspace input package runId does not match the task id MAP submitted',
       );
     }
-    const files = workspacePackage.files;
+    const visualReference = workspacePackage.files.find((file) => file.path === 'brief/visual-reference.html');
+    // 浏览器专用材料留在内存中。Codex 的工作区、会话和交付包只接触量取的样式数值。
+    const files = workspacePackage.files.filter((file) => file !== visualReference);
     const editableSeeds = prepareCurrentArtifactSeeds(files, transfer);
     fs.mkdirSync(workspaceDir, { recursive: true, mode: 0o755 });
     for (const file of files) {
@@ -367,6 +371,7 @@ export class DesignTaskExecutor {
     return {
       mapRunId: workspacePackage.runId,
       inputFiles: files.map((file) => ({ path: file.path, sha256: file.sha256, size: file.bytes.byteLength })),
+      visualReferenceHtml: visualReference?.bytes.toString('utf8'),
     };
   }
 
@@ -391,6 +396,23 @@ export class DesignTaskExecutor {
       throw new AgentWorkspaceRuntimeError('workspace_transfer_invalid', 'workspace transfer token is missing');
     }
     const designContext = collectDesignTaskContext(workspaceDir);
+    const browserEvidenceDir = path.join(
+      path.dirname(this.options.paths.outputDir),
+      'browser-quality',
+      sha256(Buffer.from(sessionId)).slice(0, 24),
+    );
+    let referenceStyle: VisualReferenceMetrics[] | undefined;
+    if (prepared.visualReferenceHtml) {
+      fs.mkdirSync(browserEvidenceDir, { recursive: true, mode: 0o700 });
+      this.chownForEngine(browserEvidenceDir);
+      const measured = await this.browserQualityRunner.run({
+        workspaceDir, evidenceDir: browserEvidenceDir, repairAttempt: 0, referenceHtml: prepared.visualReferenceHtml,
+      }, signalForDeadline(executionDeadline, signal));
+      referenceStyle = measured.referenceStyle;
+      if (referenceStyle?.length !== 4)
+        throw new AgentWorkspaceRuntimeError('design_reference_visual_unavailable', 'The reference did not expose a measurable heading in every viewport');
+    }
+    const referenceBrief = visualReferenceBrief(referenceStyle ?? []);
     const isPresentation = designContext.presentation !== undefined;
     const requiredSkillId = isPresentation
       ? OPEN_DESIGN_PRESENTATION_SKILL
@@ -474,11 +496,6 @@ export class DesignTaskExecutor {
     };
     let activeRunId: string | undefined;
     let previewPusher: PreviewPusher | undefined;
-    const browserEvidenceDir = path.join(
-      path.dirname(this.options.paths.outputDir),
-      'browser-quality',
-      sha256(Buffer.from(sessionId)).slice(0, 24),
-    );
     try {
       this.writeCodexConfig(buildOpenDesignCodexConfig(relay.proxiedBaseUrl, model.model));
       const designDirection = designContext.direction;
@@ -494,6 +511,7 @@ export class DesignTaskExecutor {
         editingExistingPage,
         presentation: designContext.presentation,
       });
+      if (referenceBrief) platformRules.push(referenceBrief);
       const { systemPrompt, reviewAddendum } = composeOpenDesignPrompts({
         platformRules,
         // 演示稿的视觉与检查合同由已选中的原生 deck skill 定义。目录风格仍提供
@@ -595,7 +613,7 @@ export class DesignTaskExecutor {
           body: buildRunBody(buildReviewMessage({
             reviewPass,
             editingExistingPage,
-            reviewAddendum,
+            reviewAddendum: [reviewAddendum, referenceBrief].filter(Boolean).join('\n\n'),
             presentation: designContext.presentation,
           })),
           signal: signalForDeadline(reviewDeadline, signal),
@@ -677,7 +695,9 @@ export class DesignTaskExecutor {
       let browserVersion = '';
       const browserAttempts: BrowserQualityAttemptEvidence[] = [];
       try {
-        const checked = await this.browserQualityRunner.run({ workspaceDir, evidenceDir: browserEvidenceDir, repairAttempt: 0 }, signalForDeadline(executionDeadline, signal));
+        const checked = await this.browserQualityRunner.run({
+          workspaceDir, evidenceDir: browserEvidenceDir, repairAttempt: 0, ...(referenceStyle ? { referenceStyle } : {}),
+        }, signalForDeadline(executionDeadline, signal));
         browserVersion = checked.browserVersion;
         const evidence = summarizeAttempt(0, browserVersion, checked.measurements);
         browserAttempts.push(evidence);
@@ -691,7 +711,10 @@ export class DesignTaskExecutor {
       activeRunId = undefined;
       const browserEvidenceFiles: WorkspacePackageFile[] = [];
       if (browserAttempts.length > 0) {
-        const browserQuality = buildBrowserQualityEvidence(browserVersion, browserAttempts);
+        const browserQuality = {
+          ...buildBrowserQualityEvidence(browserVersion, browserAttempts),
+          ...(referenceStyle ? { referenceStyleChecked: true } : {}),
+        };
         const reportBytes = Buffer.from(`${JSON.stringify(browserQuality, null, 2)}\n`);
         browserEvidenceFiles.push({ path: BROWSER_QUALITY_REPORT_PATH, contentBase64: reportBytes.toString('base64'), sha256: sha256(reportBytes), size: reportBytes.byteLength, mediaType: mediaTypeForFile(BROWSER_QUALITY_REPORT_PATH) });
       }
