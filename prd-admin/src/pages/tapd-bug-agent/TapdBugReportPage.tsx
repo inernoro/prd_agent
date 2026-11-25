@@ -156,12 +156,16 @@ export function TapdBugReportPage() {
     setSubmitResult(null);
     setTypingText('');
     setThinkingText('');
+    setModelLabel('');
     setStageMessage('正在整理缺陷草稿');
     try {
       await streamTapdBugPreviewReal(
         { naturalText, overrides: normalizedDraft },
         {
-          onStage: (_stage, message) => message && setStageMessage(message),
+          onStage: (stage, message) => {
+            if (stage === 'fallback') setModelLabel('');
+            if (message) setStageMessage(message);
+          },
           onModel: (model, platform) => setModelLabel(model ? `${model}${platform ? ` · ${platform}` : ''}` : ''),
           onThinking: (text) => setThinkingText((prev) => (prev + text).slice(-1600)),
           onTyping: (text) => setTypingText((prev) => (prev + text).slice(-3000)),
