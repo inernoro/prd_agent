@@ -131,6 +131,7 @@ describe('AppShell 之外的独立全屏页必须走共享 hook 落主题', () =
     ['录音结果页', 'pages/document-store/RecordingResultPage.tsx'],
     ['录音处理页', 'pages/document-store/RecordingProcessingPage.tsx'],
     ['视觉创作全屏页', 'pages/visual-agent/VisualAgentFullscreenPage.tsx'],
+    ['项目管理工作台', 'pages/pm-agent/PmAgentPage.tsx'],
     ['产品管理版本页', 'pages/product-agent/VersionAppearance.tsx'],
   ])('%s 用 useApplyDocumentTheme', (_name, relative) => {
     expect(read(relative)).toContain('useApplyDocumentTheme(');

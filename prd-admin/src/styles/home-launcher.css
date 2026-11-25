@@ -217,22 +217,9 @@
   gap: 9px;
   flex: 1;
   min-width: 0;
-  height: 38px;
+  height: 40px;
   padding: 0 9px 0 12px;
-  border-radius: 9px;
-  background: var(--bg-input);
-  border: 1px solid var(--border-subtle);
-  transition: border-color 0.2s, box-shadow 0.2s;
 }
-
-.home-desk-command-field:hover { border-color: var(--border-default); }
-
-.home-desk-command-field:focus-within {
-  border-color: var(--border-focus);
-  box-shadow: 0 0 0 3px var(--selection-bg);
-}
-
-.home-desk-command-icon { flex-shrink: 0; color: var(--text-muted); }
 
 .home-desk-command-input {
   flex: 1;
@@ -311,8 +298,8 @@
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 2px;
-  padding: 0 8px 8px;
+  gap: 4px;
+  padding: 0 12px 8px;
 }
 
 .home-desk-quick-item {
@@ -320,7 +307,7 @@
   align-items: center;
   gap: 6px;
   min-width: 0;
-  height: 27px;
+  height: 30px;
   padding: 0 8px;
   border-radius: 7px;
   cursor: pointer;

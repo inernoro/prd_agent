@@ -2,31 +2,46 @@
 name: cds
 metadata:
   version: 0.26.10
-description: CDS (Cloud Dev Space) core skill for onboarding, project-scoped authentication, engineering planning, decision lookup, debt intake and private design intake (CDS 设计接入), canonical cdscli commands, deployment runs, versions and rollback. Use for 工程规划、记下这个决策、排进落地计划、在 CDS 记一笔债 and CDS collaboration. Read actual preview URLs through preview-url. For 页面验收、功能验收、回归验收、验收报告 or delivery acceptance, use create-visual-test-to-kb and its design/orchestration prerequisites. Report upload is transport, not acceptance execution.
+description: CDS (Cloud Dev Space) 的唯一入口：用户说「/cds <一句话>」，按 CDS 左侧菜单路由到对应任务，例如 /cds 建项目、/cds 部署这个分支、/cds 发布到 xx 环境、/cds 回滚、/cds 添加一个任务调度、/cds 加一个 xx 的监控、/cds 审查这次改动、/cds 记下这个决策、/cds 记一笔债、/cds 改 xx 模块的设计、/cds 领一个验收任务、/cds 给智能体授权、/cds 更新 CDS。也用于 CDS 授权接入、cdscli 命令、预览地址、部署记录和版本回滚。页面验收和验收报告的取证仍用 create-visual-test-to-kb；报告上传只是传输，不等于验收执行。
 ---
 
 # CDS — 核心技能：安全接入 / cdscli / 托管交付 / self-update / 分诊器
 
-> **版本**：v0.26.10 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"、"数据库操作"、"代码审查报告"、"工程规划"、"CDS 设计接入"
+> **版本**：v0.26.10 | **状态**：已落地 | **触发**：`/cds <一句话>`（按菜单路由，见下表）、`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"预览地址"、"工程规划"、"CDS 设计接入"
 
 > **冷热分离**：
 > - 接入新项目、生成 compose、上传 YAML → **`cds-project-scan`**（冷路径）
 > - 部署 / 调试 / 看日志 / 冒烟 → **`cds-deploy-pipeline`**（热路径）
 > - 认证、env、Key、CDS 服务自更新、SSOT 公式 → **本技能**
 
-## 分诊器（用户只说"cds"或意图模糊时）
+## /cds 一句话（按 CDS 菜单）
 
-用户说"帮我看看 cds" / "搞下 cds" / 单独 `/cds` 时，**不要立即跑命令**，先反问一句区分意图：
+用户只说 `/cds <一句话>`，按 CDS 左侧菜单找到对应的任务，照「先读」加载技能和文档再做。CDS 的每一环都从这里进：建项目、部署、发布、任务调度、监控、审查、规划和债务、设计、验收。
 
-```
-CDS 这边您想做什么？
-  (1) 新项目接入 / 生成 compose / 上传配置  → 我去走「冷路径」（cds-project-scan）
-  (2) 部署 / 看日志 / deploy 失败排查      → 我去走「热路径」（cds-deploy-pipeline）
-  (3) 配认证 / 改 env / 项目 Key 管理       → 留在这里处理
-  (4) 更新 CDS 服务本体（改了 cds/ 代码）   → 留在这里处理
-```
+- 一句话能对上下表就直接做，**不要再问**；对不上时列出菜单名问一次。
+- 单独 `/cds` 或「帮我看看 cds」：先读当前仓库绑定的项目和页面，再按菜单问一句要做什么。
+- 交接只走 CDS：需求、评论、反馈、验收结果、债务和决策都在 CDS 里流转，不让用户在对话之间转述。
+- 下表由程序从 CDS 的 Agent 任务注册表生成，改说法只改 `reference/menu-intents.json`。
 
-明确触发词（含"扫描" / "部署" / "认证"）就直接派发，**不要再问**。
+<!-- cds-menu:start（程序生成，改 reference/menu-intents.json 后运行 cds/scripts/sync-cds-menu-routes.ts） -->
+
+| 菜单 | 你可以说 |
+| --- | --- |
+| 项目列表 | `/cds 建项目`、`/cds 接入一个仓库`、`/cds 有哪些项目`、`/cds 看项目状态` |
+| 概览 | `/cds 看当前页面`、`/cds 先帮我看看` |
+| 发布中心 | `/cds 发布到 xx 环境`、`/cds 上线`、`/cds 回滚到上一个版本` |
+| 任务调度 | `/cds 添加一个任务调度`、`/cds 每天 9 点跑 xx` |
+| 验收中心 | `/cds 跑 DSN-xxx 的验收`、`/cds 领一个验收任务` |
+| 监控中心 | `/cds 加一个 xx 的监控`、`/cds CDS 健康吗`、`/cds 看慢请求和错误` |
+| 代码审查报告 | `/cds 审查这次改动`、`/cds 上传审查报告` |
+| 工程规划 | `/cds 记下这个决策`、`/cds 记一笔债` |
+| 设计 | `/cds 帮我设计一个页面`、`/cds 改 xx 模块的设计`、`/cds 帮我实现 DSN-xxx`、`/cds 按交接清单实现` |
+| 接入 Agent | `/cds 给智能体授权`、`/cds 提权到另一个项目` |
+| 提交缺陷 | `/cds 提交一个 CDS 缺陷` |
+| CDS 系统设置 | `/cds 配登录和 SSO`、`/cds 接 GitHub`、`/cds 更新或重启 CDS`、`/cds 改系统设置` |
+
+完整路由、每个任务要读的技能、命令和步骤见 [按菜单的路由表](reference/menu.md)。
+<!-- cds-menu:end -->
 
 ## 本技能处理 / 不处理
 
@@ -396,7 +411,16 @@ $CLI debt stats
 
 ## 设计稿件与框架
 
-收到「请阅读 CDS 设计接入并按规范提交」时，先读 [CDS 设计接入](reference/design-intake.md)。通过已绑定项目的 MCP 读取接入清单，确认同一稿件的最新版本、稳定标识和来源。首发、同稿续版和新模块按同一协议操作。能回读的先查，仍有歧义时在动笔前一次澄清。
+收到「请阅读 CDS 设计接入并按规范提交」或 `/cds 改 xx 模块的设计` 时，先读 [CDS 设计接入](reference/design-intake.md)。通过已绑定项目的 MCP 读取接入清单，确认同一稿件的最新版本、稳定标识和来源。首发、同稿续版和新模块按同一协议操作。能回读的先查，仍有歧义时在动笔前一次澄清。
+
+发布只走两条程序命令：先 `node scripts/design/release.mjs check --dir design/<目录>`，生成版本差异并跑门禁 G-01 到 G-09，被驳回就按规则编号修改；发布成功后运行 `release.mjs register --commit <来源提交>` 登记版本。详见[程序做门禁](reference/design-intake.md#程序做门禁智能体只做输入)。
+
+发布前必须按 [出稿与发布前自查](reference/design-intake.md#出稿与发布前自查) 执行，结果写进交付说明：
+- 逐画面和实施基线对比，每处差异写明有意改动还是回退；
+- 在 CDS 预览容器里自检，零报错（CSP 不允许嵌套 `data:` 页面，原型是不透明源，没有存储）；
+- 按角色和任务亲自走查。
+
+自检通过不代表稿件可用，问题要在用户发现之前由设计方找出。
 
 从 CDS「设计」页的「接入 Agent」复制设计发布口令。新工作区先用 `cdscli setup-check --host <CDS 地址> --project <项目 ID> --design-access publish` 验证设计接入清单。缺少权限时，由智能体用 `cdscli connect --host <CDS 地址> --project <项目 ID> --design-access publish --agent <智能体名称>` 发起申请。系统所有者在「项目」页右下角「授权申请」核对项目和智能体，点击「批准设计发布」。智能体领取凭据并在当前工作区重新自检。等待超时用同一命令继续领取。实施反馈和只读任务可分别申请 `feedback` 与 `read`。
 
