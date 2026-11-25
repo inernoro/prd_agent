@@ -1,208 +1,182 @@
 {
+  "runAt": "2026-11-25",
+  "browser": "Chrome（DevTools 协议驱动），本机还原 CDS 预览容器（正式 CSP 响应头 + decorateDesignPrototype 桥接脚本），桌面与 375×812 手机、浅色与深色；实现侧证据来自本机测试与真实后端路由走查",
+  "url": "dist/index.html",
   "total": 29,
   "passed": 23,
   "items": [
     {
       "id": "R-01",
-      "rule": "公共导航",
-      "how": "human",
-      "status": "unverified",
+      "name": "R-01 公共导航",
+      "pass": false,
       "note": "原型用简化的导航栏和设置目录示意位置；实现复用正式 AppShell 与 SettingsDirectory，要在预览域名上核对"
     },
     {
       "id": "R-02",
-      "rule": "双主题和表面层级",
-      "how": "human",
-      "status": "pass",
+      "name": "R-02 双主题和表面层级",
+      "pass": true,
       "evidence": "8 个画面浅色、深色在预览容器还原下核对，颜色全部取 FW-CDS-UI V3 令牌"
     },
     {
       "id": "R-03",
-      "rule": "字体和界面尺度",
-      "how": "human",
-      "status": "unverified",
+      "name": "R-03 字体和界面尺度",
+      "pass": false,
       "note": "原型未还原整站 85% 根字号与 Windows 125%、150% 缩放，要在预览域名上核对"
     },
     {
       "id": "R-04",
-      "rule": "模块规则",
-      "how": "human",
-      "status": "pass",
+      "name": "R-04 模块规则",
+      "pass": true,
       "evidence": "模块差异写在 交付说明.md「模块差异」"
     },
     {
       "id": "R-07",
-      "rule": "窄屏的可达性",
-      "how": "human",
-      "status": "pass",
+      "name": "R-07 窄屏的可达性",
+      "pass": true,
       "evidence": "375×812 列表、签发、回执无横向溢出，手机签发底部按钮可点"
     },
     {
       "id": "R-11",
-      "rule": "框架版本与对照依据",
-      "how": "human",
-      "status": "unverified",
+      "name": "R-11 框架版本与对照依据",
+      "pass": false,
       "note": "实现尚未部署到预览域名，没有实拍可与原型校准"
     },
     {
       "id": "AK-01",
-      "rule": "首屏只有一个主动作「签发新 Key」，列表从首屏开始，签发表单不常驻",
-      "how": "screenshot",
-      "status": "pass",
+      "name": "AK-01 首屏只有一个主动作「签发新 Key」，列表从首屏开始，签发表单不常驻",
+      "pass": true,
       "evidence": "原型与本机实现走查"
     },
     {
       "id": "AK-02",
-      "rule": "项目卡「Agent Key」进入同一页并按项目筛选，签发时默认选中该项目",
-      "how": "human",
-      "status": "pass",
+      "name": "AK-02 项目卡「Agent Key」进入同一页并按项目筛选，签发时默认选中该项目",
+      "pass": true,
       "evidence": "本机实现：项目菜单 Agent Key 跳转 ?project=map-web#access-keys，标题与筛选正确"
     },
     {
       "id": "AK-03",
-      "rule": "列表按签发时间倒序，并按今天、最近 7 天、更早分组",
-      "how": "measure",
-      "status": "pass",
+      "name": "AK-03 列表按签发时间倒序，并按今天、最近 7 天、更早分组",
+      "pass": true,
       "evidence": "原型与本机实现：按时间倒序分组"
     },
     {
       "id": "AK-04",
-      "rule": "签发按顺序回答三个问题：能访问哪些项目、能执行哪些操作、何时失效；名称可选",
-      "how": "human",
-      "status": "pass",
+      "name": "AK-04 签发按顺序回答三个问题：能访问哪些项目、能执行哪些操作、何时失效；名称可选",
+      "pass": true,
       "evidence": "原型与本机实现走查"
     },
     {
       "id": "AK-05",
-      "rule": "说明栏随选择实时更新，写清能访问、能做、不能做、何时失效和风险等级",
-      "how": "screenshot",
-      "status": "pass",
+      "name": "AK-05 说明栏随选择实时更新，写清能访问、能做、不能做、何时失效和风险等级",
+      "pass": true,
       "evidence": "原型与本机实现走查"
     },
     {
       "id": "AK-06",
-      "rule": "选「全部项目」时风险为高，并提示包括以后新建的项目",
-      "how": "screenshot",
-      "status": "pass",
+      "name": "AK-06 选「全部项目」时风险为高，并提示包括以后新建的项目",
+      "pass": true,
       "evidence": "原型 #/sign-all"
     },
     {
       "id": "AK-07",
-      "rule": "签发回执与之后列表详情的说明逐字一致",
-      "how": "human",
-      "status": "pass",
+      "name": "AK-07 签发回执与之后列表详情的说明逐字一致",
+      "pass": true,
       "evidence": "web 测试：页面四处调用 describeAgentKey；本机签发后回执与详情对照一致"
     },
     {
       "id": "AK-08",
-      "rule": "项目范围提供指定项目、全部项目、仅创建新项目三种，并可同时允许创建新项目",
-      "how": "human",
-      "status": "pass",
+      "name": "AK-08 项目范围提供指定项目、全部项目、仅创建新项目三种，并可同时允许创建新项目",
+      "pass": true,
       "evidence": "原型与本机实现走查"
     },
     {
       "id": "AK-09",
-      "rule": "权限按任务组合：单项目可选完整读写或只开放一个模块；跨项目 Key 写明目前只能完整读写",
-      "how": "human",
-      "status": "pass",
+      "name": "AK-09 权限按任务组合：单项目可选完整读写或只开放一个模块；跨项目 Key 写明目前只能完整读写",
+      "pass": true,
       "evidence": "原型与本机实现走查"
     },
     {
       "id": "AK-10",
-      "rule": "条件不全时不能签发，并写明缺什么",
-      "how": "human",
-      "status": "pass",
+      "name": "AK-10 条件不全时不能签发，并写明缺什么",
+      "pass": true,
       "evidence": "原型与本机实现：未选项目时按钮不可用并提示"
     },
     {
       "id": "AK-11",
-      "rule": "有效期默认永久，可选 1、7、30、90 天或指定日期，并显示具体失效时间",
-      "how": "human",
-      "status": "pass",
+      "name": "AK-11 有效期默认永久，可选 1、7、30、90 天或指定日期，并显示具体失效时间",
+      "pass": true,
       "evidence": "本机实现：选 7 天后显示 2026-12-02 与剩余 7 天"
     },
     {
       "id": "AK-12",
-      "rule": "用户在页面选定的到期日不会因使用而推迟",
-      "how": "measure",
-      "status": "pass",
+      "name": "AK-12 用户在页面选定的到期日不会因使用而推迟",
+      "pass": true,
       "evidence": "路由测试「固定到期日」，改回旧行为确认变红"
     },
     {
       "id": "AK-13",
-      "rule": "每行写明签发来源：用户签发、AI Agent 签发或来源未记录，并附一句来源说明",
-      "how": "screenshot",
-      "status": "pass",
+      "name": "AK-13 每行写明签发来源：用户签发、AI Agent 签发或来源未记录，并附一句来源说明",
+      "pass": true,
       "evidence": "原型与本机实现走查"
     },
     {
       "id": "AK-14",
-      "rule": "详情逐步讲清来源：申请、批准、签发；自助签发写明所用用户凭据及级联失效",
-      "how": "human",
-      "status": "pass",
+      "name": "AK-14 详情逐步讲清来源：申请、批准、签发；自助签发写明所用用户凭据及级联失效",
+      "pass": true,
       "evidence": "原型与本机实现走查"
     },
     {
       "id": "AK-15",
-      "rule": "历史无来源记录的 Key 如实显示「来源未记录」，不按名称推测；有人工核对时显示归属，来源仍为未记录",
-      "how": "screenshot",
-      "status": "pass",
+      "name": "AK-15 历史无来源记录的 Key 如实显示「来源未记录」，不按名称推测；有人工核对时显示归属，来源仍为未记录",
+      "pass": true,
       "evidence": "路由测试「存量 Key 只按结构化字段判来源」与本机走查"
     },
     {
       "id": "AK-16",
-      "rule": "来源筛选三类计数之和等于全部",
-      "how": "measure",
-      "status": "pass",
+      "name": "AK-16 来源筛选三类计数之和等于全部",
+      "pass": true,
       "evidence": "原型与本机实现：1+6+2=9"
     },
     {
       "id": "AK-17",
-      "rule": "状态与鉴权同一判据：已过期、主体停用、项目授权收回的 Key 不显示为有效",
-      "how": "human",
-      "status": "unverified",
+      "name": "AK-17 状态与鉴权同一判据：已过期、主体停用、项目授权收回的 Key 不显示为有效",
+      "pass": false,
       "note": "过期与主体停用已有测试；项目授权收回只经同一判据函数覆盖，没有单独走查列表显示"
     },
     {
       "id": "AK-18",
-      "rule": "吊销放在详情里，二次确认后立即生效并保留记录；已失效的 Key 不再显示倒计时和风险等级",
-      "how": "human",
-      "status": "pass",
+      "name": "AK-18 吊销放在详情里，二次确认后立即生效并保留记录；已失效的 Key 不再显示倒计时和风险等级",
+      "pass": true,
       "evidence": "本机实现：吊销后状态即变、记录保留、不显示倒计时"
     },
     {
       "id": "AK-19",
-      "rule": "签发或吊销结果不明时不允许重复提交",
-      "how": "human",
-      "status": "unverified",
+      "name": "AK-19 签发或吊销结果不明时不允许重复提交",
+      "pass": false,
       "note": "沿用原页面的结果未知保护逻辑，本版没有重新模拟响应丢失；原有手工冒烟脚本的控件名已变，需要更新后重跑"
     },
     {
       "id": "AK-20",
-      "rule": "明文只显示一次，切换页签 30 分钟内可回看，刷新后无法恢复",
-      "how": "human",
-      "status": "unverified",
+      "name": "AK-20 明文只显示一次，切换页签 30 分钟内可回看，刷新后无法恢复",
+      "pass": false,
       "note": "回执与明文一次性显示已走查；30 分钟切页回看沿用原逻辑，本版没有重新计时验证"
     },
     {
       "id": "AK-21",
-      "rule": "手机 375 宽列表无横向溢出",
-      "how": "measure",
-      "status": "pass",
+      "name": "AK-21 手机 375 宽列表无横向溢出",
+      "pass": true,
       "evidence": "预览容器还原 375 宽无溢出"
     },
     {
       "id": "AK-22",
-      "rule": "手机上签发对话框可整体滚动，底部取消与签发按钮始终可点",
-      "how": "measure",
-      "status": "pass",
+      "name": "AK-22 手机上签发对话框可整体滚动，底部取消与签发按钮始终可点",
+      "pass": true,
       "evidence": "底边 801/812，按钮高 44"
     },
     {
       "id": "AK-23",
-      "rule": "机器 Agent Key 不能读取全部 Key 列表",
-      "how": "measure",
-      "status": "pass",
+      "name": "AK-23 机器 Agent Key 不能读取全部 Key 列表",
+      "pass": true,
       "evidence": "路由测试「机器 Agent Key 不能读全部 Key 目录」"
     }
   ]
