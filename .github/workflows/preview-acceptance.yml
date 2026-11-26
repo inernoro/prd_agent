@@ -229,6 +229,7 @@ jobs:
         env:
           HF_HUB_DISABLE_TELEMETRY: '1'
           HF_HUB_DISABLE_XET: '1'
+          MAP_QA_WHISPER_MODEL: 'medium'
         run: |
           trap 'rm -f "$RUNNER_TEMP/map-accepted-film.mp4"' EXIT
           python -m pip install --no-cache-dir 'faster-whisper==1.2.1'

@@ -14,14 +14,14 @@ def normalize(text):
 
 runner = Path(os.environ['RUNNER_TEMP'])
 audio_file = runner / 'map-accepted-film.mp4'
-model = WhisperModel('small', device='cpu', compute_type='int8', cpu_threads=4,
+model = WhisperModel(os.environ.get('MAP_QA_WHISPER_MODEL', 'small'), device='cpu', compute_type='int8', cpu_threads=4,
                      download_root=str(runner / 'map-audio-model'))
 samples_per_second = 16000
 track = decode_audio(str(audio_file), sampling_rate=samples_per_second)
 cue_windows = (
     (9.6, 13.5, '架构决策记录', '决策记录'),
     (44.3, 48.8, '组织审查', '审查'),
-    (63.0, 68.4, '取代旧记录', '旧记录'),
+    (63.0, 68.4, '取代旧记录', '审查通过'),
 )
 segments, _ = model.transcribe(track, language='zh', beam_size=5, word_timestamps=True,
                                condition_on_previous_text=False, vad_filter=True)
@@ -46,8 +46,10 @@ evidence = []
 for cue_number, (start, end, anchor, shorter_anchor) in enumerate(cue_windows, start=1):
     spoken = nearest_phrase(anchor, start)
     aligned = spoken is not None and spoken[0] >= start - 0.35 and spoken[1] <= end + 0.35
+    speech_characters = sum(start <= (low + high) / 2.0 <= end for low, high in timestamps)
     evidence.append({'cue': cue_number, 'captionSeconds': [start, end], 'speechSeconds': spoken,
-                     'shorterPhraseSeconds': nearest_phrase(shorter_anchor, start), 'aligned': aligned})
+                     'shorterPhraseSeconds': nearest_phrase(shorter_anchor, start),
+                     'speechCharactersInWindow': speech_characters, 'aligned': aligned})
 
 print(json.dumps(evidence))
 if not all(item['aligned'] for item in evidence):
