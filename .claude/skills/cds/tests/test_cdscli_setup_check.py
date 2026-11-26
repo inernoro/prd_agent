@@ -1,11 +1,13 @@
 """Exercise the shipped CLI over real HTTP with isolated workspace credentials."""
 import json
 import hashlib
+import io
 import os
 import re
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import threading
 import unittest
@@ -20,7 +22,7 @@ FRESH_SETUP = "/api/agent/setup.json?target=system&skills=cds"
 DESIGN_INTAKE = "/api/projects/proj-a/design/intake"
 DESIGN_REQUEST = "/api/projects/proj-a/access-requests"
 DESIGN_POLL = DESIGN_REQUEST + "/design-request-fixture"
-SKILLS = ("cds", "cds-design", "cds-project-scan", "cds-deploy-pipeline", "cds-release", "preview-url")
+SKILLS = ("cds", "cds-design", "cds-build", "cds-project-scan", "cds-deploy-pipeline", "cds-release", "preview-url")
 
 
 class SetupCheckTests(unittest.TestCase):
@@ -50,6 +52,7 @@ class SetupCheckTests(unittest.TestCase):
                                 "mission": "design-publish", "designAccess": "publish", "minCliVersion": "0.26.9"}
         self.design_result = {"projectId": "proj-a", "protocolVersion": 1, "permissions": {"write": True}}
         self.design_requests = []
+        self.update_bundle = None
         self.poll_proofs = []
         self.hold_design_approval = False
         test = self
@@ -66,6 +69,13 @@ class SetupCheckTests(unittest.TestCase):
 
             def do_GET(self):
                 test.requests.append((self.path, self.headers.get("X-AI-Access-Key")))
+                if self.path in ("/api/export-skill", "/api/skills/cds-pack/download") and test.update_bundle is not None:
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/gzip")
+                    self.send_header("Content-Length", str(len(test.update_bundle)))
+                    self.end_headers()
+                    self.wfile.write(test.update_bundle)
+                    return
                 if self.path in test.redirects:
                     self.send_response(302)
                     self.send_header("Location", test.redirects[self.path])
@@ -405,6 +415,43 @@ class SetupCheckTests(unittest.TestCase):
         self.assertTrue(payload["data"]["connected"])
         self.assertEqual(payload["data"]["checks"][1]["stage"], "skills")
 
+    def test_build_skill_reuses_existing_project_binding_and_reads_intake(self):
+        self.design_result['permissions'] = {'write': False}
+        setup, checked = self.run_cli('setup-check', '--host', self.host, '--project', 'proj-a', '--skills', 'cds-build')
+        self.assertEqual(setup.returncode, 0, setup.stdout + setup.stderr)
+        skills = next(item for item in checked['data']['checks'] if item['stage'] == 'skills')
+        self.assertEqual(skills['loadOnly'], ['cds-build'])
+
+        result, intake = self.run_cli('design', 'intake')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(intake['data']['projectId'], 'proj-a')
+        self.assertFalse(intake['data']['permissions']['write'])
+        self.assertEqual(self.requests[-1][0], DESIGN_INTAKE)
+        self.assertEqual(self.design_requests, [])
+
+    def test_update_installs_implementation_skill_and_keeps_workspace_files(self):
+        skills_root = self.cli.parents[2]
+        build_skill = skills_root / 'cds-build/SKILL.md'
+        build_skill.write_text('---\nname: cds-build\n---\n# 固定版实施\n', encoding='utf-8')
+        self.write_bundle_manifest()
+        archive = io.BytesIO()
+        with tarfile.open(fileobj=archive, mode='w:gz') as bundle:
+            for skill in SKILLS:
+                bundle.add(skills_root / skill, arcname=f'skills/{skill}')
+        self.update_bundle = archive.getvalue()
+        build_skill.unlink()
+        workspace_note = skills_root / 'cds/local-notes.md'
+        workspace_note.write_text('保留工作区内容', encoding='utf-8')
+
+        result, updated = self.run_cli('update')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertCountEqual(updated['data']['skillsUpdated'], SKILLS)
+        self.assertIn('name: cds-build', build_skill.read_text(encoding='utf-8'))
+        self.assertEqual(workspace_note.read_text(encoding='utf-8'), '保留工作区内容')
+        backup = Path(updated['data']['backupAt'])
+        self.assertEqual(backup.parents[1], self.root / '.cds')
+        self.assertTrue((backup / 'cds/local-notes.md').is_file())
+
     def test_host_mismatch_sends_no_credentials(self):
         self.assert_failure("host_mismatch", host="https://other.example")
         self.assertEqual(self.requests, [])
@@ -570,6 +617,14 @@ class SetupCheckTests(unittest.TestCase):
     def test_missing_bundle_is_distinct_from_authorization(self):
         (self.root / ".agents/skills/preview-url/SKILL.md").unlink()
         self.assert_failure("incomplete_bundle")
+        self.assertEqual(self.requests, [])
+
+    def test_missing_implementation_skill_is_incomplete_before_sending_credentials(self):
+        (self.cli.parents[2] / 'cds-build/SKILL.md').unlink()
+        result, checked = self.run_cli('setup-check', '--host', self.host, '--project', 'proj-a', '--skills', 'cds-build')
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(checked['data']['checks'][-1]['reason'], 'incomplete_bundle')
+        self.assertIn('cds-build', checked['data']['checks'][-1]['nextStep'])
         self.assertEqual(self.requests, [])
 
     def test_bundle_manifest_is_required_and_parseable(self):

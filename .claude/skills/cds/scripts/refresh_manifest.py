@@ -7,7 +7,7 @@ import re
 from pathlib import Path
 
 root = Path(__file__).resolve().parents[2]
-skills = ['cds', 'cds-design', 'cds-project-scan', 'cds-deploy-pipeline', 'cds-release', 'preview-url']
+skills = ['cds', 'cds-design', 'cds-build', 'cds-project-scan', 'cds-deploy-pipeline', 'cds-release', 'preview-url']
 receipt = root / 'cds/cli/cds-skill-manifest.json'
 version = re.search(r'^VERSION = "([0-9.]+)"', (root / 'cds/cli/cdscli.py').read_text(), re.M)[1]
 for name in ('design-preview-contract.json', 'design-acceptance-policy.json', 'design-acceptance-standard.mjs'):

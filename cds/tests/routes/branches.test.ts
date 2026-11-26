@@ -503,7 +503,7 @@ describe('Branch Routes', () => {
   });
 
   it('authenticated skill export ships the same file integrity manifest as anonymous installation', async () => {
-    const skills = ['cds', 'cds-design', 'cds-project-scan', 'cds-deploy-pipeline', 'cds-release', 'preview-url'];
+    const skills = ['cds', 'cds-design', 'cds-build', 'cds-project-scan', 'cds-deploy-pipeline', 'cds-release', 'preview-url'];
     const root = path.join(tmpDir, '.claude/skills');
     for (const skill of skills) {
       fs.mkdirSync(path.join(root, skill), { recursive: true });
@@ -518,10 +518,14 @@ describe('Branch Routes', () => {
     const name = entries.find(entry => entry.endsWith('/skills/cds/cli/cds-skill-manifest.json'))!;
     expect(name).toBeTruthy();
     const manifest = JSON.parse(execFileSync('tar', ['-xzOf', '-', name], { input: archive, encoding: 'utf8' }));
-    expect(manifest).toMatchObject({ version: '9.8.7', skills });
+    expect(manifest.version).toBe('9.8.7');
+    expect([...manifest.skills].sort()).toEqual([...skills].sort());
     for (const skill of skills) {
       expect(manifest.files[`${skill}/SKILL.md`]).toBe(createHash('sha256').update(`current ${skill}`).digest('hex'));
     }
+    const implementation = entries.find(entry => entry.endsWith('/skills/cds-build/SKILL.md'));
+    expect(implementation).toBeTruthy();
+    expect(execFileSync('tar', ['-xzOf', '-', implementation!], { input: archive, encoding: 'utf8' })).toBe('current cds-build');
   });
 
   function readyArtifactFixture() {

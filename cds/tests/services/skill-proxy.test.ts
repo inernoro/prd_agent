@@ -440,7 +440,7 @@ describe('CDS 技能包缓存（匿名端点的放大防护）', () => {
       fs.writeFileSync(path.join(base, key, 'cli/cdscli.py'), 'VERSION = "9.8.7"\n');
     }
   };
-  const ALL = ['cds', 'cds-design', 'cds-project-scan', 'cds-deploy-pipeline', 'cds-release', 'preview-url'];
+  const ALL = ['cds', 'cds-design', 'cds-build', 'cds-project-scan', 'cds-deploy-pipeline', 'cds-release', 'preview-url'];
 
   beforeEach(() => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-skills-root-'));
@@ -449,10 +449,10 @@ describe('CDS 技能包缓存（匿名端点的放大防护）', () => {
     fs.rmSync(root, { recursive: true, force: true });
   });
 
-  it('技能不齐时拒发本地包（半成品会让脚本以为装好了、不再回源）', async () => {
-    for (const k of ALL.slice(0, 3)) mkSkill(root, k);
+  it('只有实施技能缺失时也拒发不完整的本地包', async () => {
+    for (const k of ALL.filter(key => key !== 'cds-build')) mkSkill(root, k);
     const cache = new CdsSkillPackCache();
-    expect(await cache.get(root)).toBeNull();
+    expect((await cache.get(root))?.cached).toBeUndefined();
   });
 
   it('目录齐全时出包，第二次命中缓存不再重新构建', async () => {

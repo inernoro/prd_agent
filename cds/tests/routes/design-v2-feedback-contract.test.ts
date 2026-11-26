@@ -10,7 +10,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createDesignWorkspaceRouter } from '../../src/routes/design-workspace.js';
 import { DesignWorkspaceService, type DesignActor, type DesignWorkspaceCommit } from '../../src/services/design-workspace.js';
 import { FileProjectRevisionStore } from '../../src/services/project-revision-store.js';
-import { crc32 } from '../../src/utils/zip.js';
+import type { DesignWorkspace } from '../../src/shared/design-workspace.js';
+import { buildZip, crc32 } from '../../src/utils/zip.js';
 import { versionedDesignFixture } from '../helpers/versioned-design-fixture.js';
 
 const projectId = 'fixture-v2-feedback';
@@ -57,12 +58,13 @@ const dataUrl = (bytes: Buffer) => `data:image/png;base64,${bytes.toString('base
 
 describe('CDS V2 feedback contract', () => {
   let directory: string;
+  let store: FileProjectRevisionStore<DesignWorkspaceCommit>;
   let server: Server;
   let api: string;
 
   beforeEach(async () => {
     directory = await mkdtemp(path.join(tmpdir(), 'cds-design-v2-feedback-'));
-    const store = new FileProjectRevisionStore<DesignWorkspaceCommit>(directory);
+    store = new FileProjectRevisionStore(directory);
     const service = new DesignWorkspaceService(store);
     const app = express();
     app.use('/api', createDesignWorkspaceRouter({ service, resolveAccess: (request, project) =>
@@ -93,7 +95,7 @@ describe('CDS V2 feedback contract', () => {
     });
   }
 
-  async function publish(filePath: string, options: { prior?: string; sibling?: boolean } = {}) {
+  async function publish(filePath: string, options: { prior?: string; sibling?: boolean; data?: Buffer } = {}) {
     const screen = options.prior
       ? { id: 'revised-phone', name: 'Fixture phone', route: '#/revised', viewport: 'phone', themes: ['dark'], impl: '/revised/' }
       : { id: 'initial-desktop', name: 'Fixture desktop', route: '#/initial', viewport: 'desktop', themes: ['light'], impl: '/initial/' };
@@ -105,7 +107,7 @@ describe('CDS V2 feedback contract', () => {
       changedRules: ['A-01'] } : undefined;
     const archive = versionedDesignFixture(manifest, 'Compare revision evidence.', [
       { name: 'dist/index.html', data: '<!doctype html><html><body><h1>Fixture feedback</h1></body></html>' },
-      { name: filePath, data: '# Fixture delivery file\nOnly this exact revision contains the file.' },
+      { name: filePath, data: options.data ?? '# Fixture delivery file\nOnly this exact revision contains the file.' },
     ], previous);
     const query = new URLSearchParams({ requestId: randomUUID(), sourceCommit: (options.prior ? 'b' : 'a').repeat(40),
       sourceMode: 'private', sourcePath: options.sibling ? 'design/fixture-sibling' : 'design/fixture-feedback',
@@ -124,6 +126,13 @@ describe('CDS V2 feedback contract', () => {
   function report(designId: string) {
     return { type: 'feedback.create', designId, version: 1, screenId: 'initial-desktop', category: 'implementation',
       title: 'Fixture feedback', body: 'Check the archived design revision.' };
+  }
+
+  async function deliveryFiles(designId: string, version: number) {
+    const response = await read(`?designId=${designId}&version=${version}`);
+    expect(response.status).toBe(200);
+    const { designs } = await response.json() as DesignWorkspace;
+    return designs[0].versions.find(row => row.version === version)!.delivery!.files;
   }
 
   it('keeps text feedback at 48 KiB and accepts only attachments on the independent upload endpoint', async () => {
@@ -160,6 +169,78 @@ describe('CDS V2 feedback contract', () => {
       expect.objectContaining({ id: created.result.id, version: 1, screenId: 'initial-desktop',
         filePath: initialFile, author: expect.objectContaining({ id: 'implementer' }) }),
     ]);
+  });
+
+  it('reads new source diffs from the selected version and preserves the original download bytes', async () => {
+    const filePath = 'docs/fixture-source.diff';
+    const patches = ['初版', '修订版'].map(label => Buffer.from(`--- a/example.txt\r\n+++ b/example.txt\r\n@@ -1 +1 @@\r\n-before\r\n+${label}\r\n`));
+    const designId = await publish(filePath, { data: patches[0] });
+    await publish(filePath, { prior: designId, data: patches[1] });
+
+    const ids = new Set<string>();
+    for (const [index, bytes] of patches.entries()) {
+      const file = (await deliveryFiles(designId, index + 1)).find(row => row.path === filePath)!;
+      const sha256 = createHash('sha256').update(bytes).digest('hex');
+      expect(file).toMatchObject({ text: true, sha256 });
+      ids.add(file.id);
+      const artifactPath = `/artifacts/${file.id}`;
+      const text = await read(`${artifactPath}?view=text`);
+      expect(text.status).toBe(200);
+      expect(await text.json()).toMatchObject({ artifactId: file.id, path: filePath, sha256, offset: 0, nextOffset: null, text: bytes.toString('utf8') });
+      const download = await read(`${artifactPath}?download=true`);
+      expect(download.status).toBe(200);
+      expect(download.headers.get('content-disposition')).toContain('attachment');
+      expect(Buffer.from(await download.arrayBuffer())).toEqual(bytes);
+      expect((await read(`${artifactPath}?view=text`, 'reader', otherProject)).status).toBe(404);
+    }
+    expect(ids.size).toBe(2);
+  });
+
+  it('opens valid historical patches indexed as binary and rejects invalid UTF-8 and NUL in text view', async () => {
+    const id = 'DSN-legacy-patches';
+    const archiveId = 'fixture-legacy-archive';
+    const legacy = [
+      { path: 'changes/source.patch', bytes: Buffer.from('--- a/fixture\n+++ b/fixture\n@@ -1 +1 @@\n-old\n+历史内容\n') },
+      { path: 'changes/invalid-encoding.diff', bytes: Buffer.from([0x61, 0xc3, 0x28, 0x62]) },
+      { path: 'changes/invalid-nul.patch', bytes: Buffer.from('valid UTF-8\0with NUL') },
+    ];
+    const files = legacy.map(({ path: filePath, bytes }, index) => ({ id: `legacy-patch-${index}`, path: filePath,
+      kind: 'attachment' as const, size: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'), text: false }));
+    const prototypeId = 'fixture-legacy-prototype';
+    const prototype = '<!doctype html><main>Fixture prototype</main>';
+    const archive = buildZip([
+      { name: 'bundle/design.json', data: JSON.stringify({ project: projectId, title: 'Historical differences', screens: [], acceptance: [] }) },
+      { name: 'bundle/思路.md', data: 'Historical fixture.' },
+      { name: 'bundle/dist/index.html', data: prototype },
+      ...legacy.map(({ path: filePath, bytes }) => ({ name: `bundle/${filePath}`, data: bytes })),
+    ]);
+    expect(await store.append({ projectId, revision: 1, request: { key: id, fingerprint: id, result: { type: 'package', designId: id, version: 1 } },
+      assets: [{ id: archiveId, mime: 'application/zip', base64: archive.toString('base64') }],
+      design: { id, version: { version: 1, title: 'Historical differences', createdAt: '2026-11-20T00:00:00Z',
+        publisher: { id: 'publisher', label: 'Fixture publisher' }, sourceCommit: 'a'.repeat(40),
+        sha256: createHash('sha256').update(archive).digest('hex'), prototypeId,
+        rationale: 'Historical fixture.', spec: {}, screens: [], acceptance: [], tags: [], decisionIds: [], resolves: {},
+        delivery: { archiveId, archiveRoot: 'bundle/', warnings: [], files: [...files,
+          { id: prototypeId, path: 'dist/index.html', kind: 'prototype', size: Buffer.byteLength(prototype),
+            sha256: createHash('sha256').update(prototype).digest('hex'), text: true }] },
+      } },
+    })).toBe(true);
+    expect(await deliveryFiles(id, 1)).toEqual(expect.arrayContaining(files));
+
+    const text = await read(`/artifacts/${files[0].id}?view=text`);
+    expect(text.status).toBe(200);
+    expect(await text.json()).toMatchObject({ sha256: files[0].sha256, text: legacy[0].bytes.toString('utf8') });
+    for (const file of files.slice(1)) {
+      const denied = await read(`/artifacts/${file.id}?view=text`);
+      expect(denied.status).toBe(400);
+      expect(await denied.json()).toMatchObject({ error: 'invalid_design' });
+    }
+    for (const [index, file] of files.entries()) {
+      const download = await read(`/artifacts/${file.id}?download=true`);
+      expect(download.status).toBe(200);
+      expect(Buffer.from(await download.arrayBuffer())).toEqual(legacy[index].bytes);
+    }
+    expect((await read(`/artifacts/${files[0].id}?view=text`, 'reader', otherProject)).status).toBe(404);
   });
 
   it('uploads a large PNG on the scoped endpoint and validates its selected version, screen and slot', async () => {
