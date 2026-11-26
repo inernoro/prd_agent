@@ -559,6 +559,32 @@ describe('同实例四入口维护准入与真实请求完成条件', () => {
     fire(15_000);
   });
 
+  it('远端版本无法确认时结束更新等待，在途发布仍可继续', async () => {
+    fullWorkflow = true;
+    const startedAt = new Date().toISOString();
+    state.addReleaseRun({
+      releaseId: 'live-release', projectId: 'default', branchId: 'release-branch', targetId: 'target', planId: 'plan',
+      commitSha: sha, artifact: { commitSha: sha } as never, status: 'running', startedAt, heartbeatAt: startedAt,
+      logs: [], seq: 0,
+    });
+    transport = async (command, _options, result) => command.startsWith('git ls-remote')
+      ? { ...ok(), exitCode: 1, stderr: 'fixture remote unavailable' }
+      : result;
+
+    const reply = await post('self-update', { branch: 'main', drainTimeoutMs: 2_000, force: true });
+
+    expect(reply.raw).toContain('self_update_target_unconfirmed');
+    expect(reply.raw).toContain('检查远端分支和仓库连接后重新发起 CDS 更新。');
+    expect(reply.raw).not.toContain('self_update_restart_cancelled');
+    expect(reply.raw).not.toContain('fixture remote unavailable');
+    expect(state.getSelfUpdateHistory(1)[0]).toMatchObject({ status: 'failed', failure: { stage: 'gate' } });
+    expect(state.getReleaseRun('live-release')?.status).toBe('running');
+    expect(shell.commands.some(command => /^git (fetch|checkout|reset)/.test(command))).toBe(false);
+    expect(restartSpawn).not.toHaveBeenCalled();
+    expect(getRestartWait()).toBeNull();
+    expect(selfUpdateDrainBlockReason(Date.now())).toBeNull();
+  });
+
   it.each(['self-update', 'self-force-sync', 'self-restart'] as const)('%s保留已确认保存的原产物等待，不将未领取意图误作在途写者', async endpoint => {
     fullWorkflow = true; vi.stubEnv('CDS_SECRET_KEY', '17'.repeat(32));
     if (!state.getProject('default')) state.addProject({ id: 'default', name: '原待办归属项目', slug: 'owned-fixture' } as any);

@@ -25269,6 +25269,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
     let acceptedTransitionReason: string | undefined;
     let requestedTargetSha = '';
     let requestedBaseSha: string | undefined;
+    const targetUnconfirmed = new Error('无法核对等待开始时的远端版本。');
     let checkpoint: Awaited<ReturnType<typeof createSelfUpdateCheckpoint>> | undefined, keepUpdate = false;
     const rollbackCheckpoint = async (): Promise<void> => {
       maintenanceComplete = false;
@@ -25397,14 +25398,12 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         onProgress: (status, title) => send('drain-deploys', status, title),
         onFirstWait: async () => {
           requestedBaseSha = (await shell.exec('git rev-parse HEAD', { cwd: repoRoot })).stdout.trim().toLowerCase();
-          requestedTargetSha = await worktreeService.resolveLatestRemoteHead(repoRoot, selectedBranch, AbortSignal.timeout(Math.ceil(safeWindowMs))).catch(() => '');
+          requestedTargetSha = await worktreeService.resolveLatestRemoteHead(
+            repoRoot, selectedBranch, AbortSignal.timeout(Math.ceil(safeWindowMs)),
+          ).catch(() => { throw targetUnconfirmed; });
         },
       });
       timingRecorder.merge({ drainMs: Date.now() - drainStartedAt });
-      if (requestedBaseSha !== undefined && !requestedTargetSha) {
-        failWith('gate', { code: 'self_update_target_unconfirmed', message: '无法核对等待开始时的远端版本。请检查目标分支后重新发起更新。' });
-        return;
-      }
       if (requestedBaseSha !== undefined && deps.revalidateSelfUpdate && !await deps.revalidateSelfUpdate(req)) {
         failWith('gate', { code: 'self_update_authorization_expired', message: '本次更新的授权已到期或被撤销。请重新登录或取得授权后，再发起 CDS 更新。' });
         return;
@@ -26024,6 +26023,10 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       // argument) leave a forensic trail. Without this, the whole CDS cluster
       // goes dark with no clue why.
     } catch (err) {
+      if (err === targetUnconfirmed) {
+        failWith('gate', { code: 'self_update_target_unconfirmed', message: targetUnconfirmed.message });
+        return;
+      }
       if (err instanceof SelfUpdateRestartBlockedError) {
         failWith('restart-drain', { code: err.code, message: err.message,
           raw: err.remaining.join(', '), extra: { pendingRuns: err.remaining, waitedMs: err.waitedMs } });
