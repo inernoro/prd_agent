@@ -531,8 +531,8 @@ for (const mode of ['list', 'account-share', 'guest-share'] as const) {
       else if (path.endsWith('/collection-contexts')) data = { items: [], total: 0, totalContexts: 0, page: 1, pageSize: 20 };
       else if (path.endsWith('/related-documents')) data = { version: 1, mainSiteId: 'source', canManage: false,
         hasPermissionDifferences: false, items: sites.map(site => ({ ...site, isMain: site.id === 'source',
-          // 访客引用同合集成员；账号态关联当前合集以外但本人可读的网页。
-          isManual: !(mode === 'guest-share' && site.id === 'target'),
+          // 访客通过合集快照读取成员；评论引用仍附在该成员上。
+          isManual: true,
           mentions: mode === 'guest-share' && site.id === 'target' ? [{ commentId: 'source-comment', authorName: '引用者', sourceSiteId: 'source', sourceTitle: '来源文档', label: '来源文档中的评论引用' }] : [],
           preview: { ...site, useShareAccess: mode === 'guest-share' },
           href: mode === 'guest-share' ? `/s/wp/qa-related?siteId=${site.id}` : `/web-pages?openSite=${site.id}` })) };

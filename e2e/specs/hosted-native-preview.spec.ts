@@ -954,7 +954,7 @@ test.describe('长文批注连续跟随与菜单外点', () => {
       await card.getByRole('button', { name: '放回原位', exact: true }).click();
       await expect(card).toHaveAttribute('data-placement', 'right');
     });
-    test('图标全隐保留编号，编号重开后全显；关联菜单在外点与点正文时收起', async ({ page }) => {
+    test('图标全隐保留编号，编号重开后全显；合集菜单在外点与点正文时收起', async ({ page }) => {
       const frame = await open(page);
       const discussion = page.getByRole('button', { name: '批注与讨论', exact: true });
       const documentTab = page.getByRole('tab', { name: '正文', exact: true });
@@ -973,7 +973,7 @@ test.describe('长文批注连续跟随与菜单外点', () => {
       else await expect(page.locator('.annotation-chat-bubble')).toHaveCount(2);
       await tap(hide);
 
-      const menu = page.getByRole('button', { name: '关联文档', exact: true });
+      const menu = page.getByRole('button', { name: '合集', exact: true });
       await tap(menu);
       await expect(menu).toHaveAttribute('aria-expanded', 'true');
       if (mobile) await page.getByText(title, { exact: true }).tap();
@@ -981,7 +981,7 @@ test.describe('长文批注连续跟随与菜单外点', () => {
       await expect(menu).toHaveAttribute('aria-expanded', 'false');
       if (!mobile) await discussion.click();
       await tap(menu);
-      await expect(page.getByRole('dialog', { name: '关联文档', exact: true })).toBeVisible();
+      await expect(page.getByRole('dialog', { name: '合集', exact: true })).toBeVisible();
       const point = await freePoint(page, true);
       if (mobile) await page.touchscreen.tap(point.x, point.y);
       else await page.mouse.click(point.x, point.y);
