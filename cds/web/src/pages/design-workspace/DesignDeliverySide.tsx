@@ -3,7 +3,7 @@ import { ArrowRight, Check, MessageSquare, PanelRightClose, RotateCcw } from 'lu
 import type { DesignComment, DesignEntry, DesignRequirement, DesignTheme, DesignVersion, DesignWorkspace } from '../../../../src/shared/design-workspace';
 import { designVisualKey } from '../../../../src/shared/design-visual';
 import { designFeedbackAwaitsViewer, isDesignPhoneViewport } from './design-ui';
-import { DesignThumbnail } from './DesignGallery';
+import { DesignThumbnail, useDesignThumbnails } from './DesignGallery';
 import { rationaleOrder } from './DesignRationale';
 import { needTrace } from './DesignNeed';
 export type DesignFullView = 'need' | 'notes' | 'delivery';
@@ -58,6 +58,7 @@ function demoGroup(route: string) {
 }
 
 function Demo({ entry, version, screenId, theme, open, onScreen }: { entry: DesignEntry; version: DesignVersion; screenId?: string; theme: DesignTheme; open: Open; onScreen: (id: string) => void }) {
+  const { renders, running, status } = useDesignThumbnails(entry.projectId, version, entry.id);
   const [all, setAll] = useState(false);
   const every = version.screens.map(screen => ({ screen, title: screen.name, tip: version.acceptance.find(rule => rule.screenId === screen.id)?.rule }));
   const declared = version.demo?.flatMap(row => {
@@ -79,7 +80,7 @@ function Demo({ entry, version, screenId, theme, open, onScreen }: { entry: Desi
     const color = screen.themes.includes(theme) ? theme : screen.themes[0];
     const captured = entry.runs.slice().reverse().find(run => run.version === version.version)
       ?.visual?.[designVisualKey(screen.id, `${screen.viewport}-${color}`)]?.referenceImageId;
-    return version.renders?.[screen.id]?.[color]?.id ?? captured;
+    return renders?.[screen.id]?.[color]?.id ?? captured;
   };
   const { ordered, authorVersion } = rationaleOrder(entry, version);
   const why = ordered.filter(item => item.key === 'goal' || item.key === 'choices')
@@ -87,6 +88,7 @@ function Demo({ entry, version, screenId, theme, open, onScreen }: { entry: Desi
   return <>
     <section className="dw-sp-sec" data-sec="flow">
       <h3>演示流程<small>{steps.length ? `${Math.max(index, 0) + 1} / ${steps.length}` : ''}</small></h3>
+      {running && status && <p className="dw-muted" role="status">缩略图生成中 {status.completed}/{status.total}</p>}
       {current && <div className="dw-sp-tip">
         <p><strong>{current.title}</strong>{current.tip ? ` · ${current.tip}` : ''}</p>
         <div className="dw-sp-acts">

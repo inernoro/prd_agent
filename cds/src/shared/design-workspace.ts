@@ -1,3 +1,4 @@
+import type { designHandoffPolicy, DesignHandoffPlan, DesignHandoffState } from './design-handoff.js';
 import type { DesignAcceptancePlan, DesignCoverageRecord, DesignDimension, DesignFlow, DesignKnownIssue, DesignMethodId, DesignMethodSettings, DesignRegression, DesignSmoke } from './design-methods.js';
 import type { DesignVisualRow } from './design-visual.js';
 import type { DesignVerdict, DesignCellStatus } from '../services/design-acceptance.js';
@@ -17,6 +18,7 @@ export type DesignRule = {
   id: string; rule: string; how: 'measure' | 'screenshot' | 'human'; priority: 'high' | 'normal';
   slots: readonly DesignSlot[]; screenId?: string; expected?: string; dimension?: DesignDimension; requirementRef?: string;
   probe?: { type: 'horizontal-overflow'; tolerance?: number };
+  interaction?: true;
 };
 export type DesignMaterial = { tokens?: Record<string, unknown>; rules?: string; components?: string; skeleton?: string };
 export const designMaterialKeys = ['tokens', 'rules', 'components', 'skeleton'] as const;
@@ -134,6 +136,8 @@ export type DesignVersion = {
   group?: string; scope?: DesignScope; tags: string[]; decisionIds: string[]; resolves: Record<string, string>;
   renders?: Record<string, Partial<Record<DesignTheme, { id: string; sha256: string }>>>;
   cover?: DesignCover;
+  handoffPlan?: DesignHandoffPlan;
+  handoff?: DesignHandoffState;
   demo?: DesignDemoStep[];
   goals?: DesignGoal[];
   demoData?: DesignDemoData;
@@ -290,6 +294,7 @@ export type DesignRequirement = {
   replies?: Array<{ id: string; author: DesignFeedbackAuthor; body: string; at: string; planVersion: number }>;
 };
 export type DesignIntake = {
+  handoffPolicy?: typeof designHandoffPolicy;
   protocolVersion: 1;
   projectId: string;
   permissions: { write: boolean; feedback?: boolean; frameworkPublish?: boolean };
@@ -300,7 +305,7 @@ export type DesignIntake = {
   designs: Array<{
     designId: string; designKey?: string; title: string; latestVersion: number;
     sourceCommit: string; sourcePaths: string[]; scope?: DesignScope; canRevise: boolean; openFeedbackCount?: number;
-    baselineVersion?: number; implementedVersion?: number; versionGap?: DesignVersionGap; upgrade?: DesignUpgrade;
+    baselineVersion?: number; handoffStatus?: DesignHandoffState['status']; implementedVersion?: number; versionGap?: DesignVersionGap; upgrade?: DesignUpgrade;
     versionHistory?: Array<{ version: number; sourceCommit: string }>;
   }>;
   frameworks: Array<{ id: string; title: string; latestVersion: number; adoptedVersion?: number }>;
@@ -335,6 +340,6 @@ export type DesignWorkspace = {
   requirements?: DesignRequirement[];
   systems?: DesignSystem[];
   viewer?: DesignViewerState;
-  permissions: { write: boolean; feedback?: boolean; feedbackSupplement?: boolean; frameworkPublish?: boolean; visual?: boolean; review: boolean; sign?: boolean;
+  permissions: { write: boolean; feedback?: boolean; feedbackSupplement?: boolean; frameworkPublish?: boolean; handoffCheck?: boolean; visual?: boolean; review: boolean; sign?: boolean;
     installedAcceptance?: boolean; programRecheck?: boolean; steward: boolean; actorId: string };
 };

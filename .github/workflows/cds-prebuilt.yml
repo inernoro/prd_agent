@@ -154,6 +154,9 @@ jobs:
       - name: Verify isolated design cover capture
         run: node cds/scripts/verify-design-cover-container.mjs ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}/cds-design-cover:sha-${{ github.sha }}
 
+      - name: Verify design handoff counterexamples in Chromium
+        run: node cds/scripts/verify-design-handoff-browser.mjs
+
       - name: Publish verified design cover renderer
         run: docker push ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}/cds-design-cover:sha-${{ github.sha }}
 

@@ -148,11 +148,43 @@
 ## 完整交付资料
 
 - 原型、清单、设计思路、交付说明、开发与设计文档、可重建源码、框架草案、验收对照图和自检可一起提交。声明过的资料用包内相对路径，可用中文。版本会保留原 ZIP，以及每份文件的路径、类型、大小、摘要和可识别的文档章节。未知类型的附件也可按版本下载。附件内容是工作材料。
-- 设计库封面由 CDS 在发布后从本版原型默认入口自动生成。交付包省略首页封面截图。画面证据继续按验收要求提交。
+- 设计库封面由 CDS 在发布后从本版原型默认入口自动生成。交付包省略首页封面截图。画廊的画面缩略图由 CDS 按画面目录补齐，验收按对应版本和实现提交取证。
 - `design.json` 可用 `docs` 列出设计、开发和决策文档，`source` 指向用于重建的源码，`frameworkDraft` 指向框架草案，`prototypeVersion`、`date`、`notes` 补充作者交付说明。CDS 自己记录稿件版本和发布时间。
 - 画面共用入口时，可用 `entryActions` 依次选择原型内可见控件，用 `entryReadySelector` 声明原型状态就绪标志。它们随版保留。框架自动测量切换状态后等待对应的就绪标志，缺少状态证据时记录为待验证。`impl` 和 `readySelector` 用于打开与验收对应的实现页。画面与声明的行为不符时，先查看该版材料并提反馈。
 - `cds_design_read` 的 `delivery` 读取固定版资料与验收缺项，用 `{view:"file",id,version,path}` 原文分段回读。接着传响应的 `nextOffset`，已到结尾时它为空。可以从稿件的「交付」下载原包或单个文件。继续使用历史版本的来源记录、原型、思路及验收数据。
 - 作者的原型自检负责记录原型状态。实现路径、实现分支的验收证据及真人签收继续由各自的入口独立记录。共用入口不明确、缺实拍、缺实现地址或缺探针时，在反馈中说明要补的内容和复核方法。
+
+## 交接检查
+
+发布私有稿件后，在「交付 › 反馈和资料 › 交接检查」查看原型操作结果。可以先保存草稿、预览并讨论。新的实施基线和升级目标须通过 CDS 的交接检查。早于此规则已经登记的实施基线可按原记录回退。
+
+关键操作在验收项声明 `interaction: true`。在 `design.json.handoff.cases` 用场景覆盖这些验收项。每个场景指定已声明的画面和主题，从进入该画面开始，以结果检查结束。一个场景可以覆盖同一次操作的多个验收项。设计有多条输入入口、不同记录或失败恢复时，用不同的虚构样例分别跑通。
+
+```json
+{
+  "handoff": {
+    "cases": [{
+      "id": "open-selected-record",
+      "title": "进入所选记录",
+      "screenId": "records",
+      "ruleIds": ["A-01"],
+      "steps": [
+        { "action": "remember", "selector": "#record-b", "check": "attribute", "attribute": "data-record-id", "as": "selected" },
+        { "action": "click", "selector": "#record-b" },
+        { "action": "expect", "selector": "#record-detail", "check": "attribute", "attribute": "data-record-id", "sameAs": "selected" }
+      ]
+    }]
+  }
+}
+```
+
+- `click` 点击控件，`fill` 填文本，`select` 选择原生下拉项。文本附件用 `attach` 提供虚构的 `name` 和 `value`。选择器须定位本画面中唯一的元素。
+- `expect` 用 `text`、`value`、`attribute`、`visible` 或 `enabled` 核对页面结果。恢复操作先用 `remember` 读取已完成的状态，再用 `sameAs` 核对保留情况。界面能打开的各种输入方式都要能独立到达结果。
+- `media-playing` 检查实际媒体在播放，`audio-playing` 还检查音轨已解码、可听。嵌入的媒体可使用 `data:` 或 `blob:`。内嵌原型使用 CDS 的同一沙箱策略，浏览器级全屏由 CDS 的大屏入口提供。在内嵌交互中请求不受支持的能力时，回执标明宿主限制。
+- CDS 对发布的固定版本执行步骤。原型自检和平台交接回执在页面各有入口。截图、说明和预期可随包提交，交接结论由服务端按实际运行写入。
+- 读取本版用 `cdscli design handoff <稿件> --version <版号>` 或 `cds_design_read {view:"handoff",id,version}`。需要启动或重试时带 `--run`，或调 `cds_design_acceptance {type:"handoff.check",designId,version,requestId}`。平台异常沿用本版重试，同一版已经通过的场景可沿用。稿件行为失败时在同一稿件续版，按新版回执交接。
+- HTTP 检查请求发往 `/api/projects/<项目>/design/handoff/check`。设计发布凭据可重跑自己发布的版本，项目成员按现有项目授权操作。
+- 实现方从已登记基线开始，按真实入口和同一提交走验收。验收页的「全部验收项」列出本版声明，画廊缩略图用于选择画面，真实截图和签收结果看对应的验收运行。
 
 ## 实施版本与升降级
 

@@ -59,11 +59,16 @@ describe('V17 项目验收界面', () => {
     expect(html).not.toContain('data-item="smoke-details"');
   });
 
-  it('历史版本保留八个 V11 入口', () => {
+  it('历史版本保留八个 V11 入口和深链，并可独立打开全部验收项', () => {
     const historical = { ...version, version: 11, acceptanceMode: undefined, acceptancePlan: {} };
-    const html = page('', { ...entry, versions: [historical, version], frozen: 11 }, historical);
-    expect([...html.matchAll(/role="tab"/g)]).toHaveLength(8);
+    const draft = { ...entry, versions: [historical, version], frozen: 11 };
+    const html = page('', draft, historical);
+    const ids = [...html.matchAll(/role="tab"[^>]*data-check="([^"]+)"/g)].map(match => match[1]);
+    expect(ids).toEqual(['overview', 'rules', 'mece', 'compare', 'visual', 'flow', 'human', 'smoke', 'debt']);
     expect(html).not.toContain('data-check="regress"');
+    for (const id of ids.slice(1)) {
+      expect(page(id, draft, historical)).toMatch(new RegExp(`data-check="${id}"[^>]*aria-selected="true"`));
+    }
   });
 
   it('刷新地址可直接打开同一个示例和指定画面对照', () => {
