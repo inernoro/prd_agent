@@ -68,22 +68,16 @@ const serverSource = fs.readFileSync(
 );
 
 describe('CDS 壳层用户入口与授权提醒契约', () => {
-  it('保留原主导航顺序并在审查之后追加工程规划和设计', () => {
+  it('主导航从项目列表开始，在审查之后保留工程规划和设计', () => {
     const rail = shellSource.slice(shellSource.indexOf('function RailNav('), shellSource.indexOf('function RailThemeToggle('));
     const mainItems = rail.slice(0, rail.indexOf('<div className="flex-1" />'));
     expect([...mainItems.matchAll(/<Link\s+to="([^"]+)"/g)].map(([, href]) => href)).toEqual([
-      '/project-list', '/overview', '/release-center', '/task-schedule', '/reports', '/status',
+      '/project-list', '/release-center', '/task-schedule', '/reports', '/status',
       '/code-reviews', '/engineering-planning', '/design',
     ]);
-    const ownerItems = mainItems.slice(mainItems.indexOf('{canManageSettings ? <>'), mainItems.indexOf('</> : null}'));
-    expect(ownerItems).toContain('to="/overview"');
-    const overviewItem = ownerItems.slice(0, ownerItems.indexOf('</Link>'));
-    expect(overviewItem).toContain('<Waypoints />');
-    expect(overviewItem).toContain('<span>Overview</span>');
     const planningItem = mainItems.slice(mainItems.indexOf('<Link to="/engineering-planning"'), mainItems.indexOf('<Link to="/design"'));
     expect(planningItem).toContain('<Target />');
-    const ownerRoutes = appSource.slice(appSource.indexOf('<Route element={<OwnerConsoleRoute />}>'));
-    expect(ownerRoutes.slice(0, ownerRoutes.indexOf('</Route>'))).toContain('path="/overview"');
+    expect(appSource).not.toContain('path="/overview"');
   });
 
   /*

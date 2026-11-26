@@ -19,6 +19,7 @@
 | `/cds 查日志` | 项目日志与异常排查 | `cds-deploy-pipeline/SKILL.md` | `cdscli branch`、`cdscli health`、`cdscli auth`、`cdscli self` | 会写入 |
 | `/cds 这个接口有问题` | 项目重要接口排查 | `cds-deploy-pipeline/SKILL.md` | `cdscli branch`、`cdscli db`、`cdscli health`、`cdscli auth`、`cdscli self` | 会写入 |
 | `/cds 预览打不开` | 预览入口异常排查 | `preview-url/SKILL.md`、`cds-deploy-pipeline/SKILL.md` | `cdscli branch` | 会写入 |
+| `/cds 看当前页面`、`/cds 先帮我看看` | 当前 CDS 页面 | `cds-deploy-pipeline/SKILL.md` | `cdscli branch`、`cdscli project`、`cdscli env`、`cdscli key`、`cdscli health`、`cdscli auth`、`cdscli self` | 会写入 |
 
 ### 项目扫描与接入
 
@@ -152,12 +153,6 @@
 4. 关联代理日志与应用日志定位失败层
 
 完成标准：真实入口可访问；关键资源加载成功；多入口数量与 CDS API 一致。
-
-## 概览
-
-| 你可以说 | 任务 | 先读 | 命令 | 风险 |
-| --- | --- | --- | --- | --- |
-| `/cds 看当前页面`、`/cds 先帮我看看` | 当前 CDS 页面 | `cds-deploy-pipeline/SKILL.md` | `cdscli branch`、`cdscli project`、`cdscli env`、`cdscli key`、`cdscli health`、`cdscli auth`、`cdscli self` | 会写入 |
 
 ### 当前 CDS 页面
 
