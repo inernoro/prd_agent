@@ -5,7 +5,7 @@ import { Dialog } from '@/components/ui/Dialog';
 import { Button } from '@/components/design/Button';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { useAuthStore } from '@/stores/authStore';
-import { useResolvedThemeMode } from '@/stores/mobileThemeStore';
+import { useDataTheme } from '@/hooks/useDataTheme';
 import { useIsMobile } from '@/hooks/useBreakpoint';
 import { HOSTED_SITE_PERMISSIONS_CHANGED, getRelatedCandidates, getRelatedDocuments, previewRelatedPermissions, saveRelatedDocuments, syncRelatedPermissions,
   type RelatedSummary, type RelatedDocument, type RelatedDocuments, type RelatedDocumentSource, type RelatedPermissionPreview, type RelatedSyncResult } from '@/services/real/relatedDocuments';
@@ -23,7 +23,7 @@ export default function RelatedDocumentsBar({ siteId, source, onNavigate, varian
   menuAnchor?: HTMLElement | null; onMenuClose?: () => void;
 }) {
   const authToken = useAuthStore(state => state.token);
-  const theme = useResolvedThemeMode();
+  const theme = useDataTheme();
   const mobile = useIsMobile();
   const [data, setData] = useState<RelatedDocuments | null>(null);
   const [error, setError] = useState('');

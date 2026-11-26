@@ -788,8 +788,9 @@ for (const theme of ['light', 'dark'] as const) {
       await route.fulfill({ headers: stale ? { 'x-navigation-test': 'stale' } : {}, json: { success: true, data, error: null } });
     });
     await page.goto('/s/wp/navigation-token');
-    await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
     await expect(page.getByRole('heading', { name: shared.title, exact: true })).toBeVisible({ timeout: 15000 });
+    const themeSwitch = page.getByRole('button', { name: theme === 'light' ? '切换浅色' : '切换深色', exact: true });
+    if (await themeSwitch.isVisible()) await themeSwitch.click();
     await expect(page.getByRole('region', { name: '主文档概览' }).locator('.ledger-document-preview')).toBeVisible();
     await expect(page.getByRole('region', { name: '全部文档' }).locator('.ledger-document-preview')).toHaveCount(3);
     const initialRequests = requests;
@@ -802,6 +803,8 @@ for (const theme of ['light', 'dark'] as const) {
     const related = page.getByRole('dialog', { name: '合集', exact: true });
     await expect(related.locator('.related-document-card')).toHaveCount(3);
     await expect(related.locator('.related-document-card').filter({ hasText: '阅读文档 1' })).toBeVisible();
+    await expect(page.locator('.related-reader-popover')).toHaveAttribute('data-theme', theme);
+    await expect(page.locator('.review-workbench')).toHaveAttribute('data-theme', theme);
     await page.keyboard.press('Escape');
     await expect(page.getByText('正在读取分享文档…', { exact: true })).toHaveCount(0);
     await testInfo.attach('等待复核时的阅读界面', { body: await page.screenshot(), contentType: 'image/png' });

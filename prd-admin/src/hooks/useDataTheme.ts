@@ -6,7 +6,7 @@ import { useEffect, useState } from 'react';
  * 从这里取，避免跨页面目录引用。
  */
 export function useDataTheme(): 'light' | 'dark' {
-  const read = () => (document.documentElement.dataset.theme === 'light' ? 'light' : 'dark');
+  const read = () => (typeof document !== 'undefined' && document.documentElement.dataset.theme === 'light' ? 'light' : 'dark');
   const [theme, setTheme] = useState<'light' | 'dark'>(read);
 
   useEffect(() => {

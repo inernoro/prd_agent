@@ -16,7 +16,7 @@ import type { ShareViewData } from '@/services';
 import { getShareSiteContent, downloadShareOfflineHtml, type HostedSite } from '@/services/real/webPages';
 import { useAuthStore } from '@/stores/authStore';
 import { Lock, ExternalLink, Eye, EyeOff, AlertCircle, ArrowLeft, BookOpen, Download, FileDown, Check, LogIn, Pencil, Settings2, X, Maximize, Minimize } from 'lucide-react';
-import { useResolvedThemeMode } from '@/stores/mobileThemeStore';
+import { useDataTheme } from '@/hooks/useDataTheme';
 import { resolveAvatarUrl } from '@/lib/avatar';
 import { UserAvatar } from '@/components/ui/UserAvatar';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
@@ -197,7 +197,7 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
   const currentUser = useAuthStore(s => s.user);
   const currentUserId = currentUser?.userId;
   const viewportMobile = useIsMobile();
-  const theme = useResolvedThemeMode();
+  const theme = useDataTheme();
   const singleViewRef = useRef<HTMLDivElement>(null);
   const documentPanelId = useId(), discussionPanelId = useId();
   const [fullData, setData] = useState<ShareViewData | null>(null);
