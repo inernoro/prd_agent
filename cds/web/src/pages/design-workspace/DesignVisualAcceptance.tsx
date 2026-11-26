@@ -123,7 +123,7 @@ export function DesignVisualAcceptance({ entry, version: declared, run, busy, wr
       {canRequestReferences && <button className="ep-button" type="button" disabled={busy || thumbnails.loading}
         onClick={() => void command('reference.generate', { designId: entry.id, version: version.version }).finally(thumbnails.refresh)}>
         {thumbnailState === 'incomplete' ? '重试生成对照图' : '生成对照图'}</button>}
-      <Link className="ep-link" to={prototypePath}>打开原型</Link>
+      <Link className="ep-link" reloadDocument to={prototypePath}>打开原型</Link>
     </div>}
     {shown.length ? <div className="dw-vs-table" role="table" aria-label="逐画面对照">
       <div className="dw-vs-row dw-vs-head" role="row">{columns.map(label => <span role="columnheader" key={label}>{label}</span>)}</div>

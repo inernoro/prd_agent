@@ -322,7 +322,13 @@ describe('V17 交付工作区', () => {
       await page.route('**/design/artifacts/fixture-retry-*', route =>
         route.fulfill({ body: thumbnailPng, contentType: 'image/png' }));
 
-      await page.goto(browserDesignUrl({ design: draft.id, version: '1', tab: 'accept', check: 'compare' }));
+      await page.goto(browserDesignUrl({ design: draft.id, version: '1', tab: 'delivery' }));
+      await page.getByRole('button', { name: '全部 2 屏', exact: true }).click();
+      const gallery = page.locator('.dw-gallery');
+      await gallery.waitFor();
+      const navigation = page.getByRole('navigation', { name: '稿件标签' });
+      await navigation.getByRole('button', { name: /^验收(?:\s|$)/ }).click();
+      await page.getByRole('tab', { name: '对照图' }).click();
       const section = page.getByRole('tabpanel', { name: '对照图' });
       const table = section.getByRole('table', { name: '逐画面对照' });
       const generated = section.getByRole('status').filter({ hasText: /对照图生成中.*0\/2/ });
@@ -343,7 +349,8 @@ describe('V17 交付工作区', () => {
       await section.getByRole('link', { name: '打开原型', exact: true }).click();
       await page.waitForURL(url => url.pathname === '/design' && url.searchParams.get('design') === draft.id
         && url.searchParams.get('version') === '1' && url.searchParams.get('tab') !== 'accept');
-      await page.locator('.dw-frame iframe').contentFrame().getByRole('heading', { name: '用于复查的原型' }).waitFor();
+      await expect.poll(() => gallery.isVisible(), { timeout: 3_000 }).toBe(false);
+      await page.locator('.dw-single .dw-frame iframe').contentFrame().getByRole('heading', { name: '用于复查的原型' }).waitFor();
       canReview = true;
       await page.goto(browserDesignUrl({ design: draft.id, version: '1', tab: 'accept', check: 'compare' }));
       await retry.waitFor();
