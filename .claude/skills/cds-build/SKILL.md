@@ -17,7 +17,7 @@ description: 实现 CDS 中获准的设计稿。用户说「/cds-build 帮我实
 
 ## 2. 固定实施目标
 
-- 使用接入清单的 `implementationTargetVersion`。历史实例尚无此字段时，从 `upgrade.status === "active"` 读取 `upgrade.targetVersion`，否则读取 `baselineVersion`。值为 `null` 或未登记时，先请有权评审人定实施版本。请求中明确指定的版本须与实施目标一致。新版发布期间继续使用已锁定的版本。
+- 使用接入清单的 `implementationTargetVersion`。历史实例尚无此字段时，从 `upgrade.status === "active"` 读取 `upgrade.targetVersion`，否则读取 `baselineVersion`。请求中明确指定的版本须与已有实施目标一致。尚无目标且 `permissions.implementation` 为 `true` 时，选用交办的版本。用户只提供稿件编号时，选用接入清单的最新版。该版交接检查通过后，按 `design start-upgrade` 锁定版本并回读目标。其他项目由有权评审人确认。新版发布期间继续使用已锁定的版本。
 - 用 `cds_design_read` 的 `view: "delivery"` 或 `cdscli --workspace-credential design delivery <稿件> --version <目标版>` 读交付索引、验收规则和实现画面。读包内原文时，使用 MCP 的 `view: "file"` 或给该 CLI 命令加 `--file <包内路径>`。从索引打开 `交接清单.md` 和需要的源码差异。
 - 用 `view: "handoff"` 或 `cdscli --workspace-credential design handoff <稿件> --version <目标版>` 回读交接检查。检查失败、待运行或无法回读时，在原反馈记录缺失条件和处理人，等固定目标满足交接门禁后开始修改代码。使用历史稿时以 CDS 返回的该版交接状态为依据。
 - 读取当前工程提交和 CDS 的已实现版本。用 `cds_design_read` 的 `view: "diff"` 或 `cdscli --workspace-credential design diff <稿件> --from <已实现版> --to <目标版>` 核对净变化。先用程序检查源码差异是否能直接应用。已签收且当前实现与目标一致时，回读原提交和验收回执即可。
@@ -28,5 +28,5 @@ description: 实现 CDS 中获准的设计稿。用户说「/cds-build 帮我实
 - 系统所有者在项目列表右下角「授权申请」核对项目与智能体，点击「批准实施反馈」。等待中断时重跑同一条 connect 继续原申请。领取后再次用 `--design-access feedback` 自检。
 - 已有同版实施反馈就回原线程。首次登记用 `cdscli --workspace-credential design feedback-create <稿件编号> --version <目标版> --category implementation --title "<标题>" --body "<反馈内容>"`，回读回执的稿件编号、版本和反馈编号。
 - 先按 [CDS 设计闭环](../cds/reference/design-loop.md#六实现方按交接清单实现) 在同版反馈里回复验收项、做法和待澄清点，再按项目规则写测试和实现。按交付清单推进，发现不兼容的差异时，把文件和理由写回同一线程。
-- 同一验收运行使用目标稿件版本、同一实现提交以及该稿件指定的演示数据。请获准的项目成员绑定实现画面，使用项目已有的验收写权限上传或生成证据并逐项记录结论。把运行编号和实现提交留在稿件里，请设计方独立复核。
-- 回复固定稿件链接、实施版本、实现提交、验收运行和仍待处理的条件。定实施基线、签收和正式发布各自使用已有角色与授权。遇到缺失条件时在原线程记录精确的待办和处理人。
+- 同一验收运行使用目标稿件版本、同一实现提交以及该稿件指定的演示数据。接入清单允许实施协作时，用原绑定执行 `design bind <稿件> --version <目标> --file <页面绑定.json>`。成员也可在页面绑定。使用项目已有授权生成证据并逐项记录结论。把运行编号和实现提交留在稿件里，请设计方独立复核。
+- 回复固定稿件链接、实施版本、实现提交、验收运行和仍待处理的条件。遇到缺失条件时在原线程记录精确的待办和处理人。有权成员负责独立签收。

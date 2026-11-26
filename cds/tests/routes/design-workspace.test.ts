@@ -35,6 +35,7 @@ const html = '<!doctype html><html><head><meta charset="utf-8"></head><body><h1>
 const permissions = ['read', 'propose', 'write', 'approve'] as const;
 const people = new Map<string, DesignActor>([
   ['designer', { kind: 'agent', id: 'designer', label: 'Fixture designer', permissions }],
+  ['shared-agent', { kind: 'agent', id: 'shared-agent', label: 'Shared project fixture', permissions, projectCollaborator: true }],
   ['rotated-designer', { kind: 'agent', id: 'designer', label: 'Fixture refreshed key', permissions }],
   ['git-designer', { kind: 'agent', id: 'git-designer', label: 'Fixture restricted designer', permissions, gitPublishOnly: true }],
   ['read-designer', { kind: 'agent', id: 'read-designer', label: 'Read-only designer', permissions: ['read'] }],
@@ -1380,6 +1381,7 @@ describe('private CDS design workspace', () => {
 
       const signoff = { designId, runId };
       expect((await command('acceptance.sign', signoff, 'designer')).status).toBe(403);
+      expect((await command('acceptance.sign', signoff, 'shared-agent')).status).toBe(403);
       const sign = () => command('acceptance.sign', signoff, 'author', 'lifecycle-sign-v1');
       const concurrent = await Promise.all([sign(), sign()]);
       expect(concurrent.map(response => response.status).sort()).toEqual([200, 201]);

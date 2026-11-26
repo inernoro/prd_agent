@@ -56,7 +56,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Optional
 
-VERSION = "0.26.31"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.26.32"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 CDS_SKILLS = ("cds", "cds-design", "cds-build", "cds-project-scan", "cds-deploy-pipeline", "cds-release", "preview-url")
 
@@ -1072,6 +1072,9 @@ def cmd_setup_check(args: argparse.Namespace) -> None:
     if design_access:
         path += "/design/intake"
     status, body, _ = request(path)
+    if design_access and status == 403 and isinstance(body, dict) and body.get("error") == "design_project_credential_required":
+        fail("access", "design_project_credential_required",
+             "CDS 收到的是实例凭据。请核对服务端回显的凭据类型。若工作区已经绑定项目凭据，检查代理是否替换了它，复用原授权即可。")
     if design_access and status in (401, 403, 404):
         fail("access", "design_scope_required", "当前凭据无法访问所需设计范围。按接入说明核对工作区绑定或继续原授权申请。")
     if status != 200 or not isinstance(body, dict):
@@ -4599,7 +4602,7 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
         die("请使用当前绑定的 CDS 项目或有权限的成员账号")
     base = "/api/projects/" + urllib.parse.quote(project, safe="") + "/design"
     identity_headers = _human_session_headers(args.as_user) if args.as_user else {}
-    human_action = args.design_action in ("freeze", "sign", "start-upgrade", "cancel-upgrade", "enable-method", "disable-method") or (
+    human_action = args.design_action in ("sign", "enable-method", "disable-method") or (
         args.design_action == "extract" and args.apply)
     if human_action and not identity_headers:
         die("请在 CDS 确认，或使用 --as-user 由有权成员在终端登录")
@@ -4883,17 +4886,20 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
         if args.left is None or args.right is None:
             die("请提供稿件存在的两个版本")
 
-    if action in ("freeze", "start-upgrade", "cancel-upgrade"):
-        command = {"designId": args.id}
+    if action in ("freeze", "unfreeze", "start-upgrade", "cancel-upgrade", "bind"):
+        workflow_types = {"freeze": "design.freeze", "unfreeze": "design.unfreeze", "start-upgrade": "implementation.start",
+                          "cancel-upgrade": "implementation.cancel", "bind": "implementation.bind"}
+        command = {"type": workflow_types[action], "designId": args.id}
         if action == "cancel-upgrade":
-            command.update(type="implementation.cancel", upgradeId=args.upgrade, reason=args.reason)
+            command.update(upgradeId=args.upgrade, reason=args.reason)
+        elif action == "bind":
+            command.update(version=args.version, screens=read_input(args.file))
         else:
-            command["type"] = "design.freeze" if action == "freeze" else "implementation.start"
             if args.version is not None:
                 command["version"] = args.version
             if action == "freeze" and args.reason is not None:
                 command["reason"] = args.reason
-            if args.expected_baseline is not None:
+            if action in ("freeze", "start-upgrade") and args.expected_baseline is not None:
                 command["expectedBaseline"] = args.expected_baseline or None
         receipt = send(command)
         result = receipt.get("result")
@@ -5247,7 +5253,7 @@ def _register_design_parser(sub: Any) -> None:
     preview.add_argument("--theme", choices=("light", "dark"), default="light")
     preview.add_argument("--port", type=int, default=0, help="环回端口，默认自动选择")
     framework = sub.add_parser("framework", help="项目设计框架").add_subparsers(dest="design_action", required=True)
-    for routes, actions in ((design, ("intake", "delivery", "handoff", "brief-reply", "brief-claim", "brief-release", "feedback", "feedback-create", "feedback-reply", "feedback-resolve", "attach-evidence", "publish", "list", "reviewers", "request-review", "comments", "diff", "accept", "record", "visual", "capture", "recheck", "flow", "smoke", "coverage", "regress", "known-create", "result", "freeze", "start-upgrade", "cancel-upgrade", "sign", "scaffold", "extract", "enable-method", "disable-method")),
+    for routes, actions in ((design, ("intake", "delivery", "handoff", "brief-reply", "brief-claim", "brief-release", "feedback", "feedback-create", "feedback-reply", "feedback-resolve", "attach-evidence", "publish", "list", "reviewers", "request-review", "comments", "diff", "accept", "record", "visual", "capture", "recheck", "flow", "smoke", "coverage", "regress", "known-create", "result", "freeze", "unfreeze", "start-upgrade", "cancel-upgrade", "bind", "sign", "scaffold", "extract", "enable-method", "disable-method")),
                             (framework, ("show", "list", "publish", "import"))):
         for action in actions:
             parser = routes.add_parser(action, help="发布项目框架版本" if action == "publish" and routes is framework else None)
@@ -5257,7 +5263,7 @@ def _register_design_parser(sub: Any) -> None:
             parser.add_argument("--as-user", help="由 CDS 成员在交互终端登录后执行")
             if action not in ("intake", "list", "publish", "reviewers", "scaffold") or (routes is framework and action == "publish"):
                 parser.add_argument("id")
-            if action in ("publish", "request-review", "accept", "record", "visual", "capture", "recheck", "flow", "smoke", "coverage", "regress", "known-create", "freeze", "start-upgrade", "cancel-upgrade", "sign", "extract", "import"):
+            if action in ("publish", "request-review", "accept", "record", "visual", "capture", "recheck", "flow", "smoke", "coverage", "regress", "known-create", "freeze", "unfreeze", "start-upgrade", "cancel-upgrade", "bind", "sign", "extract", "import"):
                 parser.add_argument("--request-id")
             if action in ("handoff", "delivery"):
                 parser.add_argument("--version", required=True, type=int, help="已发布的稿件版本")
@@ -5349,8 +5355,11 @@ def _register_design_parser(sub: Any) -> None:
                 parser.add_argument("--implementation", help="当前验收提交的实拍 PNG")
                 parser.add_argument("--path", help="实拍所在预览内的相对地址")
                 parser.add_argument("--reference", help="随稿缺图时补交同版本的对照 PNG")
-            if action == "freeze":
+            if action in ("freeze", "unfreeze"):
                 parser.add_argument("version", type=int)
+            if action == "bind":
+                parser.add_argument("--version", type=int, required=True, help="实际实施目标版本")
+                parser.add_argument("--file", required=True, help="包含 screenId、path、readySelector 的 JSON 数组")
             if action in ("freeze", "start-upgrade"):
                 parser.add_argument("--expected-baseline", type=int, help="已读到的实施基线，0 表示没有基线")
             if action in ("freeze", "cancel-upgrade"):

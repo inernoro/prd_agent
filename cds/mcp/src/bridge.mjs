@@ -211,6 +211,12 @@ export function createProjectApiClient(credentials, { fetchImpl = fetch, dispatc
       if (response.status === 409 && parsed.error === 'plan_debt_closed') throw new Error('CDS HTTP 409: 请重新读取债务并选择仍未偿还的记录');
       if (response.status === 409 && parsed.error === 'design_intake_conflict') throw new Error('CDS HTTP 409: 请重新读取设计接入 intake，核对稿件、Git 目录和最新版本后再决定续版或新建');
       if (response.status === 409 && parsed.error === 'design_git_source_required') throw new Error('CDS HTTP 409: 项目 Git 尚找不到该稿件的提交与目录，请同步提交后重试');
+      if (response.status === 403 && parsed.error === 'design_project_credential_required') {
+        throw new Error('CDS HTTP 403: CDS 收到的是实例凭据。请用工作区凭据自检并核对代理配置');
+      }
+      if (response.status === 404 && parsed.error === 'design_not_found') {
+        throw new Error('CDS HTTP 404: 没有可访问的设计项目、稿件或附件。请核对 MCP 启动工作区与稿件编号');
+      }
       if (response.status === 400 && parsed.error === 'G-11') {
         throw new Error('CDS HTTP 400: 稿件门禁 G-11 未通过，请补齐验收计划与覆盖维度' + designAcceptanceHints(parsed.issues) + '。');
       }

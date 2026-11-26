@@ -63,3 +63,25 @@ test('design reads preserve server-owned implementation and locked target state 
   const listing = await bridge.call('cds_design_read', { view: 'designs' });
   assert.deepEqual(listing.items[0], { id: designId, latest: 18, title: 'Latest', versions: [11, 17, 18], ...state });
 });
+
+test('the existing project binding can send implementation workflow commands and verifies the version receipt', async t => {
+  const projectId = 'fixture-design';
+  const designId = 'DSN-fixture';
+  const projectKey = 'cdsp_fixture_shared';
+  const calls = [];
+  let responseVersion = 6;
+  const bridge = createDesignBridge({ root: process.cwd(), projectId, projectKey, host: 'https://cds.example.test' }, {
+    fetchImpl: async (url, request) => {
+      const body = JSON.parse(request.body);
+      calls.push({ path: new URL(url).pathname, key: request.headers['X-AI-Access-Key'], body });
+      return Response.json({ projectId, reused: false, result: { type: body.type, designId, version: responseVersion } });
+    },
+  });
+  t.after(() => bridge.close());
+  const command = { type: 'design.freeze', designId, version: 6, expectedBaseline: null, requestId: 'freeze-fixture' };
+  const receipt = await bridge.call('cds_design_acceptance', command);
+  assert.equal(receipt.result.version, 6);
+  assert.deepEqual(calls, [{ path: `/api/projects/${projectId}/design/commands`, key: projectKey, body: command }]);
+  responseVersion = 7;
+  await assert.rejects(bridge.call('cds_design_acceptance', command), /版本|回执/);
+});

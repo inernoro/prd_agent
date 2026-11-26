@@ -25,11 +25,12 @@ export function useDesignThumbnails(projectId: string, version: DesignVersion, d
   const source = usePlanningRead<DesignThumbnailStatus>(path, reload);
   const status = source.data?.designId === designId && source.data.version === version.version ? source.data : undefined;
   const running = status?.state === 'running';
+  const waiting = status?.state === 'idle';
   useEffect(() => {
-    if (!running || source.loading || source.error) return;
-    const timer = window.setTimeout(() => setReload(value => value + 1), 1800);
+    if ((!running && !waiting) || source.loading || source.error) return;
+    const timer = window.setTimeout(() => setReload(value => value + 1), waiting ? 4000 : 1800);
     return () => window.clearTimeout(timer);
-  }, [running, reload, source.loading, source.error]);
+  }, [running, waiting, reload, source.loading, source.error]);
   return { status, refresh, running, error: source.error, loading: source.loading, renders: status?.renders ?? version.renders };
 }
 

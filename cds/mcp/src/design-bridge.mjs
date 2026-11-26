@@ -6,6 +6,7 @@ const publishTool = 'cds_design_publish';
 const frameworkPublishTool = 'cds_design_framework_publish';
 const feedbackTool = 'cds_design_feedback';
 const acceptanceTool = 'cds_design_acceptance';
+const implementationCommands = new Set(['design.freeze', 'design.unfreeze', 'implementation.start', 'implementation.cancel', 'implementation.bind']);
 const fileLimit = 4 * 1024 * 1024;
 const id = z.string().trim().min(1).max(160).regex(/^[A-Za-z0-9_.@+-]+$/);
 const positiveVersion = z.number().int().positive();
@@ -30,7 +31,7 @@ function implementationState(entry) {
 }
 const intakeResult = z.object({
   protocolVersion: z.literal(1), projectId: z.string(),
-  permissions: z.object({ write: z.boolean(), feedback: z.boolean().optional(), frameworkPublish: z.boolean().optional() }),
+  permissions: z.object({ write: z.boolean(), feedback: z.boolean().optional(), frameworkPublish: z.boolean().optional(), implementation: z.boolean().optional() }),
   frameworks: z.array(z.object({ id, title: z.string(), latestVersion: positiveVersion, adoptedVersion: version })).optional(),
   designs: z.array(z.object({ designId: id, designKey: designKey.optional(), latestVersion: positiveVersion,
     sourceCommit, sourcePaths: z.array(z.string()), canRevise: z.boolean(), scope: scope.optional() })),
@@ -41,6 +42,7 @@ const intakeResult = z.object({
 });
 const feedbackBase = { requestId: id, designId: id };
 const feedbackBody = z.string().trim().min(1).max(4_000);
+const workflowReason = z.string().trim().min(1).max(1_000);
 const slot = z.enum(['desktop-light', 'desktop-dark', 'phone-light', 'phone-dark']);
 const imagePath = z.string().trim().min(1).max(1200);
 const checkId = z.string().regex(/^V-(?:0[1-9]|10)$/);
@@ -83,6 +85,13 @@ const schemas = {
   ]),
   [acceptanceTool]: z.discriminatedUnion('type', [
     z.object({ ...feedbackBase, type: z.literal('handoff.check'), version: positiveVersion }).strict(),
+    z.object({ ...feedbackBase, type: z.literal('design.freeze'), version: positiveVersion,
+      expectedBaseline: positiveVersion.nullable(), reason: workflowReason.optional() }).strict(),
+    z.object({ ...feedbackBase, type: z.literal('design.unfreeze'), version: positiveVersion }).strict(),
+    z.object({ ...feedbackBase, type: z.literal('implementation.start'), version, expectedBaseline: positiveVersion.nullable() }).strict(),
+    z.object({ ...feedbackBase, type: z.literal('implementation.cancel'), upgradeId: id, reason: workflowReason }).strict(),
+    z.object({ ...feedbackBase, type: z.literal('implementation.bind'), version: positiveVersion,
+      screens: z.array(z.object({ screenId: id, path: z.string().trim().min(1), readySelector: z.string().trim().min(1).max(300) }).strict()).min(1) }).strict(),
     z.object({ ...feedbackBase, type: z.literal('acceptance.capture'), runId: id, screenId: id, slot }).strict(),
     z.object({ ...feedbackBase, type: z.literal('acceptance.recheck'), runId: id, screenId: id, slot }).strict(),
     z.object({ ...acceptanceBase, type: z.literal('acceptance.visual'), screenId: id, slot,
@@ -141,7 +150,7 @@ const schemas = {
 const descriptions = {
   [readTool]: '用 intake 读取系统、模块、框架和已交给设计的原始需求、稿件标识、当前版本和权限。固定稿件或框架后，用 delivery 读交付资料、file 分段读原文、feedback 查处理记录。用 diff 固定两个版号查询 CDS 计算的画面、验收与文件净变化，调换顺序可查回退。稿件发布前可用 brief.reply 在当前需求下澄清。用 handoff 读取固定版本的交接检查。用 run 回读指定或最新验收运行。',
   [feedbackTool]: '稿件发布前用 brief.claim 认领需求，brief.reply 在原需求下澄清，brief.release 交回未出稿需求。在原稿登记实施反馈并回复，可以用 feedback.attach 提交当前工作区的私有 PNG。原反馈者或项目管理者核对处理结果。重试沿用 requestId。',
-  [acceptanceTool]: '用 handoff.check 启动或重试固定版本的原型交接检查。实施时先回读运行和提交。程序证据稿件用 acceptance.capture 同条件取证，稿件作者用 acceptance.recheck 独立重跑。旧稿沿用 visual、flow、smoke 和 regress 回填。coverage 关联维度风险与验收项，known.create 登记历史易错。重试沿用 requestId。',
+  [acceptanceTool]: '用 handoff.check 检查固定版原型。接入清单允许 implementation 时，可用 design.freeze 或 design.unfreeze 管理实施基线，implementation.start 或 implementation.cancel 管理本轮目标，implementation.bind 登记该版实际页面。验收先回读运行和提交。程序证据稿件用 acceptance.capture 同条件取证，稿件作者用 acceptance.recheck 独立重跑。旧稿沿用 visual、flow、smoke 和 regress 回填。coverage 关联维度风险与验收项，known.create 登记历史易错。重试沿用 requestId。',
   [publishTool]: '先查询 intake。新稿或新模块用 intent=create、独立的 module/draft 标识和 Git 目录。同稿用 intent=revise、原 designId 和读到的 expectedVersion。续版权限或基线不清楚时先澄清。本地稿件用 sourceMode=private 进入项目私有归档。已获授权且已同步的稿件可以核验项目 Git。重试沿用 requestId 和相同内容。',
   [frameworkPublishTool]: '用当前项目的设计发布授权提交框架材料。先读 intake。同一框架沿用 frameworkId，首发 expectedVersion 为 0，续版填写 latestVersion。回执可回读固定版。新版本可预览与试用，项目采用版本由成员在框架页切换。重试沿用 requestId。',
 };
@@ -179,7 +188,8 @@ export function createDesignBridge(credentials, options = {}) {
       return tools.filter(tool => tool.name === readTool || (tool.name === publishTool && result.permissions.write)
         || (tool.name === frameworkPublishTool && result.permissions.write && result.permissions.frameworkPublish === true)
         || (tool.name === feedbackTool && result.permissions.feedback === true)
-        || (tool.name === acceptanceTool && (result.permissions.visual === true || result.permissions.programRecheck === true || result.permissions.handoffCheck === true)));
+        || (tool.name === acceptanceTool && (result.permissions.visual === true || result.permissions.programRecheck === true
+          || result.permissions.handoffCheck === true || result.permissions.implementation === true)));
     },
     async call(name, input = {}) {
       if (!Object.hasOwn(schemas, name)) throw new Error('未知 CDS 设计工具');
@@ -287,6 +297,18 @@ export function createDesignBridge(credentials, options = {}) {
         return receipt;
       }
       if (name === acceptanceTool) {
+        if (implementationCommands.has(args.type)) {
+          const receipt = await client.request('POST', path + '/commands', args);
+          const result = receipt.result;
+          if (receipt.projectId !== projectId || typeof receipt.reused !== 'boolean' || result?.type !== args.type
+            || result.designId !== args.designId || !positiveVersion.safeParse(result.version).success
+            || (args.version !== undefined && result.version !== args.version)
+            || (args.type === 'implementation.start' && !id.safeParse(result.upgradeId).success)
+            || (args.type === 'implementation.cancel' && result.upgradeId !== args.upgradeId)) {
+            throw new Error('CDS 返回的实施回执与当前稿件或版本不符');
+          }
+          return receipt;
+        }
         if (args.type === 'handoff.check') {
           const data = await workspace(new URLSearchParams({ designId: args.designId, version: args.version }));
           if (!data.permissions.handoffCheck) throw new Error('请使用本项目设计发布或实施授权运行交接检查');

@@ -62,6 +62,7 @@ describe('设计交接服务端门禁', () => {
       switch (req.get('x-fixture-actor')) {
         case 'reviewer': return reviewer;
         case 'designer': return designer;
+        case 'collaborator': return target === project ? { ...designer, id: 'shared-project-key', label: 'Project collaboration fixture', projectCollaborator: true } : null;
         case 'publisher': return { ...designer, gitPublishOnly: true };
         case 'other-publisher': return { ...designer, id: 'other-designer', gitPublishOnly: true };
         case 'outside': return target === otherProject ? reviewer : null;
@@ -161,6 +162,40 @@ describe('设计交接服务端门禁', () => {
     expect(allowed.status).toBe(201);
     await api.readHandoff(designId, 1, 'passed');
     expect(checkHandoff).toHaveBeenCalledTimes(2);
+  });
+
+  it('uses a shared project credential for handoff while preserving program gates and attribution', async () => {
+    const api = await openApi();
+    const designId = await api.publish(draft(1, { handoff: handoffPlan }));
+    const target = { designId, version: 1 };
+    const command = (type: string, fields = {}) => api.command(type, { ...target, ...fields }, project, 'collaborator');
+    await api.readHandoff(designId, 1, 'unavailable');
+    const pending = await command('design.freeze', { expectedBaseline: null });
+    expect(pending.status).toBe(409);
+    expect(await pending.json()).toMatchObject({ error: 'design_handoff_required' });
+    const screens = [{ screenId: 'entry', path: '/fixture-entry', readySelector: 'main' }];
+    expect((await command('implementation.bind', { screens })).status).toBe(409);
+    checkHandoff.mockResolvedValueOnce([{ caseId: fixtureCase.id, status: 'passed' }]);
+    expect((await command('handoff.check')).status).toBe(201);
+    await api.readHandoff(designId, 1, 'passed');
+    expect((await command('design.freeze')).status).toBe(400);
+    expect((await api.command('design.freeze', { ...target, expectedBaseline: null }, project, 'designer')).status).toBe(403);
+    expect((await api.command('design.freeze', { ...target, expectedBaseline: null }, otherProject, 'collaborator')).status).toBe(404);
+    expect((await command('design.freeze', { expectedBaseline: null })).status).toBe(201);
+    expect((await api.read(designId, 1)).freezes.at(-1)).toMatchObject({ version: 1, by: 'Project collaboration fixture' });
+    expect((await command('implementation.start', { expectedBaseline: null })).status).toBe(409);
+    const locked = await command('implementation.start', { expectedBaseline: 1 });
+    expect(locked.status).toBe(201);
+    const { upgradeId } = (await locked.json()).result;
+    expect((await api.read(designId, 1)).upgrade).toMatchObject({ targetVersion: 1, startedBy: 'shared-project-key' });
+    expect((await command('implementation.bind', { screens })).status).toBe(201);
+    const bound = await api.read(designId, 1);
+    expect(bound.versions[0].screens[0].impl).toBe('/fixture-entry');
+    expect(bound.implementedVersion).toBeUndefined();
+    expect((await command('design.unfreeze')).status).toBe(409);
+    expect((await api.command('implementation.cancel', { designId, upgradeId, reason: '验证撤回' }, project, 'collaborator')).status).toBe(201);
+    expect((await command('design.unfreeze')).status).toBe(201);
+    expect((await api.read(designId, 1)).frozen).toBeUndefined();
   });
 
   it('拒绝提交者在稿件或执行请求里声明检查已通过', async () => {

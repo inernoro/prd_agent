@@ -6120,10 +6120,15 @@ export function createServer(deps: ServerDeps): express.Express {
   const designShareHandoff = isPreviewInstance() ? undefined : designShareHandoffConfig(publicBaseUrl, process.env);
   app.use('/api', createDesignWorkspaceRouter({
     service: designWorkspace,
+    resolveProjectId: selector => deps.stateService.getProject(selector)?.id,
     mapShareHandoff: () => designShareHandoff,
     reviewCandidates: async projectId => (await projectMemberDirectory(projectId))
       .map(user => ({ id: user.id, label: user.name || user.username || user.githubLogin })),
     resolveAccess: (req, projectId) => {
+      if ((req as express.Request & { _aiSession?: ApprovedAiSession })._aiSession?.id === 'static') {
+        return rejectPlanning(403, 'design_project_credential_required',
+          'CDS 收到的是实例凭据。请核对工作区自检回显的凭据类型，并检查网络代理是否替换了已获项目授权的凭据。');
+      }
       const actor = resolveEngineeringPlanningAccess(req, deps.stateService, projectId, 'design');
       const user = (req as express.Request & { cdsUser?: CdsUser }).cdsUser;
       return actor ? { ...actor, steward: actor.kind === 'human' && isHumanSystemOwner(req),
