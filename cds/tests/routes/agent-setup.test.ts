@@ -84,7 +84,7 @@ describe('Agent public bootstrap through the real auth gate', () => {
     expect(command).toMatch(/--design-access (?:publish|'publish'|"publish")(?=\s|$)/);
     expect(guide).toContain('右下角');
     expect(guide).toContain('批准');
-    expect(guide).toContain('0.26.23');
+    expect(guide).toContain('0.26.27');
     expect(guide).toContain(`${origin}/api/skills/cds-pack/download`);
     expect(guide).toContain('用本机工具解压');
     expect(guide).toMatch(/Windows[^\n]*0\.26\.10[^\n]*CRLF/);
@@ -95,7 +95,7 @@ describe('Agent public bootstrap through the real auth gate', () => {
     expect(manifest.status).toBe(200);
     const body = await manifest.json();
     expect(body).toMatchObject({ target: { kind: 'existing', projectId: 'proj-a' }, mission: 'design-publish',
-      minCliVersion: '0.26.23', cliVersion: shippedCliVersion, authentication: 'existing-page-approval' });
+      minCliVersion: '0.26.27', cliVersion: shippedCliVersion, authentication: 'existing-page-approval' });
     expect(body.skills).toEqual(['cds-design']);
     expect(body).not.toHaveProperty('authorizationKey');
 
@@ -103,6 +103,7 @@ describe('Agent public bootstrap through the real auth gate', () => {
     expect(task.status).toBe(200);
     const instructions = await task.text();
     expect(instructions).toMatch(/设计接入清单|cds_design_intake|design intake/);
+    expect(instructions).toContain('acceptancePolicy');
     expect(instructions).toMatch(/原稿|同稿|已有稿件/);
     expect(instructions).toContain('只在本地提交');
     expect(instructions).toContain('sourceMode=private');
@@ -366,7 +367,7 @@ describe('setup version follows the actual distributed skill bundle', () => {
     expect(await discovery.json()).toMatchObject({ cliVersion: '0.17.4', minCliVersion: '0.17.5' });
   });
 
-  it('仅设计发布任务拒绝 0.26.21 上游包，普通接入维持既有最低版本', async () => {
+  it('仅设计发布任务拒绝 0.26.26 上游包，普通接入维持既有最低版本', async () => {
     const upstreamRoot = tempRoot();
     const skills = path.join(upstreamRoot, '.claude/skills');
     fs.mkdirSync(skills, { recursive: true });
@@ -374,15 +375,15 @@ describe('setup version follows the actual distributed skill bundle', () => {
       fs.cpSync(path.resolve(process.cwd(), '../.claude/skills', skill), path.join(skills, skill), { recursive: true });
     }
     const cli = path.join(skills, 'cds/cli/cdscli.py');
-    fs.writeFileSync(cli, fs.readFileSync(cli, 'utf8').replace(/^VERSION = ".*"/m, 'VERSION = "0.26.21"'));
+    fs.writeFileSync(cli, fs.readFileSync(cli, 'utf8').replace(/^VERSION = ".*"/m, 'VERSION = "0.26.26"'));
     const upstream = await listen(appFor(upstreamRoot));
     const origin = await listen(appFor(tempRoot(), upstream));
     const entry = `${origin}/api/agent/setup.json?target=existing&project=proj-a`;
     const general = await fetch(entry);
     expect(general.status).toBe(200);
-    expect(await general.json()).toMatchObject({ minCliVersion: '0.17.5', cliVersion: '0.26.21' });
+    expect(await general.json()).toMatchObject({ minCliVersion: '0.17.5', cliVersion: '0.26.26' });
     const scoped = await fetch(`${entry}&mission=design-publish`);
     expect(scoped.status).toBe(503);
-    expect(await scoped.json()).toMatchObject({ error: 'skill_bundle_incompatible', minCliVersion: '0.26.23', cliVersion: '0.26.21' });
+    expect(await scoped.json()).toMatchObject({ error: 'skill_bundle_incompatible', minCliVersion: '0.26.27', cliVersion: '0.26.26' });
   });
 });

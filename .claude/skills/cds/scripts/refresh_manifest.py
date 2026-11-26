@@ -10,9 +10,10 @@ root = Path(__file__).resolve().parents[2]
 skills = ['cds', 'cds-design', 'cds-project-scan', 'cds-deploy-pipeline', 'cds-release', 'preview-url']
 receipt = root / 'cds/cli/cds-skill-manifest.json'
 version = re.search(r'^VERSION = "([0-9.]+)"', (root / 'cds/cli/cdscli.py').read_text(), re.M)[1]
-preview_contract = root.parents[1] / 'cds/src/shared/design-preview-contract.json'
-if preview_contract.is_file():
-    (root / 'cds/cli/design-preview-contract.json').write_bytes(preview_contract.read_bytes())
+for name in ('design-preview-contract.json', 'design-acceptance-policy.json', 'design-acceptance-standard.mjs'):
+    source = root.parents[1] / 'cds/src/shared' / name
+    if source.is_file():
+        (root / 'cds/cli' / name).write_bytes(source.read_bytes())
 files = {}
 for skill in skills:
     for file in sorted((root / skill).rglob('*')):

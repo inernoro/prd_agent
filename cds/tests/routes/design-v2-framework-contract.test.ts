@@ -85,7 +85,8 @@ describe('CDS V2 framework contract', () => {
   }
 
   async function publish(project: string, material: typeof establishedMaterial, priorId?: string) {
-    const manifest = { project, title: 'Fixture implementation sample', acceptance: [], frameworkDraft: 'spec/',
+    const manifest = { project, title: 'Fixture implementation sample', frameworkDraft: 'spec/',
+      acceptance: [{ id: 'A-01', how: 'measure', screenId: 'sample', rule: 'The example opens', expected: '检查：示例标题可见。' }],
       screens: [{ id: 'sample', name: 'Fixture sample', route: '#/sample', viewport: 'desktop', themes: ['light', 'dark'],
         impl: '/sample/', entryReadySelector: 'h1' }],
       ...(priorId ? { id: priorId } : {}) };

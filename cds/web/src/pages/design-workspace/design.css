@@ -824,6 +824,7 @@
 .dw-dl-lead-text { font-size: 15.5px; line-height: 1.6; font-weight: 550; }
 .dw-dl-items > li[data-missing] > h4 b { background: hsl(var(--warn) / .18); color: var(--dw-warn); }
 .dw-dl-missing { margin: 0; padding: 8px 12px; border-radius: 6px; font-size: 13px; color: var(--dw-warn); background: hsl(var(--warn) / .08); }
+.dw-acceptance-plan-missing { color: var(--dw-ink); }
 .dw-dl-items .dw-notes > :first-child { margin-top: 0; }
 .dw-dl-items .dw-notes > :last-child { margin-bottom: 0; }
 .dw-dl-criterion { display: grid; gap: 4px; padding: 10px 12px; border-left: 3px solid hsl(var(--primary)); border-radius: 0 6px 6px 0; background: var(--dw-sunken); }

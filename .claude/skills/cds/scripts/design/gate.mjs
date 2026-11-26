@@ -2,14 +2,15 @@
 // 设计稿件发布门禁（程序判定，不靠智能体）。智能体只负责产出稿件包；不满足规则，程序直接驳回，不发布。
 // 用法：node gate.mjs --expect <这次要发布的版本号> [--dir <稿件目录>]（默认当前目录）
 // 退出码：0 通过；1 驳回（逐条列出违反的规则）；2 参数错误。
-// 规则编号固定（G-01 到 G-10，G-10 是应用框架），驳回信息里写编号，智能体按编号修，修完重跑，直到通过。
-// 规则和 CDS 发布接口的 G-01 到 G-09 一致（技能 reference/design-intake.md「发布门禁」），本地先驳回，省一次往返。
+// 规则编号固定（G-01 到 G-11），驳回信息里写编号，智能体按编号修，修完重跑，直到通过。
+// G-01 到 G-09 按 CDS 发布接口校验，G-11 共用同一程序（技能 reference/design-intake.md「发布门禁」），本地先驳回，省一次往返。
 // 稿件自己的例外登记在 <稿件目录>/tools/gate-allow.json（CDS 只认这个位置）。
 // 不能出现在稿件包里的真实站点，用环境变量 CDS_DESIGN_FORBIDDEN_HOSTS（逗号分隔）传入，不必写进稿件包。
 import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { deflateRawSync } from 'node:zlib';
+import { designAcceptancePolicy, inspectDesignAcceptance } from '../../cli/design-acceptance-standard.mjs';
 
 const argv = process.argv.slice(2);
 const opt = name => { const i = argv.indexOf(`--${name}`); return i >= 0 ? argv[i + 1] : undefined; };
@@ -83,6 +84,11 @@ for (const a of acceptance) {
   if (a.slots !== undefined && (!Array.isArray(a.slots) || !a.slots.length || a.slots.some(x => !slotIds.includes(x)))) reject('G-03', `${a.id} 的适用视口和主题只能是 ${slotIds.join('、')}`);
   if (a.probe !== undefined && (a.how !== 'measure' || a.probe?.type !== 'horizontal-overflow')) reject('G-03', `${a.id} 的 probe 只能用于测量项，类型是 horizontal-overflow`);
   if (a.how === 'measure' && !a.probe && !/检查：/.test(a.expected ?? '')) reject('G-03', `${a.id} 是测量项，要有 probe，或在预期里写「检查：」说明测什么`);
+}
+
+/* G-11 与 CDS 发布接口共用验收计划和覆盖检查。 */
+if (d) for (const issue of inspectDesignAcceptance(d)) {
+  reject(designAcceptancePolicy.gate, `${issue.field}${issue.ruleId ? '（' + issue.ruleId + '）' : ''} ${issue.message}`);
 }
 
 /* G-04 清单里引用的文件都在 */

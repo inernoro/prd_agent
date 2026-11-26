@@ -6,10 +6,12 @@ import path from 'node:path';
 import express from 'express';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createDesignWorkspaceRouter } from '../../src/routes/design-workspace.js';
+import { readDesignPackage } from '../../src/services/design-package.js';
 import { DesignWorkspaceService, type DesignActor, type DesignWorkspaceCommit } from '../../src/services/design-workspace.js';
 import { FileProjectRevisionStore } from '../../src/services/project-revision-store.js';
-import { designProgramEvidenceRequired } from '../../src/shared/design-workspace.js';
+import { designProgramEvidenceRequired, type DesignVersion } from '../../src/shared/design-workspace.js';
 import { buildZip } from '../../src/utils/zip.js';
+import { withAcceptanceStandard } from '../helpers/versioned-design-fixture.js';
 
 const projectId = 'design-gate-fixture';
 const firstCommit = 'a'.repeat(40);
@@ -44,8 +46,33 @@ function fixture(version = 1, sourceCommit = firstCommit) {
     ['design.json', manifest], ['checks/result.json', checks], ['versions.json', registry], ['changes/index.json', index],
     ...(version === 1 ? [] : [[summaryPath, summary] as [string, unknown]]),
   ]);
-  const zip = () => buildZip([...files, ...[...json].map(([name, body]) => [name, JSON.stringify(body)] as const)].map(([name, data]) => ({ name, data })));
+  const zip = (format: 'publication' | 'historical' = 'publication') => buildZip([
+    ...[...files].map(([name, data]) => ({ name, data })),
+    ...[...json].map(([name, body]) => ({ name, data: JSON.stringify(name === 'design.json' && format === 'publication'
+      ? withAcceptanceStandard(body as Record<string, unknown>) : body) })),
+  ]);
   return { zip, files, json, manifest, screen, rule, checks, check, registry, index, row, summary };
+}
+
+async function storeHistoricalVersion(store: FileProjectRevisionStore<DesignWorkspaceCommit>, revision: number,
+  designId: string, version: number, bytes: Buffer) {
+  const parsed = await readDesignPackage(bytes);
+  const archiveId = `${designId}-archive`;
+  const { index, prototype, ...delivery } = parsed.delivery;
+  const files = index.map((file, position) => ({ ...file, id: `${designId}-file-${position}` }));
+  const prototypeFile = files.find(file => file.path === prototype)!;
+  const snapshot: DesignVersion = {
+    version, title: parsed.title, sourceCommit: firstCommit, sha256: parsed.sha256, createdAt: '2026-11-24T00:00:00Z',
+    prototypeId: prototypeFile.id, prototypeSha256: prototypeFile.sha256, publisher: { id: designer.id, label: designer.label },
+    sourceVerification: 'private-upload', rationale: parsed.rationale, spec: parsed.spec, checks: parsed.checks,
+    screens: parsed.screens, acceptance: parsed.acceptance, tags: parsed.tags, decisionIds: parsed.decisionIds, resolves: {},
+    delivery: { ...delivery, archiveId, files },
+  };
+  expect(await store.append({
+    projectId, revision, request: { key: designId, fingerprint: designId, result: { type: 'package', designId, version } },
+    design: { id: designId, version: snapshot }, assets: [{ id: archiveId, mime: 'application/zip', base64: bytes.toString('base64') }],
+  })).toBe(true);
+  return snapshot;
 }
 
 describe('设计发布门禁', () => {
@@ -155,15 +182,20 @@ describe('设计发布门禁', () => {
   it('验收模式、适用手段、覆盖风险与需求条款可回读且受结构校验', async () => {
     const source = fixture();
     const risk = { dimension: 'correctness', risk: '入口打不开', ruleIds: ['A-02'] };
+    const flow = { applicable: true, enabled: false, reason: '合成场景暂未执行流程验证。' };
+    const regress = { applicable: true };
+    const defaults = withAcceptanceStandard(source.manifest);
     source.json.set('design.json', { ...source.manifest, acceptanceMode: 'objective',
       acceptance: [{ ...source.rule, requirementRef: 'R-01' }],
-      acceptancePlan: { flow: { applicable: true, enabled: false }, regress: { applicable: true } }, risks: [risk] });
-    await expect(service.publish(projectId, designer, first, source.zip())).rejects.toMatchObject({ status: 400 });
+      acceptancePlan: { ...defaults.acceptancePlan, flow, regress }, risks: [risk, ...defaults.risks] });
+    await expect(service.publish(projectId, designer, first, source.zip())).rejects.toMatchObject({ status: 400, code: 'G-11',
+      issues: [expect.objectContaining({ field: 'risks[0].ruleIds', code: 'coverage_conflict' })],
+    });
     risk.ruleIds = ['A-01'];
     await expect(service.publish(projectId, designer, first, source.zip())).resolves.toMatchObject({ result: { version: 1 } });
     expect((await service.workspace(projectId, designer)).designs[0].versions[0]).toMatchObject({
-      acceptanceMode: 'objective', risks: [risk], acceptance: [{ requirementRef: 'R-01' }],
-      acceptancePlan: { flow: { applicable: true, enabled: false }, regress: { applicable: true } },
+      acceptanceMode: 'objective', risks: expect.arrayContaining([risk]), acceptance: [{ requirementRef: 'R-01' }],
+      acceptancePlan: { flow, regress },
     });
   });
 
@@ -205,14 +237,15 @@ describe('设计发布门禁', () => {
     legacy.rule.id = 'A-71';
     legacy.rule.how = 'human';
     legacy.rule.expected = '证据只认程序产生的，签收前由设计方独立重跑。';
-    const old = await service.publish(projectId, designer, first, legacy.zip());
-    const plain = await service.publish(projectId, designer, {
-      ...first, requestId: 'create-plain-legacy', designKey: 'fixture/plain', sourcePath: 'design/plain',
-    }, fixture().zip());
+    const store = new FileProjectRevisionStore<DesignWorkspaceCommit>(directory);
+    const evidenceId = 'DSN-LEGACY-A71';
+    const plainId = 'DSN-LEGACY-PLAIN';
+    await storeHistoricalVersion(store, 1, evidenceId, 1, legacy.zip('historical'));
+    await storeHistoricalVersion(store, 2, plainId, 1, fixture().zip('historical'));
 
     const { designs } = await service.workspace(projectId, designer);
-    const legacyVersion = designs.find(draft => draft.id === old.result.designId)!.versions[0];
-    const plainVersion = designs.find(draft => draft.id === plain.result.designId)!.versions[0];
+    const legacyVersion = designs.find(draft => draft.id === evidenceId)!.versions[0];
+    const plainVersion = designs.find(draft => draft.id === plainId)!.versions[0];
     expect(legacyVersion.evidenceProtocol).toBeUndefined();
     expect(designProgramEvidenceRequired(legacyVersion)).toBe(true);
     expect(designProgramEvidenceRequired(plainVersion)).toBe(false);
@@ -275,26 +308,17 @@ describe('设计发布门禁', () => {
     source.files.set(files[1], fixtureData);
     const demoData = { files, sha256: createHash('sha256').update(fixtureScript + fixtureData).digest('hex') };
     const goals = [{ id: 'G-01', goal: '证据来自程序', doneWhen: '同样条件下的独立复验一致。', items: ['A-71'] }];
+    const demo = [{ screen: source.screen.id, title: '打开入口' }];
     source.json.set('design.json', {
-      ...source.manifest, demoData, goals, demo: [{ screen: source.screen.id, title: '打开入口' }],
+      ...source.manifest, demoData, goals, demo,
       acceptance: [{ ...source.rule, id: 'A-71', how: 'human',
         expected: '证据只认程序产生。按 demoData.sha256 校验并由设计方独立重跑。' }],
     });
-    const archive = source.zip();
-    const published = await service.publish(projectId, designer, first, archive);
-    const designId = published.result.designId!;
-    const latest = (await service.workspace(projectId, designer)).designs[0].versions[0];
-    const { demoData: _demoData, goals: _goals, evidenceProtocol: _protocol, ...fieldsSavedByOldCds } = latest;
-    const archived = { ...fieldsSavedByOldCds, version: 23 };
-    const store = new FileProjectRevisionStore<DesignWorkspaceCommit>(path.join(directory, 'archive-before-upgrade'));
-    await store.append({
-      projectId, revision: 1, request: { key: 'prior-publish', fingerprint: 'prior-publish', result: { type: 'package', designId } },
-      design: { id: designId, version: archived },
-      assets: [{ id: archived.delivery!.archiveId, mime: 'application/zip', base64: archive.toString('base64') }],
-    });
-    const upgraded = new DesignWorkspaceService(store);
-    const detail = await upgraded.workspace(projectId, designer, { designId, version: 23 });
-    expect(detail.designs[0].versions).toMatchObject([{ version: 23, demoData, goals, demo: latest.demo }]);
+    const designId = 'DSN-ARCHIVE-V23';
+    const store = new FileProjectRevisionStore<DesignWorkspaceCommit>(directory);
+    const archived = await storeHistoricalVersion(store, 1, designId, 23, source.zip('historical'));
+    const detail = await service.workspace(projectId, designer, { designId, version: 23 });
+    expect(detail.designs[0].versions).toMatchObject([{ version: 23, demoData, goals, demo }]);
     expect((await store.read(projectId, 0))[0].design?.version).toEqual(archived);
   });
 });

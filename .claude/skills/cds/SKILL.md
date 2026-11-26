@@ -1,13 +1,13 @@
 ---
 name: cds
 metadata:
-  version: 0.26.26
+  version: 0.26.27
 description: CDS (Cloud Dev Space) 的唯一入口：用户说「/cds <一句话>」，按 CDS 左侧菜单路由到对应任务，例如 /cds 建项目、/cds 部署这个分支、/cds 发布到 xx 环境、/cds 回滚、/cds 添加一个任务调度、/cds 加一个 xx 的监控、/cds 审查这次改动、/cds 记下这个决策、/cds 记一笔债、/cds 改 xx 模块的设计、/cds 领一个验收任务、/cds 给智能体授权、/cds 更新 CDS。也用于 CDS 授权接入、cdscli 命令、预览地址、部署记录和版本回滚。页面验收和验收报告的取证仍用 create-visual-test-to-kb；报告上传只是传输，不等于验收执行。
 ---
 
 # CDS — 核心技能：安全接入 / cdscli / 托管交付 / self-update / 分诊器
 
-> **版本**：v0.26.26 | **状态**：已落地 | **触发**：`/cds <一句话>`（按菜单路由，见下表）、`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"预览地址"、"工程规划"、"CDS 设计接入"
+> **版本**：v0.26.27 | **状态**：已落地 | **触发**：`/cds <一句话>`（按菜单路由，见下表）、`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"预览地址"、"工程规划"、"CDS 设计接入"
 
 > **冷热分离**：
 > - 接入新项目、生成 compose、上传 YAML → **`cds-project-scan`**（冷路径）
@@ -433,7 +433,7 @@ $CLI debt stats
 
 收到「请阅读 CDS 设计接入并按规范提交」或 `/cds 改 xx 模块的设计` 时，先读 [CDS 设计接入](reference/design-intake.md)。通过已绑定项目的 MCP 读取接入清单，确认同一稿件的最新版本、稳定标识和来源。首发、同稿续版和新模块按同一协议操作。能回读的先查，仍有歧义时在动笔前一次澄清。
 
-发布只走两条程序命令：先 `node scripts/design/release.mjs check --dir design/<目录>`，生成版本差异并跑门禁 G-01 到 G-09，被驳回就按规则编号修改；发布成功后运行 `release.mjs register --commit <来源提交>` 登记版本。详见[程序做门禁](reference/design-intake.md#程序做门禁智能体只做输入)。
+发布只走两条程序命令：先 `node scripts/design/release.mjs check --dir design/<目录>`，生成版本差异并运行 G-01 至 G-11，被驳回就按规则编号修改；发布成功后运行 `release.mjs register --commit <来源提交>` 登记版本。详见[程序做门禁](reference/design-intake.md#程序做门禁智能体只做输入)。
 
 发布前必须按 [出稿与发布前自查](reference/design-intake.md#出稿与发布前自查) 执行，结果写进交付说明：
 - 逐画面和实施基线对比，每处差异写明有意改动还是回退；

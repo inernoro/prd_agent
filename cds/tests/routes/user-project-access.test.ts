@@ -23,7 +23,7 @@ import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backin
 import { branchEvents } from '../../src/services/branch-events.js';
 import { ExecutorRegistry } from '../../src/scheduler/executor-registry.js';
 import type { CdsConfig } from '../../src/types.js';
-import { versionedDesignFixture } from '../helpers/versioned-design-fixture.js';
+import { versionedDesignFixture, withAcceptanceStandard } from '../helpers/versioned-design-fixture.js';
 
 describe('human project grants through the production server', () => {
   let dir: string;
@@ -1469,12 +1469,12 @@ describe('human project grants through the production server', () => {
         fs.writeFileSync(file, data);
       };
       const writeJson = (relative: string, data: unknown) => write(relative, JSON.stringify(data));
-      writeJson('design.json', { project: projectId, title, prototypeVersion: revision, date: '2026-01-01', notes: '',
+      writeJson('design.json', withAcceptanceStandard({ project: projectId, title, prototypeVersion: revision, date: '2026-01-01', notes: '',
         rationale: '思路.md', prototype: 'dist/index.html', checks: 'checks/result.json', docs: [],
         screens: [{ id: 'main', name: 'Main', route: '#/main', viewport: 'desktop', themes: ['light'],
           entryReadySelector: 'h1', impl: '/fixture/' }],
         acceptance: [{ id: 'A-01', rule: 'Main loads', how: 'human', slots: ['desktop-light'], screenId: 'main', expected: 'The fixture title is visible.' }],
-      });
+      }));
       write('思路.md', `# Goal（V${revision}）\nKeep the original design journey.`);
       write('交付说明.md', `# Delivery（V${revision}）\nThe same screen and rule identify the draft across credential renewals.`);
       write('dist/index.html', `<!doctype html><html><body><h1>${title}</h1></body></html>`);
@@ -1832,7 +1832,8 @@ describe('human project grants through the production server', () => {
     async function publishDraft(id: string, frameworkVersion?: number) {
       const archive = versionedDesignFixture({ project: 'project-a', title: 'Fixture design', scope,
         ...(frameworkVersion ? { framework: frameworkId, frameworkVersion } : {}),
-        acceptance: [], screens: [{ id: 'home', name: 'Home', route: '#/home', viewport: 'desktop',
+        acceptance: [{ id: 'A-01', how: 'measure', screenId: 'home', rule: 'The example opens', expected: '检查：首页标题可见。' }],
+        screens: [{ id: 'home', name: 'Home', route: '#/home', viewport: 'desktop',
           themes: ['light'], entryReadySelector: 'h1', impl: null }] }, 'Check the framework picked by default.', [
         { name: 'dist/index.html', data: '<!doctype html><html lang="en"><body><h1>Fixture</h1></body></html>' },
       ]);

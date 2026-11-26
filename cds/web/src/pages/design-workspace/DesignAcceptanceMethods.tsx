@@ -17,12 +17,12 @@ function MethodStatus({ status }: { status: DesignMethodStatus }) {
   return <span className="dw-ac-state" data-status={status}>{names[status]}</span>;
 }
 
-export function AcceptanceMethodTabs({ active, methods, overall, objective, ruleCount, fallbackComparison, go }: {
-  active: AcceptanceCheck; methods: MethodData['methods']; overall: DesignMethodStatus; objective?: boolean; ruleCount: number; fallbackComparison?: boolean; go: (check: AcceptanceCheck) => void;
+export function AcceptanceMethodTabs({ active, methods, overall, objective, ruleCount, go }: {
+  active: AcceptanceCheck; methods: MethodData['methods']; overall: DesignMethodStatus; objective?: boolean; ruleCount: number; go: (check: AcceptanceCheck) => void;
 }) {
   const tabs = [{ id: 'overview' as const, name: '总览', status: overall, progress: undefined, setting: undefined },
     ...(ruleCount ? [{ id: 'rules' as const, name: '全部验收项', status: overall, progress: undefined, setting: undefined }] : []),
-    ...(fallbackComparison ? [{ id: 'compare' as const, name: '对照图', status: 'notrun' as const, progress: undefined, setting: undefined }] : []), ...methods];
+    ...methods];
   return <div className="dw-ac-methods" role="tablist" aria-label="验收手段">
     {tabs.map(({ id, name, status, progress, setting }, index) => <button key={id} type="button" role="tab" data-check={id} id={`dw-ac-tab-${id}`}
       data-status={objective ? status : undefined}

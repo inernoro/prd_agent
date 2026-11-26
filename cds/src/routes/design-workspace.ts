@@ -1,5 +1,6 @@
 import express, { type NextFunction, type Request, type Response, type Router } from 'express';
 import { designId, designPackageLimit, invalidDesign } from '../services/design-package.js';
+import { DesignAcceptanceGateError } from '../services/design-publication-gate.js';
 import { decorateDesignPrototype, designPrototypeCsp } from '../services/design-prototype.js';
 import type { DesignShareHandoffConfig } from '../services/design-share-handoff.js';
 import type { DesignActor, DesignWorkspaceRead, DesignWorkspaceService } from '../services/design-workspace.js';
@@ -27,7 +28,8 @@ export function createDesignWorkspaceRouter(deps: {
   const router = express.Router();
   function failure(error: unknown, res: Response) {
     if (error instanceof PlanningError) {
-      res.status(error.status).json({ error: error.code, message: error.message });
+      res.status(error.status).json({ error: error.code, message: error.message,
+        ...(error instanceof DesignAcceptanceGateError ? { issues: error.issues } : {}) });
     } else {
       res.status(503).json({ error: 'design_unavailable', message: '设计工作区暂不可用，请使用原请求编号重试' });
     }

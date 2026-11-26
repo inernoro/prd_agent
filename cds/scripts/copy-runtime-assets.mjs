@@ -2,7 +2,7 @@ import { mkdir, copyFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 const cdsRoot = fileURLToPath(new URL('../',import.meta.url));
-export const runtimeAssets = ['services/host-capacity-probe.py','services/preview-demo-snapshot.json','shared/notification-templates.json','shared/design-preview-contract.json','services/release-source-preparation.py','services/remote-release-reclaim.py','services/static-artifact-proof.py','services/disk-resource-native.py','services/backup-retention-native.py'];
+export const runtimeAssets = ['services/host-capacity-probe.py','services/preview-demo-snapshot.json','shared/notification-templates.json','shared/design-preview-contract.json','shared/design-acceptance-policy.json','shared/design-acceptance-standard.mjs','services/release-source-preparation.py','services/remote-release-reclaim.py','services/static-artifact-proof.py','services/disk-resource-native.py','services/backup-retention-native.py'];
 export async function copyRuntimeAssets(outDir=path.join(cdsRoot,'dist')){
  for(const relative of runtimeAssets){const destination=path.join(outDir,relative);await mkdir(path.dirname(destination),{recursive:true});await copyFile(path.join(cdsRoot,'src',relative),destination);}
 }
