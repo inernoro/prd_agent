@@ -4,7 +4,7 @@
   "group": "MAP · 创作",
   "framework": "FW-MAP-ADMIN",
   "frameworkVersion": 1,
-  "prototypeVersion": 3,
+  "prototypeVersion": 4,
   "date": "2026-11-26",
   "rationale": "思路.md",
   "prototype": "dist/index.html",
@@ -1180,7 +1180,7 @@
       },
       {
         "id": "retry-failed-scene",
-        "title": "单幕配音失败只重做这一幕，其余幕保留，最后得到成片",
+        "title": "单幕配音失败只重做这一幕，其余幕保留，任务回到配音阶段",
         "screenId": "failed-scene",
         "theme": "light",
         "ruleIds": [
@@ -1221,8 +1221,17 @@
           },
           {
             "action": "expect",
-            "selector": "[data-qc=video-player]",
-            "check": "visible"
+            "selector": "[data-qc-ready]",
+            "check": "attribute",
+            "attribute": "data-qc-ready",
+            "equals": "run-running"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-stage=voice]",
+            "check": "attribute",
+            "attribute": "data-stage-status",
+            "equals": "running"
           }
         ]
       },

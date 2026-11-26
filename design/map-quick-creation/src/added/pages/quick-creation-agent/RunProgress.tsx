@@ -91,7 +91,7 @@ export function RunProgress({ run }: { run: QcRun }) {
           const last = i === run.stages.length - 1;
           const active = s.status === 'running' || s.status === 'failed';
           return (
-            <li key={s.key} className="flex gap-3">
+            <li key={s.key} className="flex gap-3" data-stage={s.key} data-stage-status={s.status}>
               <div className="flex flex-col items-center">
                 <StageDot stage={s} index={i} />
                 {!last && <span className={cn('min-h-3 w-[1.5px] flex-1', s.status === 'done' ? 'bg-[color:var(--accent-fg-success)]/45' : 'bg-[var(--border-subtle)]')} />}

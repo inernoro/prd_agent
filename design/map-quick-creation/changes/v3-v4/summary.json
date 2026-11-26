@@ -1,0 +1,93 @@
+{
+ "from": {
+  "label": "V3",
+  "version": 3,
+  "commit": "01d17f2f4dfcf1db196c7d97df0cf8279292aa69",
+  "title": "快速创作 · 交付说明（V3）"
+ },
+ "to": {
+  "label": "V4",
+  "version": 4,
+  "commit": null,
+  "title": "快速创作 · 交付说明（V4）"
+ },
+ "direction": "upgrade",
+ "acceptance": {
+  "added": [],
+  "removed": [],
+  "changed": []
+ },
+ "screens": {
+  "added": [],
+  "removed": [],
+  "changed": []
+ },
+ "docs": {
+  "added": [],
+  "removed": []
+ },
+ "meta": {
+  "prototypeVersion": {
+   "from": 3,
+   "to": 4
+  }
+ },
+ "files": {
+  "added": [],
+  "removed": [],
+  "changed": [
+   {
+    "path": "design.json",
+    "area": "其他"
+   },
+   {
+    "path": "dist/index.html",
+    "area": "原型"
+   },
+   {
+    "path": "src/added/pages/quick-creation-agent/RunProgress.tsx",
+    "area": "源码"
+   },
+   {
+    "path": "tools/handoff-local.mjs",
+    "area": "工具"
+   },
+   {
+    "path": "tools/manifest-src.mjs",
+    "area": "工具"
+   },
+   {
+    "path": "versions.json",
+    "area": "其他"
+   },
+   {
+    "path": "交付说明.md",
+    "area": "文档"
+   },
+   {
+    "path": "思路.md",
+    "area": "文档"
+   },
+   {
+    "path": "设计文档/源码差异.diff",
+    "area": "文档"
+   }
+  ]
+ },
+ "checks": {
+  "from": {
+   "passed": 43,
+   "total": 43,
+   "failed": []
+  },
+  "to": {
+   "passed": 43,
+   "total": 43,
+   "failed": []
+  }
+ },
+ "source": {
+  "files": 1,
+  "bytes": 898
+ }
+}

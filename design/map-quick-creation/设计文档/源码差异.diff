@@ -868,7 +868,7 @@ index 00000000..74957b38
 +}
 diff --git a/prd-admin/src/pages/quick-creation-agent/RunProgress.tsx b/prd-admin/src/pages/quick-creation-agent/RunProgress.tsx
 new file mode 100644
-index 00000000..00049dea
+index 00000000..f0d6ff63
 --- /dev/null
 +++ b/prd-admin/src/pages/quick-creation-agent/RunProgress.tsx
 @@ -0,0 +1,115 @@
@@ -965,7 +965,7 @@ index 00000000..00049dea
 +          const last = i === run.stages.length - 1;
 +          const active = s.status === 'running' || s.status === 'failed';
 +          return (
-+            <li key={s.key} className="flex gap-3">
++            <li key={s.key} className="flex gap-3" data-stage={s.key} data-stage-status={s.status}>
 +              <div className="flex flex-col items-center">
 +                <StageDot stage={s} index={i} />
 +                {!last && <span className={cn('min-h-3 w-[1.5px] flex-1', s.status === 'done' ? 'bg-[color:var(--accent-fg-success)]/45' : 'bg-[var(--border-subtle)]')} />}

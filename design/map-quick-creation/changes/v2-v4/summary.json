@@ -6,10 +6,10 @@
   "title": "快速创作 · 交付说明（V2）"
  },
  "to": {
-  "label": "V3",
-  "version": 3,
+  "label": "V4",
+  "version": 4,
   "commit": null,
-  "title": "快速创作 · 交付说明（V3）"
+  "title": "快速创作 · 交付说明（V4）"
  },
  "direction": "upgrade",
  "acceptance": {
@@ -29,7 +29,7 @@
  "meta": {
   "prototypeVersion": {
    "from": 2,
-   "to": 3
+   "to": 4
   }
  },
  "files": {
@@ -46,6 +46,10 @@
    },
    {
     "path": "src/added/pages/quick-creation-agent/QuickCreationAgentPage.tsx",
+    "area": "源码"
+   },
+   {
+    "path": "src/added/pages/quick-creation-agent/RunProgress.tsx",
     "area": "源码"
    },
    {
@@ -66,6 +70,10 @@
    },
    {
     "path": "交付说明.md",
+    "area": "文档"
+   },
+   {
+    "path": "交接清单.md",
     "area": "文档"
    },
    {
@@ -91,7 +99,7 @@
   }
  },
  "source": {
-  "files": 2,
-  "bytes": 3360
+  "files": 3,
+  "bytes": 4258
  }
 }

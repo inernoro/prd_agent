@@ -44,8 +44,8 @@ async function readCheck(frame, step) {
   if (step.check === 'enabled') return String(await el.isEnabled());
   throw new Error(`不支持的检查：${step.check}`);
 }
-/* 等待上限取 3 秒：比 CDS 交接检查更严，避免本机预跑放过只在宽松等待下才通过的场景（V2 回执的 retry-failed-scene 就是这样） */
-const WAIT_MS = Number(opt('wait') ?? 3000);
+/* 等待上限取 1 秒：V2、V3 回执表明 CDS 只给结果检查很短的等待；场景应检查操作的即时结果，不等待几秒后的长任务 */
+const WAIT_MS = Number(opt('wait') ?? 1000);
 async function until(fn, ms = WAIT_MS) {
   const end = Date.now() + ms; let last;
   while (Date.now() < end) { try { const r = await fn(); if (r === true) return; last = r; } catch (e) { last = e.message; } await new Promise(r => setTimeout(r, 150)); }

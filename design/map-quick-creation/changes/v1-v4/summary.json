@@ -6,10 +6,10 @@
   "title": "快速创作 · 交付说明（V1）"
  },
  "to": {
-  "label": "V3",
-  "version": 3,
+  "label": "V4",
+  "version": 4,
   "commit": null,
-  "title": "快速创作 · 交付说明（V3）"
+  "title": "快速创作 · 交付说明（V4）"
  },
  "direction": "upgrade",
  "acceptance": {
@@ -232,7 +232,7 @@
  "meta": {
   "prototypeVersion": {
    "from": 1,
-   "to": 3
+   "to": 4
   }
  },
  "files": {
@@ -360,6 +360,6 @@
  },
  "source": {
   "files": 10,
-  "bytes": 45366
+  "bytes": 46025
  }
 }

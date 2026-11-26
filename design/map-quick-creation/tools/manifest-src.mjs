@@ -138,13 +138,15 @@ const cases = [
     { action: 'expect', selector: '[data-qc-ready]', check: 'attribute', attribute: 'data-run-id', sameAs: 'task' },
     { action: 'expect', selector: '[data-qc=queue-card]', check: 'visible' },
   ] },
-  { id: 'retry-failed-scene', title: '单幕配音失败只重做这一幕，其余幕保留，最后得到成片', screenId: 'failed-scene', theme: 'light', ruleIds: ['A-24'], steps: [
+  { id: 'retry-failed-scene', title: '单幕配音失败只重做这一幕，其余幕保留，任务回到配音阶段', screenId: 'failed-scene', theme: 'light', ruleIds: ['A-24'], steps: [
     { action: 'remember', selector: '[data-scene="1"]', check: 'attribute', attribute: 'data-scene-status', as: 'scene1' },
     { action: 'expect', selector: '[data-scene="4"]', check: 'attribute', attribute: 'data-scene-status', equals: 'failed' },
     { action: 'click', selector: '[data-qc=recover-primary]' },
     { action: 'expect', selector: '[data-scene="4"]', check: 'attribute', attribute: 'data-scene-status', equals: 'voicing' },
     { action: 'expect', selector: '[data-scene="1"]', check: 'attribute', attribute: 'data-scene-status', sameAs: 'scene1' },
-    { action: 'expect', selector: '[data-qc=video-player]', check: 'visible' },
+    /* 结果：任务回到生成中、配音阶段重新进行（真实的重做要几分钟，成片出现由 play-film 场景覆盖） */
+    { action: 'expect', selector: '[data-qc-ready]', check: 'attribute', attribute: 'data-qc-ready', equals: 'run-running' },
+    { action: 'expect', selector: '[data-stage=voice]', check: 'attribute', attribute: 'data-stage-status', equals: 'running' },
   ] },
   { id: 'requeue-after-timeout', title: '整条超时后重新排队，已画好的幕保留', screenId: 'timeout', theme: 'light', ruleIds: ['A-25'], steps: [
     { action: 'remember', selector: '[data-scene="3"]', check: 'attribute', attribute: 'data-scene-status', as: 'scene3' },
@@ -204,7 +206,7 @@ const manifest = {
   group: 'MAP · 创作',
   framework: 'FW-MAP-ADMIN',
   frameworkVersion: 1,
-  prototypeVersion: 3,
+  prototypeVersion: 4,
   date: new Date().toISOString().slice(0, 10),
   rationale: '思路.md',
   prototype: 'dist/index.html',

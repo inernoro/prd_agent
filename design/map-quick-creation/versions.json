@@ -16,6 +16,13 @@
    "tag": "design/DSN-1400E277/v2",
    "committedAt": "2026-11-26T12:05:08+00:00",
    "subject": "docs(design): 快速创作设计稿 V2：关键交互与失败恢复的可运行交接场景"
+  },
+  {
+   "version": 3,
+   "commit": "01d17f2f4dfcf1db196c7d97df0cf8279292aa69",
+   "tag": "design/DSN-1400E277/v3",
+   "committedAt": "2026-11-26T12:12:48+00:00",
+   "subject": "docs(design): 快速创作设计稿 V3：按 V2 交接检查回执修正单幕重做场景"
   }
  ]
 }

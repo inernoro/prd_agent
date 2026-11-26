@@ -1,13 +1,13 @@
 {
- "to": 3,
+ "to": 4,
  "from": [
   {
    "version": 1,
    "commit": "6eece65e23cb0379f6cfc391b3bd126e77a3f0a6",
    "files": [
-    "changes/v1-v3/summary.json",
-    "changes/v1-v3/changes.md",
-    "changes/v1-v3/source.diff"
+    "changes/v1-v4/summary.json",
+    "changes/v1-v4/changes.md",
+    "changes/v1-v4/source.diff"
    ],
    "acceptance": {
     "added": 2,
@@ -25,8 +25,8 @@
    "version": 2,
    "commit": "b3c2428f839e300f040866d7e367d1b1cd39e7ed",
    "files": [
-    "changes/v2-v3/summary.json",
-    "changes/v2-v3/changes.md"
+    "changes/v2-v4/summary.json",
+    "changes/v2-v4/changes.md"
    ],
    "acceptance": {
     "added": 0,
@@ -38,7 +38,26 @@
     "removed": 0,
     "changed": 0
    },
-   "sourceFiles": 2
+   "sourceFiles": 3
+  },
+  {
+   "version": 3,
+   "commit": "01d17f2f4dfcf1db196c7d97df0cf8279292aa69",
+   "files": [
+    "changes/v3-v4/summary.json",
+    "changes/v3-v4/changes.md"
+   ],
+   "acceptance": {
+    "added": 0,
+    "removed": 0,
+    "changed": 0
+   },
+   "screens": {
+    "added": 0,
+    "removed": 0,
+    "changed": 0
+   },
+   "sourceFiles": 1
   }
  ]
 }
