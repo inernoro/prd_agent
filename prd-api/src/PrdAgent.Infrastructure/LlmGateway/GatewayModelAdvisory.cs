@@ -3,7 +3,7 @@ using Microsoft.Extensions.Configuration;
 using PrdAgent.Core.LlmGateway;
 using PrdAgent.GatewayTransport;
 
-namespace PrdAgent.LlmGatewayHost;
+namespace PrdAgent.Infrastructure.LlmGateway;
 
 /// <summary>淘汰信息只读。推荐复用当前调用方的可用目录，线上默认仍由服务路由决定。</summary>
 public static class GatewayModelAdvisory
