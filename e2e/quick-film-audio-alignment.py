@@ -19,31 +19,35 @@ model = WhisperModel('small', device='cpu', compute_type='int8', cpu_threads=4,
 samples_per_second = 16000
 track = decode_audio(str(audio_file), sampling_rate=samples_per_second)
 cue_windows = (
-    (9.6, 13.5, '架构决策记录'),
-    (44.3, 48.8, '组织审查'),
-    (63.0, 68.4, '取代旧记录'),
+    (9.6, 13.5, '架构决策记录', '决策记录'),
+    (44.3, 48.8, '组织审查', '审查'),
+    (63.0, 68.4, '取代旧记录', '旧记录'),
 )
+segments, _ = model.transcribe(track, language='zh', beam_size=5, word_timestamps=True,
+                               condition_on_previous_text=False, vad_filter=True)
+characters = []
+timestamps = []
+for segment in segments:
+    for word in segment.words or []:
+        word_characters = normalize(word.word)
+        characters.extend(word_characters)
+        timestamps.extend([(float(word.start), float(word.end))] * len(word_characters))
+
+
+def nearest_phrase(phrase, start):
+    found = [match.start() for match in re.finditer(re.escape(phrase), ''.join(characters))]
+    if not found:
+        return None
+    match = min(found, key=lambda offset: abs(timestamps[offset][0] - start))
+    return [round(timestamps[match][0], 2), round(timestamps[match + len(phrase) - 1][1], 2)]
+
+
 evidence = []
-for cue_number, (start, end, anchor) in enumerate(cue_windows, start=1):
-    excerpt_start = start - 0.8
-    excerpt_end = end + 0.8
-    excerpt = track[round(excerpt_start * samples_per_second):round(excerpt_end * samples_per_second)]
-    segments, _ = model.transcribe(excerpt, language='zh', beam_size=5, word_timestamps=True,
-                                   condition_on_previous_text=False)
-    characters = []
-    timestamps = []
-    for segment in segments:
-        for word in segment.words or []:
-            word_characters = normalize(word.word)
-            characters.extend(word_characters)
-            timestamps.extend([(word.start + excerpt_start, word.end + excerpt_start)] * len(word_characters))
-    match = ''.join(characters).find(anchor)
-    found = match >= 0
-    actual_start = round(float(timestamps[match][0]), 2) if found else None
-    actual_end = round(float(timestamps[match + len(anchor) - 1][1]), 2) if found else None
-    aligned = found and actual_start >= start - 0.35 and actual_end <= end + 0.35
-    evidence.append({'cue': cue_number, 'captionSeconds': [start, end], 'anchorFound': found,
-                     'speechSeconds': [actual_start, actual_end], 'aligned': aligned})
+for cue_number, (start, end, anchor, shorter_anchor) in enumerate(cue_windows, start=1):
+    spoken = nearest_phrase(anchor, start)
+    aligned = spoken is not None and spoken[0] >= start - 0.35 and spoken[1] <= end + 0.35
+    evidence.append({'cue': cue_number, 'captionSeconds': [start, end], 'speechSeconds': spoken,
+                     'shorterPhraseSeconds': nearest_phrase(shorter_anchor, start), 'aligned': aligned})
 
 print(json.dumps(evidence))
 if not all(item['aligned'] for item in evidence):
