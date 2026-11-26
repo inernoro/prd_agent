@@ -460,8 +460,11 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             {
                 var film = verifiedFiles?.SingleOrDefault(file => file.Path == "film.mp4")
                     ?? throw new InvalidOperationException("OpenDesign 没有交付 MP4 成片");
+                var filmMetadata = run.QuickCreation == null ? null : DesignArtifactWorkspaceContract.ParseQuickCreationMedia(
+                    verifiedFiles?.SingleOrDefault(file => file.Path == "film.json")
+                    ?? throw new InvalidOperationException("没有取得成片的音轨验证结果"));
                 if (!await CompleteRunAsync(db, run.Id, leaseOwner, null, null,
-                        "影片已生成", DateTime.UtcNow, CancellationToken.None, codeFilm: true))
+                        "影片已生成", DateTime.UtcNow, CancellationToken.None, codeFilm: true, filmMetadata: filmMetadata))
                     throw new DesignArtifactRunLeaseLostException(run.Id);
 
                 meta.Status = RunStatuses.Done;
@@ -2207,7 +2210,8 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         string phase,
         DateTime completedAt,
         CancellationToken ct,
-        bool codeFilm = false)
+        bool codeFilm = false,
+        QuickCreationMedia? filmMetadata = null)
     {
         var write = await db.DesignArtifactRuns.UpdateOneAsync(
             x => x.DeploymentSlug == DeploymentScope.Current && (x.Id == runId
@@ -2225,6 +2229,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                 .Set(x => x.Phase, phase)
                 .Set(x => x.ArtifactSiteId, artifactSiteId)
                 .Set(x => x.ArtifactRevisionId, artifactRevisionId)
+                .Set(x => x.QuickCreationMedia, filmMetadata)
                 .Set(x => x.CleanupPending, false)
                 .Set(x => x.CleanupArtifactSiteId, null)
                 .Set(x => x.CleanupPublishAttemptId, null)
@@ -2467,6 +2472,26 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                 new { code = "DESIGN_ARTIFACT_INTERRUPTED", message = interruptedMessage },
                 RunTtl,
                 CancellationToken.None);
+        }
+
+        // 快捷创作的排队意图跨同一预览分支的部署继续存活。仅迁移尚未领走的任务，
+        // 已领走的仍受原版本租约保护。入队断线则由下一轮当前版本扫描收敛。
+        if (DeploymentScope.CurrentDurable is { } durableScope && DeploymentScope.Current is { } currentScope)
+        {
+            var f = Builders<DesignArtifactRun>.Filter;
+            var earlier = DesignArtifactTimingStats.ScopeFilter(durableScope)
+                & f.Where(row => row.DeploymentSlug != currentScope && row.QuickCreation != null
+                    && row.Status == RunStatuses.Queued && row.LeaseOwnerId == null && row.CancelRequestedAt == null);
+            var queued = await db.DesignArtifactRuns.Find(earlier).SortBy(row => row.CreatedAt).Limit(50).ToListAsync(ct);
+            foreach (var candidate in queued)
+            {
+                var write = await db.DesignArtifactRuns.UpdateOneAsync(earlier & f.Eq(row => row.Id, candidate.Id)
+                    & f.Eq(row => row.DeploymentSlug, candidate.DeploymentSlug),
+                    Builders<DesignArtifactRun>.Update.Set(row => row.DeploymentSlug, currentScope)
+                        .Set(row => row.RecoveryEnqueuedAt, now), cancellationToken: ct);
+                if (write.ModifiedCount == 1)
+                    await queue.EnqueueAsync(RunKinds.DesignArtifactQueue(candidate.ArtifactType), candidate.Id, CancellationToken.None);
+            }
         }
 
         var queueCandidates = await db.DesignArtifactRuns

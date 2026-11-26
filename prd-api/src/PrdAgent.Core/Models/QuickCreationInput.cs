@@ -9,3 +9,12 @@ public sealed class QuickCreationInput
     public List<string> AttachmentIds { get; set; } = new();
     public int? FilmTimeoutSeconds { get; set; }
 }
+
+public sealed class QuickCreationMedia
+{
+    public double DurationSec { get; set; }
+    public bool HasAudio { get; set; }
+    public List<QuickCreationCaption> Captions { get; set; } = new();
+}
+
+public sealed record QuickCreationCaption(double FromSec, double ToSec, string Text);

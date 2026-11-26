@@ -80,6 +80,7 @@ public class DesignArtifactRun : PrdAgent.Core.Interfaces.ITaskAuthorizedRun
     public DateTime? ExecutionStartedAt { get; set; }
     public string? QuickCreationPublishedSiteId { get; set; }
     public DateTime? QuickCreationPublishedAt { get; set; }
+    public QuickCreationMedia? QuickCreationMedia { get; set; }
     public string? RetryOfRunId { get; set; }
     /// <summary>仅由服务端新任务创建点写入；旧记录缺失时必须保持未准入。</summary>
     [System.Text.Json.Serialization.JsonIgnore]

@@ -794,7 +794,8 @@ public sealed partial class DesignArtifactsController : ControllerBase
         var run = await _db.DesignArtifactRuns.Find(CodeFilmOwnerFilter(this.GetRequiredUserId(), branchScope)
                 & Builders<DesignArtifactRun>.Filter.Eq(item => item.Id, runId))
             .FirstOrDefaultAsync(ct);
-        if (run == null || run.Status == RunStatuses.Cancelled) return NotFound();
+        if (run == null && QuickCreationEnabled()) run = await FindSharedQuickRunAsync(runId, ct);
+        if (run?.ArtifactType != DesignArtifactTypes.CodeFilm || run.Status == RunStatuses.Cancelled) return NotFound();
         try
         {
             var bytes = await ReadCodeFilmAsync(run, workspace, recovery, ct);

@@ -169,6 +169,7 @@ export interface QcRun {
   sections?: QcWebSection[];
   durationSec?: number;
   keyPoints?: QcKeyPoint[];
+  captions?: Array<{ fromSec: number; toSec: number; text: string }>;
   voice?: string;
   /** 成片媒体（视频产出完成后才有）：播放器直接播放它，字幕与重点随 currentTime 切换 */
   media?: { url: string; mime: string };

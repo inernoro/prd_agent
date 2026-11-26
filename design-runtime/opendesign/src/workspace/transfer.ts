@@ -177,8 +177,9 @@ export function normalizeWorkspaceTransfer(value: unknown, codeFilm = false): Wo
     );
   }
   for (const pattern of allowedOutputPaths) validateOutputPattern(pattern);
-  if (codeFilm && (allowedOutputPaths.length !== 1 || allowedOutputPaths[0] !== 'film.mp4')) {
-    throw new AgentWorkspaceRuntimeError('workspace_transfer_invalid', 'a code film may return only film.mp4');
+  if (codeFilm && (!allowedOutputPaths.includes('film.mp4') || new Set(allowedOutputPaths).size !== allowedOutputPaths.length
+      || allowedOutputPaths.some(file => file !== 'film.mp4' && file !== 'film.json'))) {
+    throw new AgentWorkspaceRuntimeError('workspace_transfer_invalid', 'a code film may return film.mp4 and film.json');
   }
   if (!codeFilm && (!allowedOutputPaths.includes('index.html') || !allowedOutputPaths.includes('manifest.json'))) {
     throw new AgentWorkspaceRuntimeError(

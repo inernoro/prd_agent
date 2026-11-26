@@ -32,7 +32,7 @@ import {
 } from './artifact/public-package.js';
 import { runtimeDiagnosticPreview } from './diagnostics.js';
 import { OpenDesignClient, signalForDeadline, type OpenDesignRunOutcome } from './engine/client.js';
-import { codeFilmDefaultAnswers, collectCodeFilm, registerCodeFilmSkill, verifyCodeFilmInput } from './engine/code-film.js';
+import { codeFilmDefaultAnswers, collectCodeFilm, readCodeFilmMetadata, registerCodeFilmSkill, verifyCodeFilmInput } from './engine/code-film.js';
 import { observeCodeFilmWork } from './engine/code-film-timing.js';
 import type { FilmRecoveryStore } from './engine/film-recovery.js';
 import type { EngineDaemon } from './engine/daemon.js';
@@ -579,7 +579,7 @@ export class DesignTaskExecutor {
         };
         this.captureInterruptedFilm = () => {
           const film = getFilm();
-          if (film) retainFilm(film);
+          if (film) retainFilm(film.film);
         };
         let finalRunId = firstRunId;
         const startedAt = performance.now();
@@ -606,9 +606,11 @@ export class DesignTaskExecutor {
           if (!film) {
             throw new AgentWorkspaceRuntimeError('design_output_missing', 'OpenDesign completed its conversation without a final MP4');
           }
-          retainFilm(film);
+          retainFilm(film.film);
           this.captureInterruptedFilm = undefined;
-          return await this.commitOutputs(task, prepared, [film], finalRunId, executionDeadline, signal, onStage);
+          const outputs = [film.film];
+          if (transfer.allowedOutputPaths.includes('film.json')) outputs.push(readCodeFilmMetadata(film.source));
+          return await this.commitOutputs(task, prepared, outputs, finalRunId, executionDeadline, signal, onStage);
         } catch (error) {
           this.retainInterruptedFilm();
           onStage('code_film_run_diagnostic',

@@ -1,5 +1,6 @@
 using System.Text;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Caching.Memory;
 using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Api.Services;
@@ -217,7 +218,9 @@ public sealed partial class DesignArtifactsController
     {
         if (!QuickCreationEnabled()) return NotFound();
         var run = await FindOwnedQuickRunAsync(runId, ct);
-        return run == null ? NotFound() : Ok(ApiResponse<object>.Ok(await ToQuickRunAsync(run, ct)));
+        if (run != null) return Ok(ApiResponse<object>.Ok(await ToQuickRunAsync(run, ct)));
+        var shared = await FindSharedQuickRunAsync(runId, ct);
+        return shared == null ? NotFound() : Ok(ApiResponse<object>.Ok(await ToQuickRunAsync(shared, ct, includePrivate: false)));
     }
 
     [HttpGet("/api/quick-creation/works")]
@@ -259,15 +262,18 @@ public sealed partial class DesignArtifactsController
         foreach (var run in runs)
         {
             var mine = run.UserId == userId;
+            var ownerName = "我";
             if (scope == "team")
             {
                 var site = await _sites.GetByIdAsync(run.QuickCreationPublishedSiteId!, userId, ct);
                 if (site == null || site.SharedTeamIds.Count == 0 || mine) continue;
+                ownerName = await _db.Users.Find(user => user.UserId == run.UserId)
+                    .Project(user => user.DisplayName).FirstOrDefaultAsync(ct) ?? "团队成员";
             }
             result.Add(new
             {
                 id = run.Id, runId = run.Id, run.Title, kind = QuickKind(run), templateId = run.QuickCreation!.TemplateId,
-                ownerName = mine ? "我" : "团队成员", mine,
+                ownerName, mine, durationSec = run.QuickCreationMedia?.DurationSec,
                 publishStatus = run.QuickCreationPublishedAt.HasValue ? "done" : "none",
                 siteId = run.QuickCreationPublishedSiteId, run.UpdatedAt,
             });
@@ -346,6 +352,17 @@ public sealed partial class DesignArtifactsController
             .Where(row => row.Id == runId && row.UserId == userId)).FirstOrDefaultAsync(ct);
     }
 
+    private async Task<DesignArtifactRun?> FindSharedQuickRunAsync(string runId, CancellationToken ct)
+    {
+        var filter = Builders<DesignArtifactRun>.Filter;
+        var run = await _db.DesignArtifactRuns.Find(QuickCreationScope() & filter.Where(row => row.Id == runId
+                && row.Status == RunStatuses.Done && row.QuickCreationPublishedSiteId != null))
+            .FirstOrDefaultAsync(ct);
+        if (run?.QuickCreationPublishedSiteId == null) return null;
+        var site = await _sites.GetByIdAsync(run.QuickCreationPublishedSiteId, this.GetRequiredUserId(), ct);
+        return site is { SharedTeamIds.Count: > 0 } ? run : null;
+    }
+
     private static string QuickStatus(DesignArtifactRun run) => run.Status switch
     {
         RunStatuses.Queued => "queued",
@@ -357,14 +374,15 @@ public sealed partial class DesignArtifactsController
     private static string QuickKind(DesignArtifactRun run) =>
         run.ArtifactType == DesignArtifactTypes.CodeFilm ? "video" : "web";
 
-    private async Task<object> ToQuickRunAsync(DesignArtifactRun run, CancellationToken ct)
+    private async Task<object> ToQuickRunAsync(DesignArtifactRun run, CancellationToken ct, bool includePrivate = true)
     {
         var input = run.QuickCreation!;
         var status = QuickStatus(run);
-        var attachments = await _db.Attachments.Find(row => row.UploaderId == run.UserId
-                && input.AttachmentIds.Contains(row.AttachmentId)).ToListAsync(ct);
+        var attachments = includePrivate ? await _db.Attachments.Find(row => row.UploaderId == run.UserId
+                && input.AttachmentIds.Contains(row.AttachmentId)).ToListAsync(ct) : new List<Attachment>();
         var byId = attachments.ToDictionary(row => row.AttachmentId);
         var now = DateTime.UtcNow;
+        var estimate = status is "queued" or "running" ? await QuickCreationMedianAsync(run, ct) : null;
         object? queue = null;
         if (status == "queued")
         {
@@ -378,14 +396,23 @@ public sealed partial class DesignArtifactsController
                 & (f.Lt(row => row.CreatedAt, run.CreatedAt)
                    | (f.Eq(row => row.CreatedAt, run.CreatedAt) & f.Lt(row => row.Id, run.Id)));
             var ahead = await _db.DesignArtifactRuns.CountDocumentsAsync(aheadFilter, cancellationToken: ct);
+            var ownAhead = await _db.DesignArtifactRuns.Find(aheadFilter & f.Eq(row => row.UserId, run.UserId))
+                .SortBy(row => row.CreatedAt).Limit(10).ToListAsync(ct);
             var capacity = run.ArtifactType == DesignArtifactTypes.CodeFilm
                 ? Math.Max(1, OpenDesignTransportResolver.CodeFilmSlots(_configuration).Count) : 1;
+            var startInSec = estimate is { } median ? Math.Min(86_400,
+                (int)Math.Min(1000, (active.Count + ahead) / capacity) * median) : (int?)null;
             queue = new
             {
-                position = ahead + 1, ahead, running = active.Count, capacity,
+                position = ahead + 1, ahead, running = active.Count, capacity, startInSec,
                 runningItems = active.Where(row => row.UserId == run.UserId).Select(row => new
                 {
                     ownerName = "我", row.Title, kind = QuickKind(row), elapsedSec = ElapsedSeconds(row, now),
+                    remainSec = estimate is { } typical ? Math.Max(0, typical - ElapsedSeconds(row, now)) : (int?)null,
+                }),
+                aheadItems = ownAhead.Select(row => new
+                {
+                    ownerName = "我", row.Title, kind = QuickKind(row),
                 }),
             };
         }
@@ -399,9 +426,14 @@ public sealed partial class DesignArtifactsController
         } : null;
         return new
         {
-            run.Id, run.Title, kind = QuickKind(run), templateId = input.TemplateId, input.Ask,
+            run.Id, run.Title, kind = QuickKind(run), templateId = input.TemplateId,
+            ask = includePrivate ? input.Ask : string.Empty,
             attachments = input.AttachmentIds.Where(byId.ContainsKey).Select(id => ToQuickAttachment(byId[id])),
             status, queue, elapsedSec = ElapsedSeconds(run, now), failure,
+            remainSec = status == "running" && estimate is { } seconds ? Math.Max(0, seconds - ElapsedSeconds(run, now)) : (int?)null,
+            estimateBasis = estimate.HasValue ? "近期同风格成功任务的执行时长中位数" : null,
+            durationSec = run.QuickCreationMedia?.DurationSec,
+            captions = run.QuickCreationMedia?.Captions,
             stages = new[] { new { key = run.PhaseCode, label = run.Phase, status = stageStatus, run.Progress } },
             media = run.ArtifactType == DesignArtifactTypes.CodeFilm && status == "done"
                 ? new { url = $"/api/design-artifacts/runs/{run.Id}/film.mp4", mime = "video/mp4" } : null,
@@ -411,6 +443,25 @@ public sealed partial class DesignArtifactsController
                 siteTitle = run.Title, at = run.QuickCreationPublishedAt },
             run.CreatedAt, run.UpdatedAt,
         };
+    }
+
+    private Task<int?> QuickCreationMedianAsync(DesignArtifactRun run, CancellationToken ct)
+    {
+        var cache = HttpContext.RequestServices.GetRequiredService<IMemoryCache>();
+        var templateId = run.QuickCreation!.TemplateId;
+        return cache.GetOrCreateAsync<int?>($"quick-creation-duration:{run.DeploymentSlug}:{run.ArtifactType}:{templateId}", async entry =>
+        {
+            entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(1);
+            var samples = await _db.DesignArtifactRuns.Find(QuickCreationScope()
+                    & Builders<DesignArtifactRun>.Filter.Where(row => row.Status == RunStatuses.Done
+                        && row.ArtifactType == run.ArtifactType && row.QuickCreation!.TemplateId == templateId
+                        && row.ExecutionStartedAt != null && row.CompletedAt != null))
+                .SortByDescending(row => row.CompletedAt).Limit(20)
+                .Project(row => new { row.ExecutionStartedAt, row.CompletedAt }).ToListAsync(ct);
+            var durations = samples.Select(row => (int)(row.CompletedAt!.Value - row.ExecutionStartedAt!.Value).TotalSeconds)
+                .Where(value => value > 0).Order().ToArray();
+            return durations.Length >= 3 ? durations[durations.Length / 2] : null;
+        });
     }
 
     private static int ElapsedSeconds(DesignArtifactRun run, DateTime now) =>

@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 
 import { AgentWorkspaceRuntimeError } from '../errors.js';
 import { OPEN_DESIGN_CODEX_HOME_RELATIVE } from '../prompts.js';
@@ -99,7 +100,7 @@ export function codeFilmDefaultAnswers(content: string): string | undefined {
   return [`[form answers — ${formId}]`, ...[...values].map(([field, value]) => `- ${field}: ${value}`)].join('\n');
 }
 
-export function collectCodeFilm(workspaceDir: string, maxOutputBytes: number): WorkspacePackageFile | undefined {
+export function collectCodeFilm(workspaceDir: string, maxOutputBytes: number): { film: WorkspacePackageFile; source: string } | undefined {
   // Upstream writes <name>/<name>.mp4. Accept that and a plain root MP4.
   // Restrict the scan to that shape. Skip references, symlinks and render intermediates.
   const candidates: string[] = [];
@@ -127,10 +128,57 @@ export function collectCodeFilm(workspaceDir: string, maxOutputBytes: number): W
     throw new AgentWorkspaceRuntimeError('design_output_invalid', 'OpenDesign did not return a valid MP4 container');
   }
   return {
-    path: 'film.mp4',
-    mediaType: 'video/mp4',
-    size: bytes.length,
-    sha256: sha256(bytes),
-    contentBase64: bytes.toString('base64'),
+    film: {
+      path: 'film.mp4', mediaType: 'video/mp4', size: bytes.length,
+      sha256: sha256(bytes), contentBase64: bytes.toString('base64'),
+    },
+    source: candidate,
   };
+}
+
+export function parseFilmCaptions(text: string, durationSec: number) {
+  const parseTime = (value: string) => {
+    const [hours, minutes, seconds, millis] = value.split(/[:,.]/).map(Number);
+    return hours * 3600 + minutes * 60 + seconds + millis / 1000;
+  };
+  return text.trim().split(/\r?\n(?:[ \t]*\r?\n)+/).slice(0, 500).flatMap(block => {
+    const lines = block.trim().split(/\r?\n/);
+    if (/^\d+$/.test(lines[0])) lines.shift();
+    const timing = /^(\d{2}:\d{2}:\d{2}[,.]\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2}[,.]\d{3})/.exec(lines.shift() ?? '');
+    if (!timing) return [];
+    const fromSec = parseTime(timing[1]);
+    const toSec = Math.min(durationSec, parseTime(timing[2]));
+    const caption = lines.join('\n').replace(/<[^>]+>/g, '').trim().slice(0, 300);
+    return fromSec >= 0 && toSec > fromSec && caption ? [{ fromSec, toSec, text: caption }] : [];
+  }).sort((first, second) => first.fromSec - second.fromSec);
+}
+
+/** Reads the finished file and adjacent caption output. Does not compose or modify the film. */
+export function readCodeFilmMetadata(file: string): WorkspacePackageFile {
+  const probe = JSON.parse(execFileSync('ffprobe', [
+    '-v', 'error', '-show_entries', 'format=duration:stream=codec_type',
+    '-of', 'json', file,
+  ], { encoding: 'utf8', timeout: 8000, maxBuffer: 64 * 1024 })) as {
+    format?: { duration?: string };
+    streams?: { codec_type?: string }[];
+  };
+  const durationSec = Number(probe.format?.duration);
+  const hasAudio = probe.streams?.some(stream => stream.codec_type === 'audio') === true;
+  if (!Number.isFinite(durationSec) || durationSec <= 0 || durationSec > 7200
+      || !probe.streams?.some(stream => stream.codec_type === 'video') || !hasAudio) {
+    throw new AgentWorkspaceRuntimeError('design_output_invalid', 'The completed file must contain playable video and audio');
+  }
+  const stem = file.slice(0, -4);
+  const candidate = [stem + '.srt', path.join(path.dirname(file), 'captions.srt'), path.join(path.dirname(file), 'subtitles.srt')]
+    .find(item => fs.lstatSync(item, { throwIfNoEntry: false })?.isFile() && fs.realpathSync(item) === item);
+  let captions: ReturnType<typeof parseFilmCaptions> = [];
+  if (candidate) {
+    try {
+      captions = parseFilmCaptions(readRegularFileNoFollow(candidate, 128 * 1024).toString('utf8'), durationSec);
+    } catch {
+      // Captions may be embedded in the image rather than delivered as a separate track.
+    }
+  }
+  const bytes = Buffer.from(JSON.stringify({ durationSec, hasAudio, captions }), 'utf8');
+  return { path: 'film.json', mediaType: 'application/json', size: bytes.length, sha256: sha256(bytes), contentBase64: bytes.toString('base64') };
 }

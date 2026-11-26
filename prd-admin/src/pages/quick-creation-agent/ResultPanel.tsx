@@ -165,6 +165,8 @@ export function VideoPlayer({ run, template }: { run: QcRun; template: QcTemplat
   }, [run.id, mediaAvailable, filmAttempt]);
   const media = mediaUrl ? { url: mediaUrl } : null;
   const current = useMemo(() => [...scenes].reverse().find(s => t >= s.startSec) ?? scenes[0], [scenes, t]);
+  const currentCaption = run.captions?.find(caption => caption.fromSec <= t && t < caption.toSec)?.text ?? current?.caption;
+  const hasCaptions = Boolean(run.captions?.length || scenes.length);
 
   const seek = (sec: number) => {
     const el = video.current;
@@ -204,8 +206,8 @@ export function VideoPlayer({ run, template }: { run: QcRun; template: QcTemplat
               </div>}
             </div>
           )}
-          {captions && current && media && (
-            <div data-qc="caption" className="pointer-events-none absolute bottom-[6%] left-1/2 max-w-[90%] -translate-x-1/2 rounded-md bg-black/75 px-2.5 py-1 text-center text-[12px] leading-5 text-white sm:px-3 sm:py-1.5 sm:text-[15px] sm:leading-6">{current.caption}</div>
+          {captions && currentCaption && media && (
+            <div data-qc="caption" className="pointer-events-none absolute bottom-[6%] left-1/2 max-w-[90%] -translate-x-1/2 rounded-md bg-black/75 px-2.5 py-1 text-center text-[12px] leading-5 text-white sm:px-3 sm:py-1.5 sm:text-[15px] sm:leading-6">{currentCaption}</div>
           )}
         </div>
         <div className="flex flex-wrap items-center gap-1 bg-[var(--bg-elevated)] px-2 py-1.5">
@@ -225,7 +227,7 @@ export function VideoPlayer({ run, template }: { run: QcRun; template: QcTemplat
           <span className="flex-1 sm:hidden" />
           {/* 手机用系统音量键，窄屏不占位置 */}
           <button type="button" aria-label={muted ? '取消静音' : '静音'} aria-pressed={muted} onClick={() => setMuted(v => !v)} className="qc-icon-btn hidden sm:inline-flex">{muted ? <VolumeX size={16} /> : <Volume2 size={16} />}</button>
-          <button type="button" aria-label={captions ? '关闭字幕' : '打开字幕'} aria-pressed={captions} data-qc="captions-toggle" onClick={() => setCaptions(v => !v)} className={cn('qc-icon-btn', captions && 'text-token-primary')}><Captions size={16} /></button>
+          <button type="button" aria-label={captions ? '关闭字幕' : '打开字幕'} aria-pressed={captions} disabled={!hasCaptions} data-qc="captions-toggle" onClick={() => setCaptions(v => !v)} className={cn('qc-icon-btn', captions && 'text-token-primary')}><Captions size={16} /></button>
           <button type="button" aria-label="全屏" onClick={fullscreen} className="qc-icon-btn"><Maximize size={16} /></button>
         </div>
       </div>
