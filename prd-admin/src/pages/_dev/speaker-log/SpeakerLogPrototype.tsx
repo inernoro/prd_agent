@@ -14,6 +14,7 @@ import {
   SAMPLE_DURATION_MS,
   changedCharIndexes,
   buildScreen,
+  logScrollSignature,
   nextScrollTop,
   type Conversation,
   type FrameId,
@@ -229,7 +230,7 @@ function LogScroller({ signature, children }: { signature: string; children: Rea
 
 export function SpeakerLogScreen({ model, actions }: { model: ScreenModel; actions: Actions }) {
   const { snap } = model;
-  const signature = model.conversations.map((item) => `${item.id}:${item.phase}:${item.lines.map((row) => row.text).join('')}`).join('|');
+  const signature = logScrollSignature(model.conversations);
   const activeNav = model.page === 'tasks' ? 'tasks' : 'home';
   const columns = model.page === 'tasks' ? TASK_COLUMNS : HOME_COLUMNS;
   return (

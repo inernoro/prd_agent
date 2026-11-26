@@ -20,6 +20,7 @@ import {
   USER_NAME,
   addSeconds,
   changedCharIndexes,
+  logScrollSignature,
   nextScrollTop,
   projectRound2,
   projectSample,
@@ -115,6 +116,29 @@ describe('音箱日志样例时间', () => {
     expect(second?.lines.find((row) => row.kind === 'miduo')?.text).toBe(REPLY);
     expect(second?.lines.find((row) => row.kind === 'miduo')?.volume).toBeNull();
     expect(projectRound2(1_800).phase).toBe('dictate');
+  });
+
+  it('阶段名冒出来时滚动签名会变，音量起伏不会', () => {
+    const beforeLabel = projectSample(2_820);
+    const withLabel = projectSample(2_901);
+    expect(beforeLabel.phase).toBe(withLabel.phase);
+    expect(beforeLabel.lines.map((row) => row.text).join()).toBe(withLabel.lines.map((row) => row.text).join());
+    expect(beforeLabel.lines.find((row) => row.kind === 'miduo')?.stage).toBeNull();
+    expect(withLabel.lines.find((row) => row.kind === 'miduo')?.stage).toBe('听写 · 已等待 2 秒');
+    expect(logScrollSignature([beforeLabel])).not.toBe(logScrollSignature([withLabel]));
+
+    const executeQuiet = projectSample(7_200);
+    const executeWaiting = projectSample(7_201);
+    expect(executeQuiet.phase).toBe('execute');
+    expect(executeWaiting.lines.find((row) => row.kind === 'miduo')?.stage).toBe('执行 · 已等待 2 秒');
+    expect(logScrollSignature([executeQuiet])).not.toBe(logScrollSignature([executeWaiting]));
+
+    const loud = projectSample(3_000);
+    const soft = projectSample(3_140);
+    expect(loud.lines.find((row) => row.kind === 'miduo')?.volume).not.toEqual(
+      soft.lines.find((row) => row.kind === 'miduo')?.volume,
+    );
+    expect(logScrollSignature([loud])).toBe(logScrollSignature([soft]));
   });
 
   it('只标变化的字，阅读历史时不改滚动位置', () => {

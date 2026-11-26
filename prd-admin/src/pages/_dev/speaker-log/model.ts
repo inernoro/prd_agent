@@ -355,6 +355,21 @@ const HISTORY: Conversation[] = [
   },
 ];
 
+/** 只纳入会改变日志高度的字段。音量起伏只改波形柱高，容器高度不变，不触发跟随。 */
+export function logScrollSignature(conversations: Conversation[]): string {
+  return conversations.map((item) => {
+    const lines = item.lines.map((row) => [
+      row.text,
+      row.stage ?? '',
+      row.note ?? '',
+      row.time ?? '',
+      row.showSettleMark ? '1' : '0',
+      row.volume ? '1' : '0',
+    ].join('\u0001')).join('\u0002');
+    return `${item.id}:${item.phase}:${lines}`;
+  }).join('|');
+}
+
 export function buildScreen(snap: PlayerSnap): ScreenModel {
   const conversations = HISTORY.map((item) => ({ ...item, lines: item.lines.map((row) => ({ ...row })) }));
   let clock = '待机';
