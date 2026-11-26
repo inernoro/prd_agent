@@ -164,6 +164,7 @@ builder.Services.AddSingleton<PrdAgent.Api.Services.AdminPushDispatchSignal>();
 builder.Services.AddScoped<PrdAgent.Api.Services.AdminPushNotificationService>();
 builder.Services.AddScoped<PrdAgent.Api.Services.IAdminNotificationAudience, PrdAgent.Api.Services.AdminNotificationAudience>();
 builder.Services.AddScoped<PrdAgent.Api.Services.AdminNotificationEventService>();
+builder.Services.AddHostedService<PrdAgent.Api.Services.TapdModelAdvisoryWorker>();
 // 首页槽位认领时把外部图片复制进我们自己的存储（供应商的临时/签名地址不能原样挂上首页）
 builder.Services.AddScoped<PrdAgent.Api.Services.HomepageAssetCopier>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.AdminPushNotificationWorker>();
@@ -1782,6 +1783,7 @@ static async Task<IResult> DeepHealth(
     PrdAgent.Infrastructure.Database.MongoIndexAdvisory indexAdvisory,
     ILoggerFactory loggerFactory,
     IHostEnvironment hostEnvironment,
+    IConfiguration configuration,
     CancellationToken cancellationToken)
 {
     var now = DateTime.UtcNow;
@@ -1960,6 +1962,16 @@ static async Task<IResult> DeepHealth(
     // 情况：页面展示旧模型池成员名，但运行时只接受 LLM Gateway PublicId。该探针对所有
     // 仍消费 IModelPoolQueryService 的核心入口执行同一份目录 -> 默认 -> 指定模型闭环。
     var modelCatalogResult = await modelCatalogContract.CheckAsync(cancellationToken);
+
+    bool? tapdAdvisoryHealthy = null;
+    if (TapdModelAdvisoryWorker.IsEnabled(configuration))
+    {
+        try
+        {
+            tapdAdvisoryHealthy = await TapdModelAdvisoryWorker.IsCheckHealthyAsync(db, now, configuration, cancellationToken);
+        }
+        catch (Exception) when (!cancellationToken.IsCancellationRequested) { tapdAdvisoryHealthy = false; }
+    }
 
     // 生图真实调用结果：路由预检只能证明「现在能解析」，不能证明上一笔真实请求有没有
     // 被上游或网关拒绝。过去只盯未处理异常，而模型不开放、能力不匹配、上游 4xx/5xx
@@ -2227,6 +2239,29 @@ static async Task<IResult> DeepHealth(
                         environment = "production",
                         publicVisible = true,
                         publicName = "MAP 业务模型目录",
+                    },
+                },
+            },
+            ["tapd-model-advisory:daily-check"] = tapdAdvisoryHealthy is null ? Array.Empty<object>() : new object[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["componentId"] = "tapd-model-advisory.daily-check",
+                    ["componentType"] = "service",
+                    ["observedValue"] = tapdAdvisoryHealthy.Value ? 0 : 1,
+                    ["observedUnit"] = "count",
+                    ["status"] = tapdAdvisoryHealthy.Value ? "pass" : "warn",
+                    ["time"] = now.ToString("o"),
+                    ["output"] = tapdAdvisoryHealthy.Value ? "最近一次 TAPD 模型检查已完成"
+                        : "TAPD 模型检查未完成、已过期或在用路由无法解析",
+                    ["cds:monitor"] = new
+                    {
+                        name = "TAPD 模型淘汰检查",
+                        field = "observedValue",
+                        op = "eq",
+                        value = 0,
+                        intervalSeconds = 21600,
+                        environment = "production",
                     },
                 },
             },

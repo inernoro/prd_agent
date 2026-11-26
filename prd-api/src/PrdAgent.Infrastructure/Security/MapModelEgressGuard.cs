@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Http;
 using PrdAgent.Core.Security;
+using PrdAgent.GatewayTransport;
 
 namespace PrdAgent.Infrastructure.Security;
 
@@ -81,7 +82,7 @@ public sealed class MapModelEgressHandler(string clientName, Uri gatewayBase) : 
         var path = request.RequestUri!.AbsolutePath.TrimEnd('/');
         if (request.Method == HttpMethod.Post) return path == "/gw/v1/resolve";
         if (request.Method != HttpMethod.Get) return false;
-        if (path is "/gw/v1/pools" or "/gw/v1/image-models" or "/v1/models"
+        if (path is "/gw/v1/pools" or "/gw/v1/image-models" or ModelLifecycleAdvisory.Path or "/v1/models"
             or "/gw/v1/healthz" or "/gw/v1/healthz/ready" or "/gw/v1/healthz/deep") return true;
         // 这两项是 serving 已登记的只读合同；单模型本来支持 vendor/model catch-all。
         if (path.StartsWith("/v1/models/", StringComparison.Ordinal)) return true;

@@ -156,12 +156,16 @@ export function TapdBugReportPage() {
     setSubmitResult(null);
     setTypingText('');
     setThinkingText('');
+    setModelLabel('');
     setStageMessage('正在整理缺陷草稿');
     try {
       await streamTapdBugPreviewReal(
         { naturalText, overrides: normalizedDraft },
         {
-          onStage: (_stage, message) => message && setStageMessage(message),
+          onStage: (stage, message) => {
+            if (stage === 'fallback') setModelLabel('');
+            if (message) setStageMessage(message);
+          },
           onModel: (model, platform) => setModelLabel(model ? `${model}${platform ? ` · ${platform}` : ''}` : ''),
           onThinking: (text) => setThinkingText((prev) => (prev + text).slice(-1600)),
           onTyping: (text) => setTypingText((prev) => (prev + text).slice(-3000)),
@@ -171,6 +175,7 @@ export function TapdBugReportPage() {
       toast.success('草稿已生成', '请核对后再提交到 TAPD');
     } catch (e) {
       const message = e instanceof Error ? e.message : '生成草稿失败';
+      setModelLabel('');
       setError(message);
       toast.error('生成草稿失败', message);
     } finally {

@@ -15,6 +15,7 @@ using PrdAgent.Core.LlmGateway;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Security;
+using PrdAgent.GatewayTransport;
 
 namespace PrdAgent.Infrastructure.LlmGateway;
 
@@ -762,6 +763,22 @@ public sealed class HttpLlmGatewayClient
             _logger.LogError(ex, "[HttpLlmGatewayClient] GetAvailablePoolsAsync 失败 base={Base}", _baseUrl);
             throw;
         }
+    }
+
+    public async Task<ModelLifecycleAdvisory> GetModelAdvisoryAsync(
+        string appCallerCode, string modelType, string? expectedModel, CancellationToken ct)
+    {
+        using var http = CreateHttp(infiniteTimeout: false);
+        http.Timeout = TimeSpan.FromSeconds(20);
+        var query = "?modelType=" + Uri.EscapeDataString(modelType);
+        if (!string.IsNullOrWhiteSpace(expectedModel)) query += "&expectedModel=" + Uri.EscapeDataString(expectedModel);
+        using var request = new HttpRequestMessage(HttpMethod.Get, _baseUrl + ModelLifecycleAdvisory.Path + query);
+        ApplyRoutingHeaders(request, appCallerCode, new GatewayRequestContext { SourceSystem = "map" });
+        using var response = await http.SendAsync(request, ct);
+        response.EnsureSuccessStatusCode();
+        using var body = await response.Content.ReadAsStreamAsync(ct);
+        return await JsonSerializer.DeserializeAsync<ModelLifecycleAdvisory>(body, JsonOpts, ct)
+            ?? throw new InvalidOperationException("网关返回的模型淘汰状态为空。");
     }
 
     public async Task<List<ImageGen.GatewayImageModel>> GetImageModelsAsync(string appCallerCode, CancellationToken ct = default)
