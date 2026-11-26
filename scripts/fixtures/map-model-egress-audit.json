@@ -615,12 +615,12 @@
       "calls": {
         "call:CreateClient:c938026b58555fe381e97e2d": 1,
         "call:SendAsync:0acaa6f6bc66265d3a12b02d": 5,
-        "call:SendAsync:61bcb25a64091747dedd4fb9": 1,
+        "call:SendAsync:61bcb25a64091747dedd4fb9": 2,
         "call:SendAsync:8aea20a08718131c60a92a55": 1,
         "call:SendAsync:8b667a56508c2f3c23488ed4": 1,
         "call:SendAsync:8bd167e89e1530d68e0fb552": 1
       },
-      "purpose": "阶段1统一许可运输与出口检查；新增调用仍按指纹逐项审计"
+      "purpose": "统一网关客户端运输。新增的一次请求为带调用方鉴权的只读 GET /gw/v1/model-advisory，只查本网关目录与淘汰公告，不直接访问供应商或触发推理；其他调用仍按指纹逐项审计。"
     },
     "prd-api/src/PrdAgent.Infrastructure/LlmGateway/LlmGateway.cs": {
       "calls": {

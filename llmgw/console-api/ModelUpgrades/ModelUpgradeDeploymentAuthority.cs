@@ -7,10 +7,13 @@ public static class ModelUpgradeDeploymentAuthority
     public const string WorkerDeploymentKey = "LlmGateway:ModelUpgrades:WorkerDeployment";
 
     public static string? BlockReason(IConfiguration? configuration)
+        => BlockReason(configuration, WorkerEnabledKey, WorkerDeploymentKey);
+
+    public static string? BlockReason(IConfiguration? configuration, string enabledKey, string deploymentKey)
     {
-        if (configuration is null || !bool.TryParse(configuration[WorkerEnabledKey], out var enabled) || !enabled)
+        if (configuration is null || !bool.TryParse(configuration[enabledKey], out var enabled) || !enabled)
             return "当前部署未启用模型更新执行器，请到已授权的 main 或正式入口操作。";
-        var expected = configuration[WorkerDeploymentKey];
+        var expected = configuration[deploymentKey];
         if (string.IsNullOrWhiteSpace(expected))
             return "当前部署未登记模型更新执行身份，请由管理员核对执行器部署配置。";
         var project = configuration["CDS_PROJECT_ID"];
