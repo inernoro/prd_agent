@@ -9,6 +9,13 @@
    "tag": "design/DSN-1400E277/v1",
    "committedAt": "2026-11-25T21:29:52+00:00",
    "subject": "docs(design): 快速创作设计稿：字段对齐 CDS 发布接口（演示数据进 docs、自检条目用 pass 布尔值）"
+  },
+  {
+   "version": 2,
+   "commit": "b3c2428f839e300f040866d7e367d1b1cd39e7ed",
+   "tag": "design/DSN-1400E277/v2",
+   "committedAt": "2026-11-26T12:05:08+00:00",
+   "subject": "docs(design): 快速创作设计稿 V2：关键交互与失败恢复的可运行交接场景"
   }
  ]
 }
