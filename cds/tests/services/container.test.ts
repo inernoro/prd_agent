@@ -755,6 +755,26 @@ describe('ContainerService', () => {
       expect(runCmd).not.toContain('--memory-swap');
     });
 
+    it('applies hard CPU and memory limits only to the opted-in runtime', async () => {
+      mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker run/, () => ({ stdout: 'ok', stderr: '', exitCode: 0 }));
+      const resources = { enforceRuntime: true, cpus: 1.5, memoryMB: 6144 };
+
+      await service.runService(makeEntry(), makeProfile({ resources }), makeService());
+
+      const args = dockerArgv(mock.commands.find(command => command.startsWith('docker run -d'))!);
+      expect(args.slice(args.indexOf('--cpus'), args.indexOf('--cpus') + 6))
+        .toEqual(['--cpus', '1.5', '--memory', '6144m', '--memory-swap', '6144m']);
+    });
+
+    it('rejects an incomplete hard limit before starting or replacing a container', async () => {
+      const resources = { enforceRuntime: true, cpus: 1.5 };
+
+      await expect(service.runService(makeEntry(), makeProfile({ resources }), makeService()))
+        .rejects.toThrow('运行时限额需要');
+      expect(mock.commands).toEqual([]);
+    });
+
     // 2026-09-08 宿主过载复盘：不设上限，但托管容器挂低权重 slice（--cgroup-parent）。
     // 决策由 workload-cgroup.ts 探测固化；这里只断言 run 命令「有决策就带、没决策不带」，
     // 且永远不会因此夹带 --cpus / --memory。

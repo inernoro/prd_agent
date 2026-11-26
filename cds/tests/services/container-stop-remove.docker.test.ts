@@ -1,9 +1,10 @@
 import {unitBindMountInspector} from '../helpers/storage-bind-fixture.js';
 import { describe, it, expect, afterAll } from 'vitest';
-import { execSync } from 'node:child_process';
+import { execFileSync, execSync } from 'node:child_process';
 import { ContainerService } from '../../src/services/container.js';
 import { ShellExecutor } from '../../src/services/shell-executor.js';
 import { deploymentPhaseBudget } from '../../src/services/deployment-phase-budget.js';
+import { dockerRuntimeResourceFlags } from '../../src/services/runtime-resource-limits.js';
 import type { CdsConfig } from '../../src/types.js';
 
 /**
@@ -72,6 +73,29 @@ describe.skipIf(!TEST_IMAGE_OK)('ContainerService stop/remove against real docke
     } catch {
       /* 已删除 / 从未创建 */
     }
+  });
+
+  it('enforces explicit CPU, RAM and swap limits in the running Linux container', () => {
+    const flags = dockerRuntimeResourceFlags({ enforceRuntime: true, cpus: 0.5, memoryMB: 256 })
+      .flatMap(flag => flag.split(' '));
+    const probe = `
+      cd /sys/fs/cgroup
+      if [ -r cpu.max ]; then
+        echo v2
+        cat cpu.max memory.max memory.swap.max
+      else
+        echo v1
+        cat cpu/cpu.cfs_quota_us cpu/cpu.cfs_period_us memory/memory.limit_in_bytes memory/memory.memsw.limit_in_bytes
+      fi
+    `;
+    const stdout = execFileSync('docker', ['run', '--rm', '--network', 'none', ...flags, TEST_IMAGE, 'sh', '-ec', probe],
+      { encoding: 'utf8', timeout: 20_000 });
+    const [version, ...values] = stdout.trim().split(/\s+/);
+    const [quota, period, memory, swap] = values.map(Number);
+    expect(['v1', 'v2']).toContain(version);
+    expect(quota / period).toBe(0.5);
+    expect(memory).toBe(256 * 1024 * 1024);
+    expect(swap).toBe(version === 'v2' ? 0 : memory);
   });
 
   it(

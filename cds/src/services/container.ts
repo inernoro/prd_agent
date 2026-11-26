@@ -20,6 +20,7 @@ import { profileStoragePlan, infraStoragePlan, inspectStoragePlan, resolveStorag
 import { preparePreviewCompatibilityAssets } from './preview-compatibility-assets.js';
 import type { IShellExecutor, CdsConfig, BuildProfile, BranchEntry, ServiceState, InfraService, DeployModeOverride, BuildProfileOverride, ReadinessProbe, ExecResult } from '../types.js';
 import { combinedOutput } from '../types.js';
+import { dockerRuntimeResourceFlags } from './runtime-resource-limits.js';
 import { resolveCommandTemplate, resolveEnvTemplates } from './compose-parser.js';
 import {
   collectReuseCandidates,
@@ -1720,8 +1721,10 @@ export class ContainerService {
     profile = structuredClone(profile);
     entry = {...entry};
     profile = this.networkResolver?.resolveProfileStorage?.(entry,profile) || profile;
+    const resourceFlags = [...workloadCgroupFlags(), ...dockerRuntimeResourceFlags(profile.resources)];
     if (customEnv) customEnv = {...customEnv};
     if (profile.staticWeb) {
+      if (profile.resources?.enforceRuntime) throw new Error('静态文件部署没有可设置限额的运行容器');
       if (!profile.prebuiltImage || profile.managedBuild) throw new Error('静态文件模式只接收 CI 预构建前端产物');
       if (entry.executorId || this.config.mode === 'executor') throw new Error('静态文件预览目前仅支持 CDS 主机部署，请选择主机执行');
       const target = context.artifactCommitSha || entry.pinnedCommit || entry.ciTargetSha || entry.githubCommitSha;
@@ -2221,14 +2224,6 @@ export class ContainerService {
       if (isNodeContainer && !skipSrcMount && /\bpnpm\b/.test(command)) {
         onOutput?.(`── Node.js 容器: 运行源码只读；可写缓存必须显式声明稳定归属──\n`);
       }
-
-      // 2026-05-28 用户反馈"100GB 内存,不允许任何容器限制":彻底删除所有
-      // docker 运行时资源限制(--memory / --memory-swap / --cpus)。
-      // memoryMB / cpus 字段仅作 capacity 调度规划提示,不下发到 docker run。
-      // 不下发任何 --memory / --memory-swap / --cpus,避免任何容器构造慢。
-      // 2026-09-08 宿主过载复盘:不设上限,但把托管容器挂到低权重 slice
-      // (--cgroup-parent),争抢时 CDS 控制面先拿 CPU/IO。见 workload-cgroup.ts。
-      const resourceFlags: string[] = [...workloadCgroupFlags()];
 
       // Phase 7 fix(B10,2026-05-01)— --entrypoint 覆盖。
       // 默认不传(走 image 自带 ENTRYPOINT)。指定时:

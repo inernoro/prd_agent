@@ -101,11 +101,13 @@ export class DeploymentVersionService {
       if (!current) {
         throw new Error(`当前项目缺少版本所需构建配置: ${snapshot.profileId}`);
       }
+      const effective = resolveEffectiveProfile(current, branch);
       return {
         ...current,
         // 版本不持久化环境明文；运行时仍使用本次受理的分支配置，不能退回项目基线库。
         // 镜像、命令等产物契约继续由下面的版本快照固定，不重新套用当前部署模式。
-        env: resolveEffectiveProfile(current, branch).env,
+        env: effective.env,
+        resources: effective.resources,
         name: snapshot.name,
         dockerImage: snapshot.artifactImage,
         buildScope: snapshot.buildScope ? [...snapshot.buildScope] : undefined,
