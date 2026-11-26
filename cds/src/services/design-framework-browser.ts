@@ -197,7 +197,15 @@ async function measurePrototype(browserPath: string, prototype: Buffer, screens:
 
 export type DesignReferenceTarget = { screen: DesignScreen; theme: DesignTheme };
 export type DesignCoverCapture = (prototype: Buffer, target: DesignReferenceTarget) => Promise<Buffer | undefined>;
-export type DesignReferenceCapture = (prototype: Buffer, targets: readonly DesignReferenceTarget[]) => AsyncIterable<DesignReferenceTarget & { bytes: Buffer }>;
+export type DesignReferenceCapture = (prototype: Buffer, targets: readonly DesignReferenceTarget[], retry?: boolean) =>
+  AsyncIterable<DesignReferenceTarget & { bytes: Buffer }>;
+
+export function captureDesignReference(browser: Browser, html: string, target: DesignReferenceTarget, retry = false) {
+  // Give the same declared actions time to reach the ready marker on a slower renderer.
+  const screen = retry ? { ...target.screen, entryTimeoutMs: 30_000 } : target.screen;
+  return readPrototypeScreen(browser, html, screen, target.theme, page =>
+    page.screenshot({ animations: 'disabled', caret: 'hide', timeout: retry ? 10_000 : 5000 }));
+}
 
 export function designBrowserPath(executablePath?: string) {
   return executablePath?.trim() || ['/usr/bin/chromium', '/usr/bin/chromium-browser', '/usr/bin/google-chrome'].find(path => {
@@ -208,15 +216,14 @@ export function designBrowserPath(executablePath?: string) {
 export function createDesignReferenceBrowser(executablePath?: string): DesignReferenceCapture | undefined {
   const browserPath = designBrowserPath(executablePath);
   if (!browserPath) return undefined;
-  return async function* (prototype, targets) {
+  return async function* (prototype, targets, retry) {
     const browser = await launchDesignBrowser(browserPath);
     try {
       const html = decorateDesignPrototype(prototype.toString('utf8'));
       const deadline = Date.now() + 180_000;
       for (const target of targets) {
         if (Date.now() >= deadline) break;
-        const bytes = await readPrototypeScreen(browser, html, target.screen, target.theme, page =>
-          page.screenshot({ animations: 'disabled', caret: 'hide', timeout: pageTimeout }));
+        const bytes = await captureDesignReference(browser, html, target, retry);
         if (bytes) yield { ...target, bytes };
       }
     } finally {

@@ -485,10 +485,10 @@ describe('V20 自动生成对照图', () => {
       { id: 'second', name: '第二画面', route: '#/second', viewport: 'desktop', themes: ['light'], entryReadySelector: 'main' },
     ] }, mp4, [{ name: 'screens/demo.light.png', data: desktop }]);
     let firstImageId: string | undefined;
-    const capture = vi.fn(async function* (_prototype: Buffer, targets: Parameters<DesignReferenceCapture>[1]) {
+    const capture = vi.fn(async function* (_prototype: Buffer, targets: Parameters<DesignReferenceCapture>[1], retry?: boolean) {
       for (const target of targets) {
         yield { ...target, bytes: desktop };
-        if (capture.mock.calls.length === 1) throw new Error('合成浏览器中断');
+        if (!retry) throw new Error('合成浏览器中断');
       }
     });
     const fixture = referenceFixture(capture, archive);
@@ -500,6 +500,7 @@ describe('V20 自动生成对照图', () => {
       expect(status).toMatchObject({ state: 'ready', total: 3, completed: 3 });
     });
     expect((await read()).renders.demo.light.id).toBe(firstImageId);
+    expect(capture.mock.calls.map(call => call[2])).toEqual([false, true]);
     expect(capture.mock.calls.map(([, targets]) => targets.map(({ screen, theme }) => `${screen.id}/${theme}`)))
       .toEqual([['demo/dark', 'second/light'], ['second/light']]);
   });

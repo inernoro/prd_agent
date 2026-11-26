@@ -1140,7 +1140,7 @@ export class DesignWorkspaceService {
           if (!current || isSigned(current)) return;
         }
         try {
-          for await (const image of capture(prototype.bytes, [...pending.values()])) {
+          for await (const image of capture(prototype.bytes, [...pending.values()], attempt > 0)) {
             const slot = `${image.screen.id}/${image.theme}`;
             const target = pending.get(slot);
             if (!target) continue;
