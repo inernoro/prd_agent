@@ -39,8 +39,8 @@ for cue_number, (start, end, anchor) in enumerate(cue_windows, start=1):
             timestamps.extend([(word.start + excerpt_start, word.end + excerpt_start)] * len(word_characters))
     match = ''.join(characters).find(anchor)
     found = match >= 0
-    actual_start = round(timestamps[match][0], 2) if found else None
-    actual_end = round(timestamps[match + len(anchor) - 1][1], 2) if found else None
+    actual_start = round(float(timestamps[match][0]), 2) if found else None
+    actual_end = round(float(timestamps[match + len(anchor) - 1][1]), 2) if found else None
     aligned = found and actual_start >= start - 0.35 and actual_end <= end + 0.35
     evidence.append({'cue': cue_number, 'captionSeconds': [start, end], 'anchorFound': found,
                      'speechSeconds': [actual_start, actual_end], 'aligned': aligned})
