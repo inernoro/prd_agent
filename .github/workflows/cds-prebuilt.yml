@@ -154,6 +154,9 @@ jobs:
       - name: Verify isolated design cover capture
         run: node cds/scripts/verify-design-cover-container.mjs ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}/cds-design-cover:sha-${{ github.sha }}
 
+      - name: Verify design handoff counterexamples in Chromium
+        run: node cds/scripts/verify-design-handoff-browser.mjs
+
       - name: Publish verified design cover renderer
         run: docker push ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}/cds-design-cover:sha-${{ github.sha }}
 
@@ -204,7 +207,12 @@ jobs:
 
       - name: Publish verified CDS preview runtime
         if: success()
-        run: docker push ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}/cds-preview:sha-${{ github.sha }}
+        run: |
+          for attempt in 1 2 3; do
+            if docker push ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}/cds-preview:sha-${{ github.sha }}; then exit 0; fi
+            if [ "$attempt" -lt 3 ]; then sleep 5; fi
+          done
+          exit 1
 
       - name: Preview smoke logs
         if: failure()

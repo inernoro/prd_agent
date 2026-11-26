@@ -56,7 +56,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Optional
 
-VERSION = "0.26.24"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.26.25"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -4521,14 +4521,14 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
             die("CDS 返回的设计记录不属于当前项目")
         return result
 
-    def send(command: dict, *, use_flag: bool = True) -> dict:
+    def send(command: dict, *, use_flag: bool = True, endpoint: str = "/commands") -> dict:
         if use_flag:
             request_id = getattr(args, "request_id", None) or secrets.token_hex(18)
         else:
             # A capture is derived from the acceptance run, and retries can reuse its original receipt.
             material = json.dumps([project, command], sort_keys=True, ensure_ascii=False).encode()
             request_id = hashlib.sha256(material).hexdigest()
-        return request("POST", "/commands", {**command, "requestId": request_id}, retry_id=request_id)
+        return request("POST", endpoint, {**command, "requestId": request_id}, retry_id=request_id)
 
     def read_input(filename: str) -> Any:
         try:
@@ -4557,6 +4557,21 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
         if intake.get("protocolVersion") != 1:
             die("CDS 设计接入协议版本不符，请检查当前安装的技能与 CDS 版本")
         ok(intake)
+
+    if action == "handoff":
+        query = urllib.parse.urlencode({"designId": args.id, "version": args.version})
+        workspace = request("GET", "?" + query)
+        design = next((row for row in workspace.get("designs", []) if row.get("id") == args.id and row.get("projectId") == project), None)
+        selected = next((row for row in (design or {}).get("versions", []) if row.get("version") == args.version), None)
+        if not selected or not isinstance(selected.get("handoff"), dict):
+            die("请核对稿件版本及 CDS 交接能力")
+        if args.run:
+            receipt = send({"type": "handoff.check", "designId": args.id, "version": args.version}, endpoint="/handoff/check")
+            result = receipt.get("result") or {}
+            if (result.get("type") != "handoff.check" or result.get("designId") != args.id or result.get("version") != args.version):
+                die("CDS 返回了不同稿件或版本的检查回执")
+            ok(receipt)
+        ok({"projectId": project, "designId": args.id, "version": args.version, "handoff": selected["handoff"]})
 
     if action in ("brief-reply", "brief-claim", "brief-release"):
         command = {"type": action.replace("-", ".", 1), "designKey": args.id, "expectedVersion": args.expected_version}
@@ -5033,7 +5048,7 @@ def _register_design_parser(sub: Any) -> None:
     preview.add_argument("--theme", choices=("light", "dark"), default="light")
     preview.add_argument("--port", type=int, default=0, help="环回端口，默认自动选择")
     framework = sub.add_parser("framework", help="项目设计框架").add_subparsers(dest="design_action", required=True)
-    for routes, actions in ((design, ("intake", "brief-reply", "brief-claim", "brief-release", "feedback", "feedback-create", "feedback-reply", "feedback-resolve", "attach-evidence", "publish", "list", "reviewers", "request-review", "comments", "diff", "accept", "record", "visual", "capture", "recheck", "flow", "smoke", "coverage", "regress", "known-create", "result", "freeze", "start-upgrade", "cancel-upgrade", "sign", "scaffold", "extract", "enable-method", "disable-method")),
+    for routes, actions in ((design, ("intake", "handoff", "brief-reply", "brief-claim", "brief-release", "feedback", "feedback-create", "feedback-reply", "feedback-resolve", "attach-evidence", "publish", "list", "reviewers", "request-review", "comments", "diff", "accept", "record", "visual", "capture", "recheck", "flow", "smoke", "coverage", "regress", "known-create", "result", "freeze", "start-upgrade", "cancel-upgrade", "sign", "scaffold", "extract", "enable-method", "disable-method")),
                             (framework, ("show", "list", "publish", "import"))):
         for action in actions:
             parser = routes.add_parser(action, help="发布项目框架版本" if action == "publish" and routes is framework else None)
@@ -5043,6 +5058,10 @@ def _register_design_parser(sub: Any) -> None:
             if action not in ("intake", "list", "publish", "reviewers", "scaffold") or (routes is framework and action == "publish"):
                 parser.add_argument("id")
             if action in ("publish", "request-review", "accept", "record", "visual", "capture", "recheck", "flow", "smoke", "coverage", "regress", "known-create", "freeze", "start-upgrade", "cancel-upgrade", "sign", "extract", "import"):
+                parser.add_argument("--request-id")
+            if action == "handoff":
+                parser.add_argument("--version", required=True, type=int, help="已发布的稿件版本")
+                parser.add_argument("--run", action="store_true", help="启动检查或重试未通过场景，默认只回读")
                 parser.add_argument("--request-id")
             if action in ("enable-method", "disable-method"):
                 parser.add_argument("--request-id")

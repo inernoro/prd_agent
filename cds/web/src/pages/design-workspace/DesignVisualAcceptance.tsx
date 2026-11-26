@@ -1,3 +1,4 @@
+import { useDesignThumbnails } from './DesignGallery';
 import { useRef, useState, type FormEvent, type MouseEvent } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
@@ -37,11 +38,13 @@ function reviewRow(version: DesignVersion, screen: DesignScreen, slot: DesignSlo
 }
 type ReviewRow = ReturnType<typeof reviewRow>;
 
-export function DesignVisualAcceptance({ entry, version, run, busy, writable, command, onRule, program, visualOnly = false }: {
+export function DesignVisualAcceptance({ entry, version: declared, run, busy, writable, command, onRule, program, visualOnly = false }: {
   entry: DesignEntry; version: DesignVersion; run?: DesignRun; busy: boolean; writable: boolean;
   command: DesignCommand; onRule: (cell: DesignCell) => void; visualOnly?: boolean;
   program?: { capture: boolean; recheck: boolean; actor?: string };
 }) {
+  const thumbnails = useDesignThumbnails(entry.projectId, declared, entry.id);
+  const version = thumbnails.renders ? { ...declared, renders: thumbnails.renders } : declared;
   const [params, setParams] = useSearchParams();
   const { theme } = useTheme();
   const objective = designObjectivePlanEnabled(version);

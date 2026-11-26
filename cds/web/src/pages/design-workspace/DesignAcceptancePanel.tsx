@@ -98,7 +98,10 @@ export function DesignAcceptancePanel({ entry, version, busy, canWrite, canRevie
   const proof = designProgramStatus(version, run);
   const activeMethod = methodData?.methods.find(method => method.id === params.get('check'));
   const methodOpen = activeMethod?.status !== 'not_applicable' && activeMethod?.status !== 'disabled';
-  const check: AcceptanceCheck = activeMethod?.id ?? 'overview';
+  const requestedCheck = params.get('check');
+  const fallbackComparison = !methodData && version.screens.length > 0;
+  const check: AcceptanceCheck = requestedCheck === 'rules' && items.length ? 'rules'
+    : requestedCheck === 'compare' && fallbackComparison ? 'compare' : activeMethod?.id ?? 'overview';
   const video = version.videos?.find(item => item.page === 'accept');
   const generateDemo = programRequired || (objective && !video && Boolean(version.goals?.length));
   const animation = generateDemo && methodData
@@ -122,10 +125,10 @@ export function DesignAcceptancePanel({ entry, version, busy, canWrite, canRevie
     return value;
   }, { replace: !show });
   const showOverview = check === 'overview';
-  const showRules = !methodData || check === 'mece' && methodOpen;
+  const showRules = check === 'rules' || (!methodData && check === 'overview') || check === 'mece' && methodOpen;
   const comparisonSkipped = methodData?.methods.some(method => method.id === 'compare' && (method.status === 'not_applicable' || method.status === 'disabled'));
   const visualOnly = comparisonSkipped === true && check === 'visual' && methodOpen;
-  const showComparison = version.screens.length > 0 && (!methodData || visualOnly || check === 'compare' && (methodOpen || programRequired));
+  const showComparison = version.screens.length > 0 && (fallbackComparison && (showOverview || check === 'compare') || visualOnly || check === 'compare' && (methodOpen || programRequired));
   const blockers = methodData?.blockers ?? [];
   const requiresVisual = programRequired || !methodData && designVisualRequired(version, run);
   const visualRemaining = requiresVisual && run && !run.signed ? designVisualSummary(version, run).remaining : 0;
@@ -250,8 +253,8 @@ export function DesignAcceptancePanel({ entry, version, busy, canWrite, canRevie
     return { ...goal, state };
   });
   const handoff = version.delivery?.files.find(file => file.path === '交接清单.md');
-  const groups = ([['failed', '不通过'], ['missing', '待补证据'], ['debt', '已记债'], ['unverified', '未验证'], ['passed', '通过']] as const)
-    .map(([key, label]) => [key, label, items.filter(item => statusOf(item.id) === key)] as const).filter(([, , list]) => list.length);
+  const groups = ([['failed', '不通过'], ['missing', '待补证据'], ['debt', '已记债'], ['unverified', '未验证'], ['passed', '通过'], ['excluded', '本次不适用']] as const)
+    .map(([key, label]) => [key, label, items.filter(item => applicableIds.has(item.id) ? statusOf(item.id) === key : key === 'excluded')] as const).filter(([, , list]) => list.length);
   const selfChecks = designCheckRows(version);
   const selfFailed = selfChecks.filter(row => row.status !== '通过');
   const origins = new Map<string, typeof version.screens>();
@@ -317,9 +320,10 @@ export function DesignAcceptancePanel({ entry, version, busy, canWrite, canRevie
     }
   }
   return <section className="dw-acceptance dw-ac" data-objective={objective || undefined}>
-    {methodData && <AcceptanceMethodTabs active={check} methods={methodData.methods} overall={overall} objective={objective} go={go} />}
-    <div id={methodData ? 'dw-ac-method-panel' : undefined} role={methodData ? 'tabpanel' : undefined}
-      aria-labelledby={methodData ? `dw-ac-tab-${check}` : undefined}>
+    {(methodData || items.length > 0 || fallbackComparison) && <AcceptanceMethodTabs active={check} methods={methodData?.methods ?? []}
+      overall={overall} objective={objective} ruleCount={items.length} fallbackComparison={fallbackComparison} go={go} />}
+    <div id={methodData || items.length || fallbackComparison ? 'dw-ac-method-panel' : undefined} role={methodData || items.length || fallbackComparison ? 'tabpanel' : undefined}
+      aria-labelledby={methodData || items.length || fallbackComparison ? `dw-ac-tab-${check}` : undefined}>
     <ol className="dw-dl-items dw-surface dw-ac-items">
       {activeMethod && animation.length > 0 && <li data-item="method-video">
         <DesignAcceptanceAnimation key={activeMethod.id} title={activeMethod.name} compact chapters={animation.filter(chapter => chapter.key === activeMethod.id)} /></li>}
@@ -371,7 +375,7 @@ export function DesignAcceptancePanel({ entry, version, busy, canWrite, canRevie
       {showOverview && goalRows.length > 0 && causes.length > 0 && <li data-item="causes"><h4>为什么还不能签收</h4>
         <EvidenceCauses causes={causes} /></li>}
       {showOverview && structuredOverview && <AcceptanceTrace entry={entry} version={version} run={run} requirement={requirement} statusOf={statusOf}
-        onOpen={onOpen} openRules={() => methodData ? go('mece') : jump('dw-ac-rules')} />}
+        onOpen={onOpen} openRules={() => go('rules')} />}
       {showOverview && structuredOverview && <AcceptanceScreens version={version} statusOf={statusOf} onOpen={onOpen}
         thumbnailProject={hasDemo ? entry.projectId : undefined} />}
       {showOverview && methodData && <li data-item="methods"><h4><b>4</b>验收手段<small>{objective ? '按执行顺序排列，已启用的在前' : '每种手段的状态及不适用理由'}</small></h4>
@@ -439,11 +443,16 @@ export function DesignAcceptancePanel({ entry, version, busy, canWrite, canRevie
             {evidenceWritable && <button type="button" className="ep-button" onClick={() => setSelected(cell)}>{item.how === 'human' ? '人工核对' : '补充证据'}</button>}
           </div>;
         })}</div></div>)}</details></li>}
-      {showRules && <li data-item="rules" id="dw-ac-rules"><h4><b>{ruleNumber}</b>全部验收项<small>{items.length} 条 · 按状态分组</small></h4>
+      {showRules && <li data-item="rules" id="dw-ac-rules"><h4>{check !== 'rules' && <b>{ruleNumber}</b>}全部验收项
+        <small>{items.length} 条 · 按状态分组</small></h4>
+        {check === 'rules' && <p className="dw-dl-factline">{(Object.keys(ruleModes) as Array<keyof typeof ruleModes>).map(mode => {
+          const count = items.filter(item => item.how === mode).length;
+          return count > 0 ? <span key={mode}>{ruleModes[mode]} {count}</span> : null;
+        })}</p>}
         {!items.length && <p className="dw-dl-missing">这版稿件未声明验收项。</p>}
-        {groups.map(([key, label, list]) => <details key={key} className="dw-dl-rulegroup" open={key === 'failed' || key === 'missing' || undefined}>
+        {groups.map(([key, label, list]) => <details key={key} className="dw-dl-rulegroup" open={check === 'rules' || key === 'failed' || key === 'missing' || undefined}>
           <summary><span className="dw-status" data-state={key === 'missing' ? 'needs_evidence' : key === 'unverified' ? 'draft' : key}>{label}</span> <small>{list.length}</small></summary>
-          <ul className="dw-dl-rules">{list.map(item => <li key={item.id}><code>{item.id}</code><span><strong>{item.rule}</strong>
+          <ul className="dw-dl-rules">{list.map(item => <li key={item.id} data-rule={item.id}><code>{item.id}</code><span><strong>{item.rule}</strong>
             <small>{ruleModes[item.how]}{item.priority === 'high' ? ' · 高级别' : ''}{item.expected ? ` · 预期：${item.expected}` : ''}</small>
             <span className="dw-ac-slots">{designSlots.filter(slot => item.slots.includes(slot)).map(slot => {
               const cell = cells.find(value => value.itemId === item.id && value.slot === slot);

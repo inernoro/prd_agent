@@ -116,9 +116,12 @@ describe('Agent sessions through the real basic-auth server', () => {
     });
   }
 
-  it('设计发布凭据只在本项目的独立复验入口取得这项验收权限', async () => {
+  it.each([
+    ['/acceptance/recheck', { type: 'acceptance.recheck', runId: 'RUN-fixture', screenId: 'main', slot: 'desktop-light' }],
+    ['/handoff/check', { type: 'handoff.check', version: 1 }],
+  ])('设计发布凭据在本项目的 %s 仅能发起对应检查', async (suffix, input) => {
     vi.stubEnv('CDS_STORAGE_MODE', 'json');
-    function designHeaders(designAccess: 'publish' | 'feedback') {
+    function designHeaders(designAccess: 'publish' | 'feedback' | 'read') {
       const key = 'cdsp_fixture_' + crypto.randomUUID();
       state.addAgentKey(projectId, {
         id: crypto.randomUUID(), label: '合成设计凭据', hash: crypto.createHash('sha256').update(key).digest('hex'),
@@ -128,20 +131,21 @@ describe('Agent sessions through the real basic-auth server', () => {
     }
     const publisher = designHeaders('publish');
     const feedback = designHeaders('feedback');
+    const reader = designHeaders('read');
     const server = await start();
     const own = `/api/projects/${projectId}/design`;
     const remote = `/api/projects/${otherProjectId}/design`;
-    const recheck = { type: 'acceptance.recheck', requestId: 'design-recheck-fixture',
-      designId: 'DSN-fixture', runId: 'RUN-fixture', screenId: 'main', slot: 'desktop-light' };
-    const allowed = await request(server, 'POST', own + '/acceptance/recheck', publisher, recheck);
+    const check = { ...input, requestId: 'design-check-fixture', designId: 'DSN-fixture' };
+    const allowed = await request(server, 'POST', own + suffix, publisher, check);
     expect(allowed).toMatchObject({ status: 404, body: { error: 'design_not_found', message: '该稿件不存在' } });
-    expect((await request(server, 'POST', own + '/acceptance/recheck', publisher, { ...recheck, type: 'acceptance.sign' })).status).toBe(400);
+    expect((await request(server, 'POST', own + suffix, publisher, { ...check, type: 'acceptance.sign' })).status).toBe(400);
     for (const [endpoint, actor] of [
-      [remote + '/acceptance/recheck', publisher],
-      [own + '/acceptance/recheck', feedback],
+      [remote + suffix, publisher],
+      [own + suffix, feedback],
+      [own + suffix, reader],
       [own + '/commands', publisher],
     ] as const) {
-      expect(await request(server, 'POST', endpoint, actor, recheck)).toMatchObject({
+      expect(await request(server, 'POST', endpoint, actor, check)).toMatchObject({
         status: 403, body: { error: 'design_key_scope' },
       });
     }
