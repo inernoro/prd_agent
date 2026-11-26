@@ -56,7 +56,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Optional
 
-VERSION = "0.26.29"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.26.30"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 CDS_SKILLS = ("cds", "cds-design", "cds-build", "cds-project-scan", "cds-deploy-pipeline", "cds-release", "preview-url")
 

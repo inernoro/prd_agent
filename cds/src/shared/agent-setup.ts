@@ -37,7 +37,7 @@ export function getAgentSetupDesignAccess(selection: AgentSetupSelection): 'publ
 }
 
 export function getAgentSetupMinCliVersion(selection: AgentSetupSelection): string {
-  if (getAgentSetupDesignAccess(selection) === 'read') return '0.26.29';
+  if (getAgentSetupDesignAccess(selection) === 'read') return '0.26.30';
   if (selection.skills.includes('cds-build')) return '0.26.28';
   return selection.mission === 'design-publish' ? '0.26.27' : AGENT_SETUP_MIN_CLI_VERSION;
 }

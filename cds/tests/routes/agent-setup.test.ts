@@ -145,7 +145,7 @@ describe('Agent public bootstrap through the real auth gate', () => {
     expect(metadata.status).toBe(200);
     const receipt = await metadata.json();
     expect(receipt).toMatchObject({ target: { kind: 'existing', projectId: 'proj-a' }, designAccess: 'read',
-      minCliVersion: '0.26.29', cliVersion: shippedCliVersion, skills: ['cds-build'] });
+      minCliVersion: '0.26.30', cliVersion: shippedCliVersion, skills: ['cds-build'] });
     expect([...receipt.installedSkills].sort()).toEqual([...distributedSkills].sort());
     expect(receipt).not.toHaveProperty('authorizationKey');
   });
@@ -452,7 +452,7 @@ describe('setup version follows the actual distributed skill bundle', () => {
     expect(await scoped.json()).toMatchObject({ error: 'skill_bundle_incompatible', minCliVersion: '0.26.27', cliVersion: '0.26.26' });
   });
 
-  it.each(['0.26.27', '0.26.28'])('%s 回源包仍可设计发布，同项目实施接入要求更新包', async version => {
+  it.each(['0.26.27', '0.26.28', '0.26.29'])('%s 回源包仍可设计发布，同项目实施接入要求更新包', async version => {
     const root = tempRoot();
     for (const skill of distributedSkills.filter(skill => version !== '0.26.27' || skill !== 'cds-build')) {
       const directory = path.join(root, 'skills', skill);
@@ -474,6 +474,6 @@ describe('setup version follows the actual distributed skill bundle', () => {
     expect(await publish.json()).toMatchObject({ minCliVersion: '0.26.27', cliVersion: version });
     const build = await fetch(`${entry}&skills=cds-build`);
     expect(build.status).toBe(503);
-    expect(await build.json()).toMatchObject({ error: 'skill_bundle_incompatible', minCliVersion: '0.26.29', cliVersion: version });
+    expect(await build.json()).toMatchObject({ error: 'skill_bundle_incompatible', minCliVersion: '0.26.30', cliVersion: version });
   });
 });

@@ -367,7 +367,7 @@ class SetupCheckTests(unittest.TestCase):
     def test_design_connect_requests_scoped_approval_and_saves_only_a_verified_credential(self):
         self.credentials.unlink()
         self.build_setup_status = 503
-        self.build_manifest.update(cliVersion="0.26.28", error="skill_bundle_incompatible")
+        self.build_manifest.update(cliVersion="0.26.29", error="skill_bundle_incompatible")
         result = self.run_design_connect()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout)["data"]["projectId"], "proj-a")
@@ -484,7 +484,7 @@ class SetupCheckTests(unittest.TestCase):
 
     def test_fresh_scoped_design_connect_stops_before_approval_if_build_bundle_is_incompatible(self):
         self.build_setup_status = 503
-        self.build_manifest.update(cliVersion="0.26.28", error="skill_bundle_incompatible")
+        self.build_manifest.update(cliVersion="0.26.29", error="skill_bundle_incompatible")
         for scope in ("read", "feedback"):
             with self.subTest(scope=scope):
                 self.credentials.unlink(missing_ok=True)
@@ -555,9 +555,9 @@ class SetupCheckTests(unittest.TestCase):
     def test_build_setup_checks_the_required_version_and_actual_distribution(self):
         original = self.build_manifest.copy()
         for status, overrides, reason in (
-            (503, {"cliVersion": "0.26.28", "error": "skill_bundle_incompatible"}, "skill_bundle_incompatible"),
+            (503, {"cliVersion": "0.26.29", "error": "skill_bundle_incompatible"}, "skill_bundle_incompatible"),
             (503, {"error": "temporarily_unavailable"}, "setup_unavailable"),
-            (200, {"cliVersion": "0.26.28"}, "skill_bundle_incompatible"),
+            (200, {"cliVersion": "0.26.29"}, "skill_bundle_incompatible"),
             (200, {"minCliVersion": "99.0.0", "cliVersion": "99.0.0"}, "stale_cli"),
             (200, {"cliVersion": None}, "version_unavailable"),
         ):
