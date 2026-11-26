@@ -4,7 +4,7 @@ import type {
   DesignDelivery, DesignDeliveryFile, DesignFeedback, DesignFrameworkCharter, DesignImplementation, DesignIntake, DesignRequirement, DesignScope, DesignSharePreparation, DesignSystem, DesignThumbnailStatus, DesignUpgrade, DesignViewerState, FrameworkResolutions,
 } from '../shared/design-workspace.js';
 import type { PlanningActor, PlanningDesignLink } from '../shared/engineering-planning.js';
-import { currentDesignRun, designAcceptanceTarget, designDatasetRequired, designDemoImplementationPath, designFeedbackCategories, designMaterialKeys, designProgramEvidenceRequired, designSlots, designVersionGap, designViewports, frameworkInUse, frameworkMaterialCandidates, latestDesignFeedbackAt } from '../shared/design-workspace.js';
+import { adoptedFrameworkVersion, currentDesignRun, designAcceptanceTarget, designDatasetRequired, designDemoImplementationPath, designFeedbackCategories, designMaterialKeys, designProgramEvidenceRequired, designSlots, designVersionGap, designViewports, frameworkInUse, frameworkMaterialCandidates, latestDesignFeedbackAt } from '../shared/design-workspace.js';
 import { completeFeedback, feedbackParts } from '../shared/design-feedback.js';
 import { concreteVisualEvidence, designProgramStatus, designVisualKey, designVisualSlots, designVisualStandard, designVisualRequired, designVisualRuleShot, designVisualSummary,
   visualSlotTheme, type DesignVisualChecks, type DesignVisualRow } from '../shared/design-visual.js';
@@ -109,10 +109,6 @@ function validateScope(state: WorkspaceState, scope: DesignScope) {
   const configured = configuredModule(state, scope);
   for (const related of scope.related ?? []) configuredModule(state, related);
   return configured;
-}
-
-function adoptedFrameworkVersion(framework?: DesignFramework): number | undefined {
-  return framework?.versions.filter(revision => !revision.charter || revision.charter.status === 'adopted').at(-1)?.version;
 }
 
 function visibleRequirements(state: WorkspaceState) {
@@ -506,6 +502,7 @@ export class DesignWorkspaceService {
       ...(state.systems.size ? { systems: structuredClone([...state.systems.values()]) } : {}),
       ...(actor.kind === 'human' ? { viewer: structuredClone(state.viewers.get(actor.id) ?? { designs: {}, briefs: {} }) } : {}),
       permissions: { write: actor.permissions.includes('write'), feedback: canLeaveFeedback(actor), visual: !actor.gitPublishOnly && actor.permissions.includes('write'), review: actor.kind === 'human' && actor.permissions.includes('approve'),
+        frameworkPublish: actor.permissions.includes('write'),
         sign: actor.kind === 'human' && actor.permissions.includes('write'),
         ...((actor.gitPublishOnly || actor.kind === 'human' && actor.permissions.includes('approve')) ? { programRecheck: true } : {}),
         ...(installed ? { installedAcceptance: true } : {}),
@@ -571,7 +568,8 @@ export class DesignWorkspaceService {
     const state = await this.load(projectId);
     const canWrite = actor.permissions.includes('write');
     return {
-      protocolVersion: 1, projectId, permissions: { write: canWrite, feedback: canLeaveFeedback(actor) }, keyFormat: 'module/draft', intents: ['create', 'revise'],
+      protocolVersion: 1, projectId, permissions: { write: canWrite, feedback: canLeaveFeedback(actor), frameworkPublish: canWrite },
+      keyFormat: 'module/draft', intents: ['create', 'revise'],
       requirements: visibleRequirements(state),
       ...(state.systems.size ? { systems: structuredClone([...state.systems.values()]) } : {}),
       designs: [...state.designs.values()].map(entry => {
@@ -819,9 +817,13 @@ export class DesignWorkspaceService {
         const frame = framework ? state.frameworks.get(framework) : undefined;
         const revisions = frame?.versions;
         const inheritedVersion = adoptedFrameworkVersion(frame);
+        const latestFramework = revisions?.at(-1);
         const frameworkVersion = loaded.frameworkVersion ?? (previous?.framework === framework ? previous?.frameworkVersion : undefined)
-          ?? (loaded.framework ? revisions?.at(-1)?.version : inheritedVersion);
+          ?? (loaded.framework && latestFramework?.adoption !== null ? latestFramework?.version : inheritedVersion);
         const frameworkRevision = revisions?.find(revision => revision.version === frameworkVersion);
+        if (!frameworkRevision && latestFramework?.adoption === null && frameworkVersion === undefined) {
+          invalidDesign('这个框架尚无已采用版本。试用时请在稿件清单指定 frameworkVersion');
+        }
         if (framework && !frameworkRevision) invalidDesign('稿件引用的框架版本不在当前项目');
         if (Object.keys(resolves).some(commentId => !existing?.comments.some(comment => comment.id === commentId && !comment.closed))) {
           invalidDesign('只能声明处理此稿件仍开放的评论');
@@ -1086,6 +1088,7 @@ export class DesignWorkspaceService {
     }
     return this.mutate(projectId, actor, requestId, input, async context => {
       if (type === 'framework.import' || type === 'framework.extract') return this.framework(type, input, context);
+      if (type === 'framework.adopt') return this.adoptFramework(input, context);
       const id = designId(input.designId, '稿件编号');
       const entry = context.state.designs.get(id) ?? missing('该稿件不存在');
       if (type.startsWith('comment.')) return this.comment(type, input, context, entry);
@@ -1856,8 +1859,32 @@ export class DesignWorkspaceService {
     }
   }
 
-  private async framework(type: string, input: Record<string, unknown>, { projectId, actor, state, now }: Context): Promise<Update> {
+  async publishFramework(projectId: string, actor: DesignActor, value: unknown) {
+    const input = designRecord(value, '发布框架');
+    if (input.type !== 'framework.publish') return invalidDesign('请提交框架发布请求');
+    const requestId = designId(input.requestId, '请求编号');
+    return this.mutate(projectId, actor, requestId, input, context => this.framework('framework.publish', input, context));
+  }
+
+  private adoptFramework(input: Record<string, unknown>, { actor, state, now }: Context): Update {
     review(actor);
+    designRecord(input, '采用框架', ['type', 'requestId', 'frameworkId', 'version']);
+    const id = designId(input.frameworkId, '框架编号');
+    const version = number(input.version, '框架版本');
+    const framework = state.frameworks.get(id) ?? missing('当前项目没有该框架');
+    const latest = framework.versions.at(-1)!;
+    if (latest.version !== version) conflict('框架已经变化，请重新核对最新版本后采用');
+    if (latest.adoption !== null) conflict('请选择待采用的框架版本');
+    const revision = { ...latest, adoption: { at: now, by: actor.id },
+      ...(latest.charter ? { charter: { ...latest.charter, status: 'adopted' as const } } : {}) };
+    return { result: { type: 'framework.adopt', frameworkId: id, version },
+      changes: { framework: { ...framework, versions: [...framework.versions.slice(0, -1), revision] } } };
+  }
+
+  private async framework(type: 'framework.publish' | 'framework.import' | 'framework.extract',
+    input: Record<string, unknown>, { projectId, actor, state, now }: Context): Promise<Update> {
+    if (type !== 'framework.publish') review(actor);
+    const fromMaterial = type !== 'framework.extract';
     const id = designId(input.frameworkId, '框架编号');
     const previous = state.frameworks.get(id);
     const current = previous?.versions.at(-1);
@@ -1870,8 +1897,8 @@ export class DesignWorkspaceService {
     let derivedTitle: string | undefined;
     let charter = current?.charter;
     const resolutions: FrameworkResolutions = {};
-    if (type === 'framework.import') {
-      designRecord(input, '框架导入', ['type', 'requestId', 'frameworkId', 'expectedVersion', 'sourceCommit', 'sourcePath', 'title', 'material', 'charter', 'note']);
+    if (fromMaterial) {
+      designRecord(input, '框架材料提交', ['type', 'requestId', 'frameworkId', 'expectedVersion', 'sourceCommit', 'sourcePath', 'title', 'material', 'charter', 'note']);
       material = parseMaterial(input.material);
       sourceCommit = designCommit(input.sourceCommit);
       if (input.charter !== undefined) charter = parseFrameworkCharter(input.charter);
@@ -1895,7 +1922,9 @@ export class DesignWorkspaceService {
         if (choice === 'adopt' && !keys.includes(key)) return invalidDesign('选择采用的冲突项必须包含在本次材料里');
         resolutions[key] = choice;
       }
-      if (frameworkInUse(id, current, state.designs.values()) && conflicts.some(key => !resolutions[key])) {
+      if ((frameworkInUse(id, current, state.designs.values())
+        || (current?.adoption === null && adoptedFrameworkVersion(previous) !== undefined))
+        && conflicts.some(key => !resolutions[key])) {
         conflict('框架正在使用，请逐项确认保留现有或采用候选');
       }
       material = { ...current?.material };
@@ -1922,7 +1951,7 @@ export class DesignWorkspaceService {
       const normalize = (spec: DesignMaterial) => stableJson(Object.fromEntries(Object.entries(spec).map(([key, value]) =>
         [key, typeof value === 'string' ? value.replace(/\r\n/g, '\n').trim() : value])));
       if (normalize(reference.material) !== normalize(material)) conflict('框架材料与项目 Git 中的提交和目录不一致');
-      if (type === 'framework.import') {
+      if (fromMaterial) {
         if (input.charter !== undefined && stableJson(reference.charter) !== stableJson(charter)) {
           conflict('框架初衷与范围和项目 Git 中的文件不一致');
         }
@@ -1934,8 +1963,14 @@ export class DesignWorkspaceService {
       const example = state.designs.get(exampleRef.designId);
       if (!example?.versions.some(row => row.version === exampleRef.version)) missing('当前项目没有该示意稿版本');
     }
+    if (type === 'framework.publish') {
+      // Preserve the pending state when an older service reads this revision after rollback.
+      charter = { ...(charter ?? { intent: '设计初衷待补充', problems: [], nonGoals: [],
+        scope: { system: projectId, modules: [] }, owner: '待指定' }), status: 'draft' };
+    }
     const revision = { version, title, sourceCommit, sourcePath, sourceVerification: archive ? 'git' as const : 'declared' as const,
       at: now, by: actor.id, from, material, note, ...(charter ? { charter } : {}),
+      ...(type === 'framework.publish' || (type === 'framework.extract' && current?.adoption === null) ? { adoption: null } : {}),
       ...(Object.keys(resolutions).length ? { resolutions } : {}) };
     return { result: { type, frameworkId: id, version },
       changes: { framework: { id, projectId, versions: [...(previous?.versions ?? []), revision] } } };

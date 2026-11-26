@@ -56,7 +56,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Optional
 
-VERSION = "0.26.21"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.26.23"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -901,12 +901,12 @@ def cmd_setup_check(args: argparse.Namespace) -> None:
         fail("project", "project_mismatch", "当前仓库绑定了其他项目，先确认项目范围；尚未发送任何请求。")
     checks.append({"stage": "credentials", "passed": True})
 
-    skill_keys = ("cds", "cds-project-scan", "cds-deploy-pipeline", "cds-release", "preview-url")
+    skill_keys = ("cds", "cds-design", "cds-project-scan", "cds-deploy-pipeline", "cds-release", "preview-url")
     selected = [key.strip() for key in args.skills.split(",")]
     if not selected or any(key not in skill_keys for key in selected):
         fail("skills", "unknown_skill", "从接入页面重新复制当前任务的技能选择。")
     skills_root = Path(__file__).resolve().parents[2]
-    install_bundle = (f"从 {expected_host}/api/skills/cds-pack/download 下载并核对完整五技能包，"
+    install_bundle = (f"从 {expected_host}/api/skills/cds-pack/download 下载并核对完整技能包，"
                       "用本机工具解压到当前工作区的技能根，之后复用现有授权重新自检。")
     missing = [key for key in skill_keys if not (skills_root / key / "SKILL.md").is_file()]
     if missing:
@@ -920,7 +920,7 @@ def cmd_setup_check(args: argparse.Namespace) -> None:
             or not isinstance(bundle.get("skills"), list)
             or any(not isinstance(key, str) for key in bundle["skills"])
             or set(bundle["skills"]) != set(skill_keys)):
-        fail("skills", "invalid_bundle_manifest", "技能包 manifest 未覆盖完整五技能。" + install_bundle)
+        fail("skills", "invalid_bundle_manifest", "技能包 manifest 未覆盖完整技能包。" + install_bundle)
     if bundle.get("version") != VERSION:
         fail("skills", "stale_bundle", "技能包与核心 CLI 版本不一致。" + install_bundle)
     file_hashes = bundle.get("files")
@@ -4498,7 +4498,7 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
         die("请使用当前绑定的 CDS 项目或有权限的成员账号")
     base = "/api/projects/" + urllib.parse.quote(project, safe="") + "/design"
     identity_headers = _human_session_headers(args.as_user) if args.as_user else {}
-    human_action = args.design_action in ("freeze", "sign", "import", "start-upgrade", "cancel-upgrade", "enable-method", "disable-method") or (
+    human_action = args.design_action in ("freeze", "sign", "start-upgrade", "cancel-upgrade", "enable-method", "disable-method") or (
         args.design_action == "extract" and args.apply)
     if human_action and not identity_headers:
         die("请在 CDS 确认，或使用 --as-user 由有权成员在终端登录")
@@ -4625,6 +4625,30 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
             die("CDS 返回的对照图回执与当前反馈不符")
         ok(receipt)
 
+    if args.cmd == "framework" and action in ("publish", "import"):
+        document = read_input(args.file)
+        if not isinstance(document, dict) or not set(document) <= {"tokens", "rules", "components", "skeleton", "charter"}:
+            die("框架材料需包含令牌、规则、组件或骨架")
+        member_import = action == "import" and bool(identity_headers)
+        kind = "framework.import" if member_import else "framework.publish"
+        command = {"type": kind, "frameworkId": args.id, "title": args.title, "expectedVersion": args.expected_version,
+                   "sourceCommit": args.source_commit, **({"sourcePath": args.source_path} if args.source_path else {})}
+        if "charter" in document:
+            command["charter"] = document.pop("charter")
+        command["material"] = document
+        if args.note:
+            command["note"] = args.note
+        if member_import:
+            ok(send(command))
+        material = json.dumps([project, command], sort_keys=True, ensure_ascii=False).encode()
+        request_id = args.request_id or hashlib.sha256(material).hexdigest()
+        receipt = request("POST", "/frameworks/publish", {**command, "requestId": request_id}, retry_id=request_id)
+        result = receipt.get("result") or {}
+        if (result.get("type") != kind or result.get("frameworkId") != args.id or type(result.get("version")) is not int
+                or result["version"] != args.expected_version + 1 or type(receipt.get("reused")) is not bool):
+            die("CDS 框架发布回执与所选框架或版本不符", code=2)
+        ok(receipt)
+
     if action == "publish":
         if args.zip:
             try:
@@ -4726,16 +4750,6 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
     if args.cmd == "framework":
         if action == "list":
             ok({"projectId": project, "items": frameworks})
-        if action == "import":
-            document = read_input(args.file)
-            if not isinstance(document, dict) or not set(document) <= {"tokens", "rules", "components", "skeleton", "charter"}:
-                die("框架材料需包含令牌、规则、组件或骨架")
-            command = {"type": "framework.import", "frameworkId": args.id, "title": args.title,
-                       "expectedVersion": args.expected_version, "sourceCommit": args.source_commit,
-                       **({"sourcePath": args.source_path} if args.source_path else {})}
-            if "charter" in document:
-                command["charter"] = document.pop("charter")
-            ok(send({**command, "material": document}))
         entry = next((item for item in frameworks if item["id"] == args.id), None)
         if not entry:
             die("当前项目没有该框架")
@@ -4749,6 +4763,12 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
             die("当前项目没有该框架版本")
         revision = framework["versions"][-1] if args.framework_version is None else next(
             (item for item in framework["versions"] if item["version"] == args.framework_version), None)
+        if args.framework_version is None and revision and "adoption" in revision and revision["adoption"] is None:
+            revision = next((item for item in reversed(framework["versions"])
+                             if item.get("adoption", True) is not None
+                             and (not item.get("charter") or item["charter"].get("status") == "adopted")), None)
+            if revision is None:
+                die("这个框架尚无已采用版本。试用时请指定 --framework-version")
         if revision is None:
             die("当前项目没有指定的框架版本")
         material = revision["material"]
@@ -5014,13 +5034,13 @@ def _register_design_parser(sub: Any) -> None:
     preview.add_argument("--port", type=int, default=0, help="环回端口，默认自动选择")
     framework = sub.add_parser("framework", help="项目设计框架").add_subparsers(dest="design_action", required=True)
     for routes, actions in ((design, ("intake", "brief-reply", "brief-claim", "brief-release", "feedback", "feedback-create", "feedback-reply", "feedback-resolve", "attach-evidence", "publish", "list", "reviewers", "request-review", "comments", "diff", "accept", "record", "visual", "capture", "recheck", "flow", "smoke", "coverage", "regress", "known-create", "result", "freeze", "start-upgrade", "cancel-upgrade", "sign", "scaffold", "extract", "enable-method", "disable-method")),
-                            (framework, ("show", "list", "import"))):
+                            (framework, ("show", "list", "publish", "import"))):
         for action in actions:
-            parser = routes.add_parser(action)
+            parser = routes.add_parser(action, help="发布项目框架版本" if action == "publish" and routes is framework else None)
             parser.set_defaults(func=cmd_design_workspace)
             parser.add_argument("--project", help="默认使用当前仓库绑定的项目")
             parser.add_argument("--as-user", help="由 CDS 成员在交互终端登录后执行")
-            if action not in ("intake", "list", "publish", "reviewers", "scaffold"):
+            if action not in ("intake", "list", "publish", "reviewers", "scaffold") or (routes is framework and action == "publish"):
                 parser.add_argument("id")
             if action in ("publish", "request-review", "accept", "record", "visual", "capture", "recheck", "flow", "smoke", "coverage", "regress", "known-create", "freeze", "start-upgrade", "cancel-upgrade", "sign", "extract", "import"):
                 parser.add_argument("--request-id")
@@ -5062,7 +5082,7 @@ def _register_design_parser(sub: Any) -> None:
                 parser.add_argument("--version", type=int, help="证据所对应的稿件版本")
                 parser.add_argument("--screen", help="证据所对应的画面编号")
                 parser.add_argument("--slot", choices=("desktop-light", "desktop-dark", "phone-light", "phone-dark"))
-            if action == "publish":
+            if action == "publish" and routes is design:
                 parser.add_argument("id", nargs="?")
                 source = parser.add_mutually_exclusive_group(required=True)
                 source.add_argument("--dir")
@@ -5129,12 +5149,13 @@ def _register_design_parser(sub: Any) -> None:
                 parser.add_argument("--source-commit")
                 parser.add_argument("--source-path")
                 parser.add_argument("--title")
-            if action == "import":
+            if routes is framework and action in ("publish", "import"):
                 parser.add_argument("--file", required=True)
                 parser.add_argument("--title", required=True)
                 parser.add_argument("--source-commit", required=True)
                 parser.add_argument("--source-path")
                 parser.add_argument("--expected-version", type=int, default=0)
+                parser.add_argument("--note")
 
 
 def cmd_dts(args: argparse.Namespace) -> None:
@@ -11351,8 +11372,8 @@ def cmd_update(args: argparse.Namespace) -> None:
     步骤：
       1. 定位当前技能根（cli/cdscli.py 的父父目录）
       2. 下载 tar.gz 到临时目录
-      3. 五个 CDS 技能目录统一备份到当前项目 .cds/skill-backups
-      4. 校验包内五个技能齐全后同步到当前 Agent Skills 根
+      3. 随包发布的 CDS 技能目录统一备份到当前项目 .cds/skill-backups
+      4. 校验包内六个技能齐全后同步到当前 Agent Skills 根
       5. 用户自定义的非 tracked 文件（如用户本地脚本）保留不动
 
     不动：项目凭据 / shell profile / 系统环境变量
@@ -11369,7 +11390,7 @@ def cmd_update(args: argparse.Namespace) -> None:
         die(f"cdscli.py 不在期望的 <skills>/cds/cli/ 位置（实际: {cli_path}）。"
             f"请用 Dashboard 的 (zip) 按钮重新下载完整包。", code=1)
     skills_root = os.path.dirname(skill_root)
-    bundle_skills = ["cds", "cds-project-scan", "cds-deploy-pipeline", "cds-release", "preview-url"]
+    bundle_skills = ["cds", "cds-design", "cds-project-scan", "cds-deploy-pipeline", "cds-release", "preview-url"]
 
     # 1. 下载
     url = _cds_base() + "/api/export-skill"
@@ -11412,7 +11433,7 @@ def cmd_update(args: argparse.Namespace) -> None:
                 safe_members.append(m)
             tar.extractall(tmp_dir, members=safe_members)
 
-        # 4. 找到解压内的通用 skills 根并校验五个目录齐全。
+        # 4. 找到解压内的通用 skills 根并校验技能目录齐全。
         src_skills_dir = None
         for root, dirs, _files in os.walk(tmp_dir):
             if os.path.basename(root) != "skills":
@@ -11424,7 +11445,7 @@ def cmd_update(args: argparse.Namespace) -> None:
             die("tar.gz 内找不到完整的五技能包。升级失败（已保留备份）。",
                 code=3, extra={"backupAt": bak_root})
 
-        # 5. 用内容同步：五个技能统一更新，保留用户自定义的额外文件。
+        # 5. 用内容同步：六个技能统一更新，保留用户自定义的额外文件。
         replaced_files: list[str] = []
         for skill_name in bundle_skills:
             src_skill_dir = os.path.join(src_skills_dir, skill_name)
@@ -11445,7 +11466,7 @@ def cmd_update(args: argparse.Namespace) -> None:
                 if os.path.isdir(backup_dir):
                     shutil.copytree(backup_dir, target_dir)
         except Exception as rollback_err:
-            die(f"升级失败且回滚也失败！请从 {bak_root} 恢复五个技能目录 "
+            die(f"升级失败且回滚也失败！请从 {bak_root} 恢复六个技能目录 "
                 f"（原错: {e}; 回滚错: {rollback_err}）", code=3)
         die(f"升级失败，已自动回滚: {e}", code=3)
     finally:

@@ -99,7 +99,10 @@ async function intakeFixture(t) {
   const former = { designId: 'DSN-legacy', latestVersion: 2, sourceCommit: 'b'.repeat(40), sourcePaths: ['design/profile'] };
   let intakeProject = projectId;
   let protocolVersion = 1;
-  const intake = write => ({ protocolVersion, projectId: intakeProject, permissions: { write },
+  let frameworkPublish;
+  const permissions = write => ({ write, ...(frameworkPublish ? { frameworkPublish: write } : {}) });
+  const frameworkWrites = [];
+  const intake = write => ({ protocolVersion, projectId: intakeProject, permissions: permissions(write),
     designs: [{ ...stored, canRevise: write }, { ...former, canRevise: false }] });
   const server = createServer(async (request, response) => {
     const url = new URL(request.url, 'http://127.0.0.1');
@@ -111,7 +114,7 @@ async function intakeFixture(t) {
     if (request.method === 'GET' && url.pathname === `${route}/intake`) {
       value = intake(write);
     } else if (request.method === 'GET' && url.pathname === route) {
-      value = { projectId, permissions: { write }, frameworks: [], designs: [stored, former].map(row => ({ projectId, id: row.designId,
+      value = { projectId, permissions: permissions(write), frameworks: [], designs: [stored, former].map(row => ({ projectId, id: row.designId,
         versions: [{ version: row.latestVersion, title: row.designId, sourceCommit: row.sourceCommit }] })) };
     } else if (request.method === 'POST' && url.pathname === `${route}/packages` && write) {
       const chunks = [];
@@ -129,6 +132,14 @@ async function intakeFixture(t) {
         status = 400;
         value = { error: 'G-07', message: '本地夹具的私有上游明细' };
       }
+    } else if (request.method === 'POST' && url.pathname === `${route}/frameworks/publish` && write && frameworkPublish) {
+      const chunks = [];
+      for await (const chunk of request) chunks.push(chunk);
+      const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      frameworkWrites.push(body);
+      value = { projectId, reused: false, result: { type: body.type,
+        frameworkId: body.requestId === 'mismatched-receipt' ? 'FW-other' : body.frameworkId, version: body.expectedVersion + 1 } };
+      status = 201;
     } else {
       status = write || request.method === 'GET' ? 404 : 403;
       value = { error: 'fixture_route_error' };
@@ -147,7 +158,8 @@ async function intakeFixture(t) {
     await rm(root, { recursive: true, force: true });
   });
   const base = { zipPath: 'draft.zip', sourceCommit: 'c'.repeat(40), sourcePath: 'design/accounts', requestId: 'intake-fixture-release' };
-  return { projectId, route, calls, writes, stored, bytes, writeKey, readKey, intake, reader, publisher, base,
+  return { projectId, route, calls, writes, stored, bytes, writeKey, readKey, intake, reader, publisher, base, frameworkWrites,
+    enableFrameworkPublish: () => { frameworkPublish = true; },
     setIntakeProject: value => { intakeProject = value; }, setProtocolVersion: value => { protocolVersion = value; } };
 }
 
@@ -171,6 +183,24 @@ test('intake reads the authoritative project endpoint and scopes the result to t
   setProtocolVersion(2);
   await assert.rejects(reader.call(tool, { view: 'intake' }));
   assert.equal(writes.length, 0);
+});
+
+test('framework publication is discoverable with project write access and validates the returned version', async t => {
+  const { projectId, reader, publisher, frameworkWrites, enableFrameworkPublish } = await intakeFixture(t);
+  const tool = 'cds_design_framework_publish';
+  assert.equal((await publisher.listTools()).some(row => row.name === tool), false);
+  enableFrameworkPublish();
+  assert.equal((await publisher.listTools()).some(row => row.name === tool), true);
+  assert.equal((await reader.listTools()).some(row => row.name === tool), false);
+  const args = { frameworkId: 'FW-shared', requestId: 'fixture-publish-framework', title: 'Shared',
+    sourceCommit: 'a'.repeat(40), expectedVersion: 0, material: { rules: '# Shared' } };
+  await assert.rejects(reader.call(tool, args), /框架发布权限/);
+  await assert.rejects(publisher.call(tool, { ...args, expectedVersion: -1 }), /expectedVersion/);
+  assert.equal(frameworkWrites.length, 0);
+  assert.deepEqual(await publisher.call(tool, args), { projectId, reused: false,
+    result: { type: 'framework.publish', frameworkId: 'FW-shared', version: 1 } });
+  assert.deepEqual(frameworkWrites, [{ type: 'framework.publish', ...args }]);
+  await assert.rejects(publisher.call(tool, { ...args, requestId: 'mismatched-receipt' }), /回执/);
 });
 
 test('publish forwards create and revision identity through the Git-bound package route', async t => {

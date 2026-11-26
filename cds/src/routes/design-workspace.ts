@@ -8,7 +8,7 @@ import type { DesignReviewer } from '../shared/design-workspace.js';
 
 const route = '/projects/:projectId/design';
 const readVersion = (value: unknown) => typeof value === 'string' && /^[1-9][0-9]*$/.test(value) ? Number(value) : NaN;
-const normalize = /^(?:\/_cds)?\/api\/projects\/[^/]+\/design(?:\/(packages|commands|acceptance\/recheck|feedback(?:\/attachments)?|reviewers|intake|diff|installed|viewed|artifacts\/[^/]+|shares\/[^/]+\/handoff))?\/?$/i;
+const normalize = /^(?:\/_cds)?\/api\/projects\/[^/]+\/design(?:\/(packages|commands|frameworks\/publish|acceptance\/recheck|feedback(?:\/attachments)?|reviewers|intake|diff|installed|viewed|artifacts\/[^/]+|shares\/[^/]+\/handoff))?\/?$/i;
 export function normalizedDesignPath(value: unknown): string | undefined {
   const path = String(value ?? '').split('?')[0];
   if (/^(?:\/_cds)?\/api\/auth\/design\/notices\/?$/i.test(path)) return '/api/auth/design/notices';
@@ -95,6 +95,11 @@ export function createDesignWorkspaceRouter(deps: {
   router.post(`${route}/commands`, authorized, express.json({ limit: '8mb' }),
     handle(async (req, res, projectId, actor) => {
       const info = await deps.service.command(projectId, actor, req.body);
+      res.status(info.reused ? 200 : 201).json(info);
+    }));
+  router.post(`${route}/frameworks/publish`, authorized, express.json({ limit: '8mb', inflate: false }),
+    handle(async (req, res, projectId, actor) => {
+      const info = await deps.service.publishFramework(projectId, actor, req.body);
       res.status(info.reused ? 200 : 201).json(info);
     }));
   router.post(`${route}/acceptance/recheck`, authorized, express.json({ limit: '2kb' }),

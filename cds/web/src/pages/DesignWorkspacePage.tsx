@@ -8,7 +8,7 @@ import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import { apiRequest, apiUrl } from '@/lib/api';
 import { requestAgentAccess } from '@/lib/agent-onboarding';
 import type { DesignComment, DesignEntry, DesignReviewer, DesignScreen, DesignTheme, DesignVersion, DesignViewerState, DesignWorkspace } from '../../../src/shared/design-workspace';
-import { currentDesignRun, designProgramEvidenceRequired, frameworkInUse, frameworkMaterialCandidates, latestDesignFeedbackAt, type DesignMaterialKey, type FrameworkResolutions } from '../../../src/shared/design-workspace';
+import { adoptedFrameworkVersion, currentDesignRun, designProgramEvidenceRequired, frameworkInUse, frameworkMaterialCandidates, latestDesignFeedbackAt, type DesignMaterialKey, type FrameworkResolutions } from '../../../src/shared/design-workspace';
 import { type PlanningProject, usePlanningRead } from './engineering-planning/planning-ui';
 import { DesignCanvas, DesignReviewDialog } from './design-workspace/DesignCanvas';
 import { DesignAcceptancePanel } from './design-workspace/DesignAcceptancePanel';
@@ -369,7 +369,7 @@ export function DesignWorkspacePage() {
             ? <button className="ep-link" type="button" onClick={() => openFull('need')}>查看来源需求</button> : '无交接记录'}</dd>
           <dt>框架</dt><dd>{version.framework ? <Link className="ep-link" to={frameworkVersionPath(project, version)}>
             <FrameworkBadge id={version.framework} version={version.frameworkVersion}
-              latest={workspace?.frameworks.find(row => row.id === version.framework)?.versions.at(-1)?.version} />
+              adopted={adoptedFrameworkVersion(workspace?.frameworks.find(row => row.id === version.framework))} />
           </Link> : '未绑定框架'}</dd>
           <dt>评审人</dt><dd>{entry.reviewers?.map(reviewer => reviewer.label).join('、') || '待指定'}</dd>
           <dt>说明</dt><dd>{version.note || '本版未附发布说明'}
@@ -431,7 +431,8 @@ export function DesignWorkspacePage() {
         : <p className="dw-placeholder">当前没有可查看的设计项目。</p>
       : requirementKey ? <DesignRequirementView key={`${project}/${requirementKey}`} project={project} requirement={requirement} workspace={workspace} command={command} busy={busy} startOpen={panel === 'brief-start'} />
       : framework ? <DesignFrameworkView key={framework.id} framework={framework} revision={frameworkVersion} tab={frameworkTab} designs={workspace.designs}
-        onTab={value => onChange({ tab: value })} />
+        onTab={value => onChange({ tab: value })} busy={busy}
+        onAdopt={workspace.permissions.review ? value => command('framework.adopt', { frameworkId: framework.id, version: value }) : undefined} />
       : entry && version ? <>
         {share && <DesignShareDialog key={`${entry.id}/${version.version}`} entry={entry} version={version} busy={busy} command={command} close={() => setShare(false)} />}
         {draftHeader}

@@ -23,6 +23,7 @@ import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backin
 import { branchEvents } from '../../src/services/branch-events.js';
 import { ExecutorRegistry } from '../../src/scheduler/executor-registry.js';
 import type { CdsConfig } from '../../src/types.js';
+import { versionedDesignFixture } from '../helpers/versioned-design-fixture.js';
 
 describe('human project grants through the production server', () => {
   let dir: string;
@@ -1567,6 +1568,128 @@ describe('human project grants through the production server', () => {
     ]));
     expect((await call('DELETE', keys + '/' + publisher.body.keyId, owner)).status).toBe(200);
     expect((await credentialCall('GET', design, key)).status).not.toBe(200);
+  });
+
+  it('publishes project framework revisions with an existing design publishing key', async () => {
+    const projectId = 'project-a';
+    const design = `/api/projects/${projectId}/design`;
+    const endpoint = `${design}/frameworks/publish`;
+    const issued = await call('POST', `/api/projects/${projectId}/agent-keys`, owner,
+      { label: 'Fixture framework publisher', designAccess: 'publish' });
+    expect(issued.status).toBe(201);
+    const key = issued.body.plaintext;
+    const frameworkId = 'FW-fixture-published';
+    const fields = { type: 'framework.publish', frameworkId, title: 'Fixture framework' };
+    const first = { ...fields, requestId: 'fixture-framework-publish-1', expectedVersion: 0,
+      sourceCommit: 'a'.repeat(40), material: { rules: '## R-01 First revision' },
+      charter: { status: 'adopted', intent: 'Keep the project interface consistent.', problems: [], nonGoals: [],
+        scope: { system: 'Fixture system', modules: [] }, owner: 'Fixture publisher' } };
+    const published = await credentialCall('POST', endpoint, key, first);
+    expect(published.status, published.body.message).toBe(201);
+    expect(published.body).toMatchObject({ projectId, reused: false,
+      result: { type: 'framework.publish', frameworkId, version: 1 } });
+
+    const replay = await credentialCall('POST', endpoint, key, first);
+    expect(replay.status).toBe(200);
+    expect(replay.body).toMatchObject({ projectId, reused: true, result: published.body.result });
+    expect((await credentialCall('POST', endpoint, key, { ...first, title: 'Different request payload' })).status).toBe(409);
+
+    const second = { ...fields, requestId: 'fixture-framework-publish-2', expectedVersion: 1,
+      sourceCommit: 'b'.repeat(40), material: { rules: '## R-01 Second revision' } };
+    const revised = await credentialCall('POST', endpoint, key, second);
+    expect(revised.status, revised.body.message).toBe(201);
+    expect(revised.body.result).toMatchObject({ frameworkId, version: 2 });
+    expect((await credentialCall('POST', endpoint, key, { ...second, requestId: 'fixture-framework-stale' })).status).toBe(409);
+
+    const intake = await credentialCall('GET', `${design}/intake`, key);
+    expect(intake.status).toBe(200);
+    expect(intake.body.frameworks).toMatchObject([{ id: frameworkId, title: fields.title, latestVersion: 2 }]);
+    expect(intake.body.frameworks[0]).not.toHaveProperty('adoptedVersion');
+    const workspace = await credentialCall('GET', design, key);
+    expect(workspace.status).toBe(200);
+    expect(workspace.body.frameworks).toEqual([expect.objectContaining({ id: frameworkId, projectId, versions: [
+      expect.objectContaining({ version: 1, material: first.material, sourceCommit: first.sourceCommit, adoption: null,
+        charter: { ...first.charter, status: 'draft' } }),
+      expect.objectContaining({ version: 2, material: second.material, sourceCommit: second.sourceCommit, adoption: null }),
+    ] })]);
+  });
+
+  it('keeps the adopted framework version pinned and restricts framework publishing to its design scope', async () => {
+    const design = '/api/projects/project-a/design';
+    const keys = '/api/projects/project-a/agent-keys';
+    const endpoint = `${design}/frameworks/publish`;
+    const frameworkId = 'FW-fixture-adopted';
+    const current = { type: 'framework.import', requestId: 'fixture-framework-import-1', frameworkId, expectedVersion: 0,
+      title: 'Adopted fixture framework', sourceCommit: 'a'.repeat(40), material: { rules: '## R-01 Adopted rule' } };
+    const imported = await call('POST', `${design}/commands`, owner, current);
+    expect(imported.status, imported.body.message).toBe(201);
+    const scope = { systemId: 'fixture-system', moduleId: 'fixture-module' };
+    const configured = await call('POST', `${design}/commands`, owner, { type: 'scope.register',
+      requestId: 'fixture-framework-module', ...scope, systemName: 'Fixture system', moduleName: 'Fixture module', framework: frameworkId });
+    expect(configured.status, configured.body.message).toBe(201);
+
+    const [publisher, reader, feedback] = await Promise.all((['publish', 'read', 'feedback'] as const)
+      .map(designAccess => call('POST', keys, owner, { label: `Fixture framework ${designAccess}`, designAccess })));
+    expect([publisher.status, reader.status, feedback.status]).toEqual([201, 201, 201]);
+    const key = publisher.body.plaintext;
+    const candidate = { ...current, type: 'framework.publish', requestId: 'fixture-framework-candidate', expectedVersion: 1,
+      sourceCommit: 'b'.repeat(40), material: { rules: '## R-01 Pending revision' } };
+    expect((await credentialCall('POST', endpoint, reader.body.plaintext, candidate)).status).toBe(403);
+    expect((await credentialCall('POST', endpoint, feedback.body.plaintext, candidate)).status).toBe(403);
+    expect((await credentialCall('POST', '/api/projects/project-b/design/frameworks/publish', key, candidate)).status).toBe(403);
+    expect((await credentialCall('POST', endpoint, key, current)).status).toBe(400);
+    expect((await credentialCall('POST', `${design}/commands`, key, current)).status).toBe(403);
+    expect((await credentialCall('POST', `${design}/commands`, key,
+      { type: 'design.freeze', requestId: 'fixture-framework-unauthorized-freeze', designId: 'DSN-fixture', version: 1 })).status).toBe(403);
+
+    const proposed = await credentialCall('POST', endpoint, key, candidate);
+    expect(proposed.status, proposed.body.message).toBe(201);
+    const published = await credentialCall('GET', design, key);
+    expect(published.status).toBe(200);
+    expect(published.body.frameworks[0].versions[1]).toMatchObject({ version: 2, adoption: null, charter: { status: 'draft' } });
+    const intake = await credentialCall('GET', `${design}/intake`, key);
+    expect(intake.status).toBe(200);
+    expect(intake.body.frameworks).toMatchObject([{ id: frameworkId, latestVersion: 2, adoptedVersion: 1 }]);
+    const other = await call('GET', '/api/projects/project-b/design/intake');
+    expect(other.status).toBe(200);
+    expect(other.body.frameworks).toEqual([]);
+
+    async function publishDraft(id: string, frameworkVersion?: number) {
+      const archive = versionedDesignFixture({ project: 'project-a', title: 'Fixture design', scope,
+        ...(frameworkVersion ? { framework: frameworkId, frameworkVersion } : {}),
+        acceptance: [], screens: [{ id: 'home', name: 'Home', route: '#/home', viewport: 'desktop',
+          themes: ['light'], entryReadySelector: 'h1', impl: null }] }, 'Check the framework picked by default.', [
+        { name: 'dist/index.html', data: '<!doctype html><html lang="en"><body><h1>Fixture</h1></body></html>' },
+      ]);
+      const query = new URLSearchParams({ requestId: `fixture-framework-${id}`, sourceCommit: 'c'.repeat(40),
+        sourceMode: 'private', sourcePath: `design/${id}`, intent: 'create', designKey: `fixture/${id}` });
+      const response = await fetch(`${base}${design}/packages?${query}`, { method: 'POST',
+        headers: { 'x-ai-access-key': key, 'Content-Type': 'application/zip' }, body: new Uint8Array(archive) });
+      const receipt = await response.json();
+      expect(response.status, receipt.message).toBe(201);
+      const workspace = await credentialCall('GET', `${design}?designId=${receipt.result.designId}&version=1`, key);
+      expect(workspace.status).toBe(200);
+      return { designId: receipt.result.designId as string, version: workspace.body.designs[0].versions[0].frameworkVersion };
+    }
+
+    const originalDraft = await publishDraft('adopted-default');
+    expect(originalDraft.version).toBe(1);
+    expect((await publishDraft('candidate-preview', 2)).version).toBe(2);
+
+    const adopt = { type: 'framework.adopt', requestId: 'fixture-framework-adopt-2', frameworkId, version: 2 };
+    expect((await credentialCall('POST', `${design}/commands`, key, adopt)).status).toBe(403);
+    const writeKey = await call('POST', keys, owner, { label: 'Fixture ordinary project writer' });
+    expect(writeKey.status).toBe(201);
+    expect((await credentialCall('POST', `${design}/commands`, writeKey.body.plaintext, adopt)).status).toBe(403);
+    const adopted = await call('POST', `${design}/commands`, owner, adopt);
+    expect(adopted.status, adopted.body.message).toBe(201);
+    expect(adopted.body.result).toMatchObject({ type: 'framework.adopt', frameworkId, version: 2 });
+    expect((await credentialCall('GET', `${design}/intake`, key)).body.frameworks)
+      .toMatchObject([{ id: frameworkId, latestVersion: 2, adoptedVersion: 2 }]);
+    const preserved = await credentialCall('GET', `${design}?designId=${originalDraft.designId}&version=1`, key);
+    expect(preserved.status).toBe(200);
+    expect(preserved.body.designs[0].versions[0].frameworkVersion).toBe(1);
+    expect((await publishDraft('new-default')).version).toBe(2);
   });
 
   it('limits read-only engineering planning keys to reading the assigned project', async () => {

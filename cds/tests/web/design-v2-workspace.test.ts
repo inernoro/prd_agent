@@ -509,7 +509,7 @@ function visibleText(html: string): string {
     contents.match(/<summary\b[^>]*>([\s\S]*?)<\/summary>/)?.[1] ?? ' '));
 }
 
-async function withLayout(markup: string, cssFiles: string[], check: (page: Page) => Promise<void>, options?: BrowserContextOptions) {
+async function layoutStyles(markup: string, cssFiles: string[]) {
   const styles = await Promise.all(['web/src/index.css', ...cssFiles].map(file => readFile(file, 'utf8')));
   const postcss = fromWeb('postcss');
   const tailwind = fromWeb('tailwindcss');
@@ -518,6 +518,11 @@ async function withLayout(markup: string, cssFiles: string[], check: (page: Page
     ...loadConfig(path.resolve('web/tailwind.config.js')),
     content: [{ raw: markup, extension: 'html' }],
   }), fromWeb('autoprefixer')]).process(styles.join('\n'), { from: path.resolve('web/src/index.css') });
+  return css;
+}
+
+async function withLayout(markup: string, cssFiles: string[], check: (page: Page) => Promise<void>, options?: BrowserContextOptions) {
+  const css = await layoutStyles(markup, cssFiles);
   const page = await fixturePage(options);
   try {
     await page.route('**/*', routed => routed.abort());
@@ -1132,6 +1137,76 @@ describe('工程规划与设计 V2 前端回归', () => {
     expect(html).toContain('实施基线');
     expect(html).toContain(unboundTitle);
   });
+
+  it('已发布框架待采用时可读，保留模块默认和稿件绑定，成员采用后才提示升级', async () => {
+    const input = structuredClone(workspace);
+    const candidate = input.frameworks[0].versions[1];
+    candidate.adoption = null;
+    candidate.charter = { status: 'draft', intent: '统一评审与分支页的公共控件。', problems: [], nonGoals: [],
+      scope: { system: '示例控制台', modules: ['示例模块'] }, owner: author.label };
+    input.permissions.review = false;
+    const scope = { systemId: 'fixture-console', moduleId: 'settings' };
+    const requirement = { ...awaitingBrief, scope };
+    input.requirements = [requirement];
+    input.systems = [{ id: scope.systemId, name: '示例控制台',
+      modules: [{ id: scope.moduleId, name: '示例模块', framework: frameworkId }] }];
+
+    await withDesignBrowser(() => input, async (page, commands) => {
+      const candidateUrl = browserDesignUrl({ framework: frameworkId, version: '2', tab: 'adoption' });
+      const startUrl = browserDesignUrl({ brief: requirement.designKey, panel: 'brief-start' });
+      const boundCard = page.locator('.dw-design-card').filter({ hasText: boundTitle });
+      const boundBadge = boundCard.locator('.dw-fw-badge');
+      const scaffold = page.locator('code').filter({ hasText: 'cdscli design scaffold' });
+      const adopt = page.getByRole('button', { name: '确认采用 v2', exact: true });
+
+      await page.goto(browserDesignUrl());
+      await boundBadge.waitFor();
+      expect(await boundBadge.innerText()).toContain('v1');
+      expect(await boundBadge.innerText()).not.toContain('可升级');
+      await page.goto(startUrl);
+      await scaffold.waitFor();
+      expect(await scaffold.innerText()).toMatch(/--framework-version 1\b/);
+
+      await page.goto(candidateUrl);
+      await page.getByText('待采用', { exact: true }).waitFor();
+      await page.getByText(/项目正在采用 v1/).waitFor();
+      expect(await adopt.isVisible()).toBe(false);
+
+      input.permissions.review = true;
+      await page.goto(candidateUrl);
+      await adopt.waitFor();
+      const evidence = process.env.CDS_FRAMEWORK_EVIDENCE_DIR;
+      if (evidence) {
+        await page.evaluate(css => {
+          const style = document.createElement('style');
+          style.textContent = css;
+          document.head.append(style);
+        }, await layoutStyles(await page.content(), draftStyles));
+        await page.waitForLoadState('networkidle');
+        await page.screenshot({ path: path.join(evidence, 'framework-v2-awaiting-adoption.png'), animations: 'disabled' });
+      }
+      await page.route(`**/api/projects/${projectId}/design/commands`, route => {
+        commands.push(route.request().postDataJSON());
+        candidate.adoption = { by: author.id, at };
+        candidate.charter!.status = 'adopted';
+        return route.fulfill({ json: { projectId, reused: false,
+          result: { type: 'framework.adopt', frameworkId, version: candidate.version } } });
+      });
+      await adopt.click();
+      await page.getByText('已采用', { exact: true }).waitFor();
+      expect(await adopt.isVisible()).toBe(false);
+      expect(commands).toHaveLength(1);
+      expect(commands[0]).toMatchObject({ type: 'framework.adopt', frameworkId, version: 2, requestId: expect.any(String) });
+      if (evidence) await page.screenshot({ path: path.join(evidence, 'framework-v2-adopted.png'), animations: 'disabled' });
+
+      await page.goto(browserDesignUrl());
+      await boundBadge.getByText('可升级到 v2', { exact: true }).waitFor();
+      expect(await boundBadge.innerText()).toContain('v1');
+      await page.goto(startUrl);
+      await scaffold.waitFor();
+      expect(await scaffold.innerText()).toMatch(/--framework-version 2\b/);
+    });
+  }, 20_000);
 
   it('示意稿不增加框架套数，仍能从框架详情进入指定的示意版本', () => {
     const example: DesignEntry = {

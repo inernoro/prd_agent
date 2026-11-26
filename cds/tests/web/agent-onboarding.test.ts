@@ -243,10 +243,11 @@ describe('CDS Agent 接入口令', () => {
     expect(monitorOnboarding?.note).toContain('GET 只读说明和 POST 监控提议草案');
   });
 
-  it('每个任务都绑定真实能力，并声明完整五技能包', () => {
+  it('每个任务都绑定真实能力，并声明完整技能包（六个技能）', () => {
     const capabilityIds = new Set(CDS_AGENT_CAPABILITY_DEFINITIONS.map((item) => item.id));
     expect(CDS_AGENT_SKILL_DEFINITIONS.map((item) => item.id)).toEqual([
       'cds',
+      'cds-design',
       'cds-project-scan',
       'cds-deploy-pipeline',
       'cds-release',
