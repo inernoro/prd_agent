@@ -83,8 +83,9 @@ try {
   await movies.selectOption(fresh.runId);
   await dialog.getByRole('status').first().waitFor();
   console.log('Refresh verified: the same submitted run remained visible in the browser.');
-  await movies.selectOption(reference.runId);
-  const filmPath = `/api/design-artifacts/runs/${reference.runId}/film.mp4`;
+  assert.equal(afterReload.status.toLowerCase(), 'done');
+  assert.ok(afterReload.workspaceResultSha256, 'The new film must have a committed result.');
+  const filmPath = `/api/design-artifacts/runs/${fresh.runId}/film.mp4`;
   const [film] = await Promise.all([
     page.waitForResponse(requestMatches(filmPath, 'GET'), { timeout: 95_000 }),
     dialog.getByRole('button', { name: '预览或取回成片', exact: true }).click(),
@@ -107,8 +108,8 @@ try {
     const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', buffer));
     return { length: buffer.byteLength, digest: Array.from(hash, (byte) => byte.toString(16).padStart(2, '0')).join('') };
   });
-  assert.equal(blob.length, 29_785_188);
-  assert.equal(blob.digest, '192c5094efe19eea21e6039c628bcfe4d978158e45d2b2d8967a2313751f88e0');
+  assert.equal(blob.length, 25_783_803);
+  assert.equal(blob.digest, 'ed553b2e0f64a9d52bd81d251a17ecf73aad51f04a130f4f53496aa8095bea41');
   await video.evaluate(async (movie) => {
     movie.muted = true;
     await movie.play();
@@ -122,12 +123,12 @@ try {
     const movie = document.querySelector('video[aria-label="生成视频预览"]');
     return movie && !movie.seeking && Math.abs(movie.currentTime - 42) < 0.1;
   });
-  console.log('Original MP4 recovered in browser; hash, duration, playback and seek verified.');
+  console.log('Newly generated MP4 opened in the browser; hash, duration, playback and seek verified.');
 
   const saveButton = dialog.getByRole('button', { name: '保存到网页托管', exact: true });
   const save = async () => {
     const [result] = await Promise.all([
-      page.waitForResponse(requestMatches(`/api/design-artifacts/runs/${reference.runId}/save-film`, 'POST'), { timeout: 110_000 }),
+      page.waitForResponse(requestMatches(`/api/design-artifacts/runs/${fresh.runId}/save-film`, 'POST'), { timeout: 110_000 }),
       saveButton.click(),
     ]);
     return responseData(result, 'Save movie to Web Hosting');
