@@ -13,7 +13,7 @@
  },
  "A-11": {
   "status": "passed",
-  "note": "compose 两主题截图：左栏助手开场（三种放稿件方式）与输入框，右栏产出切换、选中模板大图与 3 张模板卡同屏，选中卡唯一（V5 走查）"
+  "note": "compose 两主题截图：左栏助手开场与输入框（「视频 / 网页」与风格按钮在输入框里），右栏风格库：视觉笔记大图、样片《蜜蜂怎样酿蜜》0:51、类别行与风格卡同屏，选中卡唯一（V6 走查）"
  },
  "A-13": {
   "status": "passed",
@@ -97,7 +97,7 @@
  },
  "A-35": {
   "status": "passed",
-  "note": "phone-compose：底部输入框、资料托盘（两张资料卡 + 「+3」）与快捷生成可见；顶部「对话 / 预览」切换"
+  "note": "phone-compose：底部输入框、资料托盘（两张资料卡 + 「+3」）；「视频 / 网页」与风格按钮单独一行，上传、知识库与「快捷生成」在下一行"
  },
  "A-36": {
   "status": "passed",
@@ -113,7 +113,7 @@
  },
  "A-39": {
   "status": "passed",
-  "note": "compose-web：模板为导读长页 / 卡片速览，标记「网页 · 导读长页」"
+  "note": "compose-web：「网页」高亮，风格仍为「视觉笔记」，右栏说明改为「按这个风格的配色、字体与版式出页面」；交接场景 switch-output-keeps-style 本机预跑通过"
  },
  "A-40": {
   "status": "passed",
@@ -126,5 +126,21 @@
  "A-42": {
   "status": "passed",
   "note": "交接场景 submit-uploaded-file 本机预跑：上传「评审要点.md」后附件 1 个、快捷生成可用并进入排队"
+ },
+ "A-43": {
+  "status": "passed",
+  "note": "compose：类别行「全部 99」与 15 类各带数量；交接场景 search-style-library 搜「水墨」后「中国水墨」可见并选中，风格按钮同步；大图、样片名与署名随选中切换"
+ },
+ "A-44": {
+  "status": "passed",
+  "note": "style-picker 两主题截图：面板含搜索、类别行、风格列表与「看大图和样片说明」；交接场景 pick-style-in-composer 选「中国水墨」后按钮 data-template=ink-wash，右栏同一张卡 aria-checked=true"
+ },
+ "A-45": {
+  "status": "passed",
+  "note": "交接场景 switch-output-keeps-style：切到网页后 data-output=web，风格按钮仍是原风格；再选别的风格，产出不变"
+ },
+ "A-46": {
+  "status": "passed",
+  "note": "风格详情底部署名「Lemo-Opuscar by Lemomo (LemoLab) · 样片海报 CC BY 4.0」；源码差异只含 promptRef 位置字段，不含 STYLE.md 正文（grep「Style Prompt」「Essence」为 0）"
  }
 }

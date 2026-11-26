@@ -8,6 +8,21 @@
       "errors": []
     },
     {
+      "id": "pick-style-in-composer",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "id": "search-style-library",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "id": "switch-output-keeps-style",
+      "status": "passed",
+      "errors": []
+    },
+    {
       "id": "submit-pasted-text",
       "status": "passed",
       "errors": []

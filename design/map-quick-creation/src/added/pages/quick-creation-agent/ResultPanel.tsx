@@ -1,48 +1,9 @@
 import { useMemo, useRef, useState } from 'react';
 import { Captions, Check, Maximize, Monitor, Pause, Play, SkipBack, SkipForward, Smartphone, Volume2, VolumeX } from 'lucide-react';
 import { cn } from '@/lib/cn';
-import { Badge } from '@/components/design/Badge';
-import { TemplateFrame, TemplatePageBody } from './TemplateFrames';
+import { StyleFrame, TemplatePageBody } from './TemplateFrames';
 import type { QcRun, QcScene, QcTemplate } from './types';
 import { formatClock } from './format';
-
-/** 右栏 · 选模板：上方大图是选中模板的真实画面，下方是同一产出的全部模板 */
-export function TemplateGallery({ templates, selected, onSelect }: { templates: QcTemplate[]; selected: QcTemplate; onSelect: (id: string) => void }) {
-  return (
-    <div className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto p-2.5 sm:p-4 lg:p-5" style={{ overscrollBehavior: 'contain' }} data-qc="template-preview">
-      <div className="mx-auto w-full" style={{ maxWidth: 'min(100%, calc((100dvh - 540px) * 16 / 9))' }}>
-        <div key={selected.id} className="qc-rise overflow-hidden rounded-[12px] border border-token-subtle shadow-[var(--shadow-card-sm)]">
-          <TemplateFrame frame={selected.frame} scene={selected.kind === 'video' ? 2 : 1} />
-        </div>
-        <div className="mt-3 flex items-start gap-3">
-          <div className="min-w-0 flex-1">
-            <div className="text-[15px] font-semibold text-token-primary">{selected.name}</div>
-            <div className="mt-0.5 text-[12.5px] leading-5 text-token-secondary">{selected.tagline}。{selected.goodFor}</div>
-          </div>
-          <Badge size="sm">{selected.kind === 'video' ? '示例帧取自真实成片' : '示例页取自真实发布'}</Badge>
-        </div>
-      </div>
-      <div role="radiogroup" aria-label="选择模板" className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-        {templates.map(t => {
-          const on = t.id === selected.id;
-          return (
-            <button key={t.id} type="button" role="radio" aria-checked={on} onClick={() => onSelect(t.id)} data-template={t.id}
-              className={cn('group flex flex-col overflow-hidden rounded-[12px] border bg-[var(--bg-input)] text-left transition-[border-color,box-shadow]',
-                on ? 'border-[color:var(--accent-primary)] shadow-[0_0_0_1px_var(--accent-primary)]' : 'border-token-subtle hover:border-[var(--border-default)]')}>
-              <span className="relative block"><TemplateFrame frame={t.frame} scene={1} />
-                {on && <span className="absolute right-1.5 top-1.5 inline-flex h-5 w-5 items-center justify-center rounded-full bg-[color:var(--accent-primary)] text-[color:var(--accent-on-primary)]"><Check size={12} strokeWidth={3} aria-hidden /></span>}
-              </span>
-              <span className="block px-2.5 py-2">
-                <span className="block truncate text-[13px] font-medium text-token-primary">{t.name}</span>
-                <span className="block truncate text-[11.5px] text-token-muted">{t.goodFor}</span>
-              </span>
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
 
 const SCENE_STATUS: Record<QcScene['status'], string> = { ready: '已完成', drawing: '正在画', drawn: '待配音', voicing: '配音中', failed: '没有完成', waiting: '等待中' };
 
@@ -77,7 +38,7 @@ export function ProgressPreview({ run, template }: { run: QcRun; template: QcTem
             <span className="ml-2 truncate text-[11.5px] text-token-muted">{run.title}</span>
           </div>
           {sections.length ? (
-            <div className="bg-white"><TemplateFrame frame={template.frame} /><TemplatePageBody sections={sections} pendingFrom={doneCount} maxHeight="none" /></div>
+            <div className="bg-white"><StyleFrame template={template} /><TemplatePageBody sections={sections} pendingFrom={doneCount} maxHeight="none" /></div>
           ) : <div className="p-4"><FrameSkeleton big /></div>}
         </div>
         <div className="shrink-0 lg:w-[220px]">
@@ -121,7 +82,7 @@ export function ProgressPreview({ run, template }: { run: QcRun; template: QcTem
         <div className={cn('relative overflow-hidden rounded-[12px] border shadow-[var(--shadow-card-sm)]',
           focus?.status === 'failed' ? 'border-[color:var(--accent-fg-error)]' : 'border-token-subtle')}>
           {focus ? (
-            <div key={focus.index} className={cn('qc-rise', focus.status === 'drawing' && 'qc-shimmer')}><TemplateFrame frame={template.frame} scene={focus.frameScene} /></div>
+            <div key={focus.index} className={cn('qc-rise', focus.status === 'drawing' && 'qc-shimmer')}><StyleFrame template={template} scene={focus.frameScene} /></div>
           ) : <FrameSkeleton big />}
           {focus && (
             <>
@@ -148,7 +109,7 @@ export function ProgressPreview({ run, template }: { run: QcRun; template: QcTem
                 <div className={cn('overflow-hidden rounded-[8px] border',
                   s.status === 'failed' ? 'border-[color:var(--accent-fg-error)]' : on ? 'border-[color:var(--accent-primary)] shadow-[0_0_0_1px_var(--accent-primary)]' : 'border-token-subtle',
                   s.status === 'drawing' && 'qc-shimmer')}>
-                  {s.status === 'waiting' ? <FrameSkeleton /> : <div className={cn(s.status === 'drawn' && 'opacity-80')}><TemplateFrame frame={template.frame} scene={s.frameScene} /></div>}
+                  {s.status === 'waiting' ? <FrameSkeleton /> : <div className={cn(s.status === 'drawn' && 'opacity-80')}><StyleFrame template={template} scene={s.frameScene} /></div>}
                 </div>
                 <figcaption className="mt-1.5 px-0.5 text-[11.5px] leading-4">
                   <span className="block truncate text-token-secondary"><span className="tabular-nums text-token-muted">{s.index}</span> {s.title}</span>
@@ -213,7 +174,7 @@ export function VideoPlayer({ run, template }: { run: QcRun; template: QcTemplat
               onTimeUpdate={e => setT(e.currentTarget.currentTime)}
               onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onEnded={() => setPlaying(false)} />
           ) : (
-            <TemplateFrame frame={template.frame} scene={1} />
+            <StyleFrame template={template} scene={1} />
           )}
           {captions && current && media && (
             <div data-qc="caption" className="pointer-events-none absolute bottom-[6%] left-1/2 max-w-[90%] -translate-x-1/2 rounded-md bg-black/75 px-2.5 py-1 text-center text-[12px] leading-5 text-white sm:px-3 sm:py-1.5 sm:text-[15px] sm:leading-6">{current.caption}</div>
@@ -277,7 +238,7 @@ export function WebPreview({ run, template }: { run: QcRun; template: QcTemplate
         </div>
         <div className="flex justify-center bg-token-nested p-3">
           <div className={cn('overflow-hidden rounded-lg bg-white transition-[width] duration-300', device === 'phone' ? 'w-[300px]' : 'w-full')}>
-            <TemplateFrame frame={template.frame} scene={anchor ? sections.findIndex(s => s.anchor === anchor) + 1 : 1} />
+            <StyleFrame template={template} scene={anchor ? sections.findIndex(s => s.anchor === anchor) + 1 : 1} />
             <TemplatePageBody sections={sections} activeAnchor={anchor} maxHeight={300} />
           </div>
         </div>

@@ -4,7 +4,7 @@
  * 画面按容器宽度等比缩放（cqw），同一份代码用于模板缩略图、分镜、成片预览和发布页。
  */
 import type { CSSProperties, ReactNode } from 'react';
-import type { FrameKey, QcWebSection } from './types';
+import type { FrameKey, QcTemplate, QcWebSection } from './types';
 
 const hand = "'Kaiti SC', 'STKaiti', 'KaiTi', 'Songti SC', serif";
 const sans = "Inter, 'PingFang SC', 'Microsoft YaHei', sans-serif";
@@ -158,6 +158,19 @@ export function TemplateFrame({ frame, scene = 1 }: { frame: FrameKey; scene?: n
   if (frame === 'guide-page') return <GuidePage scene={scene} />;
   if (frame === 'card-digest') return <CardDigest />;
   return <VisualNote scene={scene} />;
+}
+
+/**
+ * 一个风格的画面：有模板代码渲染器时用它（可以按幕切换画面），没有时显示该风格的样片海报。
+ * 海报按 16:9 裁切，与渲染器同一个比例，列表、分镜和成片里尺寸一致。
+ */
+export function StyleFrame({ template, scene = 1 }: { template: Pick<QcTemplate, 'name' | 'posterUrl' | 'frame'>; scene?: number }) {
+  if (template.frame) return <TemplateFrame frame={template.frame} scene={scene} />;
+  return (
+    <div role="img" aria-label={`${template.name} · 样片海报`} style={{ width: '100%', aspectRatio: '16 / 9', overflow: 'hidden', background: '#111' }}>
+      <img src={template.posterUrl} alt="" loading="lazy" decoding="async" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+    </div>
+  );
 }
 
 /**

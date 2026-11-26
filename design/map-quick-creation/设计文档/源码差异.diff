@@ -351,10 +351,10 @@ index 00000000..d4287826
 +}
 diff --git a/prd-admin/src/pages/quick-creation-agent/QuickCreationAgentPage.tsx b/prd-admin/src/pages/quick-creation-agent/QuickCreationAgentPage.tsx
 new file mode 100644
-index 00000000..427f11d0
+index 00000000..79bad72c
 --- /dev/null
 +++ b/prd-admin/src/pages/quick-creation-agent/QuickCreationAgentPage.tsx
-@@ -0,0 +1,433 @@
+@@ -0,0 +1,435 @@
 +/**
 + * 快速创作智能体：一份文档 + 一个模板 → 能播放的视频或能浏览的网页，并发布到网页托管。
 + * - 生成在服务端排队执行，离开页面不取消；地址里的 ?run= 让用户回到同一个任务。
@@ -376,10 +376,11 @@ index 00000000..427f11d0
 +import { AttachmentTray, MaterialsPanel, SentAttachments } from './AttachmentTray';
 +import { AgentTurn, UserTurn } from './Conversation';
 +import { FailureCard, QueueCard, RunProgress } from './RunProgress';
-+import { ProgressPreview, TemplateGallery, VideoPlayer, WebPreview } from './ResultPanel';
++import { ProgressPreview, VideoPlayer, WebPreview } from './ResultPanel';
++import { StyleLibrary, StylePickerChip } from './StyleLibrary';
 +import { WorksList } from './WorksList';
 +import { MAX_ATTACHMENTS, formatChars, formatClock, summarizeAttachments } from './format';
-+import type { OutputKind, QcAttachment, QcFailure, QcRun, QcTemplate, QcWork } from './types';
++import type { OutputKind, QcAttachment, QcFailure, QcRun, QcTemplate, QcTemplateCategory, QcTemplateSource, QcWork } from './types';
 +import './quickCreation.css';
 +
 +const OUTPUT_LABEL: Record<OutputKind, string> = { video: '视频', web: '网页' };
@@ -401,6 +402,8 @@ index 00000000..427f11d0
 +  const view = params.get('view');
 +
 +  const [templates, setTemplates] = useState<QcTemplate[]>([]);
++  const [categories, setCategories] = useState<QcTemplateCategory[]>([]);
++  const [styleSource, setStyleSource] = useState<QcTemplateSource | undefined>();
 +  const [works, setWorks] = useState<QcWork[]>([]);
 +  const [run, setRun] = useState<QcRun | null>(null);
 +  const [runError, setRunError] = useState<string | null>(null);
@@ -418,18 +421,19 @@ index 00000000..427f11d0
 +  useEffect(() => { if (askRef.current) fitComposerHeight(askRef.current); }, [ask]);
 +
 +  useEffect(() => {
-+    void listQuickCreationTemplates().then(res => { if (res.success) setTemplates(res.data.items); });
++    void listQuickCreationTemplates().then(res => { if (res.success) { setTemplates(res.data.items); setCategories(res.data.categories); setStyleSource(res.data.source); } });
 +  }, []);
 +  const refreshWorks = useCallback(() => {
 +    void listQuickCreationWorks().then(res => { if (res.success) setWorks(res.data.items); });
 +  }, []);
 +  useEffect(() => { refreshWorks(); }, [refreshWorks, runId, view]);
 +
-+  const kindTemplates = templates.filter(t => t.kind === kind);
-+  const template = templates.find(t => t.id === (run?.templateId ?? templateId)) ?? kindTemplates[0];
++  /* 风格与产出相互独立：同一个风格既能出视频也能出网页；默认选「视觉笔记」 */
++  const DEFAULT_STYLE = 'sketchnote';
++  const template = templates.find(t => t.id === (run?.templateId ?? templateId)) ?? templates.find(t => t.id === DEFAULT_STYLE) ?? templates[0];
 +  useEffect(() => {
-+    if (!templateId && kindTemplates[0]) setTemplateId(kindTemplates[0].id);
-+  }, [kindTemplates, templateId]);
++    if (!templateId && templates.length) setTemplateId((templates.find(t => t.id === DEFAULT_STYLE) ?? templates[0]).id);
++  }, [templates, templateId]);
 +
 +  /* 按任务编号加载 */
 +  useEffect(() => {
@@ -558,7 +562,6 @@ index 00000000..427f11d0
 +
 +  const openManage = () => { setPanel(p => (p?.mode === 'manage' ? null : { mode: 'manage' })); setPane('preview'); };
 +  const openReview = (id?: string) => { setPanel({ mode: 'review', id }); setPane('preview'); };
-+  const KindIcon = (kind === 'video' ? Video : Globe);
 +
 +  /* ---------- 左栏 · 新建：助手的开场 + 输入框 ---------- */
 +  const startOptions = (
@@ -584,7 +587,7 @@ index 00000000..427f11d0
 +    <AgentTurn>
 +      <div>
 +        <p className="m-0 text-[15px] font-semibold leading-6 text-token-primary">把一份文档交给我</p>
-+        <p className="m-0 mt-1 text-[13px] leading-6 text-token-secondary">在预览区选好产出和模板，我来排好配音、字幕或版式，做成能播放的视频或能浏览的网页，完成后可以直接发布到网页托管。</p>
++        <p className="m-0 mt-1 text-[13px] leading-6 text-token-secondary">在输入框下方选做视频还是网页、挑一个风格（{categories.length} 类 {templates.length} 种），我来排好配音、字幕或版式，完成后可以直接发布到网页托管。</p>
 +      </div>
 +      {!attachments.length ? (
 +        <>
@@ -611,18 +614,22 @@ index 00000000..427f11d0
 +          onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void submit(); } }}
 +          placeholder="可选：加一句要求，例如「先提醒三个重点，给新同事看」"
 +          className="block w-full resize-none overflow-y-auto bg-transparent px-3.5 pb-1 pt-3 text-base leading-relaxed text-token-primary outline-none placeholder:text-token-muted sm:text-[14px]" />
-+        <div className="flex items-center gap-1 px-2 pb-2 pt-1">
++        <div className="flex flex-wrap items-center gap-1 px-2 pb-2 pt-1">
 +          <input ref={fileInput} type="file" accept=".md,.markdown,.txt,image/*" multiple hidden data-qc="file-input"
 +            onChange={e => { const files = Array.from(e.target.files ?? []); e.target.value = ''; files.forEach(f => void addFile(f)); }} />
 +          <button type="button" aria-label="上传稿件或图片" title="上传稿件或图片" className="qc-icon-btn" onClick={() => fileInput.current?.click()}><Paperclip size={16} /></button>
 +          <button type="button" aria-label="从知识库选择" title="从知识库选择" data-qc="pick-knowledge" className="qc-icon-btn" onClick={() => void addKnowledge('kb-picker')}><BookOpen size={16} /></button>
-+          <span className="mx-1 h-4 w-px bg-[var(--border-subtle)]" aria-hidden />
-+          <button type="button" onClick={() => { setPanel(null); setPane('preview'); }} aria-label={`产出与模板：${OUTPUT_LABEL[kind]} · ${template?.name ?? ''}，点此更换`}
-+            className="inline-flex h-8 min-w-0 items-center gap-1.5 rounded-lg px-2 text-[12px] text-token-secondary hover-bg-soft max-md:h-11">
-+            <KindIcon size={13} className="shrink-0" aria-hidden />
-+            <span className="truncate">{OUTPUT_LABEL[kind]} · {template?.name ?? ''}</span>
-+            <ChevronRight size={13} className="shrink-0 text-token-muted lg:hidden" aria-hidden />
-+          </button>
++          {/* 产出与风格在输入框里决定：将来和其他输入集成时，这一组跟着输入框走，不依赖右栏。
++              窄屏这一组单独占第一行，上传、知识库与快捷生成在第二行 */}
++          <div className="flex min-w-0 items-center gap-1.5 max-md:order-first max-md:basis-full max-md:pb-1 md:ml-1 md:border-l md:border-[var(--border-subtle)] md:pl-2">
++            {/* 公共组件 Segmented 沿用正式实现（28px），触控高度差异记为框架债务，不在单页改 */}
++            <span data-qc-touch-exempt className="shrink-0">
++              <Segmented<OutputKind> label="选择产出" value={kind} onChange={setKind}
++                options={[{ value: 'video', label: '视频', title: '能播放的成片：配音、字幕与画面' }, { value: 'web', label: '网页', title: '能浏览的网页：桌面与手机都能读' }]} />
++            </span>
++            <StylePickerChip templates={templates} categories={categories} selected={template} onSelect={id => { setTemplateId(id); setPanel(null); }}
++              onBrowse={() => { setPanel(null); setPane('preview'); }} />
++          </div>
 +          <Button variant="primary" size="sm" className="ml-auto shrink-0 max-md:min-h-11" disabled={!!blockReason || submitting} onClick={() => void submit()} data-qc="submit">
 +            {submitting ? <MapSpinner size={13} /> : <Send size={13} />}快捷生成
 +          </Button>
@@ -705,7 +712,7 @@ index 00000000..427f11d0
 +      ) : (
 +        <>
 +          <span className="min-w-0 flex-1">想换个模板或产出？用同一份稿件再做一个。</span>
-+          <Button size="sm" variant="secondary" className="max-md:min-h-11" data-qc="redo-other" onClick={() => { setAttachments(run.attachments.filter(a => a.status === 'ready')); setAsk(run.ask); setKind(run.kind === 'video' ? 'web' : 'video'); setTemplateId(''); setParams({}); setPane('chat'); }}>
++          <Button size="sm" variant="secondary" className="max-md:min-h-11" data-qc="redo-other" onClick={() => { setAttachments(run.attachments.filter(a => a.status === 'ready')); setAsk(run.ask); setKind(run.kind === 'video' ? 'web' : 'video'); setTemplateId(run.templateId); setParams({}); setPane('chat'); }}>
 +            用这份稿件做{run.kind === 'video' ? '网页' : '视频'}
 +          </Button>
 +        </>
@@ -714,16 +721,10 @@ index 00000000..427f11d0
 +  );
 +
 +  /* ---------- 右栏 ---------- */
-+  let previewTitle = '选择模板';
-+  let previewNote = `${OUTPUT_LABEL[kind]} · ${kindTemplates.length} 个模板，缩略图取自真实${kind === 'video' ? '成片' : '页面'}`;
-+  let nextHint = '选好模板后，在左边放进稿件，点「快捷生成」。';
-+  let toolbar: ReactNode = !run && !panel ? (
-+    /* 公共组件 Segmented 沿用正式实现（28px），触控高度差异记为框架债务，不在单页改 */
-+    <span data-qc-touch-exempt>
-+      <Segmented<OutputKind> label="选择产出" value={kind} onChange={k => { setKind(k); setTemplateId(templates.find(t => t.kind === k)?.id ?? ''); }}
-+        options={[{ value: 'video', label: '视频' }, { value: 'web', label: '网页' }]} />
-+    </span>
-+  ) : null;
++  let previewTitle = '风格库';
++  let previewNote = `${categories.length} 类 · ${templates.length} 种风格，按画面像什么分类；当前做${OUTPUT_LABEL[kind]}`;
++  let nextHint = '选好风格后，在左边放进稿件，点「快捷生成」；也可以在输入框的风格按钮里就地换。';
++  let toolbar: ReactNode = null;
 +  let actions: ReactNode = null;
 +  let body: ReactNode = null;
 +  const liveStage = run?.stages.find(s => s.status === 'running' || s.status === 'failed');
@@ -745,9 +746,9 @@ index 00000000..427f11d0
 +    actions = <Button size="sm" variant="secondary" className="max-md:min-h-11" data-qc="review-back" onClick={() => setPanel(null)}>回到预览</Button>;
 +    body = <MaterialsPanel mode="review" items={run.attachments} activeId={panel.id} onSelect={id => setPanel({ mode: 'review', id })} />;
 +  } else if (!run && template) {
-+    body = <TemplateGallery templates={kindTemplates} selected={template} onSelect={setTemplateId} />;
++    body = <StyleLibrary templates={templates} categories={categories} source={styleSource} selected={template} onSelect={setTemplateId} kind={kind} />;
 +  } else if (run && runTemplate) {
-+    toolbar = <Badge size="sm">模板 · {runTemplate.name}</Badge>;
++    toolbar = <Badge size="sm">风格 · {runTemplate.name}</Badge>;
 +    if (run.status === 'done') {
 +      previewTitle = run.kind === 'video' ? '成片' : '网页';
 +      previewNote = run.kind === 'video' ? `${formatClock(run.durationSec ?? 0)} · ${run.scenes?.length ?? 0} 幕 · 1080p${run.voice ? ` · 配音 ${run.voice}` : ''}` : `${run.sections?.length ?? 0} 节 · 桌面与手机都能读`;
@@ -768,7 +769,8 @@ index 00000000..427f11d0
 +  );
 +
 +  const loading = runId && !run && !runError;
-+  const ready = loading ? undefined : run ? `run-${run.status}` : 'compose';
++  /* 风格目录读到之前不标「可以创作」：输入框里的风格按钮和右栏风格库都依赖它 */
++  const ready = loading ? undefined : run ? `run-${run.status}` : templates.length ? 'compose' : undefined;
 +  return (
 +    <div className="flex h-full min-h-0 flex-col" data-qc-ready={ready} data-output={run?.kind ?? kind} data-run-id={run?.id ?? ''}>
 +      {header}
@@ -790,55 +792,16 @@ index 00000000..427f11d0
 +export default QuickCreationAgentPage;
 diff --git a/prd-admin/src/pages/quick-creation-agent/ResultPanel.tsx b/prd-admin/src/pages/quick-creation-agent/ResultPanel.tsx
 new file mode 100644
-index 00000000..34c3431e
+index 00000000..69cd2fc3
 --- /dev/null
 +++ b/prd-admin/src/pages/quick-creation-agent/ResultPanel.tsx
-@@ -0,0 +1,301 @@
+@@ -0,0 +1,262 @@
 +import { useMemo, useRef, useState } from 'react';
 +import { Captions, Check, Maximize, Monitor, Pause, Play, SkipBack, SkipForward, Smartphone, Volume2, VolumeX } from 'lucide-react';
 +import { cn } from '@/lib/cn';
-+import { Badge } from '@/components/design/Badge';
-+import { TemplateFrame, TemplatePageBody } from './TemplateFrames';
++import { StyleFrame, TemplatePageBody } from './TemplateFrames';
 +import type { QcRun, QcScene, QcTemplate } from './types';
 +import { formatClock } from './format';
-+
-+/** 右栏 · 选模板：上方大图是选中模板的真实画面，下方是同一产出的全部模板 */
-+export function TemplateGallery({ templates, selected, onSelect }: { templates: QcTemplate[]; selected: QcTemplate; onSelect: (id: string) => void }) {
-+  return (
-+    <div className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto p-2.5 sm:p-4 lg:p-5" style={{ overscrollBehavior: 'contain' }} data-qc="template-preview">
-+      <div className="mx-auto w-full" style={{ maxWidth: 'min(100%, calc((100dvh - 540px) * 16 / 9))' }}>
-+        <div key={selected.id} className="qc-rise overflow-hidden rounded-[12px] border border-token-subtle shadow-[var(--shadow-card-sm)]">
-+          <TemplateFrame frame={selected.frame} scene={selected.kind === 'video' ? 2 : 1} />
-+        </div>
-+        <div className="mt-3 flex items-start gap-3">
-+          <div className="min-w-0 flex-1">
-+            <div className="text-[15px] font-semibold text-token-primary">{selected.name}</div>
-+            <div className="mt-0.5 text-[12.5px] leading-5 text-token-secondary">{selected.tagline}。{selected.goodFor}</div>
-+          </div>
-+          <Badge size="sm">{selected.kind === 'video' ? '示例帧取自真实成片' : '示例页取自真实发布'}</Badge>
-+        </div>
-+      </div>
-+      <div role="radiogroup" aria-label="选择模板" className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-+        {templates.map(t => {
-+          const on = t.id === selected.id;
-+          return (
-+            <button key={t.id} type="button" role="radio" aria-checked={on} onClick={() => onSelect(t.id)} data-template={t.id}
-+              className={cn('group flex flex-col overflow-hidden rounded-[12px] border bg-[var(--bg-input)] text-left transition-[border-color,box-shadow]',
-+                on ? 'border-[color:var(--accent-primary)] shadow-[0_0_0_1px_var(--accent-primary)]' : 'border-token-subtle hover:border-[var(--border-default)]')}>
-+              <span className="relative block"><TemplateFrame frame={t.frame} scene={1} />
-+                {on && <span className="absolute right-1.5 top-1.5 inline-flex h-5 w-5 items-center justify-center rounded-full bg-[color:var(--accent-primary)] text-[color:var(--accent-on-primary)]"><Check size={12} strokeWidth={3} aria-hidden /></span>}
-+              </span>
-+              <span className="block px-2.5 py-2">
-+                <span className="block truncate text-[13px] font-medium text-token-primary">{t.name}</span>
-+                <span className="block truncate text-[11.5px] text-token-muted">{t.goodFor}</span>
-+              </span>
-+            </button>
-+          );
-+        })}
-+      </div>
-+    </div>
-+  );
-+}
 +
 +const SCENE_STATUS: Record<QcScene['status'], string> = { ready: '已完成', drawing: '正在画', drawn: '待配音', voicing: '配音中', failed: '没有完成', waiting: '等待中' };
 +
@@ -873,7 +836,7 @@ index 00000000..34c3431e
 +            <span className="ml-2 truncate text-[11.5px] text-token-muted">{run.title}</span>
 +          </div>
 +          {sections.length ? (
-+            <div className="bg-white"><TemplateFrame frame={template.frame} /><TemplatePageBody sections={sections} pendingFrom={doneCount} maxHeight="none" /></div>
++            <div className="bg-white"><StyleFrame template={template} /><TemplatePageBody sections={sections} pendingFrom={doneCount} maxHeight="none" /></div>
 +          ) : <div className="p-4"><FrameSkeleton big /></div>}
 +        </div>
 +        <div className="shrink-0 lg:w-[220px]">
@@ -917,7 +880,7 @@ index 00000000..34c3431e
 +        <div className={cn('relative overflow-hidden rounded-[12px] border shadow-[var(--shadow-card-sm)]',
 +          focus?.status === 'failed' ? 'border-[color:var(--accent-fg-error)]' : 'border-token-subtle')}>
 +          {focus ? (
-+            <div key={focus.index} className={cn('qc-rise', focus.status === 'drawing' && 'qc-shimmer')}><TemplateFrame frame={template.frame} scene={focus.frameScene} /></div>
++            <div key={focus.index} className={cn('qc-rise', focus.status === 'drawing' && 'qc-shimmer')}><StyleFrame template={template} scene={focus.frameScene} /></div>
 +          ) : <FrameSkeleton big />}
 +          {focus && (
 +            <>
@@ -944,7 +907,7 @@ index 00000000..34c3431e
 +                <div className={cn('overflow-hidden rounded-[8px] border',
 +                  s.status === 'failed' ? 'border-[color:var(--accent-fg-error)]' : on ? 'border-[color:var(--accent-primary)] shadow-[0_0_0_1px_var(--accent-primary)]' : 'border-token-subtle',
 +                  s.status === 'drawing' && 'qc-shimmer')}>
-+                  {s.status === 'waiting' ? <FrameSkeleton /> : <div className={cn(s.status === 'drawn' && 'opacity-80')}><TemplateFrame frame={template.frame} scene={s.frameScene} /></div>}
++                  {s.status === 'waiting' ? <FrameSkeleton /> : <div className={cn(s.status === 'drawn' && 'opacity-80')}><StyleFrame template={template} scene={s.frameScene} /></div>}
 +                </div>
 +                <figcaption className="mt-1.5 px-0.5 text-[11.5px] leading-4">
 +                  <span className="block truncate text-token-secondary"><span className="tabular-nums text-token-muted">{s.index}</span> {s.title}</span>
@@ -1009,7 +972,7 @@ index 00000000..34c3431e
 +              onTimeUpdate={e => setT(e.currentTarget.currentTime)}
 +              onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onEnded={() => setPlaying(false)} />
 +          ) : (
-+            <TemplateFrame frame={template.frame} scene={1} />
++            <StyleFrame template={template} scene={1} />
 +          )}
 +          {captions && current && media && (
 +            <div data-qc="caption" className="pointer-events-none absolute bottom-[6%] left-1/2 max-w-[90%] -translate-x-1/2 rounded-md bg-black/75 px-2.5 py-1 text-center text-[12px] leading-5 text-white sm:px-3 sm:py-1.5 sm:text-[15px] sm:leading-6">{current.caption}</div>
@@ -1073,7 +1036,7 @@ index 00000000..34c3431e
 +        </div>
 +        <div className="flex justify-center bg-token-nested p-3">
 +          <div className={cn('overflow-hidden rounded-lg bg-white transition-[width] duration-300', device === 'phone' ? 'w-[300px]' : 'w-full')}>
-+            <TemplateFrame frame={template.frame} scene={anchor ? sections.findIndex(s => s.anchor === anchor) + 1 : 1} />
++            <StyleFrame template={template} scene={anchor ? sections.findIndex(s => s.anchor === anchor) + 1 : 1} />
 +            <TemplatePageBody sections={sections} activeAnchor={anchor} maxHeight={300} />
 +          </div>
 +        </div>
@@ -1266,19 +1229,217 @@ index 00000000..4154f7df
 +  );
 +}
 +
+diff --git a/prd-admin/src/pages/quick-creation-agent/StyleLibrary.tsx b/prd-admin/src/pages/quick-creation-agent/StyleLibrary.tsx
+new file mode 100644
+index 00000000..93f769e6
+--- /dev/null
++++ b/prd-admin/src/pages/quick-creation-agent/StyleLibrary.tsx
+@@ -0,0 +1,192 @@
++/**
++ * 风格（模板）选择。风格库按「画面像什么」分 15 类，共 99 种（Lemo-Opuscar 的分类与风格）。
++ * 两个入口选同一个状态：
++ * - 输入框里的风格按钮：就地弹出，按类别或名字找，选完回到输入，不离开对话；
++ * - 右栏的风格库：看大图、样片说明和全部风格，适合第一次挑。
++ * 风格说明（给智能体的英文 STYLE.md）只按编号引用，界面不显示原文。
++ */
++import { useMemo, useState } from 'react';
++import * as Popover from '@radix-ui/react-popover';
++import { Check, ChevronDown, PanelRight, Search, X } from 'lucide-react';
++import { cn } from '@/lib/cn';
++import { StyleFrame } from './TemplateFrames';
++import type { OutputKind, QcTemplate, QcTemplateCategory, QcTemplateSource } from './types';
++import { formatClock } from './format';
++
++const ALL = 'all';
++
++function useStyleFilter(templates: QcTemplate[], categories: QcTemplateCategory[]) {
++  const [category, setCategory] = useState<string>(ALL);
++  const [query, setQuery] = useState('');
++  const catName = useMemo(() => new Map(categories.map(c => [c.id, c.name])), [categories]);
++  const q = query.trim().toLowerCase();
++  const list = templates.filter(t => (category === ALL || t.categoryId === category)
++    && (!q || [t.name, t.nameEn, t.id, catName.get(t.categoryId) ?? ''].some(v => v.toLowerCase().includes(q))));
++  const counts = useMemo(() => {
++    const m = new Map<string, number>();
++    templates.forEach(t => m.set(t.categoryId, (m.get(t.categoryId) ?? 0) + 1));
++    return m;
++  }, [templates]);
++  return { category, setCategory, query, setQuery, list, counts, catName };
++}
++
++function SearchBox({ value, onChange, id }: { value: string; onChange: (v: string) => void; id: string }) {
++  return (
++    <div className="relative min-w-0 flex-1">
++      <Search size={14} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-token-muted" aria-hidden />
++      <label htmlFor={id} className="sr-only">搜索风格</label>
++      <input id={id} value={value} onChange={e => onChange(e.target.value)} placeholder="搜风格名或类别，如：水墨、蓝图、像素"
++        className="h-9 w-full rounded-lg border border-[var(--border-default)] bg-[var(--bg-input)] pl-8 pr-8 text-[13px] text-token-primary outline-none placeholder:text-token-muted focus:border-[color:var(--accent-primary)] max-md:h-11" />
++      {value && (
++        <button type="button" aria-label="清空搜索" onClick={() => onChange('')} className="absolute right-1 top-1/2 inline-flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-token-muted hover-bg-soft max-md:h-11 max-md:w-11">
++          <X size={13} />
++        </button>
++      )}
++    </div>
++  );
++}
++
++/** 类别：一行横向滚动，「全部」在最前，每类带数量 */
++function CategoryRow({ categories, counts, total, value, onChange }: {
++  categories: QcTemplateCategory[]; counts: Map<string, number>; total: number; value: string; onChange: (id: string) => void;
++}) {
++  const item = (id: string, label: string, n: number) => (
++    <button key={id} type="button" role="radio" aria-checked={value === id} onClick={() => onChange(id)} data-category={id}
++      className={cn('inline-flex h-7 shrink-0 items-center gap-1 whitespace-nowrap rounded-full border px-2.5 text-[12px] transition-colors max-md:h-11',
++        value === id ? 'border-[color:var(--accent-primary)] bg-[var(--selection-bg)] font-medium text-token-primary' : 'border-token-subtle text-token-secondary hover-bg-soft')}>
++      {label}<span className="tabular-nums text-token-muted">{n}</span>
++    </button>
++  );
++  return (
++    <div role="radiogroup" aria-label="风格类别" className="flex gap-1.5 overflow-x-auto pb-1 pr-6"
++      style={{ scrollbarWidth: 'thin', maskImage: 'linear-gradient(to right, black calc(100% - 28px), transparent)', WebkitMaskImage: 'linear-gradient(to right, black calc(100% - 28px), transparent)' }}>
++      {item(ALL, '全部', total)}
++      {categories.map(c => item(c.id, c.name, counts.get(c.id) ?? 0))}
++    </div>
++  );
++}
++
++/** 输入框里的风格按钮 + 就地弹出的选择面板 */
++export function StylePickerChip({ templates, categories, selected, onSelect, onBrowse }: {
++  templates: QcTemplate[];
++  categories: QcTemplateCategory[];
++  selected?: QcTemplate;
++  onSelect: (id: string) => void;
++  onBrowse: () => void;
++}) {
++  const [open, setOpen] = useState(false);
++  const f = useStyleFilter(templates, categories);
++  return (
++    <Popover.Root open={open} onOpenChange={setOpen}>
++      <Popover.Trigger asChild>
++        <button type="button" data-qc="style-chip" data-template={selected?.id ?? ''} aria-label={`风格：${selected?.name ?? '未选'}，点此更换`}
++          className="inline-flex h-8 min-w-0 max-w-full items-center gap-1.5 rounded-lg border border-token-subtle pl-1 pr-1.5 text-[12px] text-token-primary hover-bg-soft max-md:h-11">
++          {selected && <span className="w-7 shrink-0 overflow-hidden rounded-[4px]"><StyleFrame template={{ ...selected, frame: undefined }} /></span>}
++          <span className="min-w-0 truncate">{selected?.name ?? '选风格'}</span>
++          <ChevronDown size={13} className="shrink-0 text-token-muted" aria-hidden />
++        </button>
++      </Popover.Trigger>
++      <Popover.Portal>
++        <Popover.Content side="top" align="start" sideOffset={8} collisionPadding={12} data-qc="style-popover"
++          className="z-[110] flex flex-col rounded-xl border border-[var(--border-default)] bg-[var(--bg-elevated)] p-2.5 shadow-lg"
++          style={{ width: 'min(440px, calc(100vw - 24px))', maxHeight: 'min(520px, var(--radix-popover-content-available-height))' }}>
++          <div className="flex items-center justify-between px-1 pb-2">
++            <span className="text-[13px] font-semibold text-token-primary">选风格</span>
++            <span className="text-[11.5px] text-token-muted">{categories.length} 类 · {templates.length} 种</span>
++          </div>
++          <div className="flex items-center gap-1.5"><SearchBox id="qc-style-search-pop" value={f.query} onChange={f.setQuery} /></div>
++          <div className="mt-2"><CategoryRow categories={categories} counts={f.counts} total={templates.length} value={f.category} onChange={f.setCategory} /></div>
++          <div role="radiogroup" aria-label="选择风格" className="mt-1.5 grid min-h-0 flex-1 grid-cols-2 content-start gap-1 overflow-y-auto pr-0.5" style={{ overscrollBehavior: 'contain' }}>
++            {f.list.map(t => {
++              const on = t.id === selected?.id;
++              return (
++                <button key={t.id} type="button" role="radio" aria-checked={on} data-style={t.id}
++                  onClick={() => { onSelect(t.id); setOpen(false); }}
++                  className={cn('flex min-w-0 items-center gap-2 rounded-lg p-1.5 text-left max-md:min-h-11', on ? 'bg-[var(--selection-bg)]' : 'hover-bg-soft')}>
++                  <span className="w-14 shrink-0 overflow-hidden rounded-[5px]"><StyleFrame template={{ ...t, frame: undefined }} /></span>
++                  <span className="min-w-0 flex-1">
++                    <span className="block truncate text-[12.5px] font-medium text-token-primary">{t.name}</span>
++                    <span className="block truncate text-[11px] text-token-muted">{f.catName.get(t.categoryId)}</span>
++                  </span>
++                  {on && <Check size={13} className="shrink-0 text-[color:var(--accent-primary)]" aria-hidden />}
++                </button>
++              );
++            })}
++            {!f.list.length && <div className="col-span-2 p-4 text-center text-[12.5px] text-token-muted">没有匹配的风格，换个词或选「全部」</div>}
++          </div>
++          <button type="button" onClick={() => { setOpen(false); onBrowse(); }}
++            className="mt-2 inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border-t border-token-subtle pt-1 text-[12px] text-token-secondary hover:text-token-primary max-md:h-11">
++            <PanelRight size={13} aria-hidden />看大图和样片说明
++          </button>
++        </Popover.Content>
++      </Popover.Portal>
++    </Popover.Root>
++  );
++}
++
++/** 右栏的风格库：上方是选中风格的大图与说明，下方按类别浏览全部风格 */
++export function StyleLibrary({ templates, categories, source, selected, onSelect, kind }: {
++  templates: QcTemplate[];
++  categories: QcTemplateCategory[];
++  source?: QcTemplateSource;
++  selected: QcTemplate;
++  onSelect: (id: string) => void;
++  kind: OutputKind;
++}) {
++  const f = useStyleFilter(templates, categories);
++  return (
++    <div className="h-full overflow-y-auto" style={{ overscrollBehavior: 'contain' }} data-qc="template-preview">
++      <section className="grid gap-4 p-2.5 sm:p-4 lg:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)] lg:p-5" aria-label="当前风格">
++        <div key={selected.id} className="qc-rise self-start overflow-hidden rounded-[12px] border border-token-subtle shadow-[var(--shadow-card-sm)]">
++          <StyleFrame template={{ ...selected, frame: undefined }} />
++        </div>
++        <div className="flex min-w-0 flex-col">
++          <div className="flex items-center gap-2 text-[12px] text-token-muted">
++            <span className="rounded-full bg-[var(--bg-tertiary)] px-2 leading-[22px] text-token-secondary">{selected.categoryId} · {f.catName.get(selected.categoryId)}</span>
++            <span>No.{templates.findIndex(t => t.id === selected.id) + 1}</span>
++          </div>
++          <div className="mt-2 text-[20px] font-semibold leading-7 text-token-primary">{selected.name}</div>
++          <div className="text-[12.5px] text-token-muted">{selected.nameEn}</div>
++          <div className="mt-3 text-[13px] leading-6 text-token-secondary">
++            <span className="font-medium text-token-primary">样片《{selected.film}》</span> · {formatClock(selected.durationSec)}
++            <p className="m-0 mt-1">{selected.line}</p>
++          </div>
++          <div className="mt-3 rounded-[10px] bg-[var(--bg-secondary)] px-3 py-2.5 text-[12.5px] leading-5 text-token-secondary">
++            {kind === 'video'
++              ? '生成时，智能体按这个风格的风格说明用代码逐帧画出成片；内容、配音和字幕来自你的稿件。'
++              : '生成网页时，按这个风格的配色、字体与版式出页面；内容来自你的稿件。'}
++            {selected.needsImageTool && <span className="mt-1 block" style={{ color: 'var(--accent-fg-warning)' }}>这个风格的人物要用生图工具另外画，生成前会先确认。</span>}
++          </div>
++          {source && <div className="mt-auto pt-3 text-[11px] leading-4 text-token-muted">风格分类与样片：{source.name} · {source.posterLicense}</div>}
++        </div>
++      </section>
++      <div className="sticky top-0 z-10 border-y border-token-subtle bg-[var(--bg-card)] px-2.5 pb-1.5 pt-2.5 sm:px-4 lg:px-5">
++        <div className="flex items-center gap-2">
++          <SearchBox id="qc-style-search" value={f.query} onChange={f.setQuery} />
++          <span className="shrink-0 text-[12px] tabular-nums text-token-muted">{f.list.length} 种</span>
++        </div>
++        <div className="mt-2"><CategoryRow categories={categories} counts={f.counts} total={templates.length} value={f.category} onChange={f.setCategory} /></div>
++      </div>
++      <div role="radiogroup" aria-label="选择模板" className="grid grid-cols-2 gap-3 p-2.5 sm:grid-cols-3 sm:p-4 lg:p-5 2xl:grid-cols-4">
++        {f.list.map(t => {
++          const on = t.id === selected.id;
++          return (
++            <button key={t.id} type="button" role="radio" aria-checked={on} onClick={() => onSelect(t.id)} data-template={t.id}
++              className={cn('group flex flex-col overflow-hidden rounded-[12px] border bg-[var(--bg-input)] text-left transition-[border-color,box-shadow]',
++                on ? 'border-[color:var(--accent-primary)] shadow-[0_0_0_1px_var(--accent-primary)]' : 'border-token-subtle hover:border-[var(--border-default)]')}>
++              <span className="relative block"><StyleFrame template={{ ...t, frame: undefined }} />
++                {on && <span className="absolute right-1.5 top-1.5 inline-flex h-5 w-5 items-center justify-center rounded-full bg-[color:var(--accent-primary)] text-[color:var(--accent-on-primary)]"><Check size={12} strokeWidth={3} aria-hidden /></span>}
++              </span>
++              <span className="block px-2.5 py-2">
++                <span className="block truncate text-[13px] font-medium text-token-primary">{t.name}</span>
++                <span className="block truncate text-[11.5px] text-token-muted">{f.catName.get(t.categoryId)} · {formatClock(t.durationSec)} 样片</span>
++              </span>
++            </button>
++          );
++        })}
++        {!f.list.length && <div className="col-span-full p-8 text-center text-[13px] text-token-muted">没有匹配的风格，换个词或选「全部」</div>}
++      </div>
++    </div>
++  );
++}
++
 diff --git a/prd-admin/src/pages/quick-creation-agent/TemplateFrames.tsx b/prd-admin/src/pages/quick-creation-agent/TemplateFrames.tsx
 new file mode 100644
-index 00000000..39a3c879
+index 00000000..30785f1b
 --- /dev/null
 +++ b/prd-admin/src/pages/quick-creation-agent/TemplateFrames.tsx
-@@ -0,0 +1,184 @@
+@@ -0,0 +1,197 @@
 +/**
 + * 模板画面（作品本身的配色与版式）。
 + * 这是唯一允许写作品配色的文件：作品配色与 MAP 界面主题互不影响（框架规则 R-02 的例外，范围只到本文件）。
 + * 画面按容器宽度等比缩放（cqw），同一份代码用于模板缩略图、分镜、成片预览和发布页。
 + */
 +import type { CSSProperties, ReactNode } from 'react';
-+import type { FrameKey, QcWebSection } from './types';
++import type { FrameKey, QcTemplate, QcWebSection } from './types';
 +
 +const hand = "'Kaiti SC', 'STKaiti', 'KaiTi', 'Songti SC', serif";
 +const sans = "Inter, 'PingFang SC', 'Microsoft YaHei', sans-serif";
@@ -1435,6 +1596,19 @@ index 00000000..39a3c879
 +}
 +
 +/**
++ * 一个风格的画面：有模板代码渲染器时用它（可以按幕切换画面），没有时显示该风格的样片海报。
++ * 海报按 16:9 裁切，与渲染器同一个比例，列表、分镜和成片里尺寸一致。
++ */
++export function StyleFrame({ template, scene = 1 }: { template: Pick<QcTemplate, 'name' | 'posterUrl' | 'frame'>; scene?: number }) {
++  if (template.frame) return <TemplateFrame frame={template.frame} scene={scene} />;
++  return (
++    <div role="img" aria-label={`${template.name} · 样片海报`} style={{ width: '100%', aspectRatio: '16 / 9', overflow: 'hidden', background: '#111' }}>
++      <img src={template.posterUrl} alt="" loading="lazy" decoding="async" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
++    </div>
++  );
++}
++
++/**
 + * 网页成品的正文（作品配色）。activeAnchor 用于从重点定位到对应一节；
 + * pendingFrom 用于生成中：从这一节起还没写完，画成作品纸面上的占位行。
 + */
@@ -1458,7 +1632,7 @@ index 00000000..39a3c879
 +}
 diff --git a/prd-admin/src/pages/quick-creation-agent/WorksList.tsx b/prd-admin/src/pages/quick-creation-agent/WorksList.tsx
 new file mode 100644
-index 00000000..238396cf
+index 00000000..aee65f99
 --- /dev/null
 +++ b/prd-admin/src/pages/quick-creation-agent/WorksList.tsx
 @@ -0,0 +1,89 @@
@@ -1467,7 +1641,7 @@ index 00000000..238396cf
 +import { Badge } from '@/components/design/Badge';
 +import { Button } from '@/components/design/Button';
 +import { SegmentedTabs } from '@/components/design/SegmentedTabs';
-+import { TemplateFrame } from './TemplateFrames';
++import { StyleFrame } from './TemplateFrames';
 +import type { QcTemplate, QcWork } from './types';
 +
 +type Filter = 'all' | 'active' | 'attention' | 'published';
@@ -1530,7 +1704,7 @@ index 00000000..238396cf
 +            <li key={w.runId}>
 +              <button type="button" data-run-id={w.runId} onClick={() => onOpen(w.runId)} className="flex min-h-[64px] w-full items-center gap-3 px-3 py-2.5 text-left hover-bg-soft md:px-4">
 +                <span className="w-[88px] shrink-0 overflow-hidden rounded-md border border-token-subtle md:w-[104px]">
-+                  {t ? <TemplateFrame frame={t.frame} scene={1} /> : <span className="block aspect-video bg-token-nested" />}
++                  {t ? <StyleFrame template={t} scene={1} /> : <span className="block aspect-video bg-token-nested" />}
 +                </span>
 +                <span className="min-w-0 flex-1">
 +                  <span className="line-clamp-2 text-[13.5px] font-medium leading-5 text-token-primary md:line-clamp-1">{w.title}</span>
@@ -1693,10 +1867,10 @@ index 00000000..47942c32
 +}
 diff --git a/prd-admin/src/pages/quick-creation-agent/types.ts b/prd-admin/src/pages/quick-creation-agent/types.ts
 new file mode 100644
-index 00000000..0cdf13f7
+index 00000000..238a6270
 --- /dev/null
 +++ b/prd-admin/src/pages/quick-creation-agent/types.ts
-@@ -0,0 +1,157 @@
+@@ -0,0 +1,184 @@
 +/** 快速创作：一份文档 + 一个模板 → 能播放（视频）或能浏览（网页）、能发布到网页托管的成品。 */
 +
 +export type OutputKind = 'video' | 'web';
@@ -1723,16 +1897,43 @@ index 00000000..0cdf13f7
 +  excerpt?: string;
 +}
 +
++/**
++ * 模板 = 风格库里的一种风格（分类与风格取自 Lemo-Opuscar 风格库：15 类 99 种）。
++ * 同一个风格既能出视频也能出网页：视频按风格说明逐帧画出成片，网页按它的配色、字体与版式出页面。
++ */
 +export interface QcTemplate {
++  /** 风格编号，等于风格库的文件夹名（例如 sketchnote） */
 +  id: string;
-+  kind: OutputKind;
++  /** 中文名 */
 +  name: string;
-+  /** 一句话风格 */
-+  tagline: string;
-+  /** 适合讲什么 */
-+  goodFor: string;
-+  /** 画面渲染器 */
-+  frame: FrameKey;
++  nameEn: string;
++  /** 分类编号 01–15 */
++  categoryId: string;
++  /** 样片海报（缩略图地址） */
++  posterUrl: string;
++  /** 样片标题与一句话，用来让人预判这个风格长什么样 */
++  film: string;
++  line: string;
++  durationSec: number;
++  /** 生成时交给智能体的风格说明位置（风格库 styles/<id>/STYLE.md）；界面只显示来源，不显示原文 */
++  promptRef: string;
++  /** 需要用户自备生图工具的风格（人物要另外画），选中时提示 */
++  needsImageTool?: boolean;
++  /** 原型里用模板代码渲染分镜与成片的渲染器；没有时显示样片海报 */
++  frame?: FrameKey;
++}
++
++export interface QcTemplateCategory {
++  id: string;
++  name: string;
++  nameEn: string;
++}
++
++/** 风格库来源与授权，显示在风格详情底部 */
++export interface QcTemplateSource {
++  name: string;
++  url: string;
++  posterLicense: string;
 +}
 +
 +export type FrameKey = 'visual-note' | 'whiteboard' | 'dark-notes' | 'guide-page' | 'card-digest';
@@ -1856,14 +2057,14 @@ index 00000000..0cdf13f7
 +}
 diff --git a/prd-admin/src/services/real/quickCreation.ts b/prd-admin/src/services/real/quickCreation.ts
 new file mode 100644
-index 00000000..abb1fd53
+index 00000000..fcc165b0
 --- /dev/null
 +++ b/prd-admin/src/services/real/quickCreation.ts
-@@ -0,0 +1,66 @@
+@@ -0,0 +1,67 @@
 +import { apiRequest } from '@/services/real/apiClient';
 +import { useAuthStore } from '@/stores/authStore';
 +import { fail, type ApiResponse } from '@/types/api';
-+import type { CreateRunInput, QcAttachment, QcRun, QcTemplate, QcWork } from '@/pages/quick-creation-agent/types';
++import type { CreateRunInput, QcAttachment, QcRun, QcTemplate, QcTemplateCategory, QcTemplateSource, QcWork } from '@/pages/quick-creation-agent/types';
 +
 +/**
 + * 快速创作接口。生成在服务端排队与执行（Run/Worker），离开页面不取消；页面按任务编号恢复。
@@ -1872,7 +2073,8 @@ index 00000000..abb1fd53
 +const base = '/api/quick-creation';
 +
 +export function listQuickCreationTemplates() {
-+  return apiRequest<{ items: QcTemplate[] }>(`${base}/templates`);
++  /* 风格库目录：分类、风格（含海报地址与风格说明位置）和来源授权，由服务端维护 */
++  return apiRequest<{ items: QcTemplate[]; categories: QcTemplateCategory[]; source: QcTemplateSource }>(`${base}/templates`);
 +}
 +
 +export function listQuickCreationWorks() {

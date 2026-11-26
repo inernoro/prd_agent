@@ -1,0 +1,675 @@
+{
+ "from": {
+  "label": "V5",
+  "version": 5,
+  "commit": "bde80f3964419d802b6250e146a32f952278a56c",
+  "title": "快速创作 · 交付说明（V5）"
+ },
+ "to": {
+  "label": "V6",
+  "version": 6,
+  "commit": null,
+  "title": "快速创作 · 交付说明（V6）"
+ },
+ "direction": "upgrade",
+ "acceptance": {
+  "added": [
+   {
+    "id": "A-43",
+    "rule": "风格库按 Lemo-Opuscar 的分类：15 类 99 种，可按类别筛选、按名字或类别搜索；选中风格显示样片海报、样片名与时长、一句话说明和来源署名",
+    "expected": "类别行「全部 99」与 15 类各带数量；搜「水墨」只剩「中国水墨」；选中后大图、样片《》与署名同步",
+    "how": "human",
+    "screenId": "compose",
+    "slots": [
+     "desktop-light",
+     "desktop-dark"
+    ],
+    "interaction": true
+   },
+   {
+    "id": "A-44",
+    "rule": "输入框里的风格按钮就地弹出选择面板（搜索 + 类别 + 列表），选中后面板关闭，按钮与右栏风格库同步；面板底部可去右栏看大图",
+    "expected": "点风格按钮 → 面板含搜索、类别行与风格列表；点「中国水墨」后按钮写「中国水墨」，右栏同一张卡被选中",
+    "how": "human",
+    "screenId": "style-picker",
+    "slots": [
+     "desktop-light",
+     "desktop-dark"
+    ],
+    "interaction": true
+   },
+   {
+    "id": "A-45",
+    "rule": "「视频 / 网页」在输入框里切换，风格与产出相互独立：切换产出不改风格，切换风格不改产出",
+    "expected": "切到网页后风格按钮仍是原风格；再选别的风格，产出仍是网页",
+    "how": "human",
+    "screenId": "compose",
+    "slots": [
+     "desktop-light",
+     "desktop-dark"
+    ],
+    "interaction": true
+   },
+   {
+    "id": "A-46",
+    "rule": "风格来源与授权写清：风格说明（STYLE.md，CC BY-NC 4.0）只按编号引用、界面与源码差异不含原文；样片海报署名「Lemo-Opuscar by Lemomo (LemoLab)」并注明 CC BY 4.0",
+    "expected": "风格详情底部有署名与「样片海报 CC BY 4.0」；源码差异与界面里搜不到 STYLE.md 正文；类型字段 promptRef 只存位置",
+    "how": "human",
+    "screenId": "compose",
+    "slots": [
+     "desktop-light",
+     "desktop-dark"
+    ]
+   }
+  ],
+  "removed": [],
+  "changed": [
+   {
+    "id": "A-11",
+    "fields": [
+     "rule",
+     "expected"
+    ],
+    "from": {
+     "rule": "首屏：左栏是助手开场与输入框，右栏是产出切换、选中模板的大图和全部模板卡；模板缩略图是真实成品帧，选中态唯一",
+     "expected": "1440×900 首屏同时看到右栏的产出切换、模板大图与模板卡，左栏的开场、输入框与「快捷生成」"
+    },
+    "to": {
+     "rule": "首屏：左栏是助手开场与输入框（含产出切换与风格按钮），右栏是风格库：选中风格的大图与说明在上，按类别浏览全部风格在下；选中态唯一",
+     "expected": "1440×900 首屏同时看到左栏的开场、输入框里的「视频 / 网页」与风格按钮、「快捷生成」，右栏的风格大图、样片说明、类别行与风格卡"
+    }
+   },
+   {
+    "id": "A-13",
+    "fields": [
+     "rule",
+     "expected"
+    ],
+    "from": {
+     "rule": "项目名默认取第一份稿件的标题，没有稿件时为「未命名 · 模板名」",
+     "expected": "放入「需求评审的三个习惯.md」后标题变为「需求评审的三个习惯」"
+    },
+    "to": {
+     "rule": "项目名默认取第一份稿件的标题，没有稿件时为「未命名 · 风格名」",
+     "expected": "放入「需求评审的三个习惯.md」后标题从「未命名 · 视觉笔记」变为「需求评审的三个习惯」"
+    }
+   },
+   {
+    "id": "A-35",
+    "fields": [
+     "rule",
+     "expected"
+    ],
+    "from": {
+     "rule": "手机上「对话 / 预览」切换，输入框与「快捷生成」在底部可达；选模板在「预览」页签",
+     "expected": "390×844 下底部可见输入框、资料托盘与「快捷生成」"
+    },
+    "to": {
+     "rule": "手机上「对话 / 预览」切换，输入框与「快捷生成」在底部可达；产出切换与风格按钮在输入框里单独一行",
+     "expected": "390×844 下底部可见输入框、资料托盘、「视频 / 网页」、风格按钮与「快捷生成」"
+    }
+   },
+   {
+    "id": "A-39",
+    "fields": [
+     "rule",
+     "expected"
+    ],
+    "from": {
+     "rule": "切到网页后只显示网页模板，产出标签与主按钮旁的标记同步",
+     "expected": "模板变为「导读长页」「卡片速览」，输入框下方标记为「网页 · 导读长页」"
+    },
+    "to": {
+     "rule": "切到网页后风格保持不变，右栏说明换成「按这个风格的配色、字体与版式出页面」，标题与风格按钮同步",
+     "expected": "「网页」高亮；风格仍是「视觉笔记」；右栏说明写网页的生成方式"
+    }
+   }
+  ]
+ },
+ "screens": {
+  "added": [
+   {
+    "id": "style-picker",
+    "name": "输入框里就地换风格（15 类 99 种）",
+    "route": "#/quick-creation-agent",
+    "viewport": "desktop",
+    "entryActions": [
+     "[data-qc=style-chip]"
+    ]
+   }
+  ],
+  "removed": [],
+  "changed": []
+ },
+ "docs": {
+  "added": [
+   "设计文档/验收计划.md"
+  ],
+  "removed": []
+ },
+ "meta": {
+  "prototypeVersion": {
+   "from": 5,
+   "to": 6
+  }
+ },
+ "files": {
+  "added": [
+   {
+    "path": "src/added/pages/quick-creation-agent/StyleLibrary.tsx",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/catalog.json",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/archive-lighttable.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/art-deco.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/ascii-crt.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/assembly-line-diagram.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/backrooms.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/bauhaus-shapes.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/blueprint.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/brick-toy.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/briefing-board.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/caption-news.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/cel-anime-80s.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/chalkboard.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/circuit-board.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/city-symphony.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/colored-pencil.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/comic-history.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/countdown.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/crayon-book.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/crayon-world.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/dark-documentary.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/dark-keynote.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/data-physical.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/dataviz.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/desktop-flythrough.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/double-exposure.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/engraving.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/firefly-pointillism.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/flat-space-explainer.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/flow-field.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/game-show.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/gilded-illumination.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/glass-product.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/halftone-dossier.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/hardcore-info.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/hd-2d.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/hologram-hud.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/impasto.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/ink-wash.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/instruction-manual.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/ipad-sketch.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/iso-infographic.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/isometric-picture-book.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/kino-montage.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/lidar-survey.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/living-screencast.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/lowpoly-island.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/manga-panels.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/map-explainer.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/marker-paper.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/memphis-diorama.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/microgame.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/microscope.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/midcentury-toon.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/neon-tubes.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/news-package.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/newsreel.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/one-bit-dither.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/one-line.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/oscilloscope-math.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/paper-lantern.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/paper-popup.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/papercut-red.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/pen-plotter.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/pictogram-motion.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/pip-simulation.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/pixel-rpg.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/pop-art.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/precise-mechanism.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/printed-long-take.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/risograph.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/rubber-hose.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/satellite-briefing.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/scifi-toon.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/scratch-film.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/security-xray.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/shadow-puppet.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/silent-film.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/silhouette-rhythm.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/silkscreen-poster.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/sketchnote.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/spreadsheet.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/spy-titles.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/stained-glass.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/stick-explainer.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/swiss-motion.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/teardown.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/telestrator.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/text-flash-cuts.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/thermal-camera.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/tilt-shift.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/transit-map.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/ukiyoe.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/urban-sketch.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/vintage-collage.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/visual-investigation.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/watercolor.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/white-model.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/whiteboard.webp",
+    "area": "源码"
+   },
+   {
+    "path": "src/opuscar/posters/woodcut.webp",
+    "area": "源码"
+   },
+   {
+    "path": "tools/import-opuscar.py",
+    "area": "工具"
+   },
+   {
+    "path": "设计文档/验收计划.md",
+    "area": "文档"
+   }
+  ],
+  "removed": [],
+  "changed": [
+   {
+    "path": "checks/handoff-local.json",
+    "area": "自检"
+   },
+   {
+    "path": "checks/result.json",
+    "area": "自检"
+   },
+   {
+    "path": "design.json",
+    "area": "其他"
+   },
+   {
+    "path": "dist/index.html",
+    "area": "原型"
+   },
+   {
+    "path": "prototype.json",
+    "area": "其他"
+   },
+   {
+    "path": "src/added/pages/quick-creation-agent/QuickCreationAgentPage.tsx",
+    "area": "源码"
+   },
+   {
+    "path": "src/added/pages/quick-creation-agent/ResultPanel.tsx",
+    "area": "源码"
+   },
+   {
+    "path": "src/added/pages/quick-creation-agent/TemplateFrames.tsx",
+    "area": "源码"
+   },
+   {
+    "path": "src/added/pages/quick-creation-agent/WorksList.tsx",
+    "area": "源码"
+   },
+   {
+    "path": "src/added/pages/quick-creation-agent/types.ts",
+    "area": "源码"
+   },
+   {
+    "path": "src/added/services/real/quickCreation.ts",
+    "area": "源码"
+   },
+   {
+    "path": "src/env.ts",
+    "area": "源码"
+   },
+   {
+    "path": "src/fixtures.ts",
+    "area": "源码"
+   },
+   {
+    "path": "tools/export-demo-data.mjs",
+    "area": "工具"
+   },
+   {
+    "path": "tools/manifest-src.mjs",
+    "area": "工具"
+   },
+   {
+    "path": "tools/walkthrough.json",
+    "area": "工具"
+   },
+   {
+    "path": "versions.json",
+    "area": "其他"
+   },
+   {
+    "path": "交付说明.md",
+    "area": "文档"
+   },
+   {
+    "path": "思路.md",
+    "area": "文档"
+   },
+   {
+    "path": "设计文档/源码差异.diff",
+    "area": "文档"
+   },
+   {
+    "path": "设计文档/演示数据.json",
+    "area": "文档"
+   }
+  ]
+ },
+ "checks": {
+  "from": {
+   "passed": 43,
+   "total": 43,
+   "failed": []
+  },
+  "to": {
+   "passed": 47,
+   "total": 47,
+   "failed": []
+  }
+ },
+ "source": {
+  "files": 109,
+  "bytes": 107969
+ }
+}

@@ -19,10 +19,11 @@ import {
 import { AttachmentTray, MaterialsPanel, SentAttachments } from './AttachmentTray';
 import { AgentTurn, UserTurn } from './Conversation';
 import { FailureCard, QueueCard, RunProgress } from './RunProgress';
-import { ProgressPreview, TemplateGallery, VideoPlayer, WebPreview } from './ResultPanel';
+import { ProgressPreview, VideoPlayer, WebPreview } from './ResultPanel';
+import { StyleLibrary, StylePickerChip } from './StyleLibrary';
 import { WorksList } from './WorksList';
 import { MAX_ATTACHMENTS, formatChars, formatClock, summarizeAttachments } from './format';
-import type { OutputKind, QcAttachment, QcFailure, QcRun, QcTemplate, QcWork } from './types';
+import type { OutputKind, QcAttachment, QcFailure, QcRun, QcTemplate, QcTemplateCategory, QcTemplateSource, QcWork } from './types';
 import './quickCreation.css';
 
 const OUTPUT_LABEL: Record<OutputKind, string> = { video: '视频', web: '网页' };
@@ -44,6 +45,8 @@ export function QuickCreationAgentPage() {
   const view = params.get('view');
 
   const [templates, setTemplates] = useState<QcTemplate[]>([]);
+  const [categories, setCategories] = useState<QcTemplateCategory[]>([]);
+  const [styleSource, setStyleSource] = useState<QcTemplateSource | undefined>();
   const [works, setWorks] = useState<QcWork[]>([]);
   const [run, setRun] = useState<QcRun | null>(null);
   const [runError, setRunError] = useState<string | null>(null);
@@ -61,18 +64,19 @@ export function QuickCreationAgentPage() {
   useEffect(() => { if (askRef.current) fitComposerHeight(askRef.current); }, [ask]);
 
   useEffect(() => {
-    void listQuickCreationTemplates().then(res => { if (res.success) setTemplates(res.data.items); });
+    void listQuickCreationTemplates().then(res => { if (res.success) { setTemplates(res.data.items); setCategories(res.data.categories); setStyleSource(res.data.source); } });
   }, []);
   const refreshWorks = useCallback(() => {
     void listQuickCreationWorks().then(res => { if (res.success) setWorks(res.data.items); });
   }, []);
   useEffect(() => { refreshWorks(); }, [refreshWorks, runId, view]);
 
-  const kindTemplates = templates.filter(t => t.kind === kind);
-  const template = templates.find(t => t.id === (run?.templateId ?? templateId)) ?? kindTemplates[0];
+  /* 风格与产出相互独立：同一个风格既能出视频也能出网页；默认选「视觉笔记」 */
+  const DEFAULT_STYLE = 'sketchnote';
+  const template = templates.find(t => t.id === (run?.templateId ?? templateId)) ?? templates.find(t => t.id === DEFAULT_STYLE) ?? templates[0];
   useEffect(() => {
-    if (!templateId && kindTemplates[0]) setTemplateId(kindTemplates[0].id);
-  }, [kindTemplates, templateId]);
+    if (!templateId && templates.length) setTemplateId((templates.find(t => t.id === DEFAULT_STYLE) ?? templates[0]).id);
+  }, [templates, templateId]);
 
   /* 按任务编号加载 */
   useEffect(() => {
@@ -201,7 +205,6 @@ export function QuickCreationAgentPage() {
 
   const openManage = () => { setPanel(p => (p?.mode === 'manage' ? null : { mode: 'manage' })); setPane('preview'); };
   const openReview = (id?: string) => { setPanel({ mode: 'review', id }); setPane('preview'); };
-  const KindIcon = (kind === 'video' ? Video : Globe);
 
   /* ---------- 左栏 · 新建：助手的开场 + 输入框 ---------- */
   const startOptions = (
@@ -227,7 +230,7 @@ export function QuickCreationAgentPage() {
     <AgentTurn>
       <div>
         <p className="m-0 text-[15px] font-semibold leading-6 text-token-primary">把一份文档交给我</p>
-        <p className="m-0 mt-1 text-[13px] leading-6 text-token-secondary">在预览区选好产出和模板，我来排好配音、字幕或版式，做成能播放的视频或能浏览的网页，完成后可以直接发布到网页托管。</p>
+        <p className="m-0 mt-1 text-[13px] leading-6 text-token-secondary">在输入框下方选做视频还是网页、挑一个风格（{categories.length} 类 {templates.length} 种），我来排好配音、字幕或版式，完成后可以直接发布到网页托管。</p>
       </div>
       {!attachments.length ? (
         <>
@@ -254,18 +257,22 @@ export function QuickCreationAgentPage() {
           onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void submit(); } }}
           placeholder="可选：加一句要求，例如「先提醒三个重点，给新同事看」"
           className="block w-full resize-none overflow-y-auto bg-transparent px-3.5 pb-1 pt-3 text-base leading-relaxed text-token-primary outline-none placeholder:text-token-muted sm:text-[14px]" />
-        <div className="flex items-center gap-1 px-2 pb-2 pt-1">
+        <div className="flex flex-wrap items-center gap-1 px-2 pb-2 pt-1">
           <input ref={fileInput} type="file" accept=".md,.markdown,.txt,image/*" multiple hidden data-qc="file-input"
             onChange={e => { const files = Array.from(e.target.files ?? []); e.target.value = ''; files.forEach(f => void addFile(f)); }} />
           <button type="button" aria-label="上传稿件或图片" title="上传稿件或图片" className="qc-icon-btn" onClick={() => fileInput.current?.click()}><Paperclip size={16} /></button>
           <button type="button" aria-label="从知识库选择" title="从知识库选择" data-qc="pick-knowledge" className="qc-icon-btn" onClick={() => void addKnowledge('kb-picker')}><BookOpen size={16} /></button>
-          <span className="mx-1 h-4 w-px bg-[var(--border-subtle)]" aria-hidden />
-          <button type="button" onClick={() => { setPanel(null); setPane('preview'); }} aria-label={`产出与模板：${OUTPUT_LABEL[kind]} · ${template?.name ?? ''}，点此更换`}
-            className="inline-flex h-8 min-w-0 items-center gap-1.5 rounded-lg px-2 text-[12px] text-token-secondary hover-bg-soft max-md:h-11">
-            <KindIcon size={13} className="shrink-0" aria-hidden />
-            <span className="truncate">{OUTPUT_LABEL[kind]} · {template?.name ?? ''}</span>
-            <ChevronRight size={13} className="shrink-0 text-token-muted lg:hidden" aria-hidden />
-          </button>
+          {/* 产出与风格在输入框里决定：将来和其他输入集成时，这一组跟着输入框走，不依赖右栏。
+              窄屏这一组单独占第一行，上传、知识库与快捷生成在第二行 */}
+          <div className="flex min-w-0 items-center gap-1.5 max-md:order-first max-md:basis-full max-md:pb-1 md:ml-1 md:border-l md:border-[var(--border-subtle)] md:pl-2">
+            {/* 公共组件 Segmented 沿用正式实现（28px），触控高度差异记为框架债务，不在单页改 */}
+            <span data-qc-touch-exempt className="shrink-0">
+              <Segmented<OutputKind> label="选择产出" value={kind} onChange={setKind}
+                options={[{ value: 'video', label: '视频', title: '能播放的成片：配音、字幕与画面' }, { value: 'web', label: '网页', title: '能浏览的网页：桌面与手机都能读' }]} />
+            </span>
+            <StylePickerChip templates={templates} categories={categories} selected={template} onSelect={id => { setTemplateId(id); setPanel(null); }}
+              onBrowse={() => { setPanel(null); setPane('preview'); }} />
+          </div>
           <Button variant="primary" size="sm" className="ml-auto shrink-0 max-md:min-h-11" disabled={!!blockReason || submitting} onClick={() => void submit()} data-qc="submit">
             {submitting ? <MapSpinner size={13} /> : <Send size={13} />}快捷生成
           </Button>
@@ -348,7 +355,7 @@ export function QuickCreationAgentPage() {
       ) : (
         <>
           <span className="min-w-0 flex-1">想换个模板或产出？用同一份稿件再做一个。</span>
-          <Button size="sm" variant="secondary" className="max-md:min-h-11" data-qc="redo-other" onClick={() => { setAttachments(run.attachments.filter(a => a.status === 'ready')); setAsk(run.ask); setKind(run.kind === 'video' ? 'web' : 'video'); setTemplateId(''); setParams({}); setPane('chat'); }}>
+          <Button size="sm" variant="secondary" className="max-md:min-h-11" data-qc="redo-other" onClick={() => { setAttachments(run.attachments.filter(a => a.status === 'ready')); setAsk(run.ask); setKind(run.kind === 'video' ? 'web' : 'video'); setTemplateId(run.templateId); setParams({}); setPane('chat'); }}>
             用这份稿件做{run.kind === 'video' ? '网页' : '视频'}
           </Button>
         </>
@@ -357,16 +364,10 @@ export function QuickCreationAgentPage() {
   );
 
   /* ---------- 右栏 ---------- */
-  let previewTitle = '选择模板';
-  let previewNote = `${OUTPUT_LABEL[kind]} · ${kindTemplates.length} 个模板，缩略图取自真实${kind === 'video' ? '成片' : '页面'}`;
-  let nextHint = '选好模板后，在左边放进稿件，点「快捷生成」。';
-  let toolbar: ReactNode = !run && !panel ? (
-    /* 公共组件 Segmented 沿用正式实现（28px），触控高度差异记为框架债务，不在单页改 */
-    <span data-qc-touch-exempt>
-      <Segmented<OutputKind> label="选择产出" value={kind} onChange={k => { setKind(k); setTemplateId(templates.find(t => t.kind === k)?.id ?? ''); }}
-        options={[{ value: 'video', label: '视频' }, { value: 'web', label: '网页' }]} />
-    </span>
-  ) : null;
+  let previewTitle = '风格库';
+  let previewNote = `${categories.length} 类 · ${templates.length} 种风格，按画面像什么分类；当前做${OUTPUT_LABEL[kind]}`;
+  let nextHint = '选好风格后，在左边放进稿件，点「快捷生成」；也可以在输入框的风格按钮里就地换。';
+  let toolbar: ReactNode = null;
   let actions: ReactNode = null;
   let body: ReactNode = null;
   const liveStage = run?.stages.find(s => s.status === 'running' || s.status === 'failed');
@@ -388,9 +389,9 @@ export function QuickCreationAgentPage() {
     actions = <Button size="sm" variant="secondary" className="max-md:min-h-11" data-qc="review-back" onClick={() => setPanel(null)}>回到预览</Button>;
     body = <MaterialsPanel mode="review" items={run.attachments} activeId={panel.id} onSelect={id => setPanel({ mode: 'review', id })} />;
   } else if (!run && template) {
-    body = <TemplateGallery templates={kindTemplates} selected={template} onSelect={setTemplateId} />;
+    body = <StyleLibrary templates={templates} categories={categories} source={styleSource} selected={template} onSelect={setTemplateId} kind={kind} />;
   } else if (run && runTemplate) {
-    toolbar = <Badge size="sm">模板 · {runTemplate.name}</Badge>;
+    toolbar = <Badge size="sm">风格 · {runTemplate.name}</Badge>;
     if (run.status === 'done') {
       previewTitle = run.kind === 'video' ? '成片' : '网页';
       previewNote = run.kind === 'video' ? `${formatClock(run.durationSec ?? 0)} · ${run.scenes?.length ?? 0} 幕 · 1080p${run.voice ? ` · 配音 ${run.voice}` : ''}` : `${run.sections?.length ?? 0} 节 · 桌面与手机都能读`;
@@ -411,7 +412,8 @@ export function QuickCreationAgentPage() {
   );
 
   const loading = runId && !run && !runError;
-  const ready = loading ? undefined : run ? `run-${run.status}` : 'compose';
+  /* 风格目录读到之前不标「可以创作」：输入框里的风格按钮和右栏风格库都依赖它 */
+  const ready = loading ? undefined : run ? `run-${run.status}` : templates.length ? 'compose' : undefined;
   return (
     <div className="flex h-full min-h-0 flex-col" data-qc-ready={ready} data-output={run?.kind ?? kind} data-run-id={run?.id ?? ''}>
       {header}

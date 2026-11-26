@@ -1,13 +1,19 @@
 /* 原型演示数据（虚构稿件与成员）。只用于原型，不进源码差异。实现方取证时用同一份数据（design.json demoData）。 */
-import type { QcAttachment, QcRun, QcScene, QcStage, QcTemplate, QcWork, QcWebSection } from '@/pages/quick-creation-agent/types';
+import type { FrameKey, QcAttachment, QcRun, QcScene, QcStage, QcTemplate, QcTemplateCategory, QcTemplateSource, QcWork, QcWebSection } from '@/pages/quick-creation-agent/types';
+import catalog from './opuscar/catalog.json';
 
-export const templates: QcTemplate[] = [
-  { id: 'tpl-visual-note', kind: 'video', name: '视觉笔记', tagline: '点阵纸、手绘线条、暖黄强调', goodFor: '适合讲概念、流程和注意事项', frame: 'visual-note' },
-  { id: 'tpl-whiteboard', kind: 'video', name: '白板速讲', tagline: '白底蓝色马克笔，一屏一个结论', goodFor: '适合复盘与汇报', frame: 'whiteboard' },
-  { id: 'tpl-dark-notes', kind: 'video', name: '深色讲义', tagline: '深底等宽字', goodFor: '适合技术约定与代码说明', frame: 'dark-notes' },
-  { id: 'tpl-guide-page', kind: 'web', name: '导读长页', tagline: '左侧目录、页首三个重点、正文分节', goodFor: '适合规范、手册和长文档', frame: 'guide-page' },
-  { id: 'tpl-card-digest', kind: 'web', name: '卡片速览', tagline: '一屏卡片，点开看细节', goodFor: '适合清单、要点和公告', frame: 'card-digest' },
-];
+/* 风格库：分类与风格取自 Lemo-Opuscar（tools/import-opuscar.py 生成 opuscar/catalog.json 与缩小后的样片海报）。
+ * 风格说明 STYLE.md 只按编号引用，不复制原文。原型里有 5 个风格配了模板代码渲染器，用来演示分镜与成片，其余显示海报。 */
+const posters = import.meta.glob<string>('./opuscar/posters/*.webp', { eager: true, import: 'default' });
+const FRAMES: Record<string, FrameKey> = { sketchnote: 'visual-note', whiteboard: 'whiteboard', 'dark-keynote': 'dark-notes', 'swiss-motion': 'guide-page', 'iso-infographic': 'card-digest' };
+export const templateCategories: QcTemplateCategory[] = catalog.categories.map(c => ({ id: c.id, name: c.cn, nameEn: c.en }));
+export const templateSource: QcTemplateSource = { name: catalog.source.name, url: catalog.source.url, posterLicense: '样片海报 CC BY 4.0' };
+export const templates: QcTemplate[] = catalog.styles.map(st => ({
+  id: st.slug, name: st.cn, nameEn: st.en, categoryId: st.category, posterUrl: posters[`./opuscar/posters/${st.slug}.webp`],
+  film: st.film, line: st.line, durationSec: st.dur, promptRef: `styles/${st.slug}/STYLE.md`,
+  ...('needsImageTool' in st && st.needsImageTool ? { needsImageTool: true } : {}),
+  ...(FRAMES[st.slug] ? { frame: FRAMES[st.slug] } : {}),
+}));
 
 const docExcerpt = `刚加入团队的同学，第一次参加需求评审时常常不知道该看什么。这份说明只讲三个习惯，养成之后，评审会快很多。
 
@@ -87,7 +93,7 @@ export function stagesAt(kind: 'video' | 'web', current: number, opts: { failed?
 
 const now = '今天 14:02';
 const baseRun = (over: Partial<QcRun>): QcRun => ({
-  id: 'run', title: '需求评审的三个习惯', kind: 'video', templateId: 'tpl-visual-note', ask: '稍微快一点，先提醒我三个重点，给新同事看',
+  id: 'run', title: '需求评审的三个习惯', kind: 'video', templateId: 'sketchnote', ask: '稍微快一点，先提醒我三个重点，给新同事看',
   attachments: runAttachments, status: 'running', stages: [], elapsedSec: 0, publish: { status: 'none' }, createdAt: now, updatedAt: now, voice: '女声 · 稍快',
   keyPoints: [{ text: '先读目标：这次要解决谁的问题', atSec: 26 }, { text: '再画边界：哪些这次不做', atSec: 40 }, { text: '最后对验收：怎样算真的做完', atSec: 68 }],
   ...over,
@@ -111,8 +117,8 @@ export const fixedRuns: Record<string, QcRun> = {
   'run-done': baseRun({ id: 'run-done', status: 'done', stages: stagesAt('video', 4), elapsedSec: 190, durationSec: 96, scenes: scenes(() => 'ready') }),
   'run-publish-failed': baseRun({ id: 'run-publish-failed', status: 'done', stages: stagesAt('video', 4), elapsedSec: 190, durationSec: 96, scenes: scenes(() => 'ready'), publish: { status: 'failed', error: '网页托管这次没有响应（14:21）' } }),
   'run-published': baseRun({ id: 'run-published', status: 'done', stages: stagesAt('video', 4), elapsedSec: 190, durationSec: 96, scenes: scenes(() => 'ready'), publish: { status: 'done', siteId: 'site-habits', siteTitle: '需求评审的三个习惯', at: '14:23' } }),
-  'run-web-running': baseRun({ id: 'run-web-running', kind: 'web', templateId: 'tpl-guide-page', status: 'running', stages: stagesAt('web', 3, { progress: 64 }), elapsedSec: 96, remainSec: 25, estimateBasis: '最近 20 次同模板任务的中位数', sections: webSections, keyPoints: webKeyPoints, voice: undefined }),
-  'run-web-done': baseRun({ id: 'run-web-done', kind: 'web', templateId: 'tpl-guide-page', status: 'done', stages: stagesAt('web', 4), elapsedSec: 128, sections: webSections, keyPoints: webKeyPoints, voice: undefined }),
+  'run-web-running': baseRun({ id: 'run-web-running', kind: 'web', templateId: 'swiss-motion', status: 'running', stages: stagesAt('web', 3, { progress: 64 }), elapsedSec: 96, remainSec: 25, estimateBasis: '最近 20 次同模板任务的中位数', sections: webSections, keyPoints: webKeyPoints, voice: undefined }),
+  'run-web-done': baseRun({ id: 'run-web-done', kind: 'web', templateId: 'swiss-motion', status: 'done', stages: stagesAt('web', 4), elapsedSec: 128, sections: webSections, keyPoints: webKeyPoints, voice: undefined }),
 };
 
 /** 「我的作品」30 条：前几条对应上面的任务，其余用于检查长标题与数量 */
@@ -124,17 +130,17 @@ const titles = [
   '安全意识十分钟：密码、钓鱼邮件与外部分享链接的那些坑', '代码评审礼仪', '如何申请测试环境',
 ];
 export const works: QcWork[] = [
-  { runId: 'run-voicing', title: '需求评审的三个习惯', kind: 'video', templateId: 'tpl-visual-note', status: 'running', publishStatus: 'none', summary: '配音第 3 / 6 幕', updatedAt: '刚刚' },
-  { runId: 'run-web-running', title: '需求评审的三个习惯（网页版）', kind: 'web', templateId: 'tpl-guide-page', status: 'running', publishStatus: 'none', summary: '生成页面第 3 / 4 节', updatedAt: '1 分钟前' },
-  { runId: 'run-queued', title: '接口命名约定（给后端新人）', kind: 'video', templateId: 'tpl-dark-notes', status: 'queued', publishStatus: 'none', summary: '排在第 4 位', updatedAt: '3 分钟前' },
-  { runId: 'run-failed', title: '新版报销流程，一分钟看懂', kind: 'video', templateId: 'tpl-visual-note', status: 'failed', publishStatus: 'none', summary: '第 4 幕配音超时，已保存稿件与其余 5 幕', updatedAt: '今天 11:40' },
-  { runId: 'run-timeout', title: '线上故障复盘模板怎么填', kind: 'video', templateId: 'tpl-dark-notes', status: 'failed', publishStatus: 'none', summary: '生成超时，已保存稿件与 3 幕分镜', updatedAt: '今天 09:52' },
-  { runId: 'run-publish-failed', title: '周会怎么开得更短', kind: 'video', templateId: 'tpl-whiteboard', status: 'done', publishStatus: 'failed', summary: '成片可播，发布可重试', updatedAt: '今天 10:15' },
-  { runId: 'run-published', title: '设计走查的五个检查点', kind: 'video', templateId: 'tpl-visual-note', status: 'done', publishStatus: 'done', summary: '1 分 22 秒 · 访问 46 次', updatedAt: '昨天 18:40' },
-  { runId: 'run-web-done', title: '客户来访接待流程', kind: 'web', templateId: 'tpl-card-digest', status: 'done', publishStatus: 'none', summary: '4 节 · 适配手机', updatedAt: '昨天 16:02' },
+  { runId: 'run-voicing', title: '需求评审的三个习惯', kind: 'video', templateId: 'sketchnote', status: 'running', publishStatus: 'none', summary: '配音第 3 / 6 幕', updatedAt: '刚刚' },
+  { runId: 'run-web-running', title: '需求评审的三个习惯（网页版）', kind: 'web', templateId: 'swiss-motion', status: 'running', publishStatus: 'none', summary: '生成页面第 3 / 4 节', updatedAt: '1 分钟前' },
+  { runId: 'run-queued', title: '接口命名约定（给后端新人）', kind: 'video', templateId: 'dark-keynote', status: 'queued', publishStatus: 'none', summary: '排在第 4 位', updatedAt: '3 分钟前' },
+  { runId: 'run-failed', title: '新版报销流程，一分钟看懂', kind: 'video', templateId: 'sketchnote', status: 'failed', publishStatus: 'none', summary: '第 4 幕配音超时，已保存稿件与其余 5 幕', updatedAt: '今天 11:40' },
+  { runId: 'run-timeout', title: '线上故障复盘模板怎么填', kind: 'video', templateId: 'dark-keynote', status: 'failed', publishStatus: 'none', summary: '生成超时，已保存稿件与 3 幕分镜', updatedAt: '今天 09:52' },
+  { runId: 'run-publish-failed', title: '周会怎么开得更短', kind: 'video', templateId: 'whiteboard', status: 'done', publishStatus: 'failed', summary: '成片可播，发布可重试', updatedAt: '今天 10:15' },
+  { runId: 'run-published', title: '设计走查的五个检查点', kind: 'video', templateId: 'sketchnote', status: 'done', publishStatus: 'done', summary: '1 分 22 秒 · 访问 46 次', updatedAt: '昨天 18:40' },
+  { runId: 'run-web-done', title: '客户来访接待流程', kind: 'web', templateId: 'iso-infographic', status: 'done', publishStatus: 'none', summary: '4 节 · 适配手机', updatedAt: '昨天 16:02' },
   ...Array.from({ length: 22 }, (_, i): QcWork => {
     const kind = i % 3 === 2 ? 'web' : 'video';
-    const tpl = kind === 'web' ? (i % 2 ? 'tpl-card-digest' : 'tpl-guide-page') : (['tpl-visual-note', 'tpl-whiteboard', 'tpl-dark-notes'][i % 3]);
+    const tpl = kind === 'web' ? (i % 2 ? 'iso-infographic' : 'swiss-motion') : (['sketchnote', 'whiteboard', 'dark-keynote'][i % 3]);
     const published = i % 2 === 0;
     return { runId: i % 2 ? 'run-done' : 'run-published', title: titles[i % titles.length], kind, templateId: tpl, status: 'done', publishStatus: published ? 'done' : 'none',
       summary: kind === 'web' ? '4 节 · 适配手机' : `${1 + (i % 2)} 分 ${10 + i} 秒`, updatedAt: `11-${String(24 - Math.floor(i / 2)).padStart(2, '0')}` };

@@ -3,7 +3,7 @@ import { ChevronRight, Globe, Plus, Video } from 'lucide-react';
 import { Badge } from '@/components/design/Badge';
 import { Button } from '@/components/design/Button';
 import { SegmentedTabs } from '@/components/design/SegmentedTabs';
-import { TemplateFrame } from './TemplateFrames';
+import { StyleFrame } from './TemplateFrames';
 import type { QcTemplate, QcWork } from './types';
 
 type Filter = 'all' | 'active' | 'attention' | 'published';
@@ -66,7 +66,7 @@ export function WorksList({ works, templates, onOpen, onCreate }: {
             <li key={w.runId}>
               <button type="button" data-run-id={w.runId} onClick={() => onOpen(w.runId)} className="flex min-h-[64px] w-full items-center gap-3 px-3 py-2.5 text-left hover-bg-soft md:px-4">
                 <span className="w-[88px] shrink-0 overflow-hidden rounded-md border border-token-subtle md:w-[104px]">
-                  {t ? <TemplateFrame frame={t.frame} scene={1} /> : <span className="block aspect-video bg-token-nested" />}
+                  {t ? <StyleFrame template={t} scene={1} /> : <span className="block aspect-video bg-token-nested" />}
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className="line-clamp-2 text-[13.5px] font-medium leading-5 text-token-primary md:line-clamp-1">{w.title}</span>

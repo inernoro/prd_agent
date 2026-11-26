@@ -16,6 +16,7 @@ const ADD6 = ['[data-qc=sample-doc]', '[data-qc=pick-knowledge]', '[data-qc=pick
 const screens = [
   { id: 'compose', name: '空态与选中模板（视频）', route: `#${Q}`, viewport: 'desktop', themes: both, entryReadySelector: ready('compose') },
   { id: 'compose-web', name: '产出切到网页', route: `#${Q}`, viewport: 'desktop', themes: both, entryReadySelector: ready('compose'), entryActions: ['[aria-label=选择产出] button:nth-child(2)'] },
+  { id: 'style-picker', name: '输入框里就地换风格（15 类 99 种）', route: `#${Q}`, viewport: 'desktop', themes: both, entryReadySelector: '[data-qc=style-popover]', entryActions: ['[data-qc=style-chip]'] },
   { id: 'attachments', name: '多附件 · 收起（读取中与失败）', route: `#${Q}`, viewport: 'desktop', themes: both, entryReadySelector: '[data-qc=attachment-tray]', entryActions: ADD6 },
   { id: 'attachments-expanded', name: '多附件 · 展开管理', route: `#${Q}`, viewport: 'desktop', themes: both, entryReadySelector: '[data-qc=attachment-list]', entryActions: [...ADD6.slice(0, 5), '[data-qc=tray-toggle]'] },
   { id: 'queued', name: '已提交 · 排队中', route: `#${Q}?run=run-queued`, viewport: 'desktop', themes: both, entryReadySelector: ready('run-queued') },
@@ -51,9 +52,9 @@ const rows = [
   ['A-08', 'R-08', 'generating', 'human', D, '生成显示当前阶段、进度、已用与预计剩余；离开页面不取消，回来是同一个任务', '从提交到完成逐阶段截图；生成中离开，从作品列表点回，地址 ?run= 不变、阶段继续'],
   ['A-09', 'R-09', 'failed-scene', 'human', D, '错误先说结果和恢复动作，不出现内部诊断', '逐个错误态核对：附件读取失败、单幕失败、超时、发布失败，每条都写「已保存什么 + 下一步」'],
   ['A-10', 'R-10', 'compose', 'measure', D, '请求走 services/real 与 apiRequest；附件上传用直接 fetch + FormData', '检查：services/real/quickCreation.ts 只经 apiRequest 发 JSON 请求，只有附件上传用 fetch'],
-  ['A-11', null, 'compose', 'screenshot', D, '首屏：左栏是助手开场与输入框，右栏是产出切换、选中模板的大图和全部模板卡；模板缩略图是真实成品帧，选中态唯一', '1440×900 首屏同时看到右栏的产出切换、模板大图与模板卡，左栏的开场、输入框与「快捷生成」'],
+  ['A-11', null, 'compose', 'screenshot', D, '首屏：左栏是助手开场与输入框（含产出切换与风格按钮），右栏是风格库：选中风格的大图与说明在上，按类别浏览全部风格在下；选中态唯一', '1440×900 首屏同时看到左栏的开场、输入框里的「视频 / 网页」与风格按钮、「快捷生成」，右栏的风格大图、样片说明、类别行与风格卡'],
   ['A-12', null, 'compose', 'measure', D, '没有可用稿件时不能生成，原因写在按钮下方', '检查：没有附件时 [data-qc=submit] 为 disabled，且 [data-qc=block-reason] 可见'],
-  ['A-13', null, 'attachments', 'human', D, '项目名默认取第一份稿件的标题，没有稿件时为「未命名 · 模板名」', '放入「需求评审的三个习惯.md」后标题变为「需求评审的三个习惯」'],
+  ['A-13', null, 'attachments', 'human', D, '项目名默认取第一份稿件的标题，没有稿件时为「未命名 · 风格名」', '放入「需求评审的三个习惯.md」后标题从「未命名 · 视觉笔记」变为「需求评审的三个习惯」'],
   ['A-14', null, 'attachments', 'measure', D, '附件再多，输入框顶部也只占一块：一行摘要（份数、字数、读取中、失败）+ 最多两张资料卡 + 「+N」，管理在右栏', '检查：6 个附件时托盘高度 ≤ 88px，摘要行不折行，资料卡不超过 2 张且有「+N」'],
   ['A-15', null, 'attachments-expanded', 'screenshot', D, '读取失败的附件排在最前、用错误色，写明原因与恢复动作，可单项重试或移除', '展开后第一组是「读取失败」，含原因文字、「重试」与移除按钮'],
   ['A-16', null, 'attachments-expanded', 'measure', D, '资料管理在右栏面板：按读取失败 / 稿件 / 知识库文档 / 图片分组，列表区内部滚动，右侧看正文，底部显示文字预算与附件上限', '检查：[data-qc=attachment-list] 在预览栏内且 overflow-y 为 auto；分组标题含数量；底部写「文字 x / 20,000 · 附件 n / 10」'],
@@ -75,19 +76,32 @@ const rows = [
   ['A-32', null, 'web-done', 'human', D, '网页产出：生成中大纲逐节出现；完成后可切桌面 / 手机预览，重点点击定位到对应一节', '网页生成中右栏列出 4 节；完成后点「再画边界」，对应一节高亮'],
   ['A-33', null, 'done-video', 'human', D, '同一份稿件可一键改做另一种产出，稿件与要求自动带回', '点「用这份稿件做网页」回到创作，附件与要求已填好，产出切到网页'],
   ['A-34', null, 'works', 'screenshot', ALL, '作品列表：按状态筛选；标题桌面一行、手机两行截断；状态与时间在第二行；30 条稳定', '30 条作品逐行高度一致，长标题省略，不撑破行；状态标签不折行'],
-  ['A-35', null, 'phone-compose', 'screenshot', P, '手机上「对话 / 预览」切换，输入框与「快捷生成」在底部可达；选模板在「预览」页签', '390×844 下底部可见输入框、资料托盘与「快捷生成」'],
+  ['A-35', null, 'phone-compose', 'screenshot', P, '手机上「对话 / 预览」切换，输入框与「快捷生成」在底部可达；产出切换与风格按钮在输入框里单独一行', '390×844 下底部可见输入框、资料托盘、「视频 / 网页」、风格按钮与「快捷生成」'],
   ['A-36', null, 'phone-queued', 'screenshot', P, '手机头部的状态不挤压标题', '状态标签在标题上方一行，标题完整一行显示'],
   ['A-37', null, 'phone-preview', 'screenshot', P, '手机播放器进度条单独一行，控件不换到第三行', '进度条在上，按钮一行排完'],
   ['A-38', null, 'toolbox', 'screenshot', D, '百宝箱里是一张独立的「快速创作」入口卡片，带开发中标记', '卡片名、简介与「开发中」标记可见，点击进入快速创作'],
-  ['A-39', null, 'compose-web', 'screenshot', D, '切到网页后只显示网页模板，产出标签与主按钮旁的标记同步', '模板变为「导读长页」「卡片速览」，输入框下方标记为「网页 · 导读长页」'],
+  ['A-39', null, 'compose-web', 'screenshot', D, '切到网页后风格保持不变，右栏说明换成「按这个风格的配色、字体与版式出页面」，标题与风格按钮同步', '「网页」高亮；风格仍是「视觉笔记」；右栏说明写网页的生成方式'],
   ['A-40', null, 'hosting', 'screenshot', D, '网页托管里新发布的记录高亮，并提示默认可见范围', '高亮卡片带「刚刚发布」，右下提示「默认仅团队成员可看」'],
   ['A-41', null, 'compose', 'human', D, '直接粘贴正文：一次粘贴 300 字以上的长文自动作为一份稿件附件，输入框只留给要求', '粘贴后输入框清空，附件托盘多一份「粘贴的正文」，快捷生成可用'],
   ['A-42', null, 'compose', 'human', D, '上传 Markdown / TXT 稿件或图片：读出文字的可直接生成，空文件或不支持的格式显示原因', '上传「评审要点.md」后附件托盘出现该文件且显示已读取，快捷生成可用'],
+  ['A-43', null, 'compose', 'human', D, '风格库按 Lemo-Opuscar 的分类：15 类 99 种，可按类别筛选、按名字或类别搜索；选中风格显示样片海报、样片名与时长、一句话说明和来源署名', '类别行「全部 99」与 15 类各带数量；搜「水墨」只剩「中国水墨」；选中后大图、样片《》与署名同步'],
+  ['A-44', null, 'style-picker', 'human', D, '输入框里的风格按钮就地弹出选择面板（搜索 + 类别 + 列表），选中后面板关闭，按钮与右栏风格库同步；面板底部可去右栏看大图', '点风格按钮 → 面板含搜索、类别行与风格列表；点「中国水墨」后按钮写「中国水墨」，右栏同一张卡被选中'],
+  ['A-45', null, 'compose', 'human', D, '「视频 / 网页」在输入框里切换，风格与产出相互独立：切换产出不改风格，切换风格不改产出', '切到网页后风格按钮仍是原风格；再选别的风格，产出仍是网页'],
+  ['A-46', null, 'compose', 'human', D, '风格来源与授权写清：风格说明（STYLE.md，CC BY-NC 4.0）只按编号引用、界面与源码差异不含原文；样片海报署名「Lemo-Opuscar by Lemomo (LemoLab)」并注明 CC BY 4.0', '风格详情底部有署名与「样片海报 CC BY 4.0」；源码差异与界面里搜不到 STYLE.md 正文；类型字段 promptRef 只存位置'],
 ];
 
 /* 关键操作：CDS 交接检查按 handoff.cases 实际执行 */
-const INTERACTIVE = new Set(['A-12', 'A-15', 'A-17', 'A-18', 'A-19', 'A-20', 'A-23', 'A-24', 'A-25', 'A-26', 'A-27', 'A-29', 'A-30', 'A-32', 'A-33', 'A-39', 'A-40', 'A-41', 'A-42']);
-const acceptance = rows.map(([id, ruleId, screenId, how, slots, rule, expected, extra]) => ({ id, ...(ruleId ? { ruleId } : {}), screenId, how, slots, rule, expected, ...(extra ?? {}), ...(INTERACTIVE.has(id) ? { interaction: true } : {}) }));
+const INTERACTIVE = new Set(['A-12', 'A-15', 'A-17', 'A-18', 'A-19', 'A-20', 'A-23', 'A-24', 'A-25', 'A-26', 'A-27', 'A-29', 'A-30', 'A-32', 'A-33', 'A-39', 'A-40', 'A-41', 'A-42', 'A-43', 'A-44', 'A-45']);
+/* 覆盖维度（CDS 六维）：每条验收项归一个维度，缺规则的维度在 risks 里写风险与理由 */
+const DIM = {
+  compatibility: ['A-01', 'A-02', 'A-03', 'A-06', 'A-35', 'A-36', 'A-37'],
+  security: ['A-10', 'A-46'],
+  operations: ['A-07', 'A-08', 'A-23'],
+  performance: ['A-16', 'A-20', 'A-34'],
+  correctness: ['A-12', 'A-13', 'A-15', 'A-17', 'A-24', 'A-25', 'A-26', 'A-27', 'A-29', 'A-30', 'A-32', 'A-33', 'A-39', 'A-41', 'A-42', 'A-44', 'A-45'],
+};
+const dimensionOf = id => Object.entries(DIM).find(([, ids]) => ids.includes(id))?.[0] ?? 'experience';
+const acceptance = rows.map(([id, ruleId, screenId, how, slots, rule, expected, extra]) => ({ id, ...(ruleId ? { ruleId } : {}), screenId, how, slots, rule, expected, dimension: dimensionOf(id), ...(extra ?? {}), ...(INTERACTIVE.has(id) ? { interaction: true } : {}) }));
 
 /* 可运行场景：每个从进入画面开始、以结果检查结束；失败恢复先 remember 已完成的状态，再用 sameAs 核对保留。
  * 字段与 CDS 发布接口一致：expect 的字面值用 equals；media-playing / audio-playing 是 expect 的检查方式。 */
@@ -100,6 +114,26 @@ const cases = [
     { action: 'click', selector: '[data-qc=submit]' },
     { action: 'expect', selector: '[data-qc=saved-notice]', check: 'visible' },
     { action: 'expect', selector: '[data-qc=queue-card]', check: 'visible' },
+  ] },
+  { id: 'pick-style-in-composer', title: '在输入框的风格按钮里就地换风格，右栏风格库同步', screenId: 'compose', theme: 'light', ruleIds: ['A-44'], steps: [
+    { action: 'expect', selector: '[data-qc=style-chip]', check: 'attribute', attribute: 'data-template', equals: 'sketchnote' },
+    { action: 'click', selector: '[data-qc=style-chip]' },
+    { action: 'expect', selector: '[data-qc=style-popover]', check: 'visible' },
+    { action: 'click', selector: '[data-qc=style-popover] [data-style=ink-wash]' },
+    { action: 'expect', selector: '[data-qc=style-chip]', check: 'attribute', attribute: 'data-template', equals: 'ink-wash' },
+    { action: 'expect', selector: '[aria-label=选择模板] [data-template=ink-wash]', check: 'attribute', attribute: 'aria-checked', equals: 'true' },
+  ] },
+  { id: 'search-style-library', title: '在右栏风格库按名字搜到风格并选中，输入框里的风格按钮同步', screenId: 'compose', theme: 'dark', ruleIds: ['A-43'], steps: [
+    { action: 'fill', selector: '#qc-style-search', value: '水墨' },
+    { action: 'expect', selector: '[aria-label=选择模板] [data-template=ink-wash]', check: 'visible' },
+    { action: 'click', selector: '[aria-label=选择模板] [data-template=ink-wash]' },
+    { action: 'expect', selector: '[data-qc=style-chip]', check: 'attribute', attribute: 'data-template', equals: 'ink-wash' },
+  ] },
+  { id: 'switch-output-keeps-style', title: '在输入框里切到网页，风格保持不变', screenId: 'compose', theme: 'light', ruleIds: ['A-45', 'A-39'], steps: [
+    { action: 'remember', selector: '[data-qc=style-chip]', check: 'attribute', attribute: 'data-template', as: 'style' },
+    { action: 'click', selector: '[aria-label=选择产出] button:nth-child(2)' },
+    { action: 'expect', selector: '[data-qc-ready]', check: 'attribute', attribute: 'data-output', equals: 'web' },
+    { action: 'expect', selector: '[data-qc=style-chip]', check: 'attribute', attribute: 'data-template', sameAs: 'style' },
   ] },
   { id: 'submit-pasted-text', title: '粘贴长正文成为稿件附件后生成', screenId: 'compose', theme: 'light', ruleIds: ['A-41'], steps: [
     { action: 'fill', selector: '#qc-ask', value: SAMPLE_PASTE },
@@ -190,6 +224,7 @@ const cases = [
 ];
 const goals = [
   { id: 'G-01', goal: '一份文档 + 一个模板，最快路径得到成品', doneWhen: '首次打开即可选产出与模板，用示例、上传、知识库或粘贴放进稿件并快捷生成；没有稿件时按钮不可用且说明原因', items: ['A-11', 'A-12', 'A-13', 'A-39', 'A-41', 'A-42'] },
+  { id: 'G-10', goal: '模板按 Lemo-Opuscar 风格库选择，并在输入框里决定产出与风格', doneWhen: '15 类 99 种风格可筛选、搜索、看样片说明；输入框里就地切换视频 / 网页与风格，两者相互独立；风格说明只按编号引用并署名来源', items: ['A-43', 'A-44', 'A-45', 'A-46'] },
   { id: 'G-02', goal: '附件再多也清楚、不堆一大把', doneWhen: '收起时只占一行，展开可分组管理，失败项单独处理；发送后可回看', items: ['A-14', 'A-15', 'A-16', 'A-17', 'A-18'] },
   { id: 'G-03', goal: '团队集中提交时，排队、后台继续和恢复都看得见', doneWhen: '排队写位置与预计开始；生成写阶段、进度与剩余；离开后能回到同一任务', items: ['A-19', 'A-20', 'A-21', 'A-22', 'A-23'] },
   { id: 'G-04', goal: '失败时保住已有工作，并给出明确的恢复入口', doneWhen: '单幕失败只重做那一幕；超时保留已完成部分并从断点继续', items: ['A-24', 'A-25'] },
@@ -206,16 +241,35 @@ const manifest = {
   group: 'MAP · 创作',
   framework: 'FW-MAP-ADMIN',
   frameworkVersion: 1,
-  prototypeVersion: 5,
+  prototypeVersion: 6,
   date: new Date().toISOString().slice(0, 10),
   rationale: '思路.md',
   prototype: 'dist/index.html',
   checks: 'checks/result.json',
   source: 'src',
-  docs: ['设计文档/源码差异.diff', '设计文档/目标与验收.md', '设计文档/演示数据.json', 'spec/rules.md'],
+  docs: ['设计文档/源码差异.diff', '设计文档/目标与验收.md', '设计文档/验收计划.md', '设计文档/演示数据.json', 'spec/rules.md'],
   notes: '快捷版：一份文档 + 一个模板 → 视频或网页，发布到网页托管。未来逐幕创作只给概念稿（concept-*），不交接实现。演示数据见 设计文档/演示数据.json（虚构稿件与成员），原型与实现取证共用。',
   /* 演示数据：CDS 发布接口当前不接受 demoData 字段，数据文件放进 docs（原型与实现取证共用这一份） */
-  screens: screens.map(s => ({ ...s, impl: null })),
+  /* 画面的实现地址：正式页面同一路由（演示任务编号来自演示数据）；概念稿与原型示意页不交接实现 */
+  screens: screens.map(s => ({ ...s, impl: /^#\/(concept|ai-toolbox|web-pages)/.test(s.route) ? null : s.route.slice(1) })),
+  acceptancePlan: {
+    mece: { applicable: true },
+    compare: { applicable: true },
+    visual: { applicable: true },
+    regress: { applicable: true },
+    flow: { applicable: true },
+    human: { applicable: true },
+    smoke: { applicable: true },
+    debt: { applicable: true },
+  },
+  risks: [
+    { dimension: 'performance', risk: '团队集中提交时排队变长、作品列表变长', ruleIds: ['A-20', 'A-34'] },
+    { dimension: 'performance', risk: '按风格库出片的真实耗时（风格库说明单支成片约 30–60 分钟），原型里的 3 分钟只是占位', reason: '原型无法测真实耗时；排队容量、超时与预计耗时须在实现前按服务端能力确认，已列入待定问题并在反馈线程提问' },
+    { dimension: 'security', risk: '风格说明 STYLE.md 为 CC BY-NC 4.0，内置进产品属于商用', ruleIds: ['A-46'] },
+    { dimension: 'security', risk: '前端请求绕过统一鉴权', ruleIds: ['A-10'] },
+    { dimension: 'operations', risk: '用户离开或刷新后任务丢失、重复提交', ruleIds: ['A-08', 'A-23'] },
+    { dimension: 'compatibility', risk: '手机与深浅主题下布局挤压、对比度不足', ruleIds: ['A-03', 'A-06', 'A-35'] },
+  ],
   acceptance,
   goals,
   handoff: { cases },

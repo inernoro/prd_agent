@@ -4,7 +4,7 @@
   "group": "MAP · 创作",
   "framework": "FW-MAP-ADMIN",
   "frameworkVersion": 1,
-  "prototypeVersion": 5,
+  "prototypeVersion": 6,
   "date": "2026-11-26",
   "rationale": "思路.md",
   "prototype": "dist/index.html",
@@ -13,6 +13,7 @@
   "docs": [
     "设计文档/源码差异.diff",
     "设计文档/目标与验收.md",
+    "设计文档/验收计划.md",
     "设计文档/演示数据.json",
     "spec/rules.md"
   ],
@@ -28,7 +29,7 @@
         "dark"
       ],
       "entryReadySelector": "[data-qc-ready=compose]",
-      "impl": null
+      "impl": "/quick-creation-agent"
     },
     {
       "id": "compose-web",
@@ -43,7 +44,22 @@
       "entryActions": [
         "[aria-label=选择产出] button:nth-child(2)"
       ],
-      "impl": null
+      "impl": "/quick-creation-agent"
+    },
+    {
+      "id": "style-picker",
+      "name": "输入框里就地换风格（15 类 99 种）",
+      "route": "#/quick-creation-agent",
+      "viewport": "desktop",
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "entryReadySelector": "[data-qc=style-popover]",
+      "entryActions": [
+        "[data-qc=style-chip]"
+      ],
+      "impl": "/quick-creation-agent"
     },
     {
       "id": "attachments",
@@ -63,7 +79,7 @@
         "[data-qc=pick-knowledge]",
         "[data-qc=pick-knowledge]"
       ],
-      "impl": null
+      "impl": "/quick-creation-agent"
     },
     {
       "id": "attachments-expanded",
@@ -83,7 +99,7 @@
         "[data-qc=pick-knowledge]",
         "[data-qc=tray-toggle]"
       ],
-      "impl": null
+      "impl": "/quick-creation-agent"
     },
     {
       "id": "queued",
@@ -95,7 +111,7 @@
         "dark"
       ],
       "entryReadySelector": "[data-qc-ready=run-queued]",
-      "impl": null
+      "impl": "/quick-creation-agent?run=run-queued"
     },
     {
       "id": "generating",
@@ -107,7 +123,7 @@
         "dark"
       ],
       "entryReadySelector": "[data-qc-ready=run-running]",
-      "impl": null
+      "impl": "/quick-creation-agent?run=run-voicing"
     },
     {
       "id": "failed-scene",
@@ -119,7 +135,7 @@
         "dark"
       ],
       "entryReadySelector": "[data-qc-ready=run-failed]",
-      "impl": null
+      "impl": "/quick-creation-agent?run=run-failed"
     },
     {
       "id": "timeout",
@@ -131,7 +147,7 @@
         "dark"
       ],
       "entryReadySelector": "[data-qc-ready=run-failed]",
-      "impl": null
+      "impl": "/quick-creation-agent?run=run-timeout"
     },
     {
       "id": "done-video",
@@ -143,7 +159,7 @@
         "dark"
       ],
       "entryReadySelector": "[data-qc=video-player]",
-      "impl": null
+      "impl": "/quick-creation-agent?run=run-done"
     },
     {
       "id": "publish-failed",
@@ -155,7 +171,7 @@
         "dark"
       ],
       "entryReadySelector": "[data-qc=publish-failed]",
-      "impl": null
+      "impl": "/quick-creation-agent?run=run-publish-failed"
     },
     {
       "id": "published",
@@ -167,7 +183,7 @@
         "dark"
       ],
       "entryReadySelector": "[data-qc=published]",
-      "impl": null
+      "impl": "/quick-creation-agent?run=run-published"
     },
     {
       "id": "hosting",
@@ -194,7 +210,7 @@
       "entryActions": [
         "[data-qc=open-all-attachments]"
       ],
-      "impl": null
+      "impl": "/quick-creation-agent?run=run-done"
     },
     {
       "id": "web-generating",
@@ -206,7 +222,7 @@
         "dark"
       ],
       "entryReadySelector": "[data-qc-ready=run-running]",
-      "impl": null
+      "impl": "/quick-creation-agent?run=run-web-running"
     },
     {
       "id": "web-done",
@@ -218,7 +234,7 @@
         "dark"
       ],
       "entryReadySelector": "[data-qc=web-preview]",
-      "impl": null
+      "impl": "/quick-creation-agent?run=run-web-done"
     },
     {
       "id": "works",
@@ -230,7 +246,7 @@
         "dark"
       ],
       "entryReadySelector": "[data-qc-ready=works]",
-      "impl": null
+      "impl": "/quick-creation-agent?view=works"
     },
     {
       "id": "toolbox",
@@ -261,7 +277,7 @@
         "[data-qc=pick-knowledge]",
         "[data-qc=pick-knowledge]"
       ],
-      "impl": null
+      "impl": "/quick-creation-agent"
     },
     {
       "id": "phone-queued",
@@ -273,7 +289,7 @@
         "dark"
       ],
       "entryReadySelector": "[data-qc-ready=run-queued]",
-      "impl": null
+      "impl": "/quick-creation-agent?run=run-queued"
     },
     {
       "id": "phone-preview",
@@ -288,7 +304,7 @@
       "entryActions": [
         "[aria-label=对话与预览] button:nth-child(2)"
       ],
-      "impl": null
+      "impl": "/quick-creation-agent?run=run-published"
     },
     {
       "id": "phone-works",
@@ -300,7 +316,7 @@
         "dark"
       ],
       "entryReadySelector": "[data-qc-ready=works]",
-      "impl": null
+      "impl": "/quick-creation-agent?view=works"
     },
     {
       "id": "concept-settings",
@@ -327,6 +343,78 @@
       "impl": null
     }
   ],
+  "acceptancePlan": {
+    "mece": {
+      "applicable": true
+    },
+    "compare": {
+      "applicable": true
+    },
+    "visual": {
+      "applicable": true
+    },
+    "regress": {
+      "applicable": true
+    },
+    "flow": {
+      "applicable": true
+    },
+    "human": {
+      "applicable": true
+    },
+    "smoke": {
+      "applicable": true
+    },
+    "debt": {
+      "applicable": true
+    }
+  },
+  "risks": [
+    {
+      "dimension": "performance",
+      "risk": "团队集中提交时排队变长、作品列表变长",
+      "ruleIds": [
+        "A-20",
+        "A-34"
+      ]
+    },
+    {
+      "dimension": "performance",
+      "risk": "按风格库出片的真实耗时（风格库说明单支成片约 30–60 分钟），原型里的 3 分钟只是占位",
+      "reason": "原型无法测真实耗时；排队容量、超时与预计耗时须在实现前按服务端能力确认，已列入待定问题并在反馈线程提问"
+    },
+    {
+      "dimension": "security",
+      "risk": "风格说明 STYLE.md 为 CC BY-NC 4.0，内置进产品属于商用",
+      "ruleIds": [
+        "A-46"
+      ]
+    },
+    {
+      "dimension": "security",
+      "risk": "前端请求绕过统一鉴权",
+      "ruleIds": [
+        "A-10"
+      ]
+    },
+    {
+      "dimension": "operations",
+      "risk": "用户离开或刷新后任务丢失、重复提交",
+      "ruleIds": [
+        "A-08",
+        "A-23"
+      ]
+    },
+    {
+      "dimension": "compatibility",
+      "risk": "手机与深浅主题下布局挤压、对比度不足",
+      "ruleIds": [
+        "A-03",
+        "A-06",
+        "A-35"
+      ]
+    }
+  ],
   "acceptance": [
     {
       "id": "A-01",
@@ -340,7 +428,8 @@
         "phone-dark"
       ],
       "rule": "页面挂在正式 AppShell 里，左侧导航来自服务端菜单目录",
-      "expected": "检查：原型 DOM 里有 AppShell 的侧栏与主区，快速创作页在主区内渲染"
+      "expected": "检查：原型 DOM 里有 AppShell 的侧栏与主区，快速创作页在主区内渲染",
+      "dimension": "compatibility"
     },
     {
       "id": "A-02",
@@ -352,7 +441,8 @@
         "desktop-dark"
       ],
       "rule": "页面组件只用 tokens.css 语义变量；作品配色只在模板画面组件里",
-      "expected": "检查：pages/quick-creation-agent 下除 TemplateFrames.tsx 外，十六进制与 rgb 字面量为 0"
+      "expected": "检查：pages/quick-creation-agent 下除 TemplateFrames.tsx 外，十六进制与 rgb 字面量为 0",
+      "dimension": "compatibility"
     },
     {
       "id": "A-03",
@@ -364,7 +454,8 @@
         "desktop-dark"
       ],
       "rule": "白天与黑天都可读",
-      "expected": "检查：两个主题下 --text-primary、--text-secondary 与 --bg-base 的对比度都不低于 4.5"
+      "expected": "检查：两个主题下 --text-primary、--text-secondary 与 --bg-base 的对比度都不低于 4.5",
+      "dimension": "compatibility"
     },
     {
       "id": "A-04",
@@ -376,7 +467,8 @@
         "desktop-dark"
       ],
       "rule": "图标只用 lucide-react，界面与源码不出现 emoji",
-      "expected": "检查：新增源码与渲染文本里 emoji 为 0"
+      "expected": "检查：新增源码与渲染文本里 emoji 为 0",
+      "dimension": "experience"
     },
     {
       "id": "A-05",
@@ -388,7 +480,8 @@
         "desktop-dark"
       ],
       "rule": "每一屏只有一个 primary 主动作",
-      "expected": "逐画面数：空态只有「快捷生成」，已生成只有「发布到网页托管」，失败只有恢复主按钮，作品列表只有「新建」"
+      "expected": "逐画面数：空态只有「快捷生成」，已生成只有「发布到网页托管」，失败只有恢复主按钮，作品列表只有「新建」",
+      "dimension": "experience"
     },
     {
       "id": "A-06",
@@ -401,6 +494,7 @@
       ],
       "rule": "手机两栏改成「创作 / 预览」切换，375 宽没有整页横向溢出，本页新增的可点元素触控高度不小于 44px",
       "expected": "检查：375 宽下 document.scrollWidth 等于视口宽；快速创作页内未标 data-qc-touch-exempt（公共组件 SegmentedTabs）的可点元素高度 ≥ 44",
+      "dimension": "compatibility",
       "probe": {
         "type": "horizontal-overflow"
       }
@@ -415,7 +509,8 @@
         "desktop-dark"
       ],
       "rule": "在 navRegistry 注册 /quick-creation-agent（section: toolbox，wip: true），百宝箱有入口卡片",
-      "expected": "检查：navRegistry 改动副本里有该路由与 wip: true；toolboxStore 有 builtin-quick-creation"
+      "expected": "检查：navRegistry 改动副本里有该路由与 wip: true；toolboxStore 有 builtin-quick-creation",
+      "dimension": "operations"
     },
     {
       "id": "A-08",
@@ -427,7 +522,8 @@
         "desktop-dark"
       ],
       "rule": "生成显示当前阶段、进度、已用与预计剩余；离开页面不取消，回来是同一个任务",
-      "expected": "从提交到完成逐阶段截图；生成中离开，从作品列表点回，地址 ?run= 不变、阶段继续"
+      "expected": "从提交到完成逐阶段截图；生成中离开，从作品列表点回，地址 ?run= 不变、阶段继续",
+      "dimension": "operations"
     },
     {
       "id": "A-09",
@@ -439,7 +535,8 @@
         "desktop-dark"
       ],
       "rule": "错误先说结果和恢复动作，不出现内部诊断",
-      "expected": "逐个错误态核对：附件读取失败、单幕失败、超时、发布失败，每条都写「已保存什么 + 下一步」"
+      "expected": "逐个错误态核对：附件读取失败、单幕失败、超时、发布失败，每条都写「已保存什么 + 下一步」",
+      "dimension": "experience"
     },
     {
       "id": "A-10",
@@ -451,7 +548,8 @@
         "desktop-dark"
       ],
       "rule": "请求走 services/real 与 apiRequest；附件上传用直接 fetch + FormData",
-      "expected": "检查：services/real/quickCreation.ts 只经 apiRequest 发 JSON 请求，只有附件上传用 fetch"
+      "expected": "检查：services/real/quickCreation.ts 只经 apiRequest 发 JSON 请求，只有附件上传用 fetch",
+      "dimension": "security"
     },
     {
       "id": "A-11",
@@ -461,8 +559,9 @@
         "desktop-light",
         "desktop-dark"
       ],
-      "rule": "首屏：左栏是助手开场与输入框，右栏是产出切换、选中模板的大图和全部模板卡；模板缩略图是真实成品帧，选中态唯一",
-      "expected": "1440×900 首屏同时看到右栏的产出切换、模板大图与模板卡，左栏的开场、输入框与「快捷生成」"
+      "rule": "首屏：左栏是助手开场与输入框（含产出切换与风格按钮），右栏是风格库：选中风格的大图与说明在上，按类别浏览全部风格在下；选中态唯一",
+      "expected": "1440×900 首屏同时看到左栏的开场、输入框里的「视频 / 网页」与风格按钮、「快捷生成」，右栏的风格大图、样片说明、类别行与风格卡",
+      "dimension": "experience"
     },
     {
       "id": "A-12",
@@ -474,6 +573,7 @@
       ],
       "rule": "没有可用稿件时不能生成，原因写在按钮下方",
       "expected": "检查：没有附件时 [data-qc=submit] 为 disabled，且 [data-qc=block-reason] 可见",
+      "dimension": "correctness",
       "interaction": true
     },
     {
@@ -484,8 +584,9 @@
         "desktop-light",
         "desktop-dark"
       ],
-      "rule": "项目名默认取第一份稿件的标题，没有稿件时为「未命名 · 模板名」",
-      "expected": "放入「需求评审的三个习惯.md」后标题变为「需求评审的三个习惯」"
+      "rule": "项目名默认取第一份稿件的标题，没有稿件时为「未命名 · 风格名」",
+      "expected": "放入「需求评审的三个习惯.md」后标题从「未命名 · 视觉笔记」变为「需求评审的三个习惯」",
+      "dimension": "correctness"
     },
     {
       "id": "A-14",
@@ -496,7 +597,8 @@
         "desktop-dark"
       ],
       "rule": "附件再多，输入框顶部也只占一块：一行摘要（份数、字数、读取中、失败）+ 最多两张资料卡 + 「+N」，管理在右栏",
-      "expected": "检查：6 个附件时托盘高度 ≤ 88px，摘要行不折行，资料卡不超过 2 张且有「+N」"
+      "expected": "检查：6 个附件时托盘高度 ≤ 88px，摘要行不折行，资料卡不超过 2 张且有「+N」",
+      "dimension": "experience"
     },
     {
       "id": "A-15",
@@ -508,6 +610,7 @@
       ],
       "rule": "读取失败的附件排在最前、用错误色，写明原因与恢复动作，可单项重试或移除",
       "expected": "展开后第一组是「读取失败」，含原因文字、「重试」与移除按钮",
+      "dimension": "correctness",
       "interaction": true
     },
     {
@@ -519,7 +622,8 @@
         "desktop-dark"
       ],
       "rule": "资料管理在右栏面板：按读取失败 / 稿件 / 知识库文档 / 图片分组，列表区内部滚动，右侧看正文，底部显示文字预算与附件上限",
-      "expected": "检查：[data-qc=attachment-list] 在预览栏内且 overflow-y 为 auto；分组标题含数量；底部写「文字 x / 20,000 · 附件 n / 10」"
+      "expected": "检查：[data-qc=attachment-list] 在预览栏内且 overflow-y 为 auto；分组标题含数量；底部写「文字 x / 20,000 · 附件 n / 10」",
+      "dimension": "performance"
     },
     {
       "id": "A-17",
@@ -531,6 +635,7 @@
       ],
       "rule": "有附件在读取时不能生成，读完自动可用；失败项不会用于生成",
       "expected": "按钮下方写「还有附件在读取，读完即可生成」；失败组标注「不会用于生成」",
+      "dimension": "correctness",
       "interaction": true
     },
     {
@@ -543,6 +648,7 @@
       ],
       "rule": "发送后资料收在你的消息气泡里（两张资料卡 + 「全部 N 份」），点开在右栏按类型回看原文，可回到预览",
       "expected": "右栏出现资料分组列表与原文，顶部有「回到预览」",
+      "dimension": "experience",
       "interaction": true
     },
     {
@@ -555,6 +661,7 @@
       ],
       "rule": "提交后先确认稿件和要求已保存，说明离开也会继续",
       "expected": "左栏消息下方第一张卡写「稿件和要求已保存。生成在后台进行，离开页面也会继续。」",
+      "dimension": "experience",
       "interaction": true
     },
     {
@@ -567,6 +674,7 @@
       ],
       "rule": "排队显示位置、前面几个、预计开始时间，并明确排队不是失败",
       "expected": "排队卡写「排队中 · 第 4 位」「前面 3 个，约 1 分 40 秒后开始」与「排队不是失败」",
+      "dimension": "performance",
       "interaction": true
     },
     {
@@ -578,7 +686,8 @@
         "desktop-dark"
       ],
       "rule": "生成中写出当前阶段在做什么、阶段进度、已用与预计剩余，以及预计依据",
-      "expected": "配音阶段有说明、进度条、「已用 7 分 20 秒 · 预计还需约 1 分 30 秒」和「预计依据」"
+      "expected": "配音阶段有说明、进度条、「已用 7 分 20 秒 · 预计还需约 1 分 30 秒」和「预计依据」",
+      "dimension": "experience"
     },
     {
       "id": "A-22",
@@ -589,7 +698,8 @@
         "desktop-dark"
       ],
       "rule": "生成中右栏是作品本身在生长：当前这一幕放大显示（配音中带声波与正在配的字幕），下方分镜胶片逐幕亮起，区分正在画、待配音、配音中、已完成、没有完成",
-      "expected": "右栏大画面为第 3 幕并标「配音中」，下方 6 幕各带状态，当前幕描边"
+      "expected": "右栏大画面为第 3 幕并标「配音中」，下方 6 幕各带状态，当前幕描边",
+      "dimension": "experience"
     },
     {
       "id": "A-23",
@@ -601,6 +711,7 @@
       ],
       "rule": "离开后在作品列表看到任务仍在进行，点它回到同一个任务",
       "expected": "作品列表第一组是进行中的任务，点开回到 ?run=<编号> 的同一任务",
+      "dimension": "operations",
       "interaction": true
     },
     {
@@ -613,6 +724,7 @@
       ],
       "rule": "单幕失败只标出失败的那一幕，写明已保存的内容，主按钮只重做这一幕",
       "expected": "第 4 幕红框；失败卡写「已保存：原稿与要求、6 幕分镜与画面、其余旁白」，主按钮「重试第 4 幕」",
+      "dimension": "correctness",
       "interaction": true
     },
     {
@@ -625,6 +737,7 @@
       ],
       "rule": "整条超时是失败状态，保留稿件与已生成的分镜，给出从断点继续的动作",
       "expected": "失败卡写「生成超时，已停止」和已保存的 3 幕，主按钮「重新排队，从这里继续」",
+      "dimension": "correctness",
       "interaction": true
     },
     {
@@ -637,6 +750,7 @@
       ],
       "rule": "成片播放器播放真实的视频文件和音轨：播放 / 暂停、上一幕 / 下一幕、拖动进度、静音、字幕开关、全屏，进度条上有重点刻度",
       "expected": "点播放后画面与声音都在走；字幕随幕切换；关字幕后字幕按钮为未按下、画面不再显示字幕",
+      "dimension": "correctness",
       "interaction": true
     },
     {
@@ -649,6 +763,7 @@
       ],
       "rule": "片头预告的重点可点击，跳到对应时间并开始播放",
       "expected": "点「再画边界」后时间到 0:40，当前重点卡描边",
+      "dimension": "correctness",
       "interaction": true
     },
     {
@@ -660,7 +775,8 @@
         "desktop-dark"
       ],
       "rule": "完成后过程收成一行，注意力给成品与发布",
-      "expected": "左栏助手一轮里显示「排队 · 分镜 · 配音 · 合成 全部完成，用时」一行，可展开；主按钮是「发布到网页托管」"
+      "expected": "左栏助手一轮里显示「排队 · 分镜 · 配音 · 合成 全部完成，用时」一行，可展开；主按钮是「发布到网页托管」",
+      "dimension": "experience"
     },
     {
       "id": "A-29",
@@ -672,6 +788,7 @@
       ],
       "rule": "发布失败时成品仍可播放，说明重试只上传、不会重新生成，可重试",
       "expected": "失败卡含原因、「重试只上传，不会重新生成」与「重试发布」，右栏播放器可用",
+      "dimension": "correctness",
       "interaction": true
     },
     {
@@ -684,6 +801,7 @@
       ],
       "rule": "发布成功给「在网页托管中查看」，进入网页托管后定位并高亮这条记录",
       "expected": "点按钮进入 /web-pages?focusSite=<站点编号>，对应卡片高亮（复用 WebPagesPage 已有的 focusSite）",
+      "dimension": "correctness",
       "interaction": true
     },
     {
@@ -695,7 +813,8 @@
         "desktop-dark"
       ],
       "rule": "成品可追溯：模板、配音写在预览上方，原稿收在你的消息里可点开回看",
-      "expected": "预览标题下写时长、幕数与配音，右侧「模板 · 视觉笔记」；你的消息里有资料卡与「全部 n 份」"
+      "expected": "预览标题下写时长、幕数与配音，右侧「模板 · 视觉笔记」；你的消息里有资料卡与「全部 n 份」",
+      "dimension": "experience"
     },
     {
       "id": "A-32",
@@ -707,6 +826,7 @@
       ],
       "rule": "网页产出：生成中大纲逐节出现；完成后可切桌面 / 手机预览，重点点击定位到对应一节",
       "expected": "网页生成中右栏列出 4 节；完成后点「再画边界」，对应一节高亮",
+      "dimension": "correctness",
       "interaction": true
     },
     {
@@ -719,6 +839,7 @@
       ],
       "rule": "同一份稿件可一键改做另一种产出，稿件与要求自动带回",
       "expected": "点「用这份稿件做网页」回到创作，附件与要求已填好，产出切到网页",
+      "dimension": "correctness",
       "interaction": true
     },
     {
@@ -732,7 +853,8 @@
         "phone-dark"
       ],
       "rule": "作品列表：按状态筛选；标题桌面一行、手机两行截断；状态与时间在第二行；30 条稳定",
-      "expected": "30 条作品逐行高度一致，长标题省略，不撑破行；状态标签不折行"
+      "expected": "30 条作品逐行高度一致，长标题省略，不撑破行；状态标签不折行",
+      "dimension": "performance"
     },
     {
       "id": "A-35",
@@ -742,8 +864,9 @@
         "phone-light",
         "phone-dark"
       ],
-      "rule": "手机上「对话 / 预览」切换，输入框与「快捷生成」在底部可达；选模板在「预览」页签",
-      "expected": "390×844 下底部可见输入框、资料托盘与「快捷生成」"
+      "rule": "手机上「对话 / 预览」切换，输入框与「快捷生成」在底部可达；产出切换与风格按钮在输入框里单独一行",
+      "expected": "390×844 下底部可见输入框、资料托盘、「视频 / 网页」、风格按钮与「快捷生成」",
+      "dimension": "compatibility"
     },
     {
       "id": "A-36",
@@ -754,7 +877,8 @@
         "phone-dark"
       ],
       "rule": "手机头部的状态不挤压标题",
-      "expected": "状态标签在标题上方一行，标题完整一行显示"
+      "expected": "状态标签在标题上方一行，标题完整一行显示",
+      "dimension": "compatibility"
     },
     {
       "id": "A-37",
@@ -765,7 +889,8 @@
         "phone-dark"
       ],
       "rule": "手机播放器进度条单独一行，控件不换到第三行",
-      "expected": "进度条在上，按钮一行排完"
+      "expected": "进度条在上，按钮一行排完",
+      "dimension": "compatibility"
     },
     {
       "id": "A-38",
@@ -776,7 +901,8 @@
         "desktop-dark"
       ],
       "rule": "百宝箱里是一张独立的「快速创作」入口卡片，带开发中标记",
-      "expected": "卡片名、简介与「开发中」标记可见，点击进入快速创作"
+      "expected": "卡片名、简介与「开发中」标记可见，点击进入快速创作",
+      "dimension": "experience"
     },
     {
       "id": "A-39",
@@ -786,8 +912,9 @@
         "desktop-light",
         "desktop-dark"
       ],
-      "rule": "切到网页后只显示网页模板，产出标签与主按钮旁的标记同步",
-      "expected": "模板变为「导读长页」「卡片速览」，输入框下方标记为「网页 · 导读长页」",
+      "rule": "切到网页后风格保持不变，右栏说明换成「按这个风格的配色、字体与版式出页面」，标题与风格按钮同步",
+      "expected": "「网页」高亮；风格仍是「视觉笔记」；右栏说明写网页的生成方式",
+      "dimension": "correctness",
       "interaction": true
     },
     {
@@ -800,6 +927,7 @@
       ],
       "rule": "网页托管里新发布的记录高亮，并提示默认可见范围",
       "expected": "高亮卡片带「刚刚发布」，右下提示「默认仅团队成员可看」",
+      "dimension": "experience",
       "interaction": true
     },
     {
@@ -812,6 +940,7 @@
       ],
       "rule": "直接粘贴正文：一次粘贴 300 字以上的长文自动作为一份稿件附件，输入框只留给要求",
       "expected": "粘贴后输入框清空，附件托盘多一份「粘贴的正文」，快捷生成可用",
+      "dimension": "correctness",
       "interaction": true
     },
     {
@@ -824,7 +953,59 @@
       ],
       "rule": "上传 Markdown / TXT 稿件或图片：读出文字的可直接生成，空文件或不支持的格式显示原因",
       "expected": "上传「评审要点.md」后附件托盘出现该文件且显示已读取，快捷生成可用",
+      "dimension": "correctness",
       "interaction": true
+    },
+    {
+      "id": "A-43",
+      "screenId": "compose",
+      "how": "human",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "风格库按 Lemo-Opuscar 的分类：15 类 99 种，可按类别筛选、按名字或类别搜索；选中风格显示样片海报、样片名与时长、一句话说明和来源署名",
+      "expected": "类别行「全部 99」与 15 类各带数量；搜「水墨」只剩「中国水墨」；选中后大图、样片《》与署名同步",
+      "dimension": "experience",
+      "interaction": true
+    },
+    {
+      "id": "A-44",
+      "screenId": "style-picker",
+      "how": "human",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "输入框里的风格按钮就地弹出选择面板（搜索 + 类别 + 列表），选中后面板关闭，按钮与右栏风格库同步；面板底部可去右栏看大图",
+      "expected": "点风格按钮 → 面板含搜索、类别行与风格列表；点「中国水墨」后按钮写「中国水墨」，右栏同一张卡被选中",
+      "dimension": "correctness",
+      "interaction": true
+    },
+    {
+      "id": "A-45",
+      "screenId": "compose",
+      "how": "human",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "「视频 / 网页」在输入框里切换，风格与产出相互独立：切换产出不改风格，切换风格不改产出",
+      "expected": "切到网页后风格按钮仍是原风格；再选别的风格，产出仍是网页",
+      "dimension": "correctness",
+      "interaction": true
+    },
+    {
+      "id": "A-46",
+      "screenId": "compose",
+      "how": "human",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "风格来源与授权写清：风格说明（STYLE.md，CC BY-NC 4.0）只按编号引用、界面与源码差异不含原文；样片海报署名「Lemo-Opuscar by Lemomo (LemoLab)」并注明 CC BY 4.0",
+      "expected": "风格详情底部有署名与「样片海报 CC BY 4.0」；源码差异与界面里搜不到 STYLE.md 正文；类型字段 promptRef 只存位置",
+      "dimension": "security"
     }
   ],
   "goals": [
@@ -839,6 +1020,17 @@
         "A-39",
         "A-41",
         "A-42"
+      ]
+    },
+    {
+      "id": "G-10",
+      "goal": "模板按 Lemo-Opuscar 风格库选择，并在输入框里决定产出与风格",
+      "doneWhen": "15 类 99 种风格可筛选、搜索、看样片说明；输入框里就地切换视频 / 网页与风格，两者相互独立；风格说明只按编号引用并署名来源",
+      "items": [
+        "A-43",
+        "A-44",
+        "A-45",
+        "A-46"
       ]
     },
     {
@@ -964,6 +1156,120 @@
             "action": "expect",
             "selector": "[data-qc=queue-card]",
             "check": "visible"
+          }
+        ]
+      },
+      {
+        "id": "pick-style-in-composer",
+        "title": "在输入框的风格按钮里就地换风格，右栏风格库同步",
+        "screenId": "compose",
+        "theme": "light",
+        "ruleIds": [
+          "A-44"
+        ],
+        "steps": [
+          {
+            "action": "expect",
+            "selector": "[data-qc=style-chip]",
+            "check": "attribute",
+            "attribute": "data-template",
+            "equals": "sketchnote"
+          },
+          {
+            "action": "click",
+            "selector": "[data-qc=style-chip]"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-qc=style-popover]",
+            "check": "visible"
+          },
+          {
+            "action": "click",
+            "selector": "[data-qc=style-popover] [data-style=ink-wash]"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-qc=style-chip]",
+            "check": "attribute",
+            "attribute": "data-template",
+            "equals": "ink-wash"
+          },
+          {
+            "action": "expect",
+            "selector": "[aria-label=选择模板] [data-template=ink-wash]",
+            "check": "attribute",
+            "attribute": "aria-checked",
+            "equals": "true"
+          }
+        ]
+      },
+      {
+        "id": "search-style-library",
+        "title": "在右栏风格库按名字搜到风格并选中，输入框里的风格按钮同步",
+        "screenId": "compose",
+        "theme": "dark",
+        "ruleIds": [
+          "A-43"
+        ],
+        "steps": [
+          {
+            "action": "fill",
+            "selector": "#qc-style-search",
+            "value": "水墨"
+          },
+          {
+            "action": "expect",
+            "selector": "[aria-label=选择模板] [data-template=ink-wash]",
+            "check": "visible"
+          },
+          {
+            "action": "click",
+            "selector": "[aria-label=选择模板] [data-template=ink-wash]"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-qc=style-chip]",
+            "check": "attribute",
+            "attribute": "data-template",
+            "equals": "ink-wash"
+          }
+        ]
+      },
+      {
+        "id": "switch-output-keeps-style",
+        "title": "在输入框里切到网页，风格保持不变",
+        "screenId": "compose",
+        "theme": "light",
+        "ruleIds": [
+          "A-45",
+          "A-39"
+        ],
+        "steps": [
+          {
+            "action": "remember",
+            "selector": "[data-qc=style-chip]",
+            "check": "attribute",
+            "attribute": "data-template",
+            "as": "style"
+          },
+          {
+            "action": "click",
+            "selector": "[aria-label=选择产出] button:nth-child(2)"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-qc-ready]",
+            "check": "attribute",
+            "attribute": "data-output",
+            "equals": "web"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-qc=style-chip]",
+            "check": "attribute",
+            "attribute": "data-template",
+            "sameAs": "style"
           }
         ]
       },

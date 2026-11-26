@@ -24,16 +24,43 @@ export interface QcAttachment {
   excerpt?: string;
 }
 
+/**
+ * 模板 = 风格库里的一种风格（分类与风格取自 Lemo-Opuscar 风格库：15 类 99 种）。
+ * 同一个风格既能出视频也能出网页：视频按风格说明逐帧画出成片，网页按它的配色、字体与版式出页面。
+ */
 export interface QcTemplate {
+  /** 风格编号，等于风格库的文件夹名（例如 sketchnote） */
   id: string;
-  kind: OutputKind;
+  /** 中文名 */
   name: string;
-  /** 一句话风格 */
-  tagline: string;
-  /** 适合讲什么 */
-  goodFor: string;
-  /** 画面渲染器 */
-  frame: FrameKey;
+  nameEn: string;
+  /** 分类编号 01–15 */
+  categoryId: string;
+  /** 样片海报（缩略图地址） */
+  posterUrl: string;
+  /** 样片标题与一句话，用来让人预判这个风格长什么样 */
+  film: string;
+  line: string;
+  durationSec: number;
+  /** 生成时交给智能体的风格说明位置（风格库 styles/<id>/STYLE.md）；界面只显示来源，不显示原文 */
+  promptRef: string;
+  /** 需要用户自备生图工具的风格（人物要另外画），选中时提示 */
+  needsImageTool?: boolean;
+  /** 原型里用模板代码渲染分镜与成片的渲染器；没有时显示样片海报 */
+  frame?: FrameKey;
+}
+
+export interface QcTemplateCategory {
+  id: string;
+  name: string;
+  nameEn: string;
+}
+
+/** 风格库来源与授权，显示在风格详情底部 */
+export interface QcTemplateSource {
+  name: string;
+  url: string;
+  posterLicense: string;
 }
 
 export type FrameKey = 'visual-note' | 'whiteboard' | 'dark-notes' | 'guide-page' | 'card-digest';

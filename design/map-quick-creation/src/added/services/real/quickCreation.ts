@@ -1,7 +1,7 @@
 import { apiRequest } from '@/services/real/apiClient';
 import { useAuthStore } from '@/stores/authStore';
 import { fail, type ApiResponse } from '@/types/api';
-import type { CreateRunInput, QcAttachment, QcRun, QcTemplate, QcWork } from '@/pages/quick-creation-agent/types';
+import type { CreateRunInput, QcAttachment, QcRun, QcTemplate, QcTemplateCategory, QcTemplateSource, QcWork } from '@/pages/quick-creation-agent/types';
 
 /**
  * 快速创作接口。生成在服务端排队与执行（Run/Worker），离开页面不取消；页面按任务编号恢复。
@@ -10,7 +10,8 @@ import type { CreateRunInput, QcAttachment, QcRun, QcTemplate, QcWork } from '@/
 const base = '/api/quick-creation';
 
 export function listQuickCreationTemplates() {
-  return apiRequest<{ items: QcTemplate[] }>(`${base}/templates`);
+  /* 风格库目录：分类、风格（含海报地址与风格说明位置）和来源授权，由服务端维护 */
+  return apiRequest<{ items: QcTemplate[]; categories: QcTemplateCategory[]; source: QcTemplateSource }>(`${base}/templates`);
 }
 
 export function listQuickCreationWorks() {

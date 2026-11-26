@@ -4,7 +4,7 @@
 import type { QcAttachment, QcRun, QcScene } from '@/pages/quick-creation-agent/types';
 /* 演示成片：由 tools/make-demo-film.mjs 用模板画面渲染、带示意音轨的 WebM，构建时内嵌为 data: 地址 */
 import filmUrl from './assets/demo-film.webm';
-import { attachmentQueue, fixedRuns, sampleDoc, scenes, stagesAt, templates, webKeyPoints, webSections, works } from './fixtures';
+import { attachmentQueue, fixedRuns, sampleDoc, scenes, stagesAt, templateCategories, templateSource, templates, webKeyPoints, webSections, works } from './fixtures';
 
 class MemStorage {
   private m = new Map<string, string>();
@@ -120,7 +120,7 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
   /* 外壳自身的接口：给出与服务端同形的空数据 */
   if (/user-preferences\/?$/.test(path)) return ok({ navOrder: [], navHidden: [], defaultNavOrder: [], defaultNavHidden: [] });
   if (!path.startsWith('/api/quick-creation')) return ok(null);
-  if (path.endsWith('/templates')) return ok({ items: templates });
+  if (path.endsWith('/templates')) return ok({ items: templates, categories: templateCategories, source: templateSource });
   if (path.endsWith('/works')) {
     const mine = [...live.entries()].reverse().map(([id, l]) => {
       const r = getRun(id)!;
