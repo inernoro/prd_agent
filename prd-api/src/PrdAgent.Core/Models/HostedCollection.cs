@@ -38,14 +38,25 @@ public static class HostedCollectionRules
 
         try
         {
-            var name = (JsonSerializer.Deserialize<string?[]>(output) ?? [])
-                .Where(name => !string.IsNullOrWhiteSpace(name))
-                .Select(name => name!.Trim())
-                .Where(name => name.Length is > 2 and <= 32 && !name.Any(char.IsControl))
-                .FirstOrDefault();
-            return name == null || name.EndsWith("合集", StringComparison.Ordinal) ? name : name + "合集";
+            using var document = JsonDocument.Parse(output);
+            var root = document.RootElement;
+            if (root.ValueKind == JsonValueKind.Object) return ReadSuggestedName(root);
+            if (root.ValueKind != JsonValueKind.Array) return null;
+            foreach (var candidate in root.EnumerateArray())
+                if (ReadSuggestedName(candidate) is { } name) return name;
+            return null;
         }
         catch (JsonException) { return null; }
+    }
+
+    private static string? ReadSuggestedName(JsonElement candidate)
+    {
+        if (candidate.ValueKind == JsonValueKind.Object && candidate.TryGetProperty("name", out var nameProperty))
+            candidate = nameProperty;
+        if (candidate.ValueKind != JsonValueKind.String) return null;
+        var name = candidate.GetString()?.Trim();
+        if (name is not { Length: > 2 and <= 32 } || name.Any(char.IsControl)) return null;
+        return name.EndsWith("合集", StringComparison.Ordinal) ? name : name + "合集";
     }
 
     public static List<string> OrderedIds(IEnumerable<string> ids, string? mainSiteId = null)

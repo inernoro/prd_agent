@@ -10,6 +10,8 @@ public class HostedCollectionRulesTests
     [InlineData("```json\n[\"架构决策合集\"]\n```")]
     [InlineData("```\r\n[\"架构决策\"]\r\n```")]
     [InlineData("[\"架构决策合集\",\"旧版多余名称合集\"]")]
+    [InlineData("{\"name\":\"架构决策合集\"}")]
+    [InlineData("[{\"name\":\"架构决策\"}]")]
     public void SuggestedNameUsesOneRawOrFencedCandidate(string response)
     {
         Assert.Equal("架构决策合集", HostedCollectionRules.ParseSuggestedName(response));
@@ -18,6 +20,8 @@ public class HostedCollectionRulesTests
     [Theory]
     [InlineData("```json```")]
     [InlineData("[]")]
+    [InlineData("[{\"name\":null}]")]
+    [InlineData("{\"label\":\"架构决策合集\"}")]
     [InlineData("```json\n[\"架构决策合集\"]\n```额外说明")]
     public void SuggestedNameRejectsMalformedOutput(string response)
     {
