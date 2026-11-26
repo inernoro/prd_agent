@@ -3,3 +3,4 @@
 | fix | prd-admin | TAPD 草稿只展示本次成功整理所用的模型名 |
 | test | prd-api | 将 TAPD 淘汰检查状态接入现有 48 小时稳测 |
 | test | prd-api | 在 48 小时稳测中单独记录 TAPD 淘汰检查结果 |
+| fix | prd-api | TAPD 草稿仅保留明确给出的预期结果并使用受控模型调用 |

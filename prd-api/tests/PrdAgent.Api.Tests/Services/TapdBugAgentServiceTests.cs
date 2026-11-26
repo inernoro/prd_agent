@@ -1,4 +1,9 @@
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
 using PrdAgent.Api.Services;
+using PrdAgent.Core.LlmGateway;
+using PrdAgent.Core.Security;
 using Xunit;
 
 namespace PrdAgent.Api.Tests.Services;
@@ -43,16 +48,91 @@ public class TapdBugAgentServiceTests
     }
 
     [Fact]
-    public void NormalizeDraft_ShouldAutoFillFourRequiredSectionsFromShortDescription()
+    public void NormalizeDraft_ShouldLeaveUnstatedExpectedResultMissing()
     {
         var draft = TapdBugAgentService.NormalizeDraft(new TapdBugDraft(), "不能输汉字，提示502");
 
-        Assert.Empty(draft.MissingFields);
+        Assert.Equal(new[] { "预期结果" }, draft.MissingFields);
         Assert.Equal("不能输汉字，提示502", draft.Title);
         Assert.Contains("已登录系统并进入出现该问题的功能页面", draft.Preconditions);
         Assert.Contains("在相关输入框中输入汉字内容并提交或保存", draft.Steps);
         Assert.Contains("不能输汉字，提示502", draft.ActualResult);
-        Assert.Contains("页面不应出现 502 错误", draft.ExpectedResult);
+        Assert.Empty(draft.ExpectedResult);
+    }
+
+    [Theory]
+    [InlineData("列表返回后为空。", null)]
+    [InlineData("列表返回后为空。预期结果：", null)]
+    [InlineData("列表返回后为空。预期结果：待确认。", null)]
+    [InlineData("选东区后仍显示西区。预期只显示东区门店。", "只显示东区门店")]
+    [InlineData("列表为空，正确应该显示该记录。", "显示该记录")]
+    public async Task StreamPreview_ExpectedResultComesFromUserInsteadOfModel(string naturalText, string? expected)
+    {
+        var identity = new TaskExecutionIdentity("tapd-test-permit");
+        var streamed = 0;
+        var gateway = new Mock<ILlmGateway>(MockBehavior.Strict);
+        gateway.Setup(x => x.StreamAsync(It.Is<GatewayRequest>(r => (int?)r.RequestBody!["max_tokens"] == 4096
+            && TaskExecutionContext.Current == identity), It.IsAny<CancellationToken>()))
+            .Callback(() => streamed++).Returns(ModelDraft());
+        var service = new TapdBugAgentService(gateway.Object, Mock.Of<IHttpClientFactory>(),
+            NullLogger<TapdBugAgentService>.Instance, new ConfigurationBuilder().Build());
+        var admitted = 0;
+
+        var result = await service.StreamPreviewAsync(new TapdBugPreviewRequest { NaturalText = naturalText },
+            (_, _) => Task.CompletedTask, default, _ =>
+            {
+                admitted++;
+                return Task.FromResult(identity);
+            });
+
+        Assert.Equal(1, admitted);
+        Assert.Equal(1, streamed);
+        Assert.Null(TaskExecutionContext.Current);
+        if (expected is null)
+        {
+            Assert.Empty(result.ExpectedResult);
+            Assert.Contains("预期结果", result.MissingFields);
+        }
+        else
+        {
+            Assert.Equal(expected, Assert.Single(result.ExpectedResult));
+            Assert.DoesNotContain("预期结果", result.MissingFields);
+        }
+
+        static async IAsyncEnumerable<GatewayStreamChunk> ModelDraft()
+        {
+            await Task.CompletedTask;
+            yield return new GatewayStreamChunk
+            {
+                Type = GatewayChunkType.Text,
+                Content = """{"title":"列表显示异常","expectedResult":["模型猜测的结果"]}"""
+            };
+        }
+    }
+
+    [Fact]
+    public async Task StreamPreview_CompleteFormDoesNotRequireModelPermission()
+    {
+        var gateway = new Mock<ILlmGateway>(MockBehavior.Strict);
+        var service = new TapdBugAgentService(gateway.Object, Mock.Of<IHttpClientFactory>(),
+            NullLogger<TapdBugAgentService>.Instance, new ConfigurationBuilder().Build());
+        var request = new TapdBugPreviewRequest
+        {
+            Overrides = new TapdBugDraft
+            {
+                Title = "地区筛选无效",
+                Preconditions = ["两个地区都有门店"],
+                Steps = ["选择东区"],
+                ActualResult = ["仍显示西区门店"],
+                ExpectedResult = ["只显示东区门店"],
+            },
+        };
+
+        var result = await service.StreamPreviewAsync(request, (_, _) => Task.CompletedTask, default,
+            _ => throw new InvalidOperationException("完整表单不应尝试获得模型许可"));
+
+        Assert.Equal(request.Overrides.ExpectedResult, result.ExpectedResult);
+        Assert.Empty(result.MissingFields);
     }
 
     [Fact]
