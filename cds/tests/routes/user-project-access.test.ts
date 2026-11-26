@@ -1794,6 +1794,13 @@ describe('human project grants through the production server', () => {
     expect(await credentialCall('POST', '/api/scheduled-jobs/check-target', designKey, {
       projectId: 'project-a', target: { type: 'http', url: 'https://fixture.test/' },
     })).toMatchObject({ status: 403, body: { error: 'system_runner_required' } });
+    Object.assign(container, { discoverAppContainers: async () => new Map(['project-a', 'project-b'].map(projectId => [projectId, {
+      branchId: 'orphan-' + projectId, profileId: 'fixture', running: true,
+      containerName: 'orphan-' + projectId, network: projectId,
+    }])) });
+    expect(await credentialCall('POST', '/api/branches/cleanup-orphan-containers?dryRun=1', designKey)).toMatchObject({
+      status: 200, body: { candidates: [{ projectId: 'project-a', containerName: 'orphan-project-a' }] },
+    });
     expect((await credentialCall('GET', project + '/design/intake', otherKey)).status).toBe(403);
     expect((await credentialCall('GET', other + '/design/intake', otherKey)).body.permissions.write).toBe(false);
     expect((await call('DELETE', project + '/agent-keys/' + readers[0].body.keyId, owner)).status).toBe(200);

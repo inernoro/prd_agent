@@ -6378,7 +6378,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
   });
 
   router.post('/branches/cleanup-orphan-containers', async (req, res) => {
-    const projectFilter = resolveProjectIdParam(req.query.project);
+    const { projectFilter, mismatch } = assertScopedSweep(
+      req as Parameters<typeof assertScopedSweep>[0], resolveProjectIdParam(req.query.project),
+    );
+    if (mismatch) { res.status(mismatch.status).json(mismatch.body); return; }
     const dryRun = req.query.dryRun === '1' || req.query.dryRun === 'true';
     const includeStopped = req.query.includeStopped === '1' || req.query.includeStopped === 'true';
     const requestId = String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || null;
@@ -6406,10 +6409,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       if (!includeStopped && !container.running) continue;
       const branch = stateService.getBranch(container.branchId);
       const projectIdFromNetwork = projectIdForDockerNetwork(container.network);
-      if (projectFilter) {
-        const inferredProjectMatch = !branch && projectIdFromNetwork === projectFilter;
-        if (!inferredProjectMatch && (branch?.projectId || 'default') !== projectFilter) continue;
-      }
+      const owner = branch ? branch.projectId || 'default' : projectIdFromNetwork;
+      if (projectFilter && owner !== projectFilter) continue;
       candidates.push({
         branchId: container.branchId,
         profileId: container.profileId,
