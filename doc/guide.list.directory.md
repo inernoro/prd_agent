@@ -42,6 +42,7 @@
 - [cds-compose 契约 · SSOT · 规格](./spec.cds.compose-contract.md) `spec.cds.compose-contract`
 - [CDS 与 MAP 配对协议 · 规格](./spec.cds.map-pairing-protocol.md) `spec.cds.map-pairing-protocol`
 - [CDS 多项目数据字典 · 规格](./spec.cds.project-model.md) `spec.cds.project-model`
+- [CDS 账号与登录管理](./spec.cds.account-access.md) `spec.cds.account-access`
 - [CDS 产品能力 · 规格](./spec.cds.md) `spec.cds`
 - [缺陷自动化协议 · 规格](./spec.defect-agent.automation-protocol.md) `spec.defect-agent.automation-protocol`
 - [缺陷管理 Agent 产品 · 规格](./spec.defect-agent.md) `spec.defect-agent`
