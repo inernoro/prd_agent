@@ -299,6 +299,20 @@ export function discoverComposeFiles(dir: string): string[] {
     .filter(f => fs.existsSync(f));
 }
 
+/** Read a compose source from the checkout without following file symlinks. */
+export function readRepositoryComposeFile(file: string): string | null {
+  try {
+    const fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+    try {
+      return fs.fstatSync(fd).isFile() ? fs.readFileSync(fd, 'utf8') : null;
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Parse a compose file and extract infrastructure service definitions.
  *

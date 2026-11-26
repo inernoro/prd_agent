@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, type Request, type Response } from 'express';
 import crypto from 'node:crypto';
 import type { StateService } from '../services/state.js';
 import type { ReleaseJobSource, ScheduledJob, ScheduledJobAction, ScheduledJobSchedule, ScheduledJobTarget } from '../types.js';
@@ -13,11 +13,26 @@ export interface ScheduledJobsRouterDeps {
 export function createScheduledJobsRouter(deps: ScheduledJobsRouterDeps): Router {
   const router = Router();
   const { stateService, scheduledJobService } = deps;
+  const jobTargets = (job: ScheduledJob) => job.actions?.length ? job.actions : [job.target];
+  function hasInstanceRunnerAccess(req: Request): boolean {
+    const credential = (req as { cdsProjectKey?: { projectId: string; keyId: string } }).cdsProjectKey;
+    if (!credential || !stateService.getProject(credential.projectId)?.agentKeyCollaboration) return true;
+    const key = stateService.getAgentKeys(credential.projectId).find(entry => entry.id === credential.keyId);
+    return Boolean(key && (key.projectAccess || !key.designAccess && !key.planningAccess));
+  }
+  function projectTargetsAllowed(req: Request, targets: readonly (ScheduledJobTarget | undefined)[]): boolean {
+    return hasInstanceRunnerAccess(req) || targets.every(target => target?.type === 'release');
+  }
+  function requireProjectTargets(req: Request, res: Response, targets: readonly (ScheduledJobTarget | undefined)[]): boolean {
+    if (projectTargetsAllowed(req, targets)) return true;
+    res.status(403).json({ error: 'system_runner_required', message: '此任务使用 CDS 实例的网络或命令执行器，请使用项目已绑定的发布目标或由实例管理者操作' });
+    return false;
+  }
 
   router.get('/scheduled-jobs', (req, res) => {
     const projectId = resolveProjectFilter(req, res, deps.assertProjectAccess);
     if (projectId === false) return;
-    const jobs = stateService.listScheduledJobs(projectId)
+    const jobs = stateService.listScheduledJobs(projectId).filter(job => projectTargetsAllowed(req, jobTargets(job)))
       .sort((a, b) => String(a.nextRunAt || '').localeCompare(String(b.nextRunAt || '')));
     // 时间轴右半边要画一串待触发点。序列一律由服务端出，前端不复制到期判定。
     const horizon = Math.min(Math.max(Number(req.query.nextRuns || 0), 0), 64);
@@ -42,6 +57,7 @@ export function createScheduledJobsRouter(deps: ScheduledJobsRouterDeps): Router
       const access = deps.assertProjectAccess(req, job.projectId);
       if (access) { res.status(access.status).json(access.body); return; }
       if (projectId && projectId !== job.projectId) { res.json({ runs: [] }); return; }
+      if (!requireProjectTargets(req, res, jobTargets(job))) return;
       projectId = job.projectId;
     }
     const runs = stateService.listScheduledJobRuns({
@@ -49,7 +65,9 @@ export function createScheduledJobsRouter(deps: ScheduledJobsRouterDeps): Router
       jobId,
       limit: Number(req.query.limit || 100),
     });
-    res.json({ runs });
+    res.json({ runs: hasInstanceRunnerAccess(req) ? runs : runs.map(run =>
+      run.steps?.length && run.steps.every(step => step.type === 'release') ? run
+        : { ...run, log: undefined, error: undefined, recovery: undefined, steps: undefined }) });
   });
 
   router.post('/scheduled-jobs/check-target', async (req, res) => {
@@ -62,6 +80,7 @@ export function createScheduledJobsRouter(deps: ScheduledJobsRouterDeps): Router
 
     const target = parseTarget(req.body?.target, { projectId, stateService });
     if ('error' in target) { res.status(400).json({ error: target.error }); return; }
+    if (!requireProjectTargets(req, res, [target])) return;
 
     try {
       const result = await scheduledJobService.checkTarget(
@@ -83,6 +102,7 @@ export function createScheduledJobsRouter(deps: ScheduledJobsRouterDeps): Router
     if (!project) { res.status(404).json({ error: '项目不存在' }); return; }
     const access = deps.assertProjectAccess(req, input.projectId);
     if (access) { res.status(access.status).json(access.body); return; }
+    if (!requireProjectTargets(req, res, input.actions)) return;
 
     const now = new Date().toISOString();
     const job = scheduledJobService.normalizeJob({
@@ -114,6 +134,7 @@ export function createScheduledJobsRouter(deps: ScheduledJobsRouterDeps): Router
 
     const input = parseJobInput({ ...existing, ...req.body, projectId: existing.projectId }, stateService);
     if ('error' in input) { res.status(400).json({ error: input.error }); return; }
+    if (!requireProjectTargets(req, res, input.actions)) return;
 
     const preserveNextRunAt = existing.enabled === input.enabled && schedulesEqual(existing.schedule, input.schedule);
     const job = scheduledJobService.normalizeJob({
@@ -153,6 +174,7 @@ export function createScheduledJobsRouter(deps: ScheduledJobsRouterDeps): Router
     if (!existing) { res.status(404).json({ error: '任务不存在' }); return; }
     const access = deps.assertProjectAccess(req, existing.projectId);
     if (access) { res.status(access.status).json(access.body); return; }
+    if (!requireProjectTargets(req, res, jobTargets(existing))) return;
     try {
       const requestKey = req.get('Idempotency-Key');
       if (requestKey && !/^\d{13}:[a-zA-Z0-9_.-]{8,100}$/.test(requestKey)) { res.status(400).json({ error: '幂等标识格式无效' }); return; }
@@ -168,6 +190,7 @@ export function createScheduledJobsRouter(deps: ScheduledJobsRouterDeps): Router
     if (!job) { res.status(404).json({ error: '任务不存在' }); return; }
     const access = deps.assertProjectAccess(req, job.projectId);
     if (access) { res.status(access.status).json(access.body); return; }
+    if (!requireProjectTargets(req, res, jobTargets(job))) return;
     try { res.json({ run: await scheduledJobService.recoverRun(job.id, String(req.body?.runId || '')) }); }
     catch (err) { res.status(409).json({ error: (err as Error).message }); }
   });

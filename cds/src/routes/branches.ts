@@ -5263,13 +5263,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   router.get('/remote-branches', async (req, res) => {
     try {
-      const projectId = resolveProjectIdParam(req.query.project);
+      const projectKey = (req as { cdsProjectKey?: { projectId: string } }).cdsProjectKey;
+      const projectId = resolveProjectIdParam(req.query.project) ?? projectKey?.projectId;
+      const denied = assertProjectAccess(req as Parameters<typeof assertProjectAccess>[0], projectId);
+      if (denied) { res.status(denied.status).json(denied.body); return; }
+      const project = projectId ? stateService.getProject(projectId) : null;
+      if (projectKey && !project?.repoPath && !project?.legacyFlag) {
+        res.status(409).json({ error: 'project_repository_unavailable', message: '该项目尚未绑定可读取的 Git 仓库' });
+        return;
+      }
       const noFetch = req.query.nofetch === 'true' || req.query.nofetch === '1';
       const forceFetch = req.query.force === 'true' || req.query.force === '1';
       const repoRoot = projectId
         ? stateService.getProjectRepoRoot(projectId, config.repoRoot)
         : config.repoRoot;
-      const project = projectId ? stateService.getProject(projectId) : null;
 
       const now = Date.now();
       const lastFetchedAt = remoteFetchCache.get(repoRoot) || 0;
@@ -5362,7 +5369,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
   // server-authority rule: client disconnect does NOT cancel any backend
   // work; only the listener handle is detached.
   router.get('/branches/stream', (req, res) => {
-    const projectFilter = resolveProjectIdParam(req.query.project);
+    const projectFilter = resolveProjectIdParam(req.query.project) ?? (req as { cdsProjectKey?: { projectId: string } }).cdsProjectKey?.projectId ?? null;
+    const denied = assertProjectAccess(req as Parameters<typeof assertProjectAccess>[0], projectFilter ?? undefined);
+    if (denied) { res.status(denied.status).json(denied.body); return; }
 
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
@@ -5781,7 +5790,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // 显式 docker 对账（写状态）走真实路径，永不缓存/去重。
     const live = req.query.live === 'true' || req.query.live === '1';
     // P4 Part 3b: optional ?project=<id> filter（缺省=全部，与历史一致）。
-    const projectFilter = resolveProjectIdParam(req.query.project);
+    const projectKey = (req as { cdsProjectKey?: { projectId: string } }).cdsProjectKey;
+    const projectFilter = resolveProjectIdParam(req.query.project) ?? projectKey?.projectId ?? null;
+    const denied = assertProjectAccess(req as Parameters<typeof assertProjectAccess>[0], projectFilter ?? undefined);
+    if (denied) { res.status(denied.status).json(denied.body); return; }
     let result: BranchesListResult;
     if (live || req.query.fresh === '1' || BRANCHES_CACHE_TTL_MS === 0) {
       result = await computeBranchesListPayload({ projectFilter, live, requestId });
@@ -5804,14 +5816,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
     res.setHeader('Server-Timing', Object.entries(result.timings)
       .map(([name, duration]) => `${name};dur=${duration}`)
       .join(', '));
-    if (isScopedHuman(req)) {
+    if (isScopedHuman(req) || projectKey) {
       const payload = result.payload as { branches: BranchEntry[]; defaultBranch?: string; capacity?: unknown };
       res.json({
         ...payload,
         branches: payload.branches.filter(b => canHumanAccessProject(req, stateService, b.projectId || 'default')).map(b => branchForHumanView(req, b)),
         // Global capacity/default branch describe projects this user may not see.
         capacity: undefined,
-        defaultBranch: projectFilter ? stateService.getDefaultBranchFor(projectFilter) : undefined,
+        defaultBranch: projectKey ? stateService.getProject(projectKey.projectId)?.defaultBranch ?? null
+          : projectFilter ? stateService.getDefaultBranchFor(projectFilter) : undefined,
       });
       return;
     }
@@ -6381,7 +6394,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
   });
 
   router.post('/branches/cleanup-orphan-containers', async (req, res) => {
-    const projectFilter = resolveProjectIdParam(req.query.project);
+    const { projectFilter, mismatch } = assertScopedSweep(
+      req as Parameters<typeof assertScopedSweep>[0], resolveProjectIdParam(req.query.project),
+    );
+    if (mismatch) { res.status(mismatch.status).json(mismatch.body); return; }
     const dryRun = req.query.dryRun === '1' || req.query.dryRun === 'true';
     const includeStopped = req.query.includeStopped === '1' || req.query.includeStopped === 'true';
     const requestId = String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || null;
@@ -6409,10 +6425,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       if (!includeStopped && !container.running) continue;
       const branch = stateService.getBranch(container.branchId);
       const projectIdFromNetwork = projectIdForDockerNetwork(container.network);
-      if (projectFilter) {
-        const inferredProjectMatch = !branch && projectIdFromNetwork === projectFilter;
-        if (!inferredProjectMatch && (branch?.projectId || 'default') !== projectFilter) continue;
-      }
+      const owner = branch ? branch.projectId || 'default' : projectIdFromNetwork;
+      if (projectFilter && owner !== projectFilter) continue;
       candidates.push({
         branchId: container.branchId,
         profileId: container.profileId,
@@ -6586,8 +6600,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       // P4 Part 3b: if the Dashboard passes projectId in the body, stamp
       // it on the new branch so project-scoped list queries can find it.
-      // Missing value → defaults to 'default' in addBranch().
-      const effectiveProjectId = projectId && typeof projectId === 'string' ? projectId : 'default';
+      // A project key supplies the owning project when its caller omits it.
+      const projectKey = (req as { cdsProjectKey?: { projectId: string } }).cdsProjectKey;
+      const effectiveProjectId = projectId && typeof projectId === 'string' ? projectId : projectKey?.projectId || 'default';
       // Enforce: a project-scoped Agent Key may only touch its own project.
       const akMismatch = assertProjectAccess(req as any, effectiveProjectId);
       if (akMismatch) {
@@ -6740,6 +6755,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const needsSource = deploymentNeedsSourceCheckout(mergeBranchProfiles(
         stateService.getBuildProfilesForProject(effectiveProjectId), entry,
       ).map(profile => resolveEffectiveProfile(profile, entry)));
+      if (projectKey && targetProject.agentKeyCollaboration && !targetProject.legacyFlag && !targetProject.repoPath
+        && (needsSource || expectedCommit)) {
+        res.status(409).json({ error: 'project_repository_unavailable', message: '该项目尚未绑定可读取的 Git 仓库' });
+        return;
+      }
       await worktreePathActivity.withClaim([worktreePath, WorktreeService.deploymentSourceRootFor(worktreePath)], async () => {
         if (needsSource) {
           await shell.exec(`mkdir -p "${path.posix.dirname(worktreePath)}"`);
@@ -13170,7 +13190,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
   function metadataOnlyGitRepository(entry: BranchEntry): string | undefined {
     try { fs.lstatSync(entry.worktreePath); return undefined; }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
-    return stateService.getProjectRepoRoot(entry.projectId || 'default', config.repoRoot);
+    return stateService.getProjectSourceRoot(entry.projectId || 'default', config.repoRoot);
   }
 
   // ── Pull latest code ──
@@ -14130,7 +14150,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           : `分支: \`${entry.branch}\`\n阶段: 准备独立部署源码`,
         force: true,
       });
-      const deploymentRepoRoot = stateService.getProjectRepoRoot(entry.projectId || 'default', config.repoRoot);
+      const deploymentRepoRoot = stateService.getProjectSourceRoot(entry.projectId || 'default', config.repoRoot) ?? entry.worktreePath;
       // Reject known-invalid declarations before any full source snapshot is allocated.
       // Runtime preflight still revalidates native identity and current references.
       for (const profile of profiles) assertProfileStorageBoundary(resolveEffectiveProfile(profile, inputBranch()), entry.worktreePath);
@@ -15593,7 +15613,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // Pull latest code
       logEvent({ step: 'pull', status: 'running', title: '正在拉取最新代码...', timestamp: new Date().toISOString() });
       const deployProject = entry.projectId ? stateService.getProject(entry.projectId) : undefined;
-      const deploymentRepoRoot = stateService.getProjectRepoRoot(entry.projectId || 'default', config.repoRoot);
+      const deploymentRepoRoot = stateService.getProjectSourceRoot(entry.projectId || 'default', config.repoRoot) ?? entry.worktreePath;
       assertProfileStorageBoundary(resolveEffectiveProfile(profile, inputBranch()), entry.worktreePath);
       let pullResult = isSyntheticCdsManagedRuntimeBranch(entry, deployProject)
         ? { head: entry.githubCommitSha || 'cds-managed-runtime', skipped: true, reason: 'synthetic-cds-managed-runtime' }
@@ -16883,9 +16903,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(404).json({ error: `分支 "${id}" 不存在` });
       return;
     }
-    // per-project：写入 entry 所属项目的 defaultBranch；同步刷新 legacy
-    // state.defaultBranch 兼容老 fallback。projectId 缺失时退回旧行为。
-    if (entry.projectId) {
+    const projectKey = (req as { cdsProjectKey?: { projectId: string } }).cdsProjectKey;
+    const denied = assertProjectAccess(req as Parameters<typeof assertProjectAccess>[0], entry.projectId || 'default');
+    if (denied) { res.status(denied.status).json(denied.body); return; }
+    if (projectKey) {
+      stateService.setProjectDefaultBranch(projectKey.projectId, id, { seedGlobal: false });
+    } else if (entry.projectId) {
       stateService.setProjectDefaultBranch(entry.projectId, id);
     } else {
       stateService.setDefaultBranch(id);
@@ -19383,7 +19406,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   router.get('/build-profiles', (req, res) => {
     // P4 Part 3b: optional ?project=<id> filter.
-    const projectFilter = typeof req.query.project === 'string' ? req.query.project : null;
+    const projectFilter = resolveProjectIdParam(req.query.project) ?? (req as { cdsProjectKey?: { projectId: string } }).cdsProjectKey?.projectId;
+    const denied = assertProjectAccess(req as Parameters<typeof assertProjectAccess>[0], projectFilter);
+    if (denied) { res.status(denied.status).json(denied.body); return; }
     const source = projectFilter
       ? stateService.getBuildProfilesForProject(projectFilter)
       : stateService.getBuildProfiles();
@@ -19577,7 +19602,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // of POST /cleanup-cross-project-services scoped to this single
       // profileId so the UI doesn't keep displaying a dead service.
       const removedProfileId = req.params.id;
-      const allBranches = Object.values(stateService.getState().branches || {});
+      const allBranches = Object.values(stateService.getState().branches || {})
+        .filter(branch => !assertProjectAccess(req as Parameters<typeof assertProjectAccess>[0], branch.projectId || 'default'));
       const skippedBusy: Array<{ branchId: string; profileId: string; reason: string }> = [];
       const requestId = String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || null;
       const actor = resolveActorFromRequest(req);
@@ -19758,10 +19784,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
         return () => true;
       })();
 
+      const projectKey = (req as { cdsProjectKey?: { projectId: string } }).cdsProjectKey;
+      const sharedProjectId = projectKey && stateService.getProject(projectKey.projectId)?.agentKeyCollaboration
+        ? projectKey.projectId : undefined;
       const allProfiles = stateService.getBuildProfiles();
       const targets = Array.isArray(profileIds) && profileIds.length > 0
         ? allProfiles.filter(p => profileIds.includes(p.id))
-        : allProfiles.filter(p => matchPattern(p.dockerImage || ''));
+        : allProfiles.filter(p => (!sharedProjectId || sharedProjectId === (p.projectId || 'default')) && matchPattern(p.dockerImage || ''));
+      if (sharedProjectId) {
+        for (const target of targets) {
+          const denied = assertProjectAccess(req as Parameters<typeof assertProjectAccess>[0], target.projectId || 'default');
+          if (denied) { res.status(denied.status).json(denied.body); return; }
+        }
+      }
 
       if (targets.length === 0) {
         res.status(400).json({ error: '没有匹配的 profile，请检查 filter / profileIds' });
@@ -20241,12 +20276,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
 
-    // Use the project's actual repo root so stack detection looks at
-    // the right tree. Legacy projects (no per-project repoPath) fall
-    // back to config.repoRoot via getProjectRepoRoot.
-    const projectRepoRoot = stateService.getProjectRepoRoot(projectId, config.repoRoot);
-    const adminDir = path.join(projectRepoRoot, 'prd-admin');
-    const pm = fs.existsSync(adminDir) ? detectPackageManager(adminDir) : 'npm';
+    // Detect the package manager in this project's checkout when available.
+    const projectRepoRoot = stateService.getProjectSourceRoot(projectId, config.repoRoot);
+    const adminDir = projectRepoRoot && path.join(projectRepoRoot, 'prd-admin');
+    const pm = adminDir && fs.existsSync(adminDir) ? detectPackageManager(adminDir) : 'npm';
     const nodeCmd = nodeProfileCommands(pm);
 
     // Look up the project up-front — we need the slug both for the
@@ -20270,10 +20303,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // across all projects, so reading from it would let one project's compose
     // file silently contaminate a different project's build profiles.
     let composeYaml: string | null = null;
-    const composeCandidates: string[] = [
+    const composeCandidates = projectRepoRoot ? [
       path.join(projectRepoRoot, 'cds-compose.yaml'),
       path.join(projectRepoRoot, 'cds-compose.yml'),
-    ];
+    ] : [];
     // De-duplicate paths (projectRepoRoot may equal config.repoRoot for legacy)
     const seen = new Set<string>();
     for (const composePath of composeCandidates) {
@@ -20406,11 +20439,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // 用作 meta 时才需要剥。
     const raw = req.query.scope;
     const queryScope = typeof raw === 'string' ? raw.trim() : '';
-    if (queryScope) return { scope: queryScope, fromBody: false };
     const bodyScope = req.body && typeof req.body === 'object' && typeof (req.body as Record<string, unknown>).scope === 'string'
       ? ((req.body as Record<string, string>).scope).trim()
       : '';
-    return { scope: bodyScope || '_global', fromBody: !!bodyScope };
+    const key = (req as Parameters<typeof assertProjectAccess>[0]).cdsProjectKey;
+    const sharedProjectId = key && stateService.getProject(key.projectId)?.agentKeyCollaboration ? key.projectId : undefined;
+    const supplied = queryScope || bodyScope || sharedProjectId || '_global';
+    const project = stateService.getProject(supplied);
+    const scope = project && (!stateService.getBranch(supplied) || key?.projectId === project.id) ? project.id : supplied;
+    return { scope, fromBody: !queryScope && !!bodyScope };
   }
 
   function resolveScope(req: import('express').Request): string {
@@ -20431,7 +20468,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // matching scope, or human cookie session) sees plaintext. Everyone else
     // gets `***[masked]***` — UI keeps rendering "X env vars configured" but
     // no machine credential walks away with the secret material.
-    const projKey = (req as any).cdsProjectKey as { projectId: string } | undefined;
+    const projKey = (req as Parameters<typeof assertProjectAccess>[0]).cdsProjectKey;
+    const shared = projKey && stateService.getProject(projKey.projectId)?.agentKeyCollaboration;
+    if (shared) {
+      if (scope === '_all') {
+        res.status(403).json({ error: 'global_env_forbidden', message: '这把凭据只能读取本项目的配置' });
+        return;
+      }
+      if (!allowEnvironmentScope(req, res, scope)) return;
+    }
     const humanOwner = isHumanSystemOwner(req);
     const maskValues = (env: Record<string, string>): Record<string, string> => {
       const out: Record<string, string> = {};
@@ -20470,14 +20515,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const env = ownerOkFor(scope) ? rawEnv : maskValues(rawEnv);
     if (scope !== '_global') {
       const project = stateService.getProject(scope);
-      if (project) {
+      if (project?.id === scope) {
         const envMeta = stateService.getEnvMeta(scope);
         const missingRequiredEnvKeys = stateService.getMissingRequiredEnvKeys(scope);
         const rawGlobal = stateService.getCustomEnvScope('_global');
         // _global plaintext only when caller owns _global (i.e. cookie auth);
         // a project-scoped cdsp_ key sees its own project plaintext but
         // global stays masked (consistent with reveal/customEnv P1 model).
-        const globalEnv = ownerOkFor('_global') ? rawGlobal : maskValues(rawGlobal);
+        const globalEnv = shared ? {} : ownerOkFor('_global') ? rawGlobal : maskValues(rawGlobal);
         res.json({ env, scope, envMeta, missingRequiredEnvKeys, globalEnv });
         return;
       }
@@ -20542,13 +20587,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const stamped = req as Request & Parameters<typeof assertProjectAccess>[0];
     if (scope === '_global') {
       if (stamped.cdsProjectKey || (stamped.cdsAccess && stamped.cdsAccess.access.projects !== 'all')) {
-        res.status(403).json({ error: 'global_env_forbidden', message: '这把凭据无权修改全局配置' });
+        res.status(403).json({ error: 'global_env_forbidden', message: '这把凭据无权访问全局配置' });
         return false;
       }
       return true;
     }
     const project = stateService.getProject(scope);
-    const branch = project ? undefined : stateService.getBranch(scope);
+    const branch = stateService.getBranch(scope);
+    if (project && branch && project.id !== (branch.projectId || 'default')) {
+      res.status(409).json({ error: 'ambiguous_env_scope', message: '此环境变量范围不唯一，请使用项目编号或分支详情页。' });
+      return false;
+    }
     const projectId = project?.id ?? (branch ? branch.projectId || 'default' : undefined);
     if (!projectId || !stateService.getProject(projectId) || project?.mirror || branch?.mirror) {
       res.status(404).json({ error: 'env_scope_not_found', message: '没有可操作的配置范围' });
@@ -20583,6 +20632,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const env: Record<string, string> = {};
     for (const [k, v] of Object.entries(rawBody)) {
       if (k === 'scope' && fromBody) continue;
+      if (Object.hasOwn(Object.prototype, k) || typeof v !== 'string') {
+        res.status(400).json({ error: 'invalid_environment_variable', message: '环境变量须使用有效名称和字符串值' });
+        return;
+      }
       env[k] = v;
     }
     const previous = stateService.getCustomEnvScope(scope);
@@ -20600,15 +20653,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     appendEnvironmentAudit(stateService, req, scope, 'bulk-replace', previous, env);
     stateService.save();
-    syncCdsConfig();
+    if (scope === '_global') syncCdsConfig();
     res.json({ message: '环境变量已更新', env, scope });
   });
 
   router.put('/env/:key', (req, res) => {
     const { key } = req.params;
     const { value } = req.body as { value?: string };
-    if (value === undefined) {
-      res.status(400).json({ error: '值不能为空' });
+    if (Object.hasOwn(Object.prototype, key) || typeof value !== 'string') {
+      res.status(400).json({ error: 'invalid_environment_variable', message: '环境变量须使用有效名称和字符串值' });
       return;
     }
     const scope = resolveScope(req);
@@ -20628,7 +20681,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     appendEnvironmentAudit(stateService, req, scope, 'set', previous, stateService.getCustomEnvScope(scope), [key]);
     stateService.save();
-    syncCdsConfig();
+    if (scope === '_global') syncCdsConfig();
     res.json({ message: `Set ${key}`, scope });
   });
 
@@ -20647,7 +20700,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     //(典型场景:用户删了一个泄漏的 SMTP 密码,下次 webhook 自动建分支又把它注回去)
     if (scope !== '_global' && stateService.getProject(scope)) {
       const current = stateService.getDefaultEnv(scope);
-      if (key in current) {
+      if (Object.hasOwn(current, key)) {
         delete current[key];
         stateService.setDefaultEnv(scope, current);
       }
@@ -20680,21 +20733,22 @@ export function createBranchRouter(deps: RouterDeps): Router {
   // dryRun=true 只返回 plan 不改 state；false 则按 plan 真改 + save。
   router.post('/env/categorize', (req, res) => {
     const body = (req.body || {}) as { targetProjectId?: string; dryRun?: boolean };
-    const targetProjectId = (body.targetProjectId || '').trim();
+    const projectSelector = (body.targetProjectId || '').trim();
     const dryRun = body.dryRun === true;
-    if (!targetProjectId) {
+    if (!projectSelector) {
       res.status(400).json({ error: '缺少 targetProjectId（移到哪个项目）' });
       return;
     }
-    if (targetProjectId === '_global' || targetProjectId === '_all') {
+    if (projectSelector === '_global' || projectSelector === '_all') {
       res.status(400).json({ error: 'targetProjectId 不能是 _global 或 _all' });
       return;
     }
-    const targetProject = stateService.getProject(targetProjectId);
+    const targetProject = stateService.getProject(projectSelector);
     if (!targetProject) {
-      res.status(404).json({ error: `项目 "${targetProjectId}" 不存在` });
+      res.status(404).json({ error: `项目 "${projectSelector}" 不存在` });
       return;
     }
+    const targetProjectId = targetProject.id;
 
     const globalEnv = stateService.getCustomEnvScope('_global');
     const projectEnv = stateService.getCustomEnvScope(targetProjectId);
@@ -20843,7 +20897,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
   // ── Config (read-only) ──
 
   router.get('/config', async (req, res) => {
-    if (isScopedHuman(req)) {
+    const projectKey = (req as { cdsProjectKey?: { projectId: string } }).cdsProjectKey;
+    if (isScopedHuman(req) || projectKey && stateService.getProject(projectKey.projectId)?.agentKeyCollaboration) {
       res.json({ workerPort: config.workerPort, mainDomain: config.mainDomain,
         previewDomain: config.previewDomain || config.rootDomains?.[0] });
       return;
@@ -21846,7 +21901,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   router.get('/infra', async (req, res) => {
     // P4 Part 3b: optional ?project=<id> filter.
-    const projectFilter = typeof req.query.project === 'string' ? req.query.project : null;
+    const projectFilter = infraCollaborationProject(req) ?? (typeof req.query.project === 'string' ? req.query.project : null);
     const live = req.query.live === 'true' || req.query.live === '1';
     const services = projectFilter
       ? stateService.getInfraServicesForProject(projectFilter)
@@ -21913,7 +21968,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
    * returns null so the caller can 400 with a clear "which project?"
    * message instead of silently operating on the wrong one.
    */
+  function infraCollaborationProject(req: Request): string | undefined {
+    const key = (req as Parameters<typeof assertProjectAccess>[0]).cdsProjectKey;
+    return key && stateService.getProject(key.projectId)?.agentKeyCollaboration ? key.projectId : undefined;
+  }
+
   function resolveInfraProject(req: Request, id: string): { projectId: string } | { ambiguous: string[] } | null {
+    const sharedProject = infraCollaborationProject(req);
+    if (sharedProject) return { projectId: sharedProject };
     const q = typeof req.query.project === 'string' ? req.query.project : null;
     if (q) return { projectId: q };
     const all = stateService.getInfraServices().filter(s => s.id === id);
@@ -22027,7 +22089,7 @@ router.post('/branches/:id/storage/provision',async(req,res)=>{
         return;
       }
       const queryProject = typeof req.query.project === 'string' ? req.query.project : null;
-      const projectId = body.projectId || queryProject || 'default';
+      const projectId = body.projectId || infraCollaborationProject(req) || queryProject || 'default';
       const targetProject = stateService.getProject(projectId);
       if (!targetProject) {
         res.status(400).json({ error: `未知项目: ${projectId}` });
@@ -22164,6 +22226,14 @@ router.post('/branches/:id/storage/provision',async(req,res)=>{
       {
         const m = assertProjectAccess(req as any, resolved.projectId);
         if (m) { res.status(m.status).json(m.body); return; }
+      }
+      if (infraCollaborationProject(req)) {
+        const existing = stateService.getInfraServiceForProjectAndId(resolved.projectId, req.params.id);
+        if (!existing) { res.status(404).json({ error: 'infra_not_found' }); return; }
+        if ((['id', 'projectId', 'containerName'] as const).some(key => updates[key] !== undefined && updates[key] !== existing[key])) {
+          res.status(403).json({ error: 'infra_identity_immutable', message: '基础设施更新必须保留其项目和容器归属' });
+          return;
+        }
       }
       stateService.updateInfraService(req.params.id, updates, resolved.projectId);
       stateService.save();
@@ -22304,7 +22374,8 @@ router.post('/branches/:id/storage/provision',async(req,res)=>{
 
   router.get('/infra/:id/health', async (req, res) => {
     const { id } = req.params;
-    const service = stateService.getInfraService(id);
+    const sharedProject = infraCollaborationProject(req);
+    const service = sharedProject ? stateService.getInfraServiceForProjectAndId(sharedProject, id) : stateService.getInfraService(id);
     if (!service) {
       res.status(404).json({ error: `基础设施服务 "${id}" 不存在` });
       return;

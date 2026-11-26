@@ -1,7 +1,8 @@
 export const planningPermissions = ['read', 'propose', 'write', 'approve'] as const;
 export const PLANNING_MCP_TOOLS = ['cds_planning_read', 'cds_planning_propose', 'cds_planning_record_debt'] as const;
 export type PlanningPermission = typeof planningPermissions[number];
-export type PlanningActor = { kind: 'human' | 'agent'; id: string; label: string; permissions: readonly PlanningPermission[] };
+export type PlanningActor = { kind: 'human' | 'agent'; id: string; label: string; permissions: readonly PlanningPermission[];
+  projectCollaborator?: true };
 export type PlanningIdentity = Pick<PlanningActor, 'id' | 'label'> & { kind: PlanningActor['kind'] | 'system' };
 
 export const planningSourceTypes = ['manual', 'review', 'test', 'incident', 'code', 'adr', 'import'] as const;
