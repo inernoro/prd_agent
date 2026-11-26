@@ -486,6 +486,7 @@ public class TapdBugAgentService
             while (reader.ReadLine() is { } value)
             {
                 var line = value.Trim();
+                if (line.Length == 0 && results.Count == 0) continue;
                 if (line.Length == 0) break;
                 var delimiter = line.IndexOfAny(['：', ':']);
                 if (delimiter >= 0 && line[..delimiter].Trim() is
