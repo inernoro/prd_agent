@@ -16,8 +16,11 @@ from pathlib import Path
 
 CLI = Path(__file__).resolve().parents[1] / "cli" / "cdscli.py"
 SECRET = "cdsp_setup_test_secret_never_print"
+DESIGN_APPROVAL_KEYS = {"read": "cdsp_read_fixture_never_print",
+                        "feedback": "cdsp_feedback_fixture_never_print", "publish": SECRET}
 POLL_TOKEN = "design_request_fixture_poll_token_never_print"
 DESIGN_SETUP = "/api/agent/setup.json?target=existing&project=proj-a&mission=design-publish"
+BUILD_SETUP = "/api/agent/setup.json?target=existing&project=proj-a&skills=cds-build"
 FRESH_SETUP = "/api/agent/setup.json?target=system&skills=cds"
 DESIGN_INTAKE = "/api/projects/proj-a/design/intake"
 DESIGN_REQUEST = "/api/projects/proj-a/access-requests"
@@ -47,14 +50,20 @@ class SetupCheckTests(unittest.TestCase):
         self.bundle_manifest = self.cli.with_name("cds-skill-manifest.json")
         self.write_bundle_manifest()
         self.project_status = 200
+        self.project_error = None
         self.returned_project = "proj-a"
         self.design_manifest = {"target": {"kind": "existing", "projectId": "proj-a"},
                                 "mission": "design-publish", "designAccess": "publish", "minCliVersion": "0.26.9"}
+        self.build_setup_status = 200
+        self.build_manifest = {"target": {"kind": "existing", "projectId": "proj-a"},
+                               "skills": ["cds-build"], "designAccess": "read", "minCliVersion": self.version}
         self.design_result = {"projectId": "proj-a", "protocolVersion": 1, "permissions": {"write": True}}
+        self.design_intake_status = 200
         self.design_requests = []
         self.update_bundle = None
         self.poll_proofs = []
         self.hold_design_approval = False
+        self.before_design_delivery = None
         test = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -87,6 +96,9 @@ class SetupCheckTests(unittest.TestCase):
                             "minCliVersion": test.minimum_version}
                 elif self.path == DESIGN_SETUP:
                     body = {"version": "cds-agent-setup.v1", "cliVersion": test.version, **test.design_manifest}
+                elif self.path == BUILD_SETUP:
+                    status = test.build_setup_status
+                    body = {"version": "cds-agent-setup.v1", "cliVersion": test.version, **test.build_manifest}
                 elif self.path == "/api/credentials/self-check":
                     body = {"kind": test.kind, "status": test.status}
                     if test.kind == "global":
@@ -94,7 +106,13 @@ class SetupCheckTests(unittest.TestCase):
                     if test.kind == "project":
                         body["projectId"] = "proj-a"
                 elif self.path == DESIGN_INTAKE:
-                    body = test.design_result
+                    key = self.headers.get("X-AI-Access-Key")
+                    if key in (DESIGN_APPROVAL_KEYS["read"], DESIGN_APPROVAL_KEYS["feedback"]):
+                        body = {**test.design_result, "permissions": {
+                            "write": False, "feedback": key == DESIGN_APPROVAL_KEYS["feedback"],
+                        }}
+                    else:
+                        status, body = test.design_intake_status, test.design_result
                 elif self.path == DESIGN_POLL:
                     supplied = self.headers.get("X-Poll-Token") == POLL_TOKEN
                     test.poll_proofs.append(supplied)
@@ -103,10 +121,15 @@ class SetupCheckTests(unittest.TestCase):
                     elif test.hold_design_approval or len(test.poll_proofs) == 1:
                         body = {"status": "pending"}
                     else:
-                        body = {"status": "approved", "authorizationKey": SECRET, "designAccess": "publish"}
+                        access = test.design_requests[-1]["designAccess"]
+                        if test.before_design_delivery:
+                            test.before_design_delivery()
+                        body = {"status": "approved", "authorizationKey": DESIGN_APPROVAL_KEYS[access], "designAccess": access}
                 elif self.path == "/api/projects/proj-a":
                     status = test.project_status
                     body = {"project": {"id": test.returned_project}, "secret": SECRET}
+                    if test.project_error:
+                        body = {"error": test.project_error}
                 elif self.path == "/api/global-agent-keys":
                     body = {"keys": [{"id": "global-current", "access": {"projects": test.global_projects}}], "secret": SECRET}
                 elif self.path == "/api/config":
@@ -123,7 +146,7 @@ class SetupCheckTests(unittest.TestCase):
                 request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
                 test.design_requests.append(request)
                 self.respond(201, {"requestId": "design-request-fixture", "pollToken": POLL_TOKEN,
-                                   "projectId": "proj-a", "designAccess": "publish", "status": "pending"})
+                                   "projectId": "proj-a", "designAccess": request["designAccess"], "status": "pending"})
 
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.host = f"http://127.0.0.1:{self.server.server_port}"
@@ -154,7 +177,7 @@ class SetupCheckTests(unittest.TestCase):
         env.update(credential_env or {})
         result = subprocess.run([sys.executable, str(self.cli), *args],
                                 cwd=self.root, env=env, capture_output=True, text=True, timeout=15)
-        self.assertFalse(any(value in result.stdout + result.stderr for value in (SECRET, POLL_TOKEN)),
+        self.assertFalse(any(value in result.stdout + result.stderr for value in (*DESIGN_APPROVAL_KEYS.values(), POLL_TOKEN)),
                          "CLI exposed a credential or poll token")
         return result
 
@@ -239,9 +262,13 @@ class SetupCheckTests(unittest.TestCase):
         return self.run_cli_result("setup-check", "--host", self.host, "--project", "proj-a",
                                    "--skills", "cds", "--design-access", "publish")
 
-    def run_design_connect(self, *options):
+    def run_design_connect(self, *options, scope="publish"):
         return self.run_cli_result("connect", "--host", self.host, "--project", "proj-a",
-                                   "--design-access", "publish", "--agent", "Fixture designer", "--interval", "1", *options)
+                                   "--design-access", scope, "--agent", "Fixture designer", "--interval", "1", *options)
+
+    def run_build_check(self, scope="read", skills="cds-build"):
+        return self.run_cli("setup-check", "--host", self.host, "--project", "proj-a",
+                            "--skills", skills, "--design-access", scope)
 
     def test_design_setup_check_verifies_the_declared_project_and_live_publish_permission(self):
         before = self.credentials.read_bytes()
@@ -339,6 +366,8 @@ class SetupCheckTests(unittest.TestCase):
 
     def test_design_connect_requests_scoped_approval_and_saves_only_a_verified_credential(self):
         self.credentials.unlink()
+        self.build_setup_status = 503
+        self.build_manifest.update(cliVersion="0.26.29", error="skill_bundle_incompatible")
         result = self.run_design_connect()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout)["data"]["projectId"], "proj-a")
@@ -408,6 +437,97 @@ class SetupCheckTests(unittest.TestCase):
         self.assertFalse(receipt.exists())
         self.assertTrue(json.loads(self.credentials.read_text()).get("projectKey") == SECRET)
 
+    def test_scoped_design_connect_preserves_worktree_with_ordinary_project_access(self):
+        connection = self.credentials.with_name("connection.json")
+        binding = json.dumps({"host": self.host, "projectId": "proj-a", "repository": "example.test/owner/project"}).encode()
+        credentials = self.credentials.read_bytes()
+        for scope, intake_status in (("read", 403), ("feedback", 200)):
+            with self.subTest(scope=scope):
+                self.credentials.write_bytes(credentials)
+                connection.write_bytes(binding)
+                self.requests.clear()
+                self.poll_proofs.clear()
+                self.design_intake_status = intake_status
+                self.design_result["permissions"] = {"write": False, "feedback": False}
+                result = self.run_design_connect(scope=scope)
+                self.assertEqual(result.returncode, 2)
+                self.assertEqual(json.loads(result.stdout)["reason"], "existing_project_binding")
+                self.assertEqual([url for url, _ in self.requests], [DESIGN_INTAKE, "/api/projects/proj-a"])
+                self.assertEqual(self.credentials.read_bytes(), credentials)
+                self.assertEqual(connection.read_bytes(), binding)
+        self.assertEqual(self.design_requests, [])
+
+    def test_scoped_design_connect_reuses_existing_permission_before_binding_check(self):
+        self.design_result["permissions"] = {"write": False, "feedback": True}
+        before = self.credentials.read_bytes()
+        for scope in ("read", "feedback"):
+            with self.subTest(scope=scope):
+                self.requests.clear()
+                result = self.run_design_connect(scope=scope)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertTrue(json.loads(result.stdout)["data"]["reused"])
+                self.assertEqual([url for url, _ in self.requests], [DESIGN_INTAKE])
+        self.assertEqual(self.credentials.read_bytes(), before)
+        self.assertEqual(self.design_requests, [])
+
+    def test_design_only_read_binding_can_continue_to_one_feedback_approval(self):
+        self.design_result["permissions"] = {"write": False, "feedback": False}
+        self.project_status = 403
+        self.project_error = "design_key_scope"
+        result = self.run_design_connect(scope="feedback")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["data"]["scope"], "design-feedback")
+        self.assertEqual([item["designAccess"] for item in self.design_requests], ["feedback"])
+        self.assertEqual([url for url, _ in self.requests[:3]],
+                         [DESIGN_INTAKE, "/api/projects/proj-a", DESIGN_SETUP])
+        self.assertTrue(json.loads(self.credentials.read_text()).get("projectKey") == DESIGN_APPROVAL_KEYS["feedback"])
+
+    def test_fresh_scoped_design_connect_stops_before_approval_if_build_bundle_is_incompatible(self):
+        self.build_setup_status = 503
+        self.build_manifest.update(cliVersion="0.26.29", error="skill_bundle_incompatible")
+        for scope in ("read", "feedback"):
+            with self.subTest(scope=scope):
+                self.credentials.unlink(missing_ok=True)
+                self.requests.clear()
+                check, checked = self.run_build_check(scope)
+                self.assertEqual(check.returncode, 2, checked)
+                self.assertEqual(checked["data"]["checks"][-1]["reason"], "missing_credentials")
+                self.assertEqual(self.requests, [])
+                result = self.run_design_connect(scope=scope)
+                self.assertEqual(result.returncode, 2)
+                self.assertEqual(json.loads(result.stdout)["reason"], "skill_bundle_incompatible")
+                self.assertEqual(self.requests, [(DESIGN_SETUP, None), (BUILD_SETUP, None)])
+                self.assertEqual(self.design_requests, [])
+                self.assertFalse(self.credentials.exists())
+                self.assertFalse(self.credentials.with_name("connection.json").exists())
+                self.assertFalse(self.credentials.with_name("design-approval.json").exists())
+
+    def test_scoped_design_connect_accepts_legacy_server_without_build_setup(self):
+        self.credentials.unlink()
+        self.build_setup_status = 400
+        self.build_manifest = {"error": "invalid_agent_setup"}
+        result = self.run_design_connect(scope="read")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["data"]["scope"], "design-read")
+        self.assertEqual([url for url, _ in self.requests[:3]], [DESIGN_SETUP, BUILD_SETUP, DESIGN_REQUEST])
+
+    def test_scoped_design_connect_keeps_a_project_binding_saved_while_waiting(self):
+        credentials = self.credentials.read_bytes()
+        self.credentials.unlink()
+        connection = self.credentials.with_name("connection.json")
+        binding = json.dumps({"host": self.host, "projectId": "proj-a", "repository": "example.test/owner/project"}).encode()
+
+        def bind_project():
+            self.credentials.write_bytes(credentials)
+            connection.write_bytes(binding)
+
+        self.before_design_delivery = bind_project
+        result = self.run_design_connect(scope="read")
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(json.loads(result.stdout)["reason"], "existing_project_binding")
+        self.assertEqual(self.credentials.read_bytes(), credentials)
+        self.assertEqual(connection.read_bytes(), binding)
+
     def test_repository_bundle_passes_without_installing_or_updating(self):
         self.cli = CLI
         result, payload = self.run_check()
@@ -417,10 +537,13 @@ class SetupCheckTests(unittest.TestCase):
 
     def test_build_skill_reuses_existing_project_binding_and_reads_intake(self):
         self.design_result['permissions'] = {'write': False}
-        setup, checked = self.run_cli('setup-check', '--host', self.host, '--project', 'proj-a', '--skills', 'cds-build')
+        setup, checked = self.run_build_check(skills="cds, cds-build")
         self.assertEqual(setup.returncode, 0, setup.stdout + setup.stderr)
+        self.assertEqual(checked["data"]["scope"], "design-read")
         skills = next(item for item in checked['data']['checks'] if item['stage'] == 'skills')
-        self.assertEqual(skills['loadOnly'], ['cds-build'])
+        self.assertEqual(skills['loadOnly'], ['cds', 'cds-build'])
+        self.assertEqual([url for url, _ in self.requests],
+                         [BUILD_SETUP, "/api/credentials/self-check", DESIGN_INTAKE])
 
         result, intake = self.run_cli('design', 'intake')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -428,6 +551,82 @@ class SetupCheckTests(unittest.TestCase):
         self.assertFalse(intake['data']['permissions']['write'])
         self.assertEqual(self.requests[-1][0], DESIGN_INTAKE)
         self.assertEqual(self.design_requests, [])
+
+    def test_build_setup_checks_the_required_version_and_actual_distribution(self):
+        original = self.build_manifest.copy()
+        for status, overrides, reason in (
+            (503, {"cliVersion": "0.26.29", "error": "skill_bundle_incompatible"}, "skill_bundle_incompatible"),
+            (503, {"error": "temporarily_unavailable"}, "setup_unavailable"),
+            (200, {"cliVersion": "0.26.29"}, "skill_bundle_incompatible"),
+            (200, {"minCliVersion": "99.0.0", "cliVersion": "99.0.0"}, "stale_cli"),
+            (200, {"cliVersion": None}, "version_unavailable"),
+        ):
+            with self.subTest(status=status, overrides=overrides):
+                self.build_setup_status = status
+                self.build_manifest = {**original, **overrides}
+                self.requests.clear()
+                result, payload = self.run_build_check()
+                self.assertEqual(result.returncode, 2, payload)
+                self.assertFalse(payload["data"]["connected"])
+                self.assertEqual(payload["data"]["checks"][-1]["reason"], reason)
+                self.assertEqual([url for url, _ in self.requests], [BUILD_SETUP])
+        self.assertEqual(self.design_requests, [])
+
+    def test_build_setup_rejects_mismatched_scope_and_target(self):
+        original = self.build_manifest.copy()
+        for field, value in (
+            ("target", {"kind": "existing", "projectId": "proj-b"}),
+            ("skills", ["cds-design"]),
+            ("mission", "design-publish"),
+            ("designAccess", "publish"),
+        ):
+            with self.subTest(field=field):
+                self.build_manifest = {**original, field: value}
+                self.requests.clear()
+                result, payload = self.run_build_check()
+                self.assertEqual(result.returncode, 2, payload)
+                self.assertEqual(payload["data"]["checks"][-1]["reason"], "design_approval_unavailable")
+                self.assertEqual([url for url, _ in self.requests], [BUILD_SETUP])
+        self.assertEqual(self.design_requests, [])
+
+    def test_build_feedback_checks_feedback_permission_without_requiring_publish(self):
+        for allowed in (False, True):
+            with self.subTest(allowed=allowed):
+                self.design_result["permissions"] = {"feedback": allowed, "write": False}
+                self.requests.clear()
+                result, checked = self.run_build_check("feedback")
+                self.assertEqual(result.returncode, 0 if allowed else 2, checked)
+                if allowed:
+                    self.assertEqual(checked["data"]["scope"], "design-feedback")
+                else:
+                    self.assertEqual(checked["data"]["checks"][-1]["reason"], "design_scope_required")
+                self.assertEqual([url for url, _ in self.requests],
+                                 [BUILD_SETUP, "/api/credentials/self-check", DESIGN_INTAKE])
+        self.assertEqual(self.design_requests, [])
+
+    def test_revoked_build_key_returns_to_the_original_project_workflow(self):
+        self.status = "revoked"
+        before = self.credentials.read_bytes()
+        for scope in ("read", "feedback"):
+            with self.subTest(scope=scope):
+                self.requests.clear()
+                result, checked = self.run_build_check(scope)
+                self.assertEqual(result.returncode, 2, checked)
+                error = checked["data"]["checks"][-1]
+                self.assertEqual(error["reason"], "revoked")
+                self.assertIn("已签发密钥", error["nextStep"])
+                self.assertIn("交付 → 反馈", error["nextStep"])
+                self.assertNotIn("重新连接", error["nextStep"])
+                self.assertEqual([url for url, _ in self.requests], [BUILD_SETUP, "/api/credentials/self-check"])
+        self.assertEqual(self.credentials.read_bytes(), before)
+        self.assertEqual(self.design_requests, [])
+
+    def test_design_read_without_implementation_keeps_the_existing_compatibility_check(self):
+        result, payload = self.run_build_check(skills="cds")
+        self.assertEqual(result.returncode, 0, payload)
+        self.assertEqual(payload["data"]["scope"], "design-read")
+        self.assertEqual([url for url, _ in self.requests],
+                         [DESIGN_SETUP, "/api/credentials/self-check", DESIGN_INTAKE])
 
     def test_update_installs_implementation_skill_and_keeps_workspace_files(self):
         skills_root = self.cli.parents[2]

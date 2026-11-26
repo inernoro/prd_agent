@@ -19,7 +19,7 @@ import { promisify } from 'node:util';
 import { SkillProxy, SkillProxyError, isSafeSkillKey, readCappedBody } from '../services/skill-proxy.js';
 import { buildAgentSetupGuide, buildAgentTaskGuide } from '../services/agent-setup-guide.js';
 import { buildCdsSkillManifest, copyCdsSkillSource } from '../services/cds-skill-manifest.js';
-import { AGENT_SETUP_VERSION, CDS_SKILL_KEYS, getAgentSetupMinCliVersion, parseAgentSetupSelection } from '../shared/agent-setup.js';
+import { AGENT_SETUP_VERSION, CDS_SKILL_KEYS, getAgentSetupDesignAccess, getAgentSetupMinCliVersion, parseAgentSetupSelection } from '../shared/agent-setup.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -549,6 +549,7 @@ export function createBootstrapRouter(deps: BootstrapRouterDeps): Router {
     if (req.path.endsWith('.json')) {
       const pack = await resolveSkillPack(req);
       const cliVersion = pack.body ? await readSkillPackCliVersion(pack.body) : null;
+      const designAccess = getAgentSetupDesignAccess(selection);
       const minCliVersion = getAgentSetupMinCliVersion(selection);
       const minimum = minCliVersion.split('.').map(Number);
       const outdated = cliVersion !== null && cliVersion.split('.').map(Number)
@@ -560,7 +561,7 @@ export function createBootstrapRouter(deps: BootstrapRouterDeps): Router {
         minCliVersion,
         cliVersion,
         ...selection,
-        ...(selection.mission === 'design-publish' ? { designAccess: 'publish' } : {}),
+        ...(designAccess ? { designAccess } : {}),
         installedSkills: CDS_SKILL_KEYS,
         authentication: 'existing-page-approval',
         selfCheck: 'setup-check',
