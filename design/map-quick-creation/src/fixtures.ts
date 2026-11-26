@@ -1,5 +1,5 @@
 /* 原型演示数据（虚构稿件与成员）。只用于原型，不进源码差异。实现方取证时用同一份数据（design.json demoData）。 */
-import type { FrameKey, QcAsset, QcAttachment, QcRun, QcScene, QcStage, QcTemplate, QcTemplateCategory, QcTemplateSource, QcWork, QcWebSection } from '@/pages/quick-creation-agent/types';
+import type { FrameKey, QcAsset, QcAttachment, QcQueueInfo, QcRun, QcScene, QcStage, QcTemplate, QcTemplateCategory, QcTemplateSource, QcWork, QcWebSection } from '@/pages/quick-creation-agent/types';
 import catalog from './opuscar/catalog.json';
 
 /* 风格库：分类与风格取自 Lemo-Opuscar（tools/import-opuscar.py 生成 opuscar/catalog.json 与缩小后的样片海报）。
@@ -67,14 +67,14 @@ const webStageDefs = [
 ] as const;
 
 const videoDetail: Record<string, [string, string]> = {
-  queued: ['等待开始', '等了 4 分 06 秒，曾排第 4 位'],
+  queued: ['等待开始', '等了 12 分钟，曾排第 4 位'],
   storyboard: ['已拆成 6 幕，正在画第 4 幕的画面', '6 幕分镜已保存'],
   voice: ['正在为第 3 / 6 幕配旁白，字幕与旁白同步生成', '6 幕旁白与字幕已完成'],
-  compose: ['正在合成 1080p 成片', '1 分 36 秒 · 1080p'],
+  compose: ['正在混音并合成 1080p 成片', '1 分 36 秒 · 1080p'],
   done: ['', ''],
 };
 const webDetail: Record<string, [string, string]> = {
-  queued: ['等待开始', '等了 1 分 12 秒'],
+  queued: ['等待开始', '等了 6 分钟'],
   outline: ['正在从稿件提取重点与分节', '4 节，页首 3 个重点'],
   layout: ['正在按「导读长页」排版，适配桌面与手机', '版式已确定'],
   render: ['正在生成第 3 / 4 节', '页面已生成'],
@@ -91,6 +91,31 @@ export function stagesAt(kind: 'video' | 'web', current: number, opts: { failed?
   });
 }
 
+/* 排队看板（虚构同事）：团队同时最多生成 4 个。正在生成的按「还需」先后空出位置，前面的人依次补上，
+ * 所以第 n 位的预计开始时间 = 第 n 个空出来的位置：9、12、26、38 分钟 */
+const MIN = 60;
+const runningBoard = [
+  { ownerName: '林夏', title: '新版 OKR 填写指南', kind: 'video' as const, elapsedSec: 31 * MIN, remainSec: 9 * MIN },
+  { ownerName: '周远', title: '季度客户满意度复盘', kind: 'web' as const, elapsedSec: 22 * MIN, remainSec: 12 * MIN },
+  { ownerName: '陈一帆', title: '新人入职七天路线', kind: 'video' as const, elapsedSec: 18 * MIN, remainSec: 26 * MIN },
+  { ownerName: '宋知', title: '安全培训：钓鱼邮件识别', kind: 'video' as const, elapsedSec: 7 * MIN, remainSec: 38 * MIN },
+];
+const aheadBoard = [
+  { ownerName: '何岚', title: '支付链路如何工作', kind: 'video' as const, startInSec: 9 * MIN },
+  { ownerName: '林夏', title: '春节值班安排', kind: 'video' as const, startInSec: 12 * MIN },
+  { ownerName: '周远', title: '产品发布会彩排要点', kind: 'video' as const, startInSec: 26 * MIN },
+];
+const ETA = [9, 12, 26, 38].map(m => m * MIN);
+/** 排在第 position 位时的排队信息；shift 用来演示时间推进（秒） */
+export function queueAt(position: number, shift = 0): QcQueueInfo {
+  const p = Math.max(1, Math.min(4, position));
+  return {
+    position: p, ahead: p - 1, running: 4, capacity: 4, startInSec: Math.max(30, ETA[p - 1] - shift),
+    runningItems: runningBoard.map(r => ({ ...r, elapsedSec: r.elapsedSec + shift, remainSec: Math.max(60, r.remainSec - shift) })),
+    aheadItems: aheadBoard.slice(0, p - 1).map(a => ({ ...a, startInSec: Math.max(30, a.startInSec - shift) })),
+  };
+}
+
 const now = '今天 14:02';
 const baseRun = (over: Partial<QcRun>): QcRun => ({
   id: 'run', title: '需求评审的三个习惯', kind: 'video', templateId: 'sketchnote', ask: '稍微快一点，先提醒我三个重点，给新同事看',
@@ -102,23 +127,23 @@ const baseRun = (over: Partial<QcRun>): QcRun => ({
 export const webKeyPoints = [{ text: '先读目标', anchor: 'goal' }, { text: '再画边界', anchor: 'scope' }, { text: '最后对验收', anchor: 'accept' }];
 
 export const fixedRuns: Record<string, QcRun> = {
-  'run-queued': baseRun({ id: 'run-queued', status: 'queued', queue: { position: 4, ahead: 3, running: 4, capacity: 4, startInSec: 100 }, stages: stagesAt('video', 0), elapsedSec: 22, remainSec: 290, estimateBasis: '最近 20 次同模板任务的中位数', scenes: scenes(() => 'waiting') }),
-  'run-voicing': baseRun({ id: 'run-voicing', status: 'running', stages: stagesAt('video', 2, { progress: 42 }), elapsedSec: 440, remainSec: 90, estimateBasis: '最近 20 次同模板任务的中位数', scenes: scenes(i => (i < 2 ? 'ready' : i === 2 ? 'voicing' : 'drawn')) }),
+  'run-queued': baseRun({ id: 'run-queued', status: 'queued', queue: queueAt(4), stages: stagesAt('video', 0), elapsedSec: 6 * MIN, remainSec: 38 * MIN + 42 * MIN, estimateBasis: '排队按前面任务的预计还需推算；出片按最近 20 次同风格任务的中位数（约 42 分钟）', scenes: scenes(() => 'waiting') }),
+  'run-voicing': baseRun({ id: 'run-voicing', status: 'running', stages: stagesAt('video', 2, { progress: 42 }), elapsedSec: 22 * MIN, remainSec: 18 * MIN, estimateBasis: '最近 20 次同风格任务的中位数（约 42 分钟）', scenes: scenes(i => (i < 2 ? 'ready' : i === 2 ? 'voicing' : 'drawn')) }),
   'run-failed': baseRun({
-    id: 'run-failed', status: 'failed', stages: stagesAt('video', 2, { failed: true, failDetail: '第 4 幕配音等了 3 分钟没有返回，这一幕先停下' }), elapsedSec: 856,
+    id: 'run-failed', status: 'failed', stages: stagesAt('video', 2, { failed: true, failDetail: '配音服务 10 分钟没有返回第 4 幕，这一幕先停下' }), elapsedSec: 38 * MIN,
     scenes: scenes(i => (i === 3 ? 'failed' : 'ready')),
-    failure: { stageKey: 'voice', unitIndex: 4, message: '第 4 幕配音没有完成', saved: ['原稿与要求', '6 幕分镜与画面', '第 1–3、5–6 幕旁白与字幕'], actions: ['retry-unit', 'skip-unit'] },
+    failure: { stageKey: 'voice', unitIndex: 4, message: '配音服务没有返回第 4 幕', saved: ['原稿与要求', '6 幕分镜与画面', '第 1–3、5–6 幕旁白与字幕'], actions: ['retry-unit', 'skip-unit'] },
   }),
   'run-timeout': baseRun({
-    id: 'run-timeout', status: 'failed', stages: stagesAt('video', 1, { failed: true, failDetail: '生成超过 15 分钟没有完成，已停止；已画好的 3 幕已保存' }), elapsedSec: 900,
+    id: 'run-timeout', status: 'failed', stages: stagesAt('video', 1, { failed: true, failDetail: '这次生成用满 2 小时上限仍未完成，系统按上限停下；已画好的 3 幕已保存' }), elapsedSec: 120 * MIN,
     scenes: scenes(i => (i < 3 ? 'drawn' : 'waiting')),
-    failure: { stageKey: 'storyboard', message: '生成超时，已停止', saved: ['原稿与要求', '已画好的第 1–3 幕分镜'], actions: ['requeue', 'retry-step'] },
+    failure: { stageKey: 'storyboard', message: '用满 2 小时上限，系统已停下', saved: ['原稿与要求', '已画好的第 1–3 幕分镜'], actions: ['requeue', 'retry-step'] },
   }),
-  'run-done': baseRun({ id: 'run-done', status: 'done', stages: stagesAt('video', 4), elapsedSec: 190, durationSec: 96, scenes: scenes(() => 'ready') }),
-  'run-publish-failed': baseRun({ id: 'run-publish-failed', status: 'done', stages: stagesAt('video', 4), elapsedSec: 190, durationSec: 96, scenes: scenes(() => 'ready'), publish: { status: 'failed', error: '网页托管这次没有响应（14:21）' } }),
-  'run-published': baseRun({ id: 'run-published', status: 'done', stages: stagesAt('video', 4), elapsedSec: 190, durationSec: 96, scenes: scenes(() => 'ready'), publish: { status: 'done', siteId: 'site-habits', siteTitle: '需求评审的三个习惯', at: '14:23' } }),
-  'run-web-running': baseRun({ id: 'run-web-running', kind: 'web', templateId: 'swiss-motion', status: 'running', stages: stagesAt('web', 3, { progress: 64 }), elapsedSec: 96, remainSec: 25, estimateBasis: '最近 20 次同模板任务的中位数', sections: webSections, keyPoints: webKeyPoints, voice: undefined }),
-  'run-web-done': baseRun({ id: 'run-web-done', kind: 'web', templateId: 'swiss-motion', status: 'done', stages: stagesAt('web', 4), elapsedSec: 128, sections: webSections, keyPoints: webKeyPoints, voice: undefined }),
+  'run-done': baseRun({ id: 'run-done', status: 'done', stages: stagesAt('video', 4), elapsedSec: 41 * MIN, durationSec: 96, scenes: scenes(() => 'ready') }),
+  'run-publish-failed': baseRun({ id: 'run-publish-failed', status: 'done', stages: stagesAt('video', 4), elapsedSec: 41 * MIN, durationSec: 96, scenes: scenes(() => 'ready'), publish: { status: 'failed', error: '网页托管这次没有响应（14:21）' } }),
+  'run-published': baseRun({ id: 'run-published', status: 'done', stages: stagesAt('video', 4), elapsedSec: 41 * MIN, durationSec: 96, scenes: scenes(() => 'ready'), publish: { status: 'done', siteId: 'site-habits', siteTitle: '需求评审的三个习惯', at: '14:23' } }),
+  'run-web-running': baseRun({ id: 'run-web-running', kind: 'web', templateId: 'swiss-motion', status: 'running', stages: stagesAt('web', 3, { progress: 64 }), elapsedSec: 17 * MIN, remainSec: 14 * MIN, estimateBasis: '最近 20 次同风格网页任务的中位数（约 31 分钟）', sections: webSections, keyPoints: webKeyPoints, voice: undefined }),
+  'run-web-done': baseRun({ id: 'run-web-done', kind: 'web', templateId: 'swiss-motion', status: 'done', stages: stagesAt('web', 4), elapsedSec: 33 * MIN, sections: webSections, keyPoints: webKeyPoints, voice: undefined }),
 };
 
 /** 「我的作品」30 条：前几条对应上面的任务，其余用于检查长标题与数量 */
@@ -133,8 +158,8 @@ export const works: QcWork[] = [
   { runId: 'run-voicing', title: '需求评审的三个习惯', kind: 'video', templateId: 'sketchnote', status: 'running', publishStatus: 'none', summary: '配音第 3 / 6 幕', updatedAt: '刚刚' },
   { runId: 'run-web-running', title: '需求评审的三个习惯（网页版）', kind: 'web', templateId: 'swiss-motion', status: 'running', publishStatus: 'none', summary: '生成页面第 3 / 4 节', updatedAt: '1 分钟前' },
   { runId: 'run-queued', title: '接口命名约定（给后端新人）', kind: 'video', templateId: 'dark-keynote', status: 'queued', publishStatus: 'none', summary: '排在第 4 位', updatedAt: '3 分钟前' },
-  { runId: 'run-failed', title: '新版报销流程，一分钟看懂', kind: 'video', templateId: 'sketchnote', status: 'failed', publishStatus: 'none', summary: '第 4 幕配音超时，已保存稿件与其余 5 幕', updatedAt: '今天 11:40' },
-  { runId: 'run-timeout', title: '线上故障复盘模板怎么填', kind: 'video', templateId: 'dark-keynote', status: 'failed', publishStatus: 'none', summary: '生成超时，已保存稿件与 3 幕分镜', updatedAt: '今天 09:52' },
+  { runId: 'run-failed', title: '新版报销流程，一分钟看懂', kind: 'video', templateId: 'sketchnote', status: 'failed', publishStatus: 'none', summary: '配音服务没有返回第 4 幕，已保存稿件与其余 5 幕', updatedAt: '今天 11:40' },
+  { runId: 'run-timeout', title: '线上故障复盘模板怎么填', kind: 'video', templateId: 'dark-keynote', status: 'failed', publishStatus: 'none', summary: '用满 2 小时上限停下，已保存稿件与 3 幕分镜', updatedAt: '今天 09:52' },
   { runId: 'run-publish-failed', title: '周会怎么开得更短', kind: 'video', templateId: 'whiteboard', status: 'done', publishStatus: 'failed', summary: '成片可播，发布可重试', updatedAt: '今天 10:15' },
   { runId: 'run-published', title: '设计走查的五个检查点', kind: 'video', templateId: 'sketchnote', status: 'done', publishStatus: 'done', summary: '1 分 22 秒 · 访问 46 次', updatedAt: '昨天 18:40' },
   { runId: 'run-web-done', title: '客户来访接待流程', kind: 'web', templateId: 'iso-infographic', status: 'done', publishStatus: 'none', summary: '4 节 · 适配手机', updatedAt: '昨天 16:02' },

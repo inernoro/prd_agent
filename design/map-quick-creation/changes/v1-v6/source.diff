@@ -888,7 +888,7 @@ diff --git a/src/added/pages/quick-creation-agent/QuickCreationAgentPage.tsx b/s
        </div>
 +      {blockReason
 +        ? <p className="m-0 px-2 pt-1.5 text-[11.5px] text-token-muted" data-qc="block-reason">{blockReason}</p>
-+        : <p className="m-0 hidden px-2 pt-1.5 text-[11.5px] text-token-muted lg:block">Ctrl / ⌘ + Enter 也可以生成 · 生成在后台进行，可以离开</p>}
++        : <p className="m-0 hidden px-2 pt-1.5 text-[11.5px] text-token-muted lg:block">Ctrl / ⌘ + Enter 也可以生成 · 一支约 30–60 分钟，在后台进行，可以离开</p>}
      </div>
    );
  
@@ -915,7 +915,7 @@ diff --git a/src/added/pages/quick-creation-agent/QuickCreationAgentPage.tsx b/s
 +      </UserTurn>
 +      <AgentTurn status={agentStatus}>
 +        <p className="m-0 flex items-center gap-1.5 text-[12.5px] text-token-secondary" data-qc="saved-notice">
-+          <Check size={14} className="shrink-0 text-[color:var(--accent-fg-success)]" aria-hidden />稿件和要求已保存，生成在后台进行，离开页面也会继续。
++          <Check size={14} className="shrink-0 text-[color:var(--accent-fg-success)]" aria-hidden />稿件和要求已保存。{run.status === 'queued' || run.status === 'running' ? '一支通常要 30–60 分钟，在后台进行，离开页面也会继续，完成后会通知你。' : ''}
 +        </p>
          {run.status === 'queued' && <QueueCard run={run} />}
 -        <RunProgress run={run} />
@@ -1482,7 +1482,7 @@ diff --git a/src/added/pages/quick-creation-agent/ResultPanel.tsx b/src/added/pa
 diff --git a/src/added/pages/quick-creation-agent/RunProgress.tsx b/src/added/pages/quick-creation-agent/RunProgress.tsx
 --- a/src/added/pages/quick-creation-agent/RunProgress.tsx
 +++ b/src/added/pages/quick-creation-agent/RunProgress.tsx
-@@ -1,115 +1,165 @@
+@@ -1,115 +1,225 @@
 +/**
 + * 对话里助手一侧的过程卡：排队、生成进度、失败恢复、完成。
 + * 写法对齐网页生成工作台的 RunProgressCard：标题行说「此刻在做什么」，右上角是走动的计时，
@@ -1490,12 +1490,12 @@ diff --git a/src/added/pages/quick-creation-agent/RunProgress.tsx b/src/added/pa
 + */
  import { useState } from 'react';
 -import { AlertTriangle, Check, ChevronDown, Clock, RotateCcw } from 'lucide-react';
-+import { AlertTriangle, ChevronDown, Circle, CircleCheck, Clock3, RotateCcw, Users } from 'lucide-react';
++import { AlertTriangle, ChevronDown, Circle, CircleCheck, Clock3, Globe, RotateCcw, Users, Video } from 'lucide-react';
  import { cn } from '@/lib/cn';
  import { Button } from '@/components/design/Button';
 -import type { QcFailure, QcRun, QcStage } from './types';
 +import { MapSpinner } from '@/components/ui/VideoLoader';
-+import type { QcFailure, QcRun } from './types';
++import type { OutputKind, QcFailure, QcRun } from './types';
  import { formatDuration, formatRemain } from './format';
  
 -function StageDot({ stage, index }: { stage: QcStage; index: number }) {
@@ -1504,29 +1504,49 @@ diff --git a/src/added/pages/quick-creation-agent/RunProgress.tsx b/src/added/pa
 -  if (stage.status === 'failed') return <span className={cn(base, 'border-[color:var(--accent-fg-error)]/60 bg-[color:var(--accent-fg-error)]/[0.12] text-[color:var(--accent-fg-error)]')}><AlertTriangle size={12} aria-label="未完成" /></span>;
 -  if (stage.status === 'running') return <span className={cn(base, 'border-[color:var(--accent-primary)] text-[color:var(--accent-primary)]')}><span className="qc-pulse h-2 w-2 rounded-full bg-[color:var(--accent-primary)]" aria-label="进行中" /></span>;
 -  return <span className={cn(base, 'border-token-subtle text-token-muted')}>{index + 1}</span>;
++/** 计时：不到 1 小时写 mm:ss，超过写 h:mm:ss（出片常要 30–60 分钟，超时上限 2 小时） */
 +function clock(sec: number) {
 +  const s = Math.max(0, Math.round(sec));
-+  return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
++  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = s % 60;
++  const mmss = `${String(m).padStart(2, '0')}:${String(r).padStart(2, '0')}`;
++  return h ? `${h}:${mmss}` : mmss;
  }
  
++/** 排队看板里的分钟数：只写到分钟，不足 1 分钟写「1 分钟内」 */
++function mins(sec: number) {
++  const m = Math.round(sec / 60);
++  return m < 1 ? '1 分钟内' : m < 60 ? `${m} 分钟` : `${Math.floor(m / 60)} 小时${m % 60 ? ` ${m % 60} 分` : ''}`;
++}
++
++function Initial({ name, me }: { name: string; me?: boolean }) {
++  return (
++    <span className={cn('inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold',
++      me ? 'bg-[color:var(--accent-primary)] text-[color:var(--accent-on-primary)]' : 'bg-[var(--bg-tertiary)] text-token-secondary')} aria-hidden>
++      {me ? '你' : name.slice(-1)}
++    </span>
++  );
++}
++
++function KindMark({ kind }: { kind: OutputKind }) {
++  return kind === 'video' ? <Video size={12} className="shrink-0 text-token-muted" aria-label="视频" /> : <Globe size={12} className="shrink-0 text-token-muted" aria-label="网页" />;
++}
++
++/**
++ * 排队卡：先说清楚为什么在等（团队同时生成的上限满了，不是稿件或操作的问题），
++ * 再列出正在生成的是谁、各还要多久，排在前面的是谁、各自预计何时开始，最后是你自己。
++ */
  export function QueueCard({ run }: { run: QcRun }) {
    const q = run.queue;
    if (!q) return null;
 -  const cells = Array.from({ length: q.running + q.ahead + 1 + 2 }, (_, i) => (i < q.running ? 'run' : i < q.running + q.ahead ? 'wait' : i === q.running + q.ahead ? 'me' : 'after'));
-+  const slots = Array.from({ length: q.running + q.ahead + 1 }, (_, i) => (i < q.running ? 'run' : i < q.running + q.ahead ? 'wait' : 'me'));
++  const runningItems = q.runningItems ?? [];
++  const aheadItems = q.aheadItems ?? [];
    return (
 -    <div className="rounded-[var(--radius-card)] border border-token-subtle bg-token-nested p-3.5" data-qc="queue-card">
 -      <div className="flex items-baseline gap-2">
 -        <span className="text-[13px] font-medium text-token-primary">排队中 · 第 {q.position} 位</span>
 -        <span className="text-[12px] text-token-muted">前面 {q.ahead} 个，{formatRemain(q.startInSec)}后开始</span>
-+    <section className="qc-card qc-rise p-4" data-qc="queue-card">
-+      <div className="flex items-start gap-3">
-+        <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-[var(--selection-bg)] text-[color:var(--accent-primary)]"><Users size={17} aria-hidden /></span>
-+        <div className="min-w-0 flex-1">
-+          <div className="text-[15px] font-semibold text-token-primary">排队中 · 第 {q.position} 位</div>
-+          <div className="mt-0.5 text-[12.5px] text-token-secondary">前面还有 {q.ahead} 个，预计 {formatRemain(q.startInSec)}后开始</div>
-+        </div>
-       </div>
+-      </div>
 -      <div className="mt-2.5 flex gap-1" aria-hidden>
 -        {cells.map((c, i) => (
 -          <span key={i} className={cn('h-1.5 flex-1 rounded-full',
@@ -1535,30 +1555,70 @@ diff --git a/src/added/pages/quick-creation-agent/RunProgress.tsx b/src/added/pa
 -            c === 'me' && 'bg-[color:var(--accent-primary)]',
 -            c === 'after' && 'bg-token-nested border border-dashed border-token-subtle')} />
 -        ))}
--      </div>
--      <div className="mt-2 text-[12px] leading-5 text-token-secondary">
--        团队同时最多 {q.capacity} 个在生成，现在 {q.running} 个在跑。排队不是失败，轮到会自动开始；可以离开，完成后会发通知。
-+      <div className="mt-3.5 rounded-[10px] bg-[var(--bg-secondary)] p-2.5">
-+        <div className="flex gap-1.5" aria-hidden>
-+          {slots.map((c, i) => (
-+            <span key={i} className={cn('flex h-7 flex-1 items-center justify-center rounded-md text-[11px] font-semibold',
-+              c === 'run' && 'qc-shimmer bg-[var(--semantic-success-soft)]',
-+              c === 'wait' && 'border border-dashed border-[var(--border-default)]',
-+              c === 'me' && 'bg-[color:var(--accent-primary)] text-[color:var(--accent-on-primary)]')}>
-+              {c === 'me' ? '你' : ''}
-+            </span>
-+          ))}
-+        </div>
-+        <div className="mt-2 flex items-center justify-between text-[11px] text-token-muted">
-+          <span className="flex items-center gap-3">
-+            <span className="flex items-center gap-1"><i className="inline-block h-2 w-2 rounded-sm bg-[var(--semantic-success-soft)] ring-1 ring-[color:var(--accent-fg-success)]" />生成中 {q.running}</span>
-+            <span className="flex items-center gap-1"><i className="inline-block h-2 w-2 rounded-sm border border-dashed border-[var(--border-default)]" />排在前面 {q.ahead}</span>
-+          </span>
-+          <span>同时最多 {q.capacity} 个</span>
++    <section className="qc-card qc-rise p-4" data-qc="queue-card" data-position={q.position}>
++      <div className="flex items-start gap-3">
++        <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-[var(--selection-bg)] text-[color:var(--accent-primary)]"><Users size={17} aria-hidden /></span>
++        <div className="min-w-0 flex-1">
++          <div className="text-[15px] font-semibold text-token-primary">排队中 · 第 {q.position} 位</div>
++          <div className="mt-0.5 text-[12.5px] text-token-secondary">
++            {q.ahead ? `前面还有 ${q.ahead} 人，` : '下一个就是你，'}预计 {mins(q.startInSec)}后开始
++          </div>
 +        </div>
        </div>
+-      <div className="mt-2 text-[12px] leading-5 text-token-secondary">
+-        团队同时最多 {q.capacity} 个在生成，现在 {q.running} 个在跑。排队不是失败，轮到会自动开始；可以离开，完成后会发通知。
++      <p className="m-0 mt-3 text-[12.5px] leading-5 text-token-secondary" data-qc="queue-reason">
++        团队同时最多生成 {q.capacity} 个，现在 {q.running} 个都在生成，所以要排队；这和你的稿件、操作无关。轮到你会自动开始，开始和完成时都会通知你。
++      </p>
++      <div className="mt-3 rounded-[10px] bg-[var(--bg-secondary)] px-3 py-2">
++        <div className="flex items-center justify-between pb-1 text-[11.5px] font-medium text-token-secondary">
++          <span>正在生成 · {q.running} / {q.capacity}</span><span className="font-normal text-token-muted">还需</span>
++        </div>
++        <ul className="m-0 list-none p-0" aria-label="正在生成的任务">
++          {runningItems.map(r => {
++            const done = (r.elapsedSec ?? 0) / Math.max(1, (r.elapsedSec ?? 0) + (r.remainSec ?? 0));
++            return (
++              <li key={r.ownerName + r.title} className="py-1.5" data-queue-running={r.ownerName}>
++                <div className="flex items-center gap-2 text-[12.5px]">
++                  <Initial name={r.ownerName} />
++                  <span className="shrink-0 font-medium text-token-primary">{r.ownerName}</span>
++                  <KindMark kind={r.kind} />
++                  <span className="min-w-0 flex-1 truncate text-token-secondary">{r.title}</span>
++                  <span className="shrink-0 tabular-nums text-token-primary">约 {mins(r.remainSec ?? 0)}</span>
++                </div>
++                <div className="ml-8 mt-1 h-1 overflow-hidden rounded-full bg-[var(--bg-tertiary)]" aria-hidden>
++                  <div className="qc-bar-live h-full rounded-full" style={{ width: `${Math.round(done * 100)}%` }} />
++                </div>
++              </li>
++            );
++          })}
++        </ul>
++        <div className="mt-1.5 flex items-center justify-between border-t border-token-subtle pb-1 pt-2 text-[11.5px] font-medium text-token-secondary">
++          <span>排在你前面 · {q.ahead} 人</span><span className="font-normal text-token-muted">预计开始</span>
++        </div>
++        <ol className="m-0 list-none p-0" aria-label="排队顺序">
++          {aheadItems.map((a, i) => (
++            <li key={a.ownerName + a.title} className="flex items-center gap-2 py-1.5 text-[12.5px]" data-queue-ahead={i + 1}>
++              <span className="w-3 shrink-0 text-center tabular-nums text-token-muted">{i + 1}</span>
++              <Initial name={a.ownerName} />
++              <span className="shrink-0 font-medium text-token-primary">{a.ownerName}</span>
++              <KindMark kind={a.kind} />
++              <span className="min-w-0 flex-1 truncate text-token-secondary">{a.title}</span>
++              <span className="shrink-0 tabular-nums text-token-muted">{mins(a.startInSec ?? 0)}后</span>
++            </li>
++          ))}
++          <li className="-mx-1.5 flex items-center gap-2 rounded-lg bg-[var(--selection-bg)] px-1.5 py-1.5 text-[12.5px]" data-queue-me>
++            <span className="w-3 shrink-0 text-center font-semibold tabular-nums text-[color:var(--accent-primary)]">{q.position}</span>
++            <Initial name="你" me />
++            <span className="shrink-0 font-semibold text-token-primary">你</span>
++            <KindMark kind={run.kind} />
++            <span className="min-w-0 flex-1 truncate text-token-primary">{run.title}</span>
++            <span className="shrink-0 font-medium tabular-nums text-[color:var(--accent-primary)]">{mins(q.startInSec)}后</span>
++          </li>
++        </ol>
+       </div>
 -    </div>
-+      <p className="mt-2.5 text-[12px] leading-5 text-token-secondary">排队不是失败，轮到会自动开始：先出分镜，再逐幕配音，最后合成成片。</p>
++      <p className="m-0 mt-2.5 text-[12px] leading-5 text-token-muted">排队不是失败。一支片子通常要 30–60 分钟，可以离开，完成后到「我的作品」或通知里打开。</p>
 +    </section>
    );
  }
@@ -1591,14 +1651,14 @@ diff --git a/src/added/pages/quick-creation-agent/RunProgress.tsx b/src/added/pa
 +        <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-[var(--bg-input)]" style={{ color: 'var(--accent-fg-error)' }}><AlertTriangle size={17} aria-hidden /></span>
 +        <div className="min-w-0 flex-1">
 +          <div className="text-[14px] font-semibold text-token-primary">{failure.message}</div>
-+          <div className="mt-1 text-[12.5px] leading-5 text-token-secondary">已保存：{failure.saved.join('、')}。重试只会重做没完成的部分。</div>
++          <div className="mt-1 text-[12.5px] leading-5 text-token-secondary">已保存：{failure.saved.join('、')}。不需要改稿件，重试只会重做没完成的部分。</div>
 +        </div>
-       </div>
--    </div>
++      </div>
 +      <div className="mt-3 flex flex-wrap gap-2 pl-12">
 +        {primary && <Button size="sm" variant="primary" className="max-md:min-h-11" data-qc="recover-primary" onClick={() => onAction(primary)}><RotateCcw size={13} />{label[primary]}</Button>}
 +        {others.map(a => <Button key={a} size="sm" variant="secondary" className="max-md:min-h-11" data-qc={`recover-${a}`} onClick={() => onAction(a)}>{label[a]}</Button>)}
-+      </div>
+       </div>
+-    </div>
 +    </section>
    );
  }
@@ -1657,16 +1717,6 @@ diff --git a/src/added/pages/quick-creation-agent/RunProgress.tsx b/src/added/pa
 +            {finished ? '总用时' : failed ? '运行后停下' : run.remainSec != null ? `还需${formatRemain(run.remainSec)}` : '正在估算'}
 +          </div>
 +        </div>
-+      </div>
-+      {/* 分段总进度：每段一个阶段，进行中那段流动 */}
-+      <div className="flex gap-1 px-4" aria-hidden>
-+        {steps.map(s => (
-+          <span key={s.key} className="h-1.5 flex-1 overflow-hidden rounded-full bg-[var(--bg-tertiary)]">
-+            {s.status === 'done' && <span className="block h-full w-full rounded-full bg-[color:var(--accent-fg-success)] opacity-70" />}
-+            {s.status === 'running' && <span className="qc-bar-live block h-full rounded-full transition-[width] duration-700" style={{ width: `${Math.max(8, s.progress ?? 30)}%` }} />}
-+            {s.status === 'failed' && <span className="block h-full w-full rounded-full" style={{ background: 'var(--accent-fg-error)' }} />}
-+          </span>
-+        ))}
        </div>
 -      <ol>
 -        {run.stages.map((s, i) => {
@@ -1693,6 +1743,16 @@ diff --git a/src/added/pages/quick-creation-agent/RunProgress.tsx b/src/added/pa
 -      </ol>
 -      {run.estimateBasis && !finished && run.status !== 'failed' && <div className="pb-2 text-[11px] text-token-muted">预计依据：{run.estimateBasis}</div>}
 -    </div>
++      {/* 分段总进度：每段一个阶段，进行中那段流动 */}
++      <div className="flex gap-1 px-4" aria-hidden>
++        {steps.map(s => (
++          <span key={s.key} className="h-1.5 flex-1 overflow-hidden rounded-full bg-[var(--bg-tertiary)]">
++            {s.status === 'done' && <span className="block h-full w-full rounded-full bg-[color:var(--accent-fg-success)] opacity-70" />}
++            {s.status === 'running' && <span className="qc-bar-live block h-full rounded-full transition-[width] duration-700" style={{ width: `${Math.max(8, s.progress ?? 30)}%` }} />}
++            {s.status === 'failed' && <span className="block h-full w-full rounded-full" style={{ background: 'var(--accent-fg-error)' }} />}
++          </span>
++        ))}
++      </div>
 +      <div className="mx-4 mb-3 mt-3 rounded-[10px] bg-[var(--bg-secondary)] px-3 py-1.5">
 +        <div className="flex items-center justify-between border-b border-token-subtle pb-1.5 pt-0.5 text-[11.5px]">
 +          <span className="font-medium text-token-secondary">任务清单</span>
@@ -2092,9 +2152,16 @@ diff --git a/src/added/pages/quick-creation-agent/types.ts b/src/added/pages/qui
 + */
  export interface QcTemplate {
 +  /** 风格编号，等于风格库的文件夹名（例如 sketchnote） */
-+  id: string;
+   id: string;
+-  kind: OutputKind;
 +  /** 中文名 */
-+  name: string;
+   name: string;
+-  /** 一句话风格 */
+-  tagline: string;
+-  /** 适合讲什么 */
+-  goodFor: string;
+-  /** 画面渲染器 */
+-  frame: FrameKey;
 +  nameEn: string;
 +  /** 分类编号 01–15 */
 +  categoryId: string;
@@ -2113,15 +2180,8 @@ diff --git a/src/added/pages/quick-creation-agent/types.ts b/src/added/pages/qui
 +}
 +
 +export interface QcTemplateCategory {
-   id: string;
--  kind: OutputKind;
-   name: string;
--  /** 一句话风格 */
--  tagline: string;
--  /** 适合讲什么 */
--  goodFor: string;
--  /** 画面渲染器 */
--  frame: FrameKey;
++  id: string;
++  name: string;
 +  nameEn: string;
 +}
 +
@@ -2133,7 +2193,35 @@ diff --git a/src/added/pages/quick-creation-agent/types.ts b/src/added/pages/qui
  }
  
  export type FrameKey = 'visual-note' | 'whiteboard' | 'dark-notes' | 'guide-page' | 'card-digest';
-@@ -129,6 +156,8 @@ export interface QcRun {
+@@ -50,6 +77,16 @@ export interface QcStage {
+   progress?: number;
+ }
+ 
++/** 排队看板上的一条：谁的哪份稿件，正在生成的写已运行与预计还需，排队的写预计多久后开始 */
++export interface QcQueueEntry {
++  ownerName: string;
++  title: string;
++  kind: OutputKind;
++  elapsedSec?: number;
++  remainSec?: number;
++  startInSec?: number;
++}
++
+ export interface QcQueueInfo {
+   position: number;
+   ahead: number;
+@@ -57,6 +94,10 @@ export interface QcQueueInfo {
+   capacity: number;
+   /** 预计多少秒后开始 */
+   startInSec: number;
++  /** 正在生成的任务（团队同时生成上限内） */
++  runningItems?: QcQueueEntry[];
++  /** 排在你前面的任务，按先后 */
++  aheadItems?: QcQueueEntry[];
+ }
+ 
+ export interface QcScene {
+@@ -129,6 +170,8 @@ export interface QcRun {
    durationSec?: number;
    keyPoints?: QcKeyPoint[];
    voice?: string;
@@ -2142,7 +2230,7 @@ diff --git a/src/added/pages/quick-creation-agent/types.ts b/src/added/pages/qui
    publish: QcPublish;
    createdAt: string;
    updatedAt: string;
-@@ -146,6 +175,32 @@ export interface QcWork {
+@@ -146,6 +189,32 @@ export interface QcWork {
    updatedAt: string;
  }
  
@@ -2237,7 +2325,7 @@ diff --git a/src/env.ts b/src/env.ts
 +import type { QcAttachment, QcRun, QcScene } from '@/pages/quick-creation-agent/types';
 +/* 演示成片：由 tools/make-demo-film.mjs 用模板画面渲染、带示意音轨的 WebM，构建时内嵌为 data: 地址 */
 +import filmUrl from './assets/demo-film.webm';
-+import { assets, attachmentQueue, fixedRuns, sampleDoc, scenes, stagesAt, templateCategories, templateSource, templates, webKeyPoints, webSections, works } from './fixtures';
++import { assets, attachmentQueue, fixedRuns, queueAt, sampleDoc, scenes, stagesAt, templateCategories, templateSource, templates, webKeyPoints, webSections, works } from './fixtures';
  
  class MemStorage {
    private m = new Map<string, string>();
@@ -2252,7 +2340,19 @@ diff --git a/src/env.ts b/src/env.ts
  const publishedAt = new Map<string, string>();
  
  /* 视频：排队 0–8 秒 → 分镜 8–16 → 配音 16–26 → 合成 26–31 → 已生成 */
-@@ -59,12 +65,51 @@ function liveRun(id: string, l: Live): QcRun {
+@@ -44,9 +50,9 @@ function liveRun(id: string, l: Live): QcRun {
+   const status = stage === 0 ? 'queued' : stage < 4 ? 'running' : 'done';
+   const base: QcRun = {
+     id, title: l.title, kind: l.kind, templateId: l.templateId, ask: l.ask, attachments: l.attachments, status,
+-    stages: stagesAt(l.kind, stage, { progress }), elapsedSec: Math.round(t * 6), remainSec: status === 'done' ? undefined : Math.max(5, Math.round((total - t) * 6)),
++    stages: stagesAt(l.kind, stage, { progress }), elapsedSec: Math.round(t * SCALE), remainSec: status === 'done' ? undefined : Math.max(60, Math.round((total - t) * SCALE)),
+     estimateBasis: '最近 20 次同模板任务的中位数', publish: { status: 'none' }, createdAt: '刚刚', updatedAt: '刚刚',
+-    queue: stage === 0 ? { position: Math.max(1, 3 - Math.floor(t / 3)), ahead: Math.max(0, 2 - Math.floor(t / 3)), running: 4, capacity: 4, startInSec: Math.max(5, Math.round((8 - t) * 6)) } : undefined,
++    queue: stage === 0 ? queueAt(3 - Math.floor(t / 3), Math.round(t * SCALE)) : undefined,
+   };
+   if (l.kind === 'video') {
+     const drawn = stage < 1 ? 0 : stage === 1 ? Math.min(6, 1 + Math.floor(((t - steps[0]) / (steps[1] - steps[0])) * 6)) : 6;
+@@ -59,12 +65,54 @@ function liveRun(id: string, l: Live): QcRun {
  
  function withPublish(run: QcRun): QcRun {
    const at = publishedAt.get(run.id);
@@ -2261,32 +2361,35 @@ diff --git a/src/env.ts b/src/env.ts
 +  return at ? { ...withMedia, publish: { status: 'done', siteId: `site-${run.id}`, siteTitle: run.title, at } } : withMedia;
 +}
 +
++/* 演示时间压缩：原型里 1 秒按真实的 75 秒显示，一次约 32 秒的演示对应约 40 分钟的出片 */
++const SCALE = 75;
++
 +/* 恢复中的任务（演示时间压缩）：单幕重做约 1.6 秒；超时后重新排队约 2 秒，再从未画完的幕继续 */
 +function recoveryRun(rec: Recovery): QcRun {
 +  const t = (Date.now() - rec.startedAt) / 1000;
 +  const { base, keep, redo } = rec;
 +  const sceneOf = (status: (i: number) => QcScene['status']) => (base.scenes ?? []).map((sc, i) => ({ ...sc, status: keep.has(i) ? keep.get(i)! : status(i) }));
-+  const common = { failure: undefined, elapsedSec: base.elapsedSec + Math.round(t * 6), estimateBasis: '只重做没完成的部分', publish: base.publish };
++  const common = { failure: undefined, elapsedSec: base.elapsedSec + Math.round(t * SCALE), estimateBasis: '只重做没完成的部分', publish: base.publish };
 +  if (rec.kind === 'scene') {
-+    if (t < 0.8) return { ...base, ...common, status: 'running', stages: stagesAt('video', 2, { progress: Math.round((t / 0.8) * 100) }), remainSec: Math.round((1.6 - t) * 6), scenes: sceneOf(() => 'voicing') };
-+    if (t < 1.6) return { ...base, ...common, status: 'running', stages: stagesAt('video', 3, { progress: Math.round(((t - 0.8) / 0.8) * 100) }), remainSec: Math.round((1.6 - t) * 6), scenes: sceneOf(() => 'ready').map(sc => ({ ...sc, status: 'ready' })) };
++    if (t < 0.8) return { ...base, ...common, status: 'running', stages: stagesAt('video', 2, { progress: Math.round((t / 0.8) * 100) }), remainSec: Math.round((1.6 - t) * SCALE), scenes: sceneOf(() => 'voicing') };
++    if (t < 1.6) return { ...base, ...common, status: 'running', stages: stagesAt('video', 3, { progress: Math.round(((t - 0.8) / 0.8) * 100) }), remainSec: Math.round((1.6 - t) * SCALE), scenes: sceneOf(() => 'ready').map(sc => ({ ...sc, status: 'ready' })) };
 +    return { ...base, ...common, status: 'done', stages: stagesAt('video', 4), remainSec: undefined, durationSec: 96, scenes: sceneOf(() => 'ready').map(sc => ({ ...sc, status: 'ready' })) };
 +  }
 +  const q = rec.kind === 'requeue' ? 2 : 0;
-+  if (t < q) return { ...base, ...common, status: 'queued', queue: { position: 2, ahead: 1, running: 4, capacity: 4, startInSec: Math.round((q - t) * 6) }, stages: stagesAt('video', 0), remainSec: 90, scenes: sceneOf(() => 'waiting') };
++  if (t < q) return { ...base, ...common, status: 'queued', queue: queueAt(2, Math.round(t * SCALE)), stages: stagesAt('video', 0), remainSec: 42 * 60, scenes: sceneOf(() => 'waiting') };
 +  const u = t - q;
 +  if (u < 4) {
 +    const drawnNow = Math.floor((u / 4) * redo.length);
-+    return { ...base, ...common, status: 'running', stages: stagesAt('video', 1, { progress: Math.round((u / 4) * 100) }), remainSec: Math.round((11 - u) * 6),
++    return { ...base, ...common, status: 'running', stages: stagesAt('video', 1, { progress: Math.round((u / 4) * 100) }), remainSec: Math.round((11 - u) * SCALE),
 +      scenes: sceneOf(i => { const k = redo.indexOf(i); return k < drawnNow ? 'drawn' : k === drawnNow ? 'drawing' : 'waiting'; }) };
 +  }
 +  if (u < 8) {
 +    const voiced = Math.floor(((u - 4) / 4) * 6);
-+    return { ...base, ...common, status: 'running', stages: stagesAt('video', 2, { progress: Math.round(((u - 4) / 4) * 100) }), remainSec: Math.round((11 - u) * 6),
++    return { ...base, ...common, status: 'running', stages: stagesAt('video', 2, { progress: Math.round(((u - 4) / 4) * 100) }), remainSec: Math.round((11 - u) * SCALE),
 +      scenes: (base.scenes ?? []).map((sc, i) => ({ ...sc, status: i < voiced ? 'ready' : i === voiced ? 'voicing' : 'drawn' })) };
 +  }
 +  const done = u >= 11;
-+  return { ...base, ...common, status: done ? 'done' : 'running', stages: stagesAt('video', done ? 4 : 3, { progress: Math.round(((u - 8) / 3) * 100) }), remainSec: done ? undefined : Math.round((11 - u) * 6), durationSec: 96,
++  return { ...base, ...common, status: done ? 'done' : 'running', stages: stagesAt('video', done ? 4 : 3, { progress: Math.round(((u - 8) / 3) * 100) }), remainSec: done ? undefined : Math.round((11 - u) * SCALE), durationSec: 96,
 +    scenes: (base.scenes ?? []).map(sc => ({ ...sc, status: 'ready' })) };
  }
  
@@ -2305,7 +2408,7 @@ diff --git a/src/env.ts b/src/env.ts
    const f = fixedRuns[id];
    return f ? withPublish(f) : undefined;
  }
-@@ -77,12 +122,19 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+@@ -77,12 +125,19 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
    const method = (init?.method ?? 'GET').toUpperCase();
    const path = url.pathname;
    const body = typeof init?.body === 'string' ? JSON.parse(init.body || '{}') : {};
@@ -2327,7 +2430,7 @@ diff --git a/src/env.ts b/src/env.ts
    if (path.endsWith('/works')) {
      const mine = [...live.entries()].reverse().map(([id, l]) => {
        const r = getRun(id)!;
-@@ -96,6 +148,13 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+@@ -96,6 +151,13 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
      kbCursor += 1;
      return ok(next);
    }
@@ -2341,7 +2444,7 @@ diff --git a/src/env.ts b/src/env.ts
    const reread = path.match(/\/attachments\/([^/]+)\/read$/);
    if (reread) {
      const item = attachmentQueue.find(a => a.id === reread[1]);
-@@ -103,22 +162,39 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+@@ -103,22 +165,39 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
    }
    if (path.endsWith('/attachments') && method === 'POST') {
      seq += 1;
@@ -2387,7 +2490,7 @@ diff --git a/src/env.ts b/src/env.ts
      return ok(getRun(retry[1]));
    }
    const publish = path.match(/\/runs\/([^/]+)\/publish$/);
-@@ -126,7 +202,7 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+@@ -126,7 +205,7 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
      const id = publish[1];
      const tries = (publishTries.get(id) ?? 0) + 1;
      publishTries.set(id, tries);
@@ -2410,7 +2513,7 @@ diff --git a/src/fixtures.ts b/src/fixtures.ts
 -  { id: 'tpl-guide-page', kind: 'web', name: '导读长页', tagline: '左侧目录、页首三个重点、正文分节', goodFor: '适合规范、手册和长文档', frame: 'guide-page' },
 -  { id: 'tpl-card-digest', kind: 'web', name: '卡片速览', tagline: '一屏卡片，点开看细节', goodFor: '适合清单、要点和公告', frame: 'card-digest' },
 -];
-+import type { FrameKey, QcAsset, QcAttachment, QcRun, QcScene, QcStage, QcTemplate, QcTemplateCategory, QcTemplateSource, QcWork, QcWebSection } from '@/pages/quick-creation-agent/types';
++import type { FrameKey, QcAsset, QcAttachment, QcQueueInfo, QcRun, QcScene, QcStage, QcTemplate, QcTemplateCategory, QcTemplateSource, QcWork, QcWebSection } from '@/pages/quick-creation-agent/types';
 +import catalog from './opuscar/catalog.json';
 +
 +/* 风格库：分类与风格取自 Lemo-Opuscar（tools/import-opuscar.py 生成 opuscar/catalog.json 与缩小后的样片海报）。
@@ -2428,8 +2531,53 @@ diff --git a/src/fixtures.ts b/src/fixtures.ts
  
  const docExcerpt = `刚加入团队的同学，第一次参加需求评审时常常不知道该看什么。这份说明只讲三个习惯，养成之后，评审会快很多。
  
-@@ -87,7 +93,7 @@ export function stagesAt(kind: 'video' | 'web', current: number, opts: { failed?
+@@ -61,14 +67,14 @@ const webStageDefs = [
+ ] as const;
  
+ const videoDetail: Record<string, [string, string]> = {
+-  queued: ['等待开始', '等了 4 分 06 秒，曾排第 4 位'],
++  queued: ['等待开始', '等了 12 分钟，曾排第 4 位'],
+   storyboard: ['已拆成 6 幕，正在画第 4 幕的画面', '6 幕分镜已保存'],
+   voice: ['正在为第 3 / 6 幕配旁白，字幕与旁白同步生成', '6 幕旁白与字幕已完成'],
+-  compose: ['正在合成 1080p 成片', '1 分 36 秒 · 1080p'],
++  compose: ['正在混音并合成 1080p 成片', '1 分 36 秒 · 1080p'],
+   done: ['', ''],
+ };
+ const webDetail: Record<string, [string, string]> = {
+-  queued: ['等待开始', '等了 1 分 12 秒'],
++  queued: ['等待开始', '等了 6 分钟'],
+   outline: ['正在从稿件提取重点与分节', '4 节，页首 3 个重点'],
+   layout: ['正在按「导读长页」排版，适配桌面与手机', '版式已确定'],
+   render: ['正在生成第 3 / 4 节', '页面已生成'],
+@@ -85,9 +91,34 @@ export function stagesAt(kind: 'video' | 'web', current: number, opts: { failed?
+   });
+ }
+ 
++/* 排队看板（虚构同事）：团队同时最多生成 4 个。正在生成的按「还需」先后空出位置，前面的人依次补上，
++ * 所以第 n 位的预计开始时间 = 第 n 个空出来的位置：9、12、26、38 分钟 */
++const MIN = 60;
++const runningBoard = [
++  { ownerName: '林夏', title: '新版 OKR 填写指南', kind: 'video' as const, elapsedSec: 31 * MIN, remainSec: 9 * MIN },
++  { ownerName: '周远', title: '季度客户满意度复盘', kind: 'web' as const, elapsedSec: 22 * MIN, remainSec: 12 * MIN },
++  { ownerName: '陈一帆', title: '新人入职七天路线', kind: 'video' as const, elapsedSec: 18 * MIN, remainSec: 26 * MIN },
++  { ownerName: '宋知', title: '安全培训：钓鱼邮件识别', kind: 'video' as const, elapsedSec: 7 * MIN, remainSec: 38 * MIN },
++];
++const aheadBoard = [
++  { ownerName: '何岚', title: '支付链路如何工作', kind: 'video' as const, startInSec: 9 * MIN },
++  { ownerName: '林夏', title: '春节值班安排', kind: 'video' as const, startInSec: 12 * MIN },
++  { ownerName: '周远', title: '产品发布会彩排要点', kind: 'video' as const, startInSec: 26 * MIN },
++];
++const ETA = [9, 12, 26, 38].map(m => m * MIN);
++/** 排在第 position 位时的排队信息；shift 用来演示时间推进（秒） */
++export function queueAt(position: number, shift = 0): QcQueueInfo {
++  const p = Math.max(1, Math.min(4, position));
++  return {
++    position: p, ahead: p - 1, running: 4, capacity: 4, startInSec: Math.max(30, ETA[p - 1] - shift),
++    runningItems: runningBoard.map(r => ({ ...r, elapsedSec: r.elapsedSec + shift, remainSec: Math.max(60, r.remainSec - shift) })),
++    aheadItems: aheadBoard.slice(0, p - 1).map(a => ({ ...a, startInSec: Math.max(30, a.startInSec - shift) })),
++  };
++}
++
  const now = '今天 14:02';
  const baseRun = (over: Partial<QcRun>): QcRun => ({
 -  id: 'run', title: '需求评审的三个习惯', kind: 'video', templateId: 'tpl-visual-note', ask: '稍微快一点，先提醒我三个重点，给新同事看',
@@ -2437,18 +2585,42 @@ diff --git a/src/fixtures.ts b/src/fixtures.ts
    attachments: runAttachments, status: 'running', stages: [], elapsedSec: 0, publish: { status: 'none' }, createdAt: now, updatedAt: now, voice: '女声 · 稍快',
    keyPoints: [{ text: '先读目标：这次要解决谁的问题', atSec: 26 }, { text: '再画边界：哪些这次不做', atSec: 40 }, { text: '最后对验收：怎样算真的做完', atSec: 68 }],
    ...over,
-@@ -111,8 +117,8 @@ export const fixedRuns: Record<string, QcRun> = {
-   'run-done': baseRun({ id: 'run-done', status: 'done', stages: stagesAt('video', 4), elapsedSec: 190, durationSec: 96, scenes: scenes(() => 'ready') }),
-   'run-publish-failed': baseRun({ id: 'run-publish-failed', status: 'done', stages: stagesAt('video', 4), elapsedSec: 190, durationSec: 96, scenes: scenes(() => 'ready'), publish: { status: 'failed', error: '网页托管这次没有响应（14:21）' } }),
-   'run-published': baseRun({ id: 'run-published', status: 'done', stages: stagesAt('video', 4), elapsedSec: 190, durationSec: 96, scenes: scenes(() => 'ready'), publish: { status: 'done', siteId: 'site-habits', siteTitle: '需求评审的三个习惯', at: '14:23' } }),
+@@ -96,23 +127,23 @@ const baseRun = (over: Partial<QcRun>): QcRun => ({
+ export const webKeyPoints = [{ text: '先读目标', anchor: 'goal' }, { text: '再画边界', anchor: 'scope' }, { text: '最后对验收', anchor: 'accept' }];
+ 
+ export const fixedRuns: Record<string, QcRun> = {
+-  'run-queued': baseRun({ id: 'run-queued', status: 'queued', queue: { position: 4, ahead: 3, running: 4, capacity: 4, startInSec: 100 }, stages: stagesAt('video', 0), elapsedSec: 22, remainSec: 290, estimateBasis: '最近 20 次同模板任务的中位数', scenes: scenes(() => 'waiting') }),
+-  'run-voicing': baseRun({ id: 'run-voicing', status: 'running', stages: stagesAt('video', 2, { progress: 42 }), elapsedSec: 440, remainSec: 90, estimateBasis: '最近 20 次同模板任务的中位数', scenes: scenes(i => (i < 2 ? 'ready' : i === 2 ? 'voicing' : 'drawn')) }),
++  'run-queued': baseRun({ id: 'run-queued', status: 'queued', queue: queueAt(4), stages: stagesAt('video', 0), elapsedSec: 6 * MIN, remainSec: 38 * MIN + 42 * MIN, estimateBasis: '排队按前面任务的预计还需推算；出片按最近 20 次同风格任务的中位数（约 42 分钟）', scenes: scenes(() => 'waiting') }),
++  'run-voicing': baseRun({ id: 'run-voicing', status: 'running', stages: stagesAt('video', 2, { progress: 42 }), elapsedSec: 22 * MIN, remainSec: 18 * MIN, estimateBasis: '最近 20 次同风格任务的中位数（约 42 分钟）', scenes: scenes(i => (i < 2 ? 'ready' : i === 2 ? 'voicing' : 'drawn')) }),
+   'run-failed': baseRun({
+-    id: 'run-failed', status: 'failed', stages: stagesAt('video', 2, { failed: true, failDetail: '第 4 幕配音等了 3 分钟没有返回，这一幕先停下' }), elapsedSec: 856,
++    id: 'run-failed', status: 'failed', stages: stagesAt('video', 2, { failed: true, failDetail: '配音服务 10 分钟没有返回第 4 幕，这一幕先停下' }), elapsedSec: 38 * MIN,
+     scenes: scenes(i => (i === 3 ? 'failed' : 'ready')),
+-    failure: { stageKey: 'voice', unitIndex: 4, message: '第 4 幕配音没有完成', saved: ['原稿与要求', '6 幕分镜与画面', '第 1–3、5–6 幕旁白与字幕'], actions: ['retry-unit', 'skip-unit'] },
++    failure: { stageKey: 'voice', unitIndex: 4, message: '配音服务没有返回第 4 幕', saved: ['原稿与要求', '6 幕分镜与画面', '第 1–3、5–6 幕旁白与字幕'], actions: ['retry-unit', 'skip-unit'] },
+   }),
+   'run-timeout': baseRun({
+-    id: 'run-timeout', status: 'failed', stages: stagesAt('video', 1, { failed: true, failDetail: '生成超过 15 分钟没有完成，已停止；已画好的 3 幕已保存' }), elapsedSec: 900,
++    id: 'run-timeout', status: 'failed', stages: stagesAt('video', 1, { failed: true, failDetail: '这次生成用满 2 小时上限仍未完成，系统按上限停下；已画好的 3 幕已保存' }), elapsedSec: 120 * MIN,
+     scenes: scenes(i => (i < 3 ? 'drawn' : 'waiting')),
+-    failure: { stageKey: 'storyboard', message: '生成超时，已停止', saved: ['原稿与要求', '已画好的第 1–3 幕分镜'], actions: ['requeue', 'retry-step'] },
++    failure: { stageKey: 'storyboard', message: '用满 2 小时上限，系统已停下', saved: ['原稿与要求', '已画好的第 1–3 幕分镜'], actions: ['requeue', 'retry-step'] },
+   }),
+-  'run-done': baseRun({ id: 'run-done', status: 'done', stages: stagesAt('video', 4), elapsedSec: 190, durationSec: 96, scenes: scenes(() => 'ready') }),
+-  'run-publish-failed': baseRun({ id: 'run-publish-failed', status: 'done', stages: stagesAt('video', 4), elapsedSec: 190, durationSec: 96, scenes: scenes(() => 'ready'), publish: { status: 'failed', error: '网页托管这次没有响应（14:21）' } }),
+-  'run-published': baseRun({ id: 'run-published', status: 'done', stages: stagesAt('video', 4), elapsedSec: 190, durationSec: 96, scenes: scenes(() => 'ready'), publish: { status: 'done', siteId: 'site-habits', siteTitle: '需求评审的三个习惯', at: '14:23' } }),
 -  'run-web-running': baseRun({ id: 'run-web-running', kind: 'web', templateId: 'tpl-guide-page', status: 'running', stages: stagesAt('web', 3, { progress: 64 }), elapsedSec: 96, remainSec: 25, estimateBasis: '最近 20 次同模板任务的中位数', sections: webSections, keyPoints: webKeyPoints, voice: undefined }),
 -  'run-web-done': baseRun({ id: 'run-web-done', kind: 'web', templateId: 'tpl-guide-page', status: 'done', stages: stagesAt('web', 4), elapsedSec: 128, sections: webSections, keyPoints: webKeyPoints, voice: undefined }),
-+  'run-web-running': baseRun({ id: 'run-web-running', kind: 'web', templateId: 'swiss-motion', status: 'running', stages: stagesAt('web', 3, { progress: 64 }), elapsedSec: 96, remainSec: 25, estimateBasis: '最近 20 次同模板任务的中位数', sections: webSections, keyPoints: webKeyPoints, voice: undefined }),
-+  'run-web-done': baseRun({ id: 'run-web-done', kind: 'web', templateId: 'swiss-motion', status: 'done', stages: stagesAt('web', 4), elapsedSec: 128, sections: webSections, keyPoints: webKeyPoints, voice: undefined }),
++  'run-done': baseRun({ id: 'run-done', status: 'done', stages: stagesAt('video', 4), elapsedSec: 41 * MIN, durationSec: 96, scenes: scenes(() => 'ready') }),
++  'run-publish-failed': baseRun({ id: 'run-publish-failed', status: 'done', stages: stagesAt('video', 4), elapsedSec: 41 * MIN, durationSec: 96, scenes: scenes(() => 'ready'), publish: { status: 'failed', error: '网页托管这次没有响应（14:21）' } }),
++  'run-published': baseRun({ id: 'run-published', status: 'done', stages: stagesAt('video', 4), elapsedSec: 41 * MIN, durationSec: 96, scenes: scenes(() => 'ready'), publish: { status: 'done', siteId: 'site-habits', siteTitle: '需求评审的三个习惯', at: '14:23' } }),
++  'run-web-running': baseRun({ id: 'run-web-running', kind: 'web', templateId: 'swiss-motion', status: 'running', stages: stagesAt('web', 3, { progress: 64 }), elapsedSec: 17 * MIN, remainSec: 14 * MIN, estimateBasis: '最近 20 次同风格网页任务的中位数（约 31 分钟）', sections: webSections, keyPoints: webKeyPoints, voice: undefined }),
++  'run-web-done': baseRun({ id: 'run-web-done', kind: 'web', templateId: 'swiss-motion', status: 'done', stages: stagesAt('web', 4), elapsedSec: 33 * MIN, sections: webSections, keyPoints: webKeyPoints, voice: undefined }),
  };
  
  /** 「我的作品」30 条：前几条对应上面的任务，其余用于检查长标题与数量 */
-@@ -124,19 +130,44 @@ const titles = [
+@@ -124,19 +155,44 @@ const titles = [
    '安全意识十分钟：密码、钓鱼邮件与外部分享链接的那些坑', '代码评审礼仪', '如何申请测试环境',
  ];
  export const works: QcWork[] = [
@@ -2463,8 +2635,8 @@ diff --git a/src/fixtures.ts b/src/fixtures.ts
 +  { runId: 'run-voicing', title: '需求评审的三个习惯', kind: 'video', templateId: 'sketchnote', status: 'running', publishStatus: 'none', summary: '配音第 3 / 6 幕', updatedAt: '刚刚' },
 +  { runId: 'run-web-running', title: '需求评审的三个习惯（网页版）', kind: 'web', templateId: 'swiss-motion', status: 'running', publishStatus: 'none', summary: '生成页面第 3 / 4 节', updatedAt: '1 分钟前' },
 +  { runId: 'run-queued', title: '接口命名约定（给后端新人）', kind: 'video', templateId: 'dark-keynote', status: 'queued', publishStatus: 'none', summary: '排在第 4 位', updatedAt: '3 分钟前' },
-+  { runId: 'run-failed', title: '新版报销流程，一分钟看懂', kind: 'video', templateId: 'sketchnote', status: 'failed', publishStatus: 'none', summary: '第 4 幕配音超时，已保存稿件与其余 5 幕', updatedAt: '今天 11:40' },
-+  { runId: 'run-timeout', title: '线上故障复盘模板怎么填', kind: 'video', templateId: 'dark-keynote', status: 'failed', publishStatus: 'none', summary: '生成超时，已保存稿件与 3 幕分镜', updatedAt: '今天 09:52' },
++  { runId: 'run-failed', title: '新版报销流程，一分钟看懂', kind: 'video', templateId: 'sketchnote', status: 'failed', publishStatus: 'none', summary: '配音服务没有返回第 4 幕，已保存稿件与其余 5 幕', updatedAt: '今天 11:40' },
++  { runId: 'run-timeout', title: '线上故障复盘模板怎么填', kind: 'video', templateId: 'dark-keynote', status: 'failed', publishStatus: 'none', summary: '用满 2 小时上限停下，已保存稿件与 3 幕分镜', updatedAt: '今天 09:52' },
 +  { runId: 'run-publish-failed', title: '周会怎么开得更短', kind: 'video', templateId: 'whiteboard', status: 'done', publishStatus: 'failed', summary: '成片可播，发布可重试', updatedAt: '今天 10:15' },
 +  { runId: 'run-published', title: '设计走查的五个检查点', kind: 'video', templateId: 'sketchnote', status: 'done', publishStatus: 'done', summary: '1 分 22 秒 · 访问 46 次', updatedAt: '昨天 18:40' },
 +  { runId: 'run-web-done', title: '客户来访接待流程', kind: 'web', templateId: 'iso-infographic', status: 'done', publishStatus: 'none', summary: '4 节 · 适配手机', updatedAt: '昨天 16:02' },

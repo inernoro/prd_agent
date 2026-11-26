@@ -4,51 +4,111 @@
  * 下方是任务清单；进行中的那一步高亮、带流动的进度条，其余步骤一行一项。
  */
 import { useState } from 'react';
-import { AlertTriangle, ChevronDown, Circle, CircleCheck, Clock3, RotateCcw, Users } from 'lucide-react';
+import { AlertTriangle, ChevronDown, Circle, CircleCheck, Clock3, Globe, RotateCcw, Users, Video } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { Button } from '@/components/design/Button';
 import { MapSpinner } from '@/components/ui/VideoLoader';
-import type { QcFailure, QcRun } from './types';
+import type { OutputKind, QcFailure, QcRun } from './types';
 import { formatDuration, formatRemain } from './format';
 
+/** 计时：不到 1 小时写 mm:ss，超过写 h:mm:ss（出片常要 30–60 分钟，超时上限 2 小时） */
 function clock(sec: number) {
   const s = Math.max(0, Math.round(sec));
-  return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = s % 60;
+  const mmss = `${String(m).padStart(2, '0')}:${String(r).padStart(2, '0')}`;
+  return h ? `${h}:${mmss}` : mmss;
 }
 
+/** 排队看板里的分钟数：只写到分钟，不足 1 分钟写「1 分钟内」 */
+function mins(sec: number) {
+  const m = Math.round(sec / 60);
+  return m < 1 ? '1 分钟内' : m < 60 ? `${m} 分钟` : `${Math.floor(m / 60)} 小时${m % 60 ? ` ${m % 60} 分` : ''}`;
+}
+
+function Initial({ name, me }: { name: string; me?: boolean }) {
+  return (
+    <span className={cn('inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold',
+      me ? 'bg-[color:var(--accent-primary)] text-[color:var(--accent-on-primary)]' : 'bg-[var(--bg-tertiary)] text-token-secondary')} aria-hidden>
+      {me ? '你' : name.slice(-1)}
+    </span>
+  );
+}
+
+function KindMark({ kind }: { kind: OutputKind }) {
+  return kind === 'video' ? <Video size={12} className="shrink-0 text-token-muted" aria-label="视频" /> : <Globe size={12} className="shrink-0 text-token-muted" aria-label="网页" />;
+}
+
+/**
+ * 排队卡：先说清楚为什么在等（团队同时生成的上限满了，不是稿件或操作的问题），
+ * 再列出正在生成的是谁、各还要多久，排在前面的是谁、各自预计何时开始，最后是你自己。
+ */
 export function QueueCard({ run }: { run: QcRun }) {
   const q = run.queue;
   if (!q) return null;
-  const slots = Array.from({ length: q.running + q.ahead + 1 }, (_, i) => (i < q.running ? 'run' : i < q.running + q.ahead ? 'wait' : 'me'));
+  const runningItems = q.runningItems ?? [];
+  const aheadItems = q.aheadItems ?? [];
   return (
-    <section className="qc-card qc-rise p-4" data-qc="queue-card">
+    <section className="qc-card qc-rise p-4" data-qc="queue-card" data-position={q.position}>
       <div className="flex items-start gap-3">
         <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-[var(--selection-bg)] text-[color:var(--accent-primary)]"><Users size={17} aria-hidden /></span>
         <div className="min-w-0 flex-1">
           <div className="text-[15px] font-semibold text-token-primary">排队中 · 第 {q.position} 位</div>
-          <div className="mt-0.5 text-[12.5px] text-token-secondary">前面还有 {q.ahead} 个，预计 {formatRemain(q.startInSec)}后开始</div>
+          <div className="mt-0.5 text-[12.5px] text-token-secondary">
+            {q.ahead ? `前面还有 ${q.ahead} 人，` : '下一个就是你，'}预计 {mins(q.startInSec)}后开始
+          </div>
         </div>
       </div>
-      <div className="mt-3.5 rounded-[10px] bg-[var(--bg-secondary)] p-2.5">
-        <div className="flex gap-1.5" aria-hidden>
-          {slots.map((c, i) => (
-            <span key={i} className={cn('flex h-7 flex-1 items-center justify-center rounded-md text-[11px] font-semibold',
-              c === 'run' && 'qc-shimmer bg-[var(--semantic-success-soft)]',
-              c === 'wait' && 'border border-dashed border-[var(--border-default)]',
-              c === 'me' && 'bg-[color:var(--accent-primary)] text-[color:var(--accent-on-primary)]')}>
-              {c === 'me' ? '你' : ''}
-            </span>
+      <p className="m-0 mt-3 text-[12.5px] leading-5 text-token-secondary" data-qc="queue-reason">
+        团队同时最多生成 {q.capacity} 个，现在 {q.running} 个都在生成，所以要排队；这和你的稿件、操作无关。轮到你会自动开始，开始和完成时都会通知你。
+      </p>
+      <div className="mt-3 rounded-[10px] bg-[var(--bg-secondary)] px-3 py-2">
+        <div className="flex items-center justify-between pb-1 text-[11.5px] font-medium text-token-secondary">
+          <span>正在生成 · {q.running} / {q.capacity}</span><span className="font-normal text-token-muted">还需</span>
+        </div>
+        <ul className="m-0 list-none p-0" aria-label="正在生成的任务">
+          {runningItems.map(r => {
+            const done = (r.elapsedSec ?? 0) / Math.max(1, (r.elapsedSec ?? 0) + (r.remainSec ?? 0));
+            return (
+              <li key={r.ownerName + r.title} className="py-1.5" data-queue-running={r.ownerName}>
+                <div className="flex items-center gap-2 text-[12.5px]">
+                  <Initial name={r.ownerName} />
+                  <span className="shrink-0 font-medium text-token-primary">{r.ownerName}</span>
+                  <KindMark kind={r.kind} />
+                  <span className="min-w-0 flex-1 truncate text-token-secondary">{r.title}</span>
+                  <span className="shrink-0 tabular-nums text-token-primary">约 {mins(r.remainSec ?? 0)}</span>
+                </div>
+                <div className="ml-8 mt-1 h-1 overflow-hidden rounded-full bg-[var(--bg-tertiary)]" aria-hidden>
+                  <div className="qc-bar-live h-full rounded-full" style={{ width: `${Math.round(done * 100)}%` }} />
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+        <div className="mt-1.5 flex items-center justify-between border-t border-token-subtle pb-1 pt-2 text-[11.5px] font-medium text-token-secondary">
+          <span>排在你前面 · {q.ahead} 人</span><span className="font-normal text-token-muted">预计开始</span>
+        </div>
+        <ol className="m-0 list-none p-0" aria-label="排队顺序">
+          {aheadItems.map((a, i) => (
+            <li key={a.ownerName + a.title} className="flex items-center gap-2 py-1.5 text-[12.5px]" data-queue-ahead={i + 1}>
+              <span className="w-3 shrink-0 text-center tabular-nums text-token-muted">{i + 1}</span>
+              <Initial name={a.ownerName} />
+              <span className="shrink-0 font-medium text-token-primary">{a.ownerName}</span>
+              <KindMark kind={a.kind} />
+              <span className="min-w-0 flex-1 truncate text-token-secondary">{a.title}</span>
+              <span className="shrink-0 tabular-nums text-token-muted">{mins(a.startInSec ?? 0)}后</span>
+            </li>
           ))}
-        </div>
-        <div className="mt-2 flex items-center justify-between text-[11px] text-token-muted">
-          <span className="flex items-center gap-3">
-            <span className="flex items-center gap-1"><i className="inline-block h-2 w-2 rounded-sm bg-[var(--semantic-success-soft)] ring-1 ring-[color:var(--accent-fg-success)]" />生成中 {q.running}</span>
-            <span className="flex items-center gap-1"><i className="inline-block h-2 w-2 rounded-sm border border-dashed border-[var(--border-default)]" />排在前面 {q.ahead}</span>
-          </span>
-          <span>同时最多 {q.capacity} 个</span>
-        </div>
+          <li className="-mx-1.5 flex items-center gap-2 rounded-lg bg-[var(--selection-bg)] px-1.5 py-1.5 text-[12.5px]" data-queue-me>
+            <span className="w-3 shrink-0 text-center font-semibold tabular-nums text-[color:var(--accent-primary)]">{q.position}</span>
+            <Initial name="你" me />
+            <span className="shrink-0 font-semibold text-token-primary">你</span>
+            <KindMark kind={run.kind} />
+            <span className="min-w-0 flex-1 truncate text-token-primary">{run.title}</span>
+            <span className="shrink-0 font-medium tabular-nums text-[color:var(--accent-primary)]">{mins(q.startInSec)}后</span>
+          </li>
+        </ol>
       </div>
-      <p className="mt-2.5 text-[12px] leading-5 text-token-secondary">排队不是失败，轮到会自动开始：先出分镜，再逐幕配音，最后合成成片。</p>
+      <p className="m-0 mt-2.5 text-[12px] leading-5 text-token-muted">排队不是失败。一支片子通常要 30–60 分钟，可以离开，完成后到「我的作品」或通知里打开。</p>
     </section>
   );
 }
@@ -69,7 +129,7 @@ export function FailureCard({ failure, onAction }: { failure: QcFailure; onActio
         <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-[var(--bg-input)]" style={{ color: 'var(--accent-fg-error)' }}><AlertTriangle size={17} aria-hidden /></span>
         <div className="min-w-0 flex-1">
           <div className="text-[14px] font-semibold text-token-primary">{failure.message}</div>
-          <div className="mt-1 text-[12.5px] leading-5 text-token-secondary">已保存：{failure.saved.join('、')}。重试只会重做没完成的部分。</div>
+          <div className="mt-1 text-[12.5px] leading-5 text-token-secondary">已保存：{failure.saved.join('、')}。不需要改稿件，重试只会重做没完成的部分。</div>
         </div>
       </div>
       <div className="mt-3 flex flex-wrap gap-2 pl-12">

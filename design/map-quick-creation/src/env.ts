@@ -4,7 +4,7 @@
 import type { QcAttachment, QcRun, QcScene } from '@/pages/quick-creation-agent/types';
 /* 演示成片：由 tools/make-demo-film.mjs 用模板画面渲染、带示意音轨的 WebM，构建时内嵌为 data: 地址 */
 import filmUrl from './assets/demo-film.webm';
-import { assets, attachmentQueue, fixedRuns, sampleDoc, scenes, stagesAt, templateCategories, templateSource, templates, webKeyPoints, webSections, works } from './fixtures';
+import { assets, attachmentQueue, fixedRuns, queueAt, sampleDoc, scenes, stagesAt, templateCategories, templateSource, templates, webKeyPoints, webSections, works } from './fixtures';
 
 class MemStorage {
   private m = new Map<string, string>();
@@ -50,9 +50,9 @@ function liveRun(id: string, l: Live): QcRun {
   const status = stage === 0 ? 'queued' : stage < 4 ? 'running' : 'done';
   const base: QcRun = {
     id, title: l.title, kind: l.kind, templateId: l.templateId, ask: l.ask, attachments: l.attachments, status,
-    stages: stagesAt(l.kind, stage, { progress }), elapsedSec: Math.round(t * 6), remainSec: status === 'done' ? undefined : Math.max(5, Math.round((total - t) * 6)),
+    stages: stagesAt(l.kind, stage, { progress }), elapsedSec: Math.round(t * SCALE), remainSec: status === 'done' ? undefined : Math.max(60, Math.round((total - t) * SCALE)),
     estimateBasis: '最近 20 次同模板任务的中位数', publish: { status: 'none' }, createdAt: '刚刚', updatedAt: '刚刚',
-    queue: stage === 0 ? { position: Math.max(1, 3 - Math.floor(t / 3)), ahead: Math.max(0, 2 - Math.floor(t / 3)), running: 4, capacity: 4, startInSec: Math.max(5, Math.round((8 - t) * 6)) } : undefined,
+    queue: stage === 0 ? queueAt(3 - Math.floor(t / 3), Math.round(t * SCALE)) : undefined,
   };
   if (l.kind === 'video') {
     const drawn = stage < 1 ? 0 : stage === 1 ? Math.min(6, 1 + Math.floor(((t - steps[0]) / (steps[1] - steps[0])) * 6)) : 6;
@@ -69,32 +69,35 @@ function withPublish(run: QcRun): QcRun {
   return at ? { ...withMedia, publish: { status: 'done', siteId: `site-${run.id}`, siteTitle: run.title, at } } : withMedia;
 }
 
+/* 演示时间压缩：原型里 1 秒按真实的 75 秒显示，一次约 32 秒的演示对应约 40 分钟的出片 */
+const SCALE = 75;
+
 /* 恢复中的任务（演示时间压缩）：单幕重做约 1.6 秒；超时后重新排队约 2 秒，再从未画完的幕继续 */
 function recoveryRun(rec: Recovery): QcRun {
   const t = (Date.now() - rec.startedAt) / 1000;
   const { base, keep, redo } = rec;
   const sceneOf = (status: (i: number) => QcScene['status']) => (base.scenes ?? []).map((sc, i) => ({ ...sc, status: keep.has(i) ? keep.get(i)! : status(i) }));
-  const common = { failure: undefined, elapsedSec: base.elapsedSec + Math.round(t * 6), estimateBasis: '只重做没完成的部分', publish: base.publish };
+  const common = { failure: undefined, elapsedSec: base.elapsedSec + Math.round(t * SCALE), estimateBasis: '只重做没完成的部分', publish: base.publish };
   if (rec.kind === 'scene') {
-    if (t < 0.8) return { ...base, ...common, status: 'running', stages: stagesAt('video', 2, { progress: Math.round((t / 0.8) * 100) }), remainSec: Math.round((1.6 - t) * 6), scenes: sceneOf(() => 'voicing') };
-    if (t < 1.6) return { ...base, ...common, status: 'running', stages: stagesAt('video', 3, { progress: Math.round(((t - 0.8) / 0.8) * 100) }), remainSec: Math.round((1.6 - t) * 6), scenes: sceneOf(() => 'ready').map(sc => ({ ...sc, status: 'ready' })) };
+    if (t < 0.8) return { ...base, ...common, status: 'running', stages: stagesAt('video', 2, { progress: Math.round((t / 0.8) * 100) }), remainSec: Math.round((1.6 - t) * SCALE), scenes: sceneOf(() => 'voicing') };
+    if (t < 1.6) return { ...base, ...common, status: 'running', stages: stagesAt('video', 3, { progress: Math.round(((t - 0.8) / 0.8) * 100) }), remainSec: Math.round((1.6 - t) * SCALE), scenes: sceneOf(() => 'ready').map(sc => ({ ...sc, status: 'ready' })) };
     return { ...base, ...common, status: 'done', stages: stagesAt('video', 4), remainSec: undefined, durationSec: 96, scenes: sceneOf(() => 'ready').map(sc => ({ ...sc, status: 'ready' })) };
   }
   const q = rec.kind === 'requeue' ? 2 : 0;
-  if (t < q) return { ...base, ...common, status: 'queued', queue: { position: 2, ahead: 1, running: 4, capacity: 4, startInSec: Math.round((q - t) * 6) }, stages: stagesAt('video', 0), remainSec: 90, scenes: sceneOf(() => 'waiting') };
+  if (t < q) return { ...base, ...common, status: 'queued', queue: queueAt(2, Math.round(t * SCALE)), stages: stagesAt('video', 0), remainSec: 42 * 60, scenes: sceneOf(() => 'waiting') };
   const u = t - q;
   if (u < 4) {
     const drawnNow = Math.floor((u / 4) * redo.length);
-    return { ...base, ...common, status: 'running', stages: stagesAt('video', 1, { progress: Math.round((u / 4) * 100) }), remainSec: Math.round((11 - u) * 6),
+    return { ...base, ...common, status: 'running', stages: stagesAt('video', 1, { progress: Math.round((u / 4) * 100) }), remainSec: Math.round((11 - u) * SCALE),
       scenes: sceneOf(i => { const k = redo.indexOf(i); return k < drawnNow ? 'drawn' : k === drawnNow ? 'drawing' : 'waiting'; }) };
   }
   if (u < 8) {
     const voiced = Math.floor(((u - 4) / 4) * 6);
-    return { ...base, ...common, status: 'running', stages: stagesAt('video', 2, { progress: Math.round(((u - 4) / 4) * 100) }), remainSec: Math.round((11 - u) * 6),
+    return { ...base, ...common, status: 'running', stages: stagesAt('video', 2, { progress: Math.round(((u - 4) / 4) * 100) }), remainSec: Math.round((11 - u) * SCALE),
       scenes: (base.scenes ?? []).map((sc, i) => ({ ...sc, status: i < voiced ? 'ready' : i === voiced ? 'voicing' : 'drawn' })) };
   }
   const done = u >= 11;
-  return { ...base, ...common, status: done ? 'done' : 'running', stages: stagesAt('video', done ? 4 : 3, { progress: Math.round(((u - 8) / 3) * 100) }), remainSec: done ? undefined : Math.round((11 - u) * 6), durationSec: 96,
+  return { ...base, ...common, status: done ? 'done' : 'running', stages: stagesAt('video', done ? 4 : 3, { progress: Math.round(((u - 8) / 3) * 100) }), remainSec: done ? undefined : Math.round((11 - u) * SCALE), durationSec: 96,
     scenes: (base.scenes ?? []).map(sc => ({ ...sc, status: 'ready' })) };
 }
 

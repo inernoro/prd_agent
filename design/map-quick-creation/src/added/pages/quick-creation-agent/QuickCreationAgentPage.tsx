@@ -298,7 +298,7 @@ export function QuickCreationAgentPage() {
       </div>
       {blockReason
         ? <p className="m-0 px-2 pt-1.5 text-[11.5px] text-token-muted" data-qc="block-reason">{blockReason}</p>
-        : <p className="m-0 hidden px-2 pt-1.5 text-[11.5px] text-token-muted lg:block">Ctrl / ⌘ + Enter 也可以生成 · 生成在后台进行，可以离开</p>}
+        : <p className="m-0 hidden px-2 pt-1.5 text-[11.5px] text-token-muted lg:block">Ctrl / ⌘ + Enter 也可以生成 · 一支约 30–60 分钟，在后台进行，可以离开</p>}
     </div>
   );
 
@@ -313,7 +313,7 @@ export function QuickCreationAgentPage() {
       </UserTurn>
       <AgentTurn status={agentStatus}>
         <p className="m-0 flex items-center gap-1.5 text-[12.5px] text-token-secondary" data-qc="saved-notice">
-          <Check size={14} className="shrink-0 text-[color:var(--accent-fg-success)]" aria-hidden />稿件和要求已保存，生成在后台进行，离开页面也会继续。
+          <Check size={14} className="shrink-0 text-[color:var(--accent-fg-success)]" aria-hidden />稿件和要求已保存。{run.status === 'queued' || run.status === 'running' ? '一支通常要 30–60 分钟，在后台进行，离开页面也会继续，完成后会通知你。' : ''}
         </p>
         {run.status === 'queued' && <QueueCard run={run} />}
         {run.status !== 'queued' && <RunProgress run={run} />}

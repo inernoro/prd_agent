@@ -77,6 +77,16 @@ export interface QcStage {
   progress?: number;
 }
 
+/** 排队看板上的一条：谁的哪份稿件，正在生成的写已运行与预计还需，排队的写预计多久后开始 */
+export interface QcQueueEntry {
+  ownerName: string;
+  title: string;
+  kind: OutputKind;
+  elapsedSec?: number;
+  remainSec?: number;
+  startInSec?: number;
+}
+
 export interface QcQueueInfo {
   position: number;
   ahead: number;
@@ -84,6 +94,10 @@ export interface QcQueueInfo {
   capacity: number;
   /** 预计多少秒后开始 */
   startInSec: number;
+  /** 正在生成的任务（团队同时生成上限内） */
+  runningItems?: QcQueueEntry[];
+  /** 排在你前面的任务，按先后 */
+  aheadItems?: QcQueueEntry[];
 }
 
 export interface QcScene {

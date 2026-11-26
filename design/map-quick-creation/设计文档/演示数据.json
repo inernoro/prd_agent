@@ -1318,7 +1318,7 @@
      "key": "compose",
      "label": "合成",
      "status": "pending",
-     "detail": "正在合成 1080p 成片"
+     "detail": "正在混音并合成 1080p 成片"
     },
     {
      "key": "done",
@@ -1326,7 +1326,7 @@
      "status": "pending"
     }
    ],
-   "elapsedSec": 22,
+   "elapsedSec": 360,
    "publish": {
     "status": "none"
    },
@@ -1352,10 +1352,60 @@
     "ahead": 3,
     "running": 4,
     "capacity": 4,
-    "startInSec": 100
+    "startInSec": 2280,
+    "runningItems": [
+     {
+      "ownerName": "林夏",
+      "title": "新版 OKR 填写指南",
+      "kind": "video",
+      "elapsedSec": 1860,
+      "remainSec": 540
+     },
+     {
+      "ownerName": "周远",
+      "title": "季度客户满意度复盘",
+      "kind": "web",
+      "elapsedSec": 1320,
+      "remainSec": 720
+     },
+     {
+      "ownerName": "陈一帆",
+      "title": "新人入职七天路线",
+      "kind": "video",
+      "elapsedSec": 1080,
+      "remainSec": 1560
+     },
+     {
+      "ownerName": "宋知",
+      "title": "安全培训：钓鱼邮件识别",
+      "kind": "video",
+      "elapsedSec": 420,
+      "remainSec": 2280
+     }
+    ],
+    "aheadItems": [
+     {
+      "ownerName": "何岚",
+      "title": "支付链路如何工作",
+      "kind": "video",
+      "startInSec": 540
+     },
+     {
+      "ownerName": "林夏",
+      "title": "春节值班安排",
+      "kind": "video",
+      "startInSec": 720
+     },
+     {
+      "ownerName": "周远",
+      "title": "产品发布会彩排要点",
+      "kind": "video",
+      "startInSec": 1560
+     }
+    ]
    },
-   "remainSec": 290,
-   "estimateBasis": "最近 20 次同模板任务的中位数",
+   "remainSec": 4800,
+   "estimateBasis": "排队按前面任务的预计还需推算；出片按最近 20 次同风格任务的中位数（约 42 分钟）",
    "scenes": [
     {
      "index": 1,
@@ -1464,7 +1514,7 @@
      "key": "queued",
      "label": "排队",
      "status": "done",
-     "detail": "等了 4 分 06 秒，曾排第 4 位"
+     "detail": "等了 12 分钟，曾排第 4 位"
     },
     {
      "key": "storyboard",
@@ -1483,7 +1533,7 @@
      "key": "compose",
      "label": "合成",
      "status": "pending",
-     "detail": "正在合成 1080p 成片"
+     "detail": "正在混音并合成 1080p 成片"
     },
     {
      "key": "done",
@@ -1491,7 +1541,7 @@
      "status": "pending"
     }
    ],
-   "elapsedSec": 440,
+   "elapsedSec": 1320,
    "publish": {
     "status": "none"
    },
@@ -1512,8 +1562,8 @@
      "atSec": 68
     }
    ],
-   "remainSec": 90,
-   "estimateBasis": "最近 20 次同模板任务的中位数",
+   "remainSec": 1080,
+   "estimateBasis": "最近 20 次同风格任务的中位数（约 42 分钟）",
    "scenes": [
     {
      "index": 1,
@@ -1622,7 +1672,7 @@
      "key": "queued",
      "label": "排队",
      "status": "done",
-     "detail": "等了 4 分 06 秒，曾排第 4 位"
+     "detail": "等了 12 分钟，曾排第 4 位"
     },
     {
      "key": "storyboard",
@@ -1634,13 +1684,13 @@
      "key": "voice",
      "label": "配音",
      "status": "failed",
-     "detail": "第 4 幕配音等了 3 分钟没有返回，这一幕先停下"
+     "detail": "配音服务 10 分钟没有返回第 4 幕，这一幕先停下"
     },
     {
      "key": "compose",
      "label": "合成",
      "status": "pending",
-     "detail": "正在合成 1080p 成片"
+     "detail": "正在混音并合成 1080p 成片"
     },
     {
      "key": "done",
@@ -1648,7 +1698,7 @@
      "status": "pending"
     }
    ],
-   "elapsedSec": 856,
+   "elapsedSec": 2280,
    "publish": {
     "status": "none"
    },
@@ -1722,7 +1772,7 @@
    "failure": {
     "stageKey": "voice",
     "unitIndex": 4,
-    "message": "第 4 幕配音没有完成",
+    "message": "配音服务没有返回第 4 幕",
     "saved": [
      "原稿与要求",
      "6 幕分镜与画面",
@@ -1791,13 +1841,13 @@
      "key": "queued",
      "label": "排队",
      "status": "done",
-     "detail": "等了 4 分 06 秒，曾排第 4 位"
+     "detail": "等了 12 分钟，曾排第 4 位"
     },
     {
      "key": "storyboard",
      "label": "分镜",
      "status": "failed",
-     "detail": "生成超过 15 分钟没有完成，已停止；已画好的 3 幕已保存"
+     "detail": "这次生成用满 2 小时上限仍未完成，系统按上限停下；已画好的 3 幕已保存"
     },
     {
      "key": "voice",
@@ -1809,7 +1859,7 @@
      "key": "compose",
      "label": "合成",
      "status": "pending",
-     "detail": "正在合成 1080p 成片"
+     "detail": "正在混音并合成 1080p 成片"
     },
     {
      "key": "done",
@@ -1817,7 +1867,7 @@
      "status": "pending"
     }
    ],
-   "elapsedSec": 900,
+   "elapsedSec": 7200,
    "publish": {
     "status": "none"
    },
@@ -1890,7 +1940,7 @@
    ],
    "failure": {
     "stageKey": "storyboard",
-    "message": "生成超时，已停止",
+    "message": "用满 2 小时上限，系统已停下",
     "saved": [
      "原稿与要求",
      "已画好的第 1–3 幕分镜"
@@ -1958,7 +2008,7 @@
      "key": "queued",
      "label": "排队",
      "status": "done",
-     "detail": "等了 4 分 06 秒，曾排第 4 位"
+     "detail": "等了 12 分钟，曾排第 4 位"
     },
     {
      "key": "storyboard",
@@ -1984,7 +2034,7 @@
      "status": "done"
     }
    ],
-   "elapsedSec": 190,
+   "elapsedSec": 2460,
    "publish": {
     "status": "none"
    },
@@ -2114,7 +2164,7 @@
      "key": "queued",
      "label": "排队",
      "status": "done",
-     "detail": "等了 4 分 06 秒，曾排第 4 位"
+     "detail": "等了 12 分钟，曾排第 4 位"
     },
     {
      "key": "storyboard",
@@ -2140,7 +2190,7 @@
      "status": "done"
     }
    ],
-   "elapsedSec": 190,
+   "elapsedSec": 2460,
    "publish": {
     "status": "failed",
     "error": "网页托管这次没有响应（14:21）"
@@ -2271,7 +2321,7 @@
      "key": "queued",
      "label": "排队",
      "status": "done",
-     "detail": "等了 4 分 06 秒，曾排第 4 位"
+     "detail": "等了 12 分钟，曾排第 4 位"
     },
     {
      "key": "storyboard",
@@ -2297,7 +2347,7 @@
      "status": "done"
     }
    ],
-   "elapsedSec": 190,
+   "elapsedSec": 2460,
    "publish": {
     "status": "done",
     "siteId": "site-habits",
@@ -2430,7 +2480,7 @@
      "key": "queued",
      "label": "排队",
      "status": "done",
-     "detail": "等了 1 分 12 秒"
+     "detail": "等了 6 分钟"
     },
     {
      "key": "outline",
@@ -2457,7 +2507,7 @@
      "status": "pending"
     }
    ],
-   "elapsedSec": 96,
+   "elapsedSec": 1020,
    "publish": {
     "status": "none"
    },
@@ -2477,8 +2527,8 @@
      "anchor": "accept"
     }
    ],
-   "remainSec": 25,
-   "estimateBasis": "最近 20 次同模板任务的中位数",
+   "remainSec": 840,
+   "estimateBasis": "最近 20 次同风格网页任务的中位数（约 31 分钟）",
    "sections": [
     {
      "anchor": "points",
@@ -2559,7 +2609,7 @@
      "key": "queued",
      "label": "排队",
      "status": "done",
-     "detail": "等了 1 分 12 秒"
+     "detail": "等了 6 分钟"
     },
     {
      "key": "outline",
@@ -2585,7 +2635,7 @@
      "status": "done"
     }
    ],
-   "elapsedSec": 128,
+   "elapsedSec": 1980,
    "publish": {
     "status": "none"
    },
@@ -2667,7 +2717,7 @@
    "templateId": "sketchnote",
    "status": "failed",
    "publishStatus": "none",
-   "summary": "第 4 幕配音超时，已保存稿件与其余 5 幕",
+   "summary": "配音服务没有返回第 4 幕，已保存稿件与其余 5 幕",
    "updatedAt": "今天 11:40"
   },
   {
@@ -2677,7 +2727,7 @@
    "templateId": "dark-keynote",
    "status": "failed",
    "publishStatus": "none",
-   "summary": "生成超时，已保存稿件与 3 幕分镜",
+   "summary": "用满 2 小时上限停下，已保存稿件与 3 幕分镜",
    "updatedAt": "今天 09:52"
   },
   {
