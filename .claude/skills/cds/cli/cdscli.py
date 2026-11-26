@@ -855,6 +855,13 @@ def _design_setup_supported(manifest: dict[str, Any], project_id: str) -> bool:
             and _version_compare(versions[1], versions[0]) >= 0)
 
 
+_IMPLEMENTATION_BUNDLE_REPAIR = "CDS 分发的技能包低于实施所需版本，请恢复兼容的完整技能包分发后重试。"
+
+
+def _implementation_bundle_incompatible(status: int, manifest: Any) -> bool:
+    return status == 503 and isinstance(manifest, dict) and manifest.get("error") == "skill_bundle_incompatible"
+
+
 def _design_intake_matches(body: Any, project_id: str) -> bool:
     return (isinstance(body, dict) and body.get("projectId") == project_id
             and body.get("protocolVersion") == 1 and isinstance(body.get("permissions"), dict))
@@ -963,8 +970,7 @@ def cmd_setup_check(args: argparse.Namespace) -> None:
     implementation = design_access in ("read", "feedback") and "cds-build" in selected
     setup_path = _design_setup_path(project, implementation=implementation) if design_access else "/api/agent/setup.json"
     status, manifest, _ = request(setup_path)
-    incompatible_status = (implementation and status == 503 and isinstance(manifest, dict)
-                           and manifest.get("error") == "skill_bundle_incompatible")
+    incompatible_status = implementation and _implementation_bundle_incompatible(status, manifest)
     if ((status != 200 and not incompatible_status) or not isinstance(manifest, dict)
             or manifest.get("version") != "cds-agent-setup.v1"):
         fail("protocol", "setup_unavailable", "CDS 接入协议不可用，请确认服务版本和网络。")
@@ -982,7 +988,7 @@ def cmd_setup_check(args: argparse.Namespace) -> None:
            for value in (remote_version, minimum_version)):
         fail("version", "version_unavailable", "服务端无法确认技能版本，请恢复技能包分发后重试。")
     if implementation and (incompatible_status or _version_compare(remote_version, minimum_version) < 0):
-        fail("version", "skill_bundle_incompatible", "CDS 分发的技能包低于实施所需版本，请恢复兼容的完整技能包分发后重试。")
+        fail("version", "skill_bundle_incompatible", _IMPLEMENTATION_BUNDLE_REPAIR)
     if _version_compare(VERSION, remote_version) < 0 or _version_compare(VERSION, minimum_version) < 0:
         fail("version", "stale_cli", "当前 CLI 版本落后。" + install_bundle)
     checks.append({"stage": "version", "passed": True, "local": VERSION, "remote": remote_version})
@@ -6633,7 +6639,7 @@ def cmd_connect(args: argparse.Namespace) -> None:
 
     approval_url = host + "/project-list"
     safe_transport = {"follow_redirects": False, "fatal_network_errors": False} if design_access else {}
-    preserve_project_binding = design_access in ("read", "feedback")
+    read_or_feedback = design_access in ("read", "feedback")
     pending_path = ""
     pending: dict[str, Any] = {}
     design_scope = f"design-{design_access}" if design_access else ""
@@ -6657,7 +6663,7 @@ def cmd_connect(args: argparse.Namespace) -> None:
             if current_key.startswith(("cdsp_", "cdsu_")):
                 saved_user_cred = current_key
         workspace_key = str(local.get("projectKey") or local.get("bootstrapKey") or "").strip()
-        if preserve_project_binding and workspace_key:
+        if read_or_feedback and workspace_key:
             project_status, project_access = 0, None
             if current_key == workspace_key:
                 project_status, project_access, _ = _request(
@@ -6721,6 +6727,14 @@ def cmd_connect(args: argparse.Namespace) -> None:
     if pending:
         status, body = 201, pending
     else:
+        if read_or_feedback:
+            bundle_status, bundle, _ = _request(
+                "GET", _design_setup_path(project_id, implementation=True), timeout=10, **safe_transport,
+            )
+            # Older servers may not support the implementation selection.
+            if _implementation_bundle_incompatible(bundle_status, bundle):
+                _restore_auth_env(previous)
+                die(_IMPLEMENTATION_BUNDLE_REPAIR, code=2, extra={"reason": "skill_bundle_incompatible"})
         status, body, _ = _request(
             "POST",
             request_path,
@@ -6859,7 +6873,7 @@ def cmd_connect(args: argparse.Namespace) -> None:
         verification_path = "/api/projects"
         auth_scope = "create-project-once"
     else:
-        if preserve_project_binding and (_read_local_credentials_file() != local or _connection_context() != context):
+        if read_or_feedback and (_read_local_credentials_file() != local or _connection_context() != context):
             _restore_auth_env(previous)
             die("等待批准期间当前工作区的项目绑定已变化。请保留此绑定，在独立工作区重新自检。",
                 code=2, extra={"reason": "existing_project_binding"})

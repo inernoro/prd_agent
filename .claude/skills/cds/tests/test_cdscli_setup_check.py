@@ -366,6 +366,8 @@ class SetupCheckTests(unittest.TestCase):
 
     def test_design_connect_requests_scoped_approval_and_saves_only_a_verified_credential(self):
         self.credentials.unlink()
+        self.build_setup_status = 503
+        self.build_manifest.update(cliVersion="0.26.28", error="skill_bundle_incompatible")
         result = self.run_design_connect()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout)["data"]["projectId"], "proj-a")
@@ -479,6 +481,35 @@ class SetupCheckTests(unittest.TestCase):
         self.assertEqual([url for url, _ in self.requests[:3]],
                          [DESIGN_INTAKE, "/api/projects/proj-a", DESIGN_SETUP])
         self.assertTrue(json.loads(self.credentials.read_text()).get("projectKey") == DESIGN_APPROVAL_KEYS["feedback"])
+
+    def test_fresh_scoped_design_connect_stops_before_approval_if_build_bundle_is_incompatible(self):
+        self.build_setup_status = 503
+        self.build_manifest.update(cliVersion="0.26.28", error="skill_bundle_incompatible")
+        for scope in ("read", "feedback"):
+            with self.subTest(scope=scope):
+                self.credentials.unlink(missing_ok=True)
+                self.requests.clear()
+                check, checked = self.run_build_check(scope)
+                self.assertEqual(check.returncode, 2, checked)
+                self.assertEqual(checked["data"]["checks"][-1]["reason"], "missing_credentials")
+                self.assertEqual(self.requests, [])
+                result = self.run_design_connect(scope=scope)
+                self.assertEqual(result.returncode, 2)
+                self.assertEqual(json.loads(result.stdout)["reason"], "skill_bundle_incompatible")
+                self.assertEqual(self.requests, [(DESIGN_SETUP, None), (BUILD_SETUP, None)])
+                self.assertEqual(self.design_requests, [])
+                self.assertFalse(self.credentials.exists())
+                self.assertFalse(self.credentials.with_name("connection.json").exists())
+                self.assertFalse(self.credentials.with_name("design-approval.json").exists())
+
+    def test_scoped_design_connect_accepts_legacy_server_without_build_setup(self):
+        self.credentials.unlink()
+        self.build_setup_status = 400
+        self.build_manifest = {"error": "invalid_agent_setup"}
+        result = self.run_design_connect(scope="read")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["data"]["scope"], "design-read")
+        self.assertEqual([url for url, _ in self.requests[:3]], [DESIGN_SETUP, BUILD_SETUP, DESIGN_REQUEST])
 
     def test_scoped_design_connect_keeps_a_project_binding_saved_while_waiting(self):
         credentials = self.credentials.read_bytes()
