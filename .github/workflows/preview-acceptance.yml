@@ -34,9 +34,13 @@ on:
         required: false
         default: ''
       film_commit:
-        description: '代码视频压测目标 API 提交'
+        description: '代码视频压测或浏览器复验的目标 API 提交'
         required: false
         default: ''
+      film_browser_only:
+        description: '只验证新部署上的旧片播放、恢复、保存和分享'
+        type: boolean
+        default: false
       perf_ref:
         description: '隔离性能回归的候选提交或 ref；留空跳过，不接受 URL'
         required: false
@@ -225,15 +229,18 @@ jobs:
           E2E_BASE_URL: ${{ github.event.inputs.e2e_base_url }}
           E2E_USER: ${{ secrets.E2E_USER }}
           E2E_PASSWORD: ${{ secrets.E2E_PASSWORD }}
-          VERIFY_FILM_AUDIO: '1'
+          E2E_EXPECTED_COMMIT: ${{ github.event.inputs.film_commit }}
+          VERIFY_FILM_AUDIO: ${{ github.event.inputs.film_browser_only == 'true' && '0' || '1' }}
         run: node quick-film-cloud-acceptance.mjs
 
       - name: Set up Python for audio verification
+        if: github.event.inputs.film_browser_only != 'true'
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
       - name: Check caption timing in the finished audio track
+        if: github.event.inputs.film_browser_only != 'true'
         env:
           HF_HUB_DISABLE_TELEMETRY: '1'
           HF_HUB_DISABLE_XET: '1'

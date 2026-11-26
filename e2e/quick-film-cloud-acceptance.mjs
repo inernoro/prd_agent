@@ -5,7 +5,8 @@ import { join } from 'node:path';
 import { chromium } from '@playwright/test';
 
 const origin = 'https://opendesign-sketchnote-film-codex-prd-agent.miduo.org';
-const deployedCommit = '31cdc15f00a2057ae5711ab5e49206c51660296d';
+const deployedCommit = process.env.E2E_EXPECTED_COMMIT || '31cdc15f00a2057ae5711ab5e49206c51660296d';
+assert.match(deployedCommit, /^[a-f0-9]{40}$/);
 assert.equal(process.env.E2E_BASE_URL, origin, 'Target must be the isolated MAP preview');
 assert.ok(process.env.E2E_USER && process.env.E2E_PASSWORD, 'Cloud acceptance credentials are missing');
 const endpoint = (path) => new URL(path, origin);
