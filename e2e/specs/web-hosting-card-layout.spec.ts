@@ -832,6 +832,13 @@ for (const theme of ['light', 'dark'] as const) {
 }
 
 async function mockVideoCollectionShare(page: Page) {
+  await page.addInitScript(() => {
+    localStorage.setItem('prd-admin-auth', JSON.stringify({ state: {
+      isAuthenticated: true, user: { userId: 'video-reader', username: 'video-reader' },
+      token: 'video-reader-session', permissions: [], permissionsLoaded: true,
+      menuCatalog: [], menuCatalogLoaded: true,
+    }, version: 0 }));
+  });
   const token = 'video-review';
   const sharePath = `/api/web-pages/shares/view/${token}`;
   const liveUrl = 'https://hosting.example/film/v2/index.html';
@@ -857,9 +864,25 @@ async function mockVideoCollectionShare(page: Page) {
 }
 
 test('视频分享可打开历史版本和合集卡片，分享读者没有上传操作', async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 900 });
   const { film, member, oldUrl } = await mockVideoCollectionShare(page);
   await expect(page.frameLocator('iframe[title="项目演示视频"]').locator('video')).toBeVisible();
-  await page.getByRole('button', { name: '视频版本：V2' }).click();
+  await expect(page.locator('.share-topbar-note')).toHaveCount(0);
+  const version = page.getByRole('button', { name: '视频版本：V2' });
+  await expect(version).toBeVisible();
+  await expect.poll(() => version.evaluate(button => {
+    const bounds = button.getBoundingClientRect();
+    const toolbar = button.closest('.review-reader-toolbar')!.getBoundingClientRect();
+    return Math.abs((bounds.left + bounds.right - toolbar.left - toolbar.right) / 2);
+  })).toBeLessThanOrEqual(1);
+  await page.setViewportSize({ width: 800, height: 900 });
+  await expect.poll(() => version.evaluate(button => {
+    const toolbar = button.closest('.review-reader-toolbar')!;
+    const versionRight = button.getBoundingClientRect().right;
+    const actionsLeft = toolbar.querySelector('.related-trigger')!.getBoundingClientRect().left;
+    return actionsLeft - versionRight;
+  })).toBeGreaterThan(0);
+  await version.click();
   await expect(page.locator('iframe[title="V1 网页预览"]')).toHaveAttribute('src', oldUrl);
   await expect(page.getByRole('button', { name: '上传新版本', exact: true })).toHaveCount(0);
   await page.getByRole('button', { name: '关闭历史版本' }).click();
@@ -882,6 +905,7 @@ test.describe('触屏视频阅读', () => {
 
   test('首点展开合集后，播放器自动聚焦不会收起面板', async ({ page }) => {
     const { film, member } = await mockVideoCollectionShare(page);
+    await expect(page.locator('.share-topbar-note')).toHaveCount(0);
     const toggle = page.getByRole('button', { name: '合集', exact: true });
     const collection = page.getByRole('dialog', { name: '合集', exact: true });
     const frame = page.locator(`iframe[title="${film.title}"]`);

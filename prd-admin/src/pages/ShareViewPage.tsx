@@ -886,6 +886,7 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
   if (data.sites.length === 1) {
     const liveSite = data.sites[0];
     const site = { ...liveSite, ...review.site };
+    const isVideo = liveSite.wrappedAssetType === 'video';
     const externalViewUrl = !review.historical && token
       ? `/s/wp/${encodeURIComponent(token)}?${new URLSearchParams({ siteId: site.id })}`
       : site.pdfAssetUrl || site.siteUrl || undefined;
@@ -915,28 +916,14 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
         : downloadPlan.fileCount > 1
           ? `下载离线版网页：本站 ${downloadPlan.fileCount} 个文件里的样式、脚本、图片都装进一个 HTML`
           : '下载离线版网页（一个 HTML 文件）';
-    /**
-     * 顶栏说明条有两种来源，这里合成一条。
-     *
-     * 常驻的那一种（unavailable）：这一档根本取不到源文件（视频包装站、入口超过代理上限），
-     * 原因在**交互之前**就摆在这里，不必点任何东西。按钮那一档干脆不渲染。
-     *
-     * 为什么不是一个灰着的按钮：宣称 disabled、却必须点它才能知道为什么——屏读用户被告知
-     * 不可用会跳过，视觉用户看到禁用光标也会跳过，两边都拿不到那句原因，键盘激活还与宣称
-     * 的状态自相矛盾（Codex 第六轮 P2）。此前在「不渲染」与「可点的 aria-disabled」之间
-     * 来回过两轮，两版各丢一头：前者丢了原因，后者把原因锁在一次点击后面。真正该做的是
-     * 把原因从按钮里搬出来——交互前可见，于是那个假的可点控件不再需要存在。
-     *
-     * 一次性的那一种（downloadNote）：下载的结论或失败原因，用户可以关掉。常驻那条不给
-     * 关闭按钮——它是这一屏的状态，不是一次操作的回执。
-     */
+    // 视频阅读页没有源文件下载入口，直接呈现播放器。其他资料继续说明离线下载限制。
     const visibleNote: { text: string; tone: 'info' | 'error'; detail?: string; dismissible: boolean } | null =
       // 打包中：按钮在手机上只剩图标，进度必须以文字常驻在说明条里（静止转圈超过 2 秒即缺陷）
       downloading
         ? { text: `${offlineExportLabel}：正在把样式、脚本和图片装进一个文件`, tone: 'info', dismissible: false }
         : downloadNote
         ? { ...downloadNote, dismissible: true }
-        : isAuthenticated && downloadPlan.kind === 'unavailable'
+        : !isVideo && isAuthenticated && downloadPlan.kind === 'unavailable'
           ? { text: downloadPlan.reason, tone: 'info', dismissible: false }
           : null;
     return (
@@ -960,7 +947,8 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
       >
         {/* 全屏演示隐藏审阅顶栏，给托管内容留出完整空间。 */}
         <div style={{ display: isFullscreen ? 'none' : 'block', gridColumn: '1 / -1' }}>
-          <div className="share-topbar review-reader-toolbar border-b border-b-token-subtle" style={reviewReaderTint(annotations.headerTints)}>
+          <div className="share-topbar review-reader-toolbar border-b border-b-token-subtle"
+            data-review-content={isVideo ? 'video' : undefined} style={reviewReaderTint(annotations.headerTints)}>
             <div className="review-reader-title">
               {!embedded && data.shareType === 'collection' && requestedRelatedSiteId
                 ? <a className="review-reader-back" aria-label="返回合集" title="返回合集" href={`/s/wp/${encodeURIComponent(token!)}`}>
@@ -977,7 +965,7 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
                   : site.description && <span className="review-reader-source" title={site.description}>{site.description}</span>}
               </div>
             </div>
-            {token && (!liveSite.wrappedAssetType || liveSite.wrappedAssetType === 'video') && <ReviewVersionBar review={review} canUpload={liveSite.viewerCanEdit === true} video={liveSite.wrappedAssetType === 'video'} readerToolbar readerStage={reviewFrameRef} />}
+            {token && (!liveSite.wrappedAssetType || isVideo) && <ReviewVersionBar review={review} canUpload={liveSite.viewerCanEdit === true} video={isVideo} readerToolbar readerStage={reviewFrameRef} />}
             {/* 常用操作用图标直达；低频操作收进更多，避免挤压网页标题。 */}
             <div className="share-topbar-actions">
               {!isMobile && historyHint && !review.historical && <ReviewHistoryHint value={historyHint} onOpen={id => review.setVersionPreview({ id })} />}
@@ -1033,8 +1021,6 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
                   存档、二次编辑）此前没有任何入口——只能右键另存，而托管内容在独立域名，
                   存下来的常常不是那一份。
                   为什么限登录：源文件就是这份内容的全部，门槛与「保存到我的托管」保持一致。 */}
-              {/* 取不到源文件的那一档（视频包装站、超过代理上限的大站）不渲染按钮——
-                  原因由上面那条常驻说明在交互前就给出，不需要一个点了才肯说话的假控件。 */}
               {isAuthenticated && downloadPlan.kind !== 'unavailable' && (
                 <button
                   role="menuitem"
@@ -1099,7 +1085,6 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
               trailing={!liveSite.wrappedAssetType && <ReviewBubbleToggle annotations={annotations} readerLayout />} />}
           </div>
 
-          {/* 一闪而过的 toast 读不完，所以两种说明都占一行。来源见 visibleNote 的注释。 */}
           {visibleNote && (
             <div
               className={`share-topbar-note surface-tone-dark${visibleNote.tone === 'error' ? ' share-topbar-note--error' : ''}`}

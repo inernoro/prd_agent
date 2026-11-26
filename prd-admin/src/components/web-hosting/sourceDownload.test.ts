@@ -151,22 +151,9 @@ describe('下载源文件的取法', () => {
     expect(hook).toContain('saveBlobAsFile(file.blob, file.fileName)');
   });
 
-  /**
-   * 取不到源文件时，原因必须在**交互之前**就看得见，且不靠一个假的可点控件送达。
-   *
-   * 这个点来回过三轮，三轮各错一处，值得逐条记着：
-   * 1. 最初：按钮看着能用，点下去才说「取不到」，触屏连 title 都露不出来（Codex 轮一 P2）。
-   * 2. 改成「干脆不渲染按钮」：`reason` 就再没人看得到——算出来却送不到眼前（形状 2）。
-   * 3. 改成可点的 `aria-disabled`：宣称不可用、却必须点它才肯说为什么。屏读用户被告知
-   *    不可用会跳过，视觉用户看到禁用光标也会跳过，键盘激活还与宣称的状态矛盾（轮六 P2）。
-   *
-   * 三轮都在「这个按钮该是什么状态」里打转。定版把原因**搬出按钮**：unavailable 一档
-   * 说明条常驻（交互前可见、屏读可达、不需要点），按钮不渲染——于是那个自相矛盾的控件
-   * 不再需要存在。两边都钉住：少了哪一边都会红。
-   */
-  it('unavailable 一档不渲染按钮，原因在交互前就常驻可见', () => {
+  it('不可下载时不渲染下载按钮，视频以外的资料仍显示原因', () => {
     expect(page).toMatch(/isAuthenticated && downloadPlan\.kind !== 'unavailable' &&/);
-    expect(page).toMatch(/downloadPlan\.kind === 'unavailable'\s*\?\s*\{ text: downloadPlan\.reason/);
+    expect(page).toMatch(/!isVideo && isAuthenticated && downloadPlan\.kind === 'unavailable'\s*\?\s*\{ text: downloadPlan\.reason/);
     // 不许退回「灰着但可点」：那正是轮六指出的自相矛盾。
     expect(page, "aria-disabled 的可点控件：宣称不可用却要点了才说原因").
       not.toMatch(/aria-disabled=\{downloadPlan\.kind === 'unavailable'/);

@@ -34,6 +34,23 @@
       var(--review-b-glass) 80%);
   }
 }
+.review-workbench[data-theme="dark"] .review-reader-toolbar[data-review-content="video"] {
+  background: linear-gradient(108deg,
+    color-mix(in srgb, var(--review-b-field) 90%, transparent),
+    color-mix(in srgb, var(--review-b-action) 8%, var(--review-b-glass)) 48%,
+    color-mix(in srgb, var(--review-b-paper) 92%, transparent));
+}
+.review-workbench[data-theme="dark"] .review-reader-toolbar[data-review-content="video"] .review-version-trigger {
+  background: color-mix(in srgb, var(--review-b-field) 82%, transparent);
+  border-color: var(--review-b-line-strong);
+}
+.review-workbench[data-review-layout="desktop"] .review-reader-toolbar[data-review-content="video"] {
+  grid-template-columns: minmax(0, 1fr) auto minmax(max-content, 1fr);
+  padding-inline: 16px;
+}
+.review-workbench[data-review-layout="desktop"] .review-reader-toolbar[data-review-content="video"] .review-version-trigger {
+  min-width: 0;
+}
 .review-workbench .review-reader-toolbar > .review-version-control { justify-self: center; }
 .review-workbench .review-reader-title { min-width: 0; gap: 12px; }
 .review-reader-back {

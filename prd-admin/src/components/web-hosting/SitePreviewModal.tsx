@@ -285,7 +285,8 @@ export default function SitePreviewModal({
         onClick={(e) => e.stopPropagation()}
       >
         {/* 头部 */}
-        <div className="hosted-preview-toolbar review-reader-toolbar border-b border-token-subtle" style={reviewReaderTint(annotations.headerTints)}>
+        <div className="hosted-preview-toolbar review-reader-toolbar border-b border-token-subtle"
+          data-review-content={video ? 'video' : undefined} style={reviewReaderTint(annotations.headerTints)}>
           <div className="review-reader-title">
             <span className="review-reader-icon" aria-hidden="true"><BookOpen size={16} /></span>
             <div className="review-reader-identity">
