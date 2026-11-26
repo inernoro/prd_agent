@@ -126,12 +126,15 @@ describe('Agent public bootstrap through the real auth gate', () => {
     expect(guide).toContain(`${origin}/api/skills/cds-pack/download`);
     expect(guide).not.toContain('/api/bootstrap/cds-only');
     expect(guide).toContain('已有该项目的设计只读权限时直接复用');
-    expect(guide).toContain('仅在自检明确报告缺少或失效的设计只读权限时');
+    expect(guide).toContain('仅在自检明确报告当前没有可复用凭据或缺少设计只读权限时');
     expect(guide).toContain('批准设计只读');
     expect(guide).toContain('等待中断时，运行同一条命令继续领取原申请');
     expect(guide).toContain('auth inspect --strict');
     expect(guide).toContain('保留原绑定');
     expect(guide).toContain('独立工作区');
+    expect(guide).toContain('凭据已吊销时停止申请');
+    expect(guide).toContain('已签发密钥');
+    expect(guide).toContain('交付 → 反馈');
     expect(guide).toContain('读取已获准的实施版本、该版本的交付资料和交接回执');
     expect(guide).not.toContain('branch set-mode');
     expect(guide).not.toContain('previewUrl / previewUrls');
@@ -187,6 +190,16 @@ describe('Agent public bootstrap through the real auth gate', () => {
     expect(instructions).toContain('/api/agent/setup.md?target=existing&project=<项目 ID>&skills=cds-build');
     expect(instructions).toMatch(/setup-check[^\n]*--skills cds-build --design-access read/);
     expect(instructions).toMatch(/connect[^\n]*--design-access read/);
+    expect(instructions).toMatch(/setup-check[^\n]*--skills cds-build --design-access feedback/);
+    expect(instructions).toMatch(/connect[^\n]*--design-access feedback/);
+    expect(instructions).toContain('批准实施反馈');
+    expect(instructions).toContain('design_scope_required');
+    expect(instructions).toContain('凭据已吊销时停止申请');
+    expect(instructions).toContain('验收写权限');
+    const dispatcher = execFileSync('tar', ['-xzOf', '-', 'skills/cds/SKILL.md'], { input: archive, encoding: 'utf8' });
+    expect(dispatcher.split('<!-- cds-menu:start')[0]).toMatch(
+      /\/cds 帮我实现 DSN-xxx[^。\n]*\[cds-build\]\(\.\.\/cds-build\/SKILL\.md\)/,
+    );
   });
 
   it.each(Object.values(AGENT_MISSION_DEFINITIONS))('retains every required skill for mission $id', async mission => {

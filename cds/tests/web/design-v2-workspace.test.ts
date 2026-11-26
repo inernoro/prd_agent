@@ -1604,6 +1604,64 @@ describe('工程规划与设计 V2 前端回归', () => {
     }
   });
 
+  it('用技能按当前选中项目打开实施接入，设计阶段仍走发布授权', async () => {
+    const selectedProject = 'fixture-other-design';
+    await withDesignBrowser(() => workspace, async page => {
+      await page.route('**/api/projects', route => route.fulfill({ json: { projects: [
+        { id: projectId, name: '虚拟工程项目' }, { id: selectedProject, name: '切换后的项目' },
+      ] } }));
+      await page.route(url => url.pathname === `/api/projects/${selectedProject}/design`, route =>
+        route.fulfill({ json: { ...workspace, projectId: selectedProject, designs: [] } }));
+      await page.context().route('**/api/agent/setup.md?*', route => route.fulfill({
+        contentType: 'text/markdown; charset=utf-8', body: '# CDS 智能体接入',
+      }));
+      await page.goto(browserDesignUrl());
+      await page.getByRole('combobox', { name: '设计项目' }).selectOption(selectedProject);
+      await page.waitForURL(url => url.searchParams.get('project') === selectedProject);
+      await page.evaluate(() => {
+        window.addEventListener('cds:open-agent-access', event => {
+          document.documentElement.dataset.fixtureAgentAccess = (event as CustomEvent).detail?.contextId;
+        });
+      });
+      await page.getByText('用技能', { exact: true }).click();
+      const guide = page.locator('[data-design-panel="cli"] .dw-skill-guide');
+      const stages = guide.getByRole('list', { name: '开发流程' });
+      await stages.getByRole('button', { name: /^设计/ }).click();
+      await guide.getByRole('button', { name: '接入 Agent', exact: true }).click();
+      expect(await page.locator('html').getAttribute('data-fixture-agent-access')).toBe('design-publish');
+      await page.evaluate(() => { delete document.documentElement.dataset.fixtureAgentAccess; });
+
+      await stages.getByRole('button', { name: /^实现/ }).click();
+      const footer = guide.locator('footer');
+      expect(await footer.getByText('接入 Agent', { exact: true }).count()).toBe(1);
+      const link = footer.getByRole('link', { name: '接入 Agent', exact: true });
+      const expected = `/api/agent/setup.md?target=existing&project=${selectedProject}&skills=cds-build`;
+      expect(await link.getAttribute('href', { timeout: 2000 })).toBe(expected);
+      const [guidePage] = await Promise.all([page.waitForEvent('popup'), link.click()]);
+      await guidePage.waitForURL(browserDesignOrigin + expected);
+      expect(await guidePage.locator('body').innerText()).toContain('CDS 智能体接入');
+      expect(await page.locator('html').getAttribute('data-fixture-agent-access')).toBeNull();
+    }, { reducedMotion: 'reduce' });
+  }, 25_000);
+
+  it('无法确定设计项目时给出下一步，并可从下拉框选中可访问项目', async () => {
+    await withDesignBrowser(() => workspace, async page => {
+      await page.goto(browserDesignUrl({ project: 'fixture-unavailable', panel: 'skills' }));
+      await page.getByText('请先在页头选择设计项目，再打开「用技能」接入实施智能体。', { exact: true }).waitFor({ timeout: 2000 });
+      expect(await page.getByText('用技能', { exact: true }).count()).toBe(0);
+      const picker = page.getByRole('combobox', { name: '设计项目' });
+      expect(await picker.inputValue()).toBe('');
+      await picker.selectOption(projectId);
+      await page.getByText('用技能', { exact: true }).waitFor();
+
+      await page.route('**/api/projects', route => route.fulfill({ json: { projects: [] } }));
+      await page.reload();
+      await page.getByText(/请项目负责人授予访问权限后/).waitFor();
+      expect(await picker.count()).toBe(0);
+      expect(await page.getByText('用技能', { exact: true }).count()).toBe(0);
+    }, { reducedMotion: 'reduce' });
+  }, 20_000);
+
   it('A-19 首页范围行进入项目框架，稿件卡保留绑定版本和可升级状态', async () => {
     const html = design();
     expect(text(html)).toContain(frameworkId);

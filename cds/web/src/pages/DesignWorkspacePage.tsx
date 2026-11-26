@@ -313,9 +313,10 @@ export function DesignWorkspacePage() {
     : objectModule && objectScope ? { name: objectModule.name, href: scopePath(project, objectScope) }
     : folder && folder !== '未分组' ? { name: folder, href: scopePath(project, undefined, folder) }
     : undefined;
-  const inDetail = Boolean(entry || requirementKey || framework || frameworkList || group || module);
-  const projectSwitcher = options.length > 0 && <select className="dw-crumb-project" aria-label="设计项目" value={project}
+  const inDetail = authorized && Boolean(entry || requirementKey || framework || frameworkList || group || module);
+  const projectSwitcher = options.length > 0 && <select className="dw-crumb-project" aria-label="设计项目" value={authorized ? project : ''}
     onChange={event => setParams(new URLSearchParams({ project: event.target.value }))}>
+    {!authorized && <option value="" disabled>选择设计项目</option>}
     {options.map(option => <option key={option.id} value={option.id}>{option.aliasName || option.name}</option>)}
   </select>;
   const breadcrumbs = <TopBar left={<nav className="dw-crumb" aria-label="位置" data-detail={inDetail || undefined}>
@@ -453,7 +454,8 @@ export function DesignWorkspacePage() {
       {!workspace ? (projects.error || source.error)
         ? <p role="alert" className="dw-placeholder">{projects.error ?? source.error} <button type="button" className="ep-button" onClick={() => refresh(value => value + 1)}>重试</button></p>
         : projects.loading || source.loading ? <ContentLoading variant="table" label="正在读取设计工作区" />
-        : <p className="dw-placeholder">当前没有可查看的设计项目。</p>
+        : <p className="dw-placeholder">{options.length ? '请先在页头选择设计项目，再打开「用技能」接入实施智能体。'
+          : '当前没有可查看的设计项目。请项目负责人授予访问权限后，再接入实施智能体。'}</p>
       : requirementKey ? <DesignRequirementView key={`${project}/${requirementKey}`} project={project} requirement={requirement} workspace={workspace} command={command} busy={busy} startOpen={panel === 'brief-start'} />
       : framework ? <DesignFrameworkView key={framework.id} framework={framework} revision={frameworkVersion} tab={frameworkTab} designs={workspace.designs}
         onTab={value => onChange({ tab: value })} busy={busy}
@@ -533,7 +535,7 @@ export function DesignWorkspacePage() {
         <DesignLibrary workspace={workspace} query={query} onChange={changeLibrary} mode={mode} theme={canvasTheme}
           viewer={viewer} frameworkList={frameworkList} onFramework={selectFramework}
           onReview={openReview} onLarge={openLarge} headerActions={<>
-            <DesignSkillsMenu linked={panel === 'cli' || panel === 'skills'}
+            <DesignSkillsMenu linked={panel === 'cli' || panel === 'skills'} projectId={workspace.projectId}
               dismiss={() => { if (panel === 'cli' || panel === 'skills') dismissPanel(panel); }} onAccess={() => requestAgentAccess('design-publish')} />
             {permissions?.write && <button className="ep-button ep-button--primary" type="button" onClick={() => setUpload(true)}><Upload />发布稿件</button>}
           </>} />

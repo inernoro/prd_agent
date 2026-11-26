@@ -11,7 +11,7 @@ describe('设计页技能指南', () => {
     for (const step of lifecycle) expect(examples.has(step.say.slice('/cds '.length))).toBe(true);
     expect(lifecycle.find(step => step.key === 'design')?.steps.join(' ')).toContain('G-01 至 G-11');
     expect(lifecycle.find(step => step.key === 'build')?.steps[0]).toMatch(/有权评审人.*实施基线.*升级目标/);
-    const html = renderToStaticMarkup(createElement(SkillGuide, { onAccess() {} }));
+    const html = renderToStaticMarkup(createElement(SkillGuide, { projectId: 'fixture-project', onAccess() {} }));
     expect(html.match(/<h5>/g)).toHaveLength(4);
     expect(html).toContain('aria-label="示例结果"');
     expect(html).toContain('接入 Agent');

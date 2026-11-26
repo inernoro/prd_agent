@@ -834,10 +834,13 @@ def _setup_origin(value: str) -> str:
     return parsed.scheme + "://" + host
 
 
-def _design_setup_path(project_id: str) -> str:
-    return "/api/agent/setup.json?" + urllib.parse.urlencode({
-        "target": "existing", "project": project_id, "mission": "design-publish",
-    })
+def _design_setup_path(project_id: str, *, implementation: bool = False) -> str:
+    query = {"target": "existing", "project": project_id}
+    if implementation:
+        query["skills"] = "cds-build"
+    else:
+        query["mission"] = "design-publish"
+    return "/api/agent/setup.json?" + urllib.parse.urlencode(query)
 
 
 def _design_setup_supported(manifest: dict[str, Any], project_id: str) -> bool:
@@ -957,16 +960,29 @@ def cmd_setup_check(args: argparse.Namespace) -> None:
     checks.append(skill_check)
 
     print("接入自检：核对服务端协议与版本。", file=sys.stderr)
-    status, manifest, _ = request(_design_setup_path(project) if design_access else "/api/agent/setup.json")
-    if status != 200 or not isinstance(manifest, dict) or manifest.get("version") != "cds-agent-setup.v1":
+    implementation = design_access in ("read", "feedback") and "cds-build" in selected
+    setup_path = _design_setup_path(project, implementation=implementation) if design_access else "/api/agent/setup.json"
+    status, manifest, _ = request(setup_path)
+    incompatible_status = (implementation and status == 503 and isinstance(manifest, dict)
+                           and manifest.get("error") == "skill_bundle_incompatible")
+    if ((status != 200 and not incompatible_status) or not isinstance(manifest, dict)
+            or manifest.get("version") != "cds-agent-setup.v1"):
         fail("protocol", "setup_unavailable", "CDS 接入协议不可用，请确认服务版本和网络。")
-    if design_access and not _design_setup_supported(manifest, project):
+    if implementation:
+        declared_scope = (manifest.get("target") == {"kind": "existing", "projectId": project}
+                          and manifest.get("mission") is None and manifest.get("skills") == ["cds-build"]
+                          and manifest.get("designAccess") == "read")
+    else:
+        declared_scope = not design_access or _design_setup_supported(manifest, project)
+    if not declared_scope:
         fail("protocol", "design_approval_unavailable", "目标实例还不支持当前项目的设计授权，请核对服务版本。")
     remote_version = manifest.get("cliVersion")
     minimum_version = manifest.get("minCliVersion")
     if any(not isinstance(value, str) or not re.fullmatch(r"\d+\.\d+\.\d+", value)
            for value in (remote_version, minimum_version)):
         fail("version", "version_unavailable", "服务端无法确认技能版本，请恢复技能包分发后重试。")
+    if implementation and (incompatible_status or _version_compare(remote_version, minimum_version) < 0):
+        fail("version", "skill_bundle_incompatible", "CDS 分发的技能包低于实施所需版本，请恢复兼容的完整技能包分发后重试。")
     if _version_compare(VERSION, remote_version) < 0 or _version_compare(VERSION, minimum_version) < 0:
         fail("version", "stale_cli", "当前 CLI 版本落后。" + install_bundle)
     checks.append({"stage": "version", "passed": True, "local": VERSION, "remote": remote_version})
@@ -986,6 +1002,9 @@ def cmd_setup_check(args: argparse.Namespace) -> None:
             "not-checkable": "当前 CDS 无法确认此凭据状态，请先检查服务版本与身份服务，不要反复重新授权。",
             "malformed": "凭据格式无效，请按 CDS 页面批准流程重新连接，不手工拼写凭据。",
         }
+        if implementation:
+            recovery["revoked"] = ("凭据已吊销时停止申请，请系统所有者在原项目「Agent Key → 已签发密钥」核对撤销记录。"
+                                   "仍获授权的项目成员可在原稿同版「交付 → 反馈」接续。")
         fail("authorization", reason if reason in recovery else "invalid_response",
              recovery.get(reason, "凭据自检返回无法识别的结果，请先确认服务版本与网络。"))
     if project and identity.get("projectId") and identity["projectId"] != project:
@@ -6614,6 +6633,7 @@ def cmd_connect(args: argparse.Namespace) -> None:
 
     approval_url = host + "/project-list"
     safe_transport = {"follow_redirects": False, "fatal_network_errors": False} if design_access else {}
+    preserve_project_binding = design_access in ("read", "feedback")
     pending_path = ""
     pending: dict[str, Any] = {}
     design_scope = f"design-{design_access}" if design_access else ""
@@ -6636,6 +6656,21 @@ def cmd_connect(args: argparse.Namespace) -> None:
                 die("暂时无法核对当前项目的设计接入清单，请核对项目和服务。", code=2)
             if current_key.startswith(("cdsp_", "cdsu_")):
                 saved_user_cred = current_key
+        workspace_key = str(local.get("projectKey") or local.get("bootstrapKey") or "").strip()
+        if preserve_project_binding and workspace_key:
+            project_status, project_access = 0, None
+            if current_key == workspace_key:
+                project_status, project_access, _ = _request(
+                    "GET", project_endpoint, timeout=10,
+                    extra_headers={"X-AI-Access-Key": workspace_key}, **safe_transport,
+                )
+            # A dedicated design credential cannot read the ordinary project route.
+            design_only = (project_status == 403 and isinstance(project_access, dict)
+                           and project_access.get("error") == "design_key_scope")
+            if not design_only and project_status not in (401, 404):
+                _restore_auth_env(previous)
+                die("当前工作区已有项目绑定。请保留此绑定，在同一仓库的独立工作区先自检，再申请所需设计权限。",
+                    code=2, extra={"reason": "existing_project_binding"})
         # An old server may silently ignore the field and issue a general grant.
         status, manifest, _ = _request("GET", _design_setup_path(project_id), timeout=10, **safe_transport)
         if status != 200 or not isinstance(manifest, dict) or not _design_setup_supported(manifest, project_id):
@@ -6824,6 +6859,10 @@ def cmd_connect(args: argparse.Namespace) -> None:
         verification_path = "/api/projects"
         auth_scope = "create-project-once"
     else:
+        if preserve_project_binding and (_read_local_credentials_file() != local or _connection_context() != context):
+            _restore_auth_env(previous)
+            die("等待批准期间当前工作区的项目绑定已变化。请保留此绑定，在独立工作区重新自检。",
+                code=2, extra={"reason": "existing_project_binding"})
         credentials_path = _save_local_credentials(
             host=host,
             project_id=resolved_project_id,

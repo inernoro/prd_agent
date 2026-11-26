@@ -9,6 +9,7 @@ import type { LucideIcon } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { copyTextToClipboard } from '@/lib/clipboard';
 import { reducedSurfaceMotion } from '@/lib/surfaceMotion';
+import { AGENT_SETUP_PATH } from '../../../../src/shared/agent-setup';
 import { designImplementationTargetVersion, type DesignEntry } from '../../../../src/shared/design-workspace';
 import menuIntents from '../../../../../.claude/skills/cds/reference/menu-intents.json';
 import './design-skills.css';
@@ -128,9 +129,11 @@ function useCopy() {
 }
 
 type SkillGuideProps = { designId: string; version: number; buildPrompt: DesignBuildPrompt | null; handoffBlocks?: boolean; onAccess?: never }
-  | { designId?: undefined; onAccess: () => void };
+  | { designId?: undefined; projectId: string; onAccess: () => void };
 
-export function DesignSkillsMenu({ linked, dismiss, onAccess }: { linked: boolean; dismiss: () => void; onAccess: () => void }) {
+export function DesignSkillsMenu({ linked, dismiss, projectId, onAccess }: {
+  linked: boolean; dismiss: () => void; projectId: string; onAccess: () => void;
+}) {
   const [open, setOpen] = useState(linked);
   return <details className="ep-new dw-skills" data-design-panel="cli" open={linked || undefined}
     onToggle={event => {
@@ -139,7 +142,7 @@ export function DesignSkillsMenu({ linked, dismiss, onAccess }: { linked: boolea
       if (!visible && linked) dismiss();
     }}>
     <summary className="ep-button" data-action="design-skills"><Sparkles />用技能</summary>
-    {(open || linked) && <SkillGuide onAccess={onAccess} />}
+    {(open || linked) && <SkillGuide projectId={projectId} onAccess={onAccess} />}
   </details>;
 }
 
@@ -182,6 +185,8 @@ export function SkillGuide(props: SkillGuideProps) {
   </div>;
   const stage = lifecycle[index];
   const Icon = stage.icon;
+  const buildAccess = stage.key === 'build';
+  const buildSetupQuery = new URLSearchParams({ target: 'existing', project: props.projectId, skills: 'cds-build' });
   return <div className="dw-skill-guide" data-stage={stage.key}>
     <header><strong>用 /cds 走完整个开发流程</strong><small>在 Claude Code 或接入的智能体里说一句话；每一步做什么、得到什么、怎么算完成都在这里</small></header>
     <ol className="dw-sg-flow" aria-label="开发流程">{lifecycle.map((row, i) => { const RowIcon = row.icon;
@@ -209,6 +214,10 @@ export function SkillGuide(props: SkillGuideProps) {
         <p className="dw-sg-ifnot"><TriangleAlert />没做到：{stage.ifNot}</p>
       </div>
     </section>
-    <footer><small>第一次用，先给智能体授权。</small><button className="ep-button" type="button" onClick={props.onAccess}>接入 Agent</button></footer>
+    <footer>
+      <small>{buildAccess ? '首次使用时，把接入说明的链接发给智能体。' : '第一次用，先给智能体授权。'}</small>
+      {buildAccess ? <a className="ep-button shrink-0 whitespace-nowrap" href={`${AGENT_SETUP_PATH}?${buildSetupQuery}`} target="_blank" rel="noreferrer">接入 Agent</a>
+        : <button className="ep-button" type="button" onClick={props.onAccess}>接入 Agent</button>}
+    </footer>
   </div>;
 }

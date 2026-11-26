@@ -11,6 +11,9 @@ export function buildAgentSetupGuide(origin: string, selection: AgentSetupSelect
   const designRead = designAccess === 'read';
   const designArg = designAccess ? ` --design-access ${designAccess}` : '';
   const approval = designPublish ? '批准设计发布' : designRead ? '批准设计只读' : '批准';
+  const requestCondition = designRead
+    ? '仅在自检明确报告当前没有可复用凭据或缺少设计只读权限时'
+    : '仅在自检明确报告缺少或失效的目标权限时';
   const host = quote(origin);
   const project = target.kind === 'existing' ? quote(target.projectId) : '<创建后返回的 projectId>';
   const check = `python3 <技能根>/cds/cli/cdscli.py setup-check --host ${host} ${target.kind === 'system' ? '--system' : `--project ${project}`} --skills ${quote(skills.join(','))}${designArg}`;
@@ -45,10 +48,12 @@ export function buildAgentSetupGuide(origin: string, selection: AgentSetupSelect
     '```sh', check, '```',
     target.kind === 'system'
       ? '当前是系统任务，没有项目 ID；不得拿项目列表第一项代替。CLI 只复用已有系统凭据；浏览器登录不能替代 CLI 凭据。没有系统 CLI 权限时由人类在已登录的 CDS 页面处理，不反复要求登录、不执行项目 connect、不自行签发或扩大权限。系统写操作仍按页面审批执行。'
-      : `仅在自检明确报告缺少或失效的${designRead ? '设计只读权限' : '目标权限'}时，执行以下命令。\n\n\`\`\`sh\n${connect}\n\`\`\`\n\n申请发出后，让系统所有者打开 ${origin}/project-list，在右下角「授权申请」核对项目与智能体，点击「${approval}」。智能体等待批准，自动领取并保存凭据，然后再次运行自检。${designAccess ? '等待中断时，运行同一条命令继续领取原申请。' : ''}${target.kind === 'new' ? '使用同一条 connect 命令创建和换取授权，再用返回的 projectId 再次执行自检。' : ''}`,
+      : `${requestCondition}，执行以下命令。\n\n\`\`\`sh\n${connect}\n\`\`\`\n\n申请发出后，让系统所有者打开 ${origin}/project-list，在右下角「授权申请」核对项目与智能体，点击「${approval}」。智能体等待批准，自动领取并保存凭据，然后再次运行自检。${designAccess ? '等待中断时，运行同一条命令继续领取原申请。' : ''}${target.kind === 'new' ? '使用同一条 connect 命令创建和换取授权，再用返回的 projectId 再次执行自检。' : ''}`,
     '主机、项目或凭据来源冲突时停止并报告冲突，不把冲突当作缺少权限重新授权。凭据由现有 connect 原子保存到 .cds/credentials.json 并加入 Git 忽略；不索要、不展示、不复述密钥。',
     ...(designRead ? [
       '主机绑定冲突时，先运行 `python3 <技能根>/cds/cli/cdscli.py auth inspect --strict` 查看脱敏的主机、项目和凭据来源，并与稿件链接核对。若应使用原主机，按原主机同一项目的接入说明再次自检。若确认目标是另一台 CDS，保留原绑定和凭据，在目标仓库的独立工作区中使用不继承原主机凭据的进程环境，再按目标实例的接入说明自检。',
+      '当前工作区已有可用的普通项目绑定但缺设计权限时，保留原绑定和凭据，在同一仓库的独立工作区用隔离的进程环境重新自检。需要申请时在独立工作区执行。',
+      '凭据已吊销时停止申请，请系统所有者在「项目列表 → 项目操作 → Agent Key → 已签发密钥」核对原项目的撤销记录。仍获授权的项目成员可在原稿同版「交付 → 反馈」接续。',
     ] : []),
     '',
     '## 3. 自检通过后才执行任务',
