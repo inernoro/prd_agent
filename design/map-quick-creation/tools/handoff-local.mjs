@@ -56,7 +56,7 @@ for (const c of design.handoff.cases) {
   if (only && c.id !== only) continue;
   const screen = screens.get(c.screenId);
   const phone = screen.viewport === 'phone';
-  const ctx = await browser.newContext({ viewport: phone ? { width: 375, height: 812 } : { width: 1440, height: 900 }, isMobile: phone, hasTouch: phone });
+  const ctx = await browser.newContext({ viewport: phone ? { width: 375, height: 812 } : (opt('desktop') === '1280' ? { width: 1280, height: 800 } : { width: 1440, height: 900 }), isMobile: phone, hasTouch: phone });
   const page = await ctx.newPage();
   const errors = [];
   page.on('pageerror', e => errors.push(String(e).slice(0, 200)));

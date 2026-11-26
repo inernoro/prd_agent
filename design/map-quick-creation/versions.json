@@ -37,6 +37,13 @@
    "tag": "design/DSN-1400E277/v5",
    "committedAt": "2026-11-26T12:47:54+00:00",
    "subject": "docs(design): 快速创作设计稿 V5：按设计反馈打磨对话、输入框、附件与生成中"
+  },
+  {
+   "version": 6,
+   "commit": "f9aec3a87b100f39bc17083988e8b8d3f14921e1",
+   "tag": "design/DSN-1400E277/v6",
+   "committedAt": "2026-11-26T17:38:19+00:00",
+   "subject": "Merge remote-tracking branch 'origin/main' into claude/map-quick-creation-agent-9aslcd"
   }
  ]
 }
