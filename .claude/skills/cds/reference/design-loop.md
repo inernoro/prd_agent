@@ -22,6 +22,7 @@
 | --- | --- | --- |
 | 未关闭的评论 | `cdscli design comments <稿件编号> --open` | 本版要回应的意见，发布时用 `--resolves` 关闭 |
 | 实施反馈 | MCP `cds_design_read {view:"feedback", id}` | 实现方提的复用、缺口、约束和验收问题 |
+| 原型交接检查 | `cdscli design handoff <稿件编号> --version <版号>` | 当前版本是否可以开始实施、失败在哪一步 |
 | 验收结果 | `cdscli design result <稿件编号>` | 哪些验收项没过、挡住了什么 |
 | 实施基线和已实现版本 | MCP `cds_design_read {view:"design", id}` | 决定 `changes/` 要附完整源码差异的起点 |
 | 交付资料 | MCP `cds_design_read {view:"delivery", id}` | 上一版的思路、交付说明和验收缺项 |
@@ -40,7 +41,8 @@ node <技能根>/cds/scripts/design/release.mjs check --dir design/<目录> --fu
 2. 提交稿件目录，然后用 `check` 打印的命令私有发布。续版带上 `--resolves "<评论编号>=如何处理"`。
 3. 回读：`cdscli design list`，核对版本号、来源提交和文件摘要。
 4. 登记：`release.mjs register --dir design/<目录> --commit <来源提交>`。首发后第一次登记带 `--design <稿件编号>`。
-5. 回复实施反馈：MCP `cds_design_feedback {type:"feedback.reply", revision:<新版本>}`，正文指向 `交接清单.md`，请实现方按验收项编号逐条回复。实现方从 CDS 读到回复，不用用户转告。
+5. 读取固定版本的交接检查。在同一稿件修正失败的交互。环境暂不可用时重试本版。需要执行场景时按[交接规则](design-intake.md#交接检查)补充。
+6. 回复实施反馈：MCP `cds_design_feedback {type:"feedback.reply", revision:<新版本>}`，正文指向 `交接清单.md`，请实现方按验收项编号逐条回复。实现方从 CDS 读到回复，不用用户转告。
 
 ## 五、告诉用户
 
@@ -49,7 +51,7 @@ node <技能根>/cds/scripts/design/release.mjs check --dir design/<目录> --fu
 - 稿件编号和新版本；
 - 本版改了什么，写 2 到 3 条；
 - 从实施基线到新版的净变化，引用 `changes/v<基线>-v<新版>/changes.md` 的计数；
-- 门禁结果和自检结果；
+- 程序交接回执和原型自检摘要；
 - 需要人做的事，例如在 CDS 定稿、请评审人查看。
 
 定稿和签收由获授权成员在 CDS 里操作，智能体不代办。
@@ -60,7 +62,7 @@ node <技能根>/cds/scripts/design/release.mjs check --dir design/<目录> --fu
 
 1. **读稿件**：`cds_design_read`（view=delivery）读最新版，打开 `交接清单.md`、`设计文档/目标与验收.md`。
 2. **先回复，再动手**：在实施反馈线程里按清单第五节的模板，逐条回复验收项编号（接受 / 怎么做 / 何时）。没提到的编号视为没有接受；做不到的写明原因。
-3. **定实施基线**：核对已有实施基线并按授权锁定升级目标。保留证据和当前正式环境的发布门槛。
+3. **定实施基线**：读回当前版本的交接通过回执，再核对已有实施基线并按授权锁定升级目标。保留证据和当前正式环境的发布门槛。
 4. **整份应用源码差异**：先用 `git apply --check` 对实际实现的提交做程序预检。兼容时应用发布差异。哪个文件不能直接用，在线程里逐个写文件和理由。
 5. **用同一份数据取证**：对照图两边都用稿件 `design.json.demoData` 列出的演示数据渲染。截图由 CDS 按这次提交截。每处证据带三个字段：
    - `cell.dataset`：等于演示数据的摘要；

@@ -44,6 +44,7 @@ const latestBoundTitle = '分支列表改进';
 const unboundTitle = '尚未绑定示例稿';
 const deliveryPath = 'docs/review-workspace.md';
 const tag = '评审示例标签';
+const thumbnailPng = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGPwL5wJAAJsAVpBgUBhAAAAAElFTkSuQmCC', 'base64');
 const first: DesignVersion = {
   version: 1, title: boundTitle, sourceCommit: 'a'.repeat(40), sha256: '1'.repeat(64),
   prototypeId: 'artifact-prototype', createdAt: at, publisher: author, rationale: '',
@@ -170,6 +171,104 @@ describe('V17 交付工作区', () => {
     expect(html).toContain('<strong>设置可关闭</strong>');
   });
 
+  it('未定稿也能从总览和直链查看测量、截图与人工的全部验收项', async () => {
+    const declarations = [
+      { id: 'A-01', rule: '工具栏在窄屏内完整显示', expected: '所有按钮均位于视口内。', how: 'measure' },
+      { id: 'A-02', rule: '确认后的状态和对照图一致', expected: '按同一视口检查确认完成。', how: 'screenshot' },
+      { id: 'A-03', rule: '读者能找到页面帮助', expected: '可以从页头打开帮助。', how: 'human' },
+    ] as const;
+    const rules: DesignVersion['acceptance'] = declarations.map(row => ({ ...row, screenId: currentScreen.id,
+      priority: 'normal', slots: ['desktop-light'] }));
+    const draft: DesignEntry = { ...unbound, versions: [{ ...unbound.versions[0], screens: [currentScreen], acceptance: rules,
+      handoff: { status: 'missing-plan' }, goals: [{ id: 'G-01', goal: '读者能使用工具栏', doneWhen: '三项检查有结果。', items: rules.map(rule => rule.id) }],
+    }] };
+    const overview = { design: draft.id, version: '1', tab: 'accept' };
+    const input = { ...workspace, designs: [draft] };
+    const css = await layoutStyles(design(`&design=${draft.id}&version=1&tab=accept&check=rules`, input), draftStyles);
+    await withDesignBrowser(() => input, async (page, commands) => {
+      await page.goto(browserDesignUrl(overview));
+      const tablist = page.getByRole('tablist', { name: '验收手段' });
+      await tablist.getByRole('tab', { name: /全部验收项/ }).waitFor();
+      await page.locator('[data-stage=items]').click();
+      await page.waitForURL(url => url.searchParams.get('check') === 'rules');
+
+      async function checkRules() {
+        const panel = page.getByRole('tabpanel', { name: /全部验收项/ });
+        await panel.getByRole('heading', { name: /全部验收项/ }).waitFor();
+        expect(await panel.locator('li[data-rule]').count()).toBe(rules.length);
+        for (const rule of rules) {
+          const line = panel.locator(`li[data-rule="${rule.id}"]`);
+          await line.waitFor({ state: 'visible' });
+          expect(await line.innerText()).toContain(rule.expected);
+        }
+        const counts = await panel.locator('[data-item=rules] .dw-dl-factline').innerText();
+        for (const label of ['测量 1', '截图 1', '人工 1']) expect(counts).toContain(label);
+      }
+
+      await checkRules();
+      for (const [width, height] of [[1280, 800], [375, 812]] as const) {
+        await page.setViewportSize({ width, height });
+        await page.goto(browserDesignUrl({ ...overview, check: 'rules' }));
+        await applyFixtureStyles(page, css);
+        await checkRules();
+        await checkAcceptanceLayout(page, `rules-${width}`);
+      }
+      expect(commands).toHaveLength(0);
+    });
+  }, 30_000);
+
+  it('无分手段计划的对照图直链呈现程序缩略图和未取实拍状态', async () => {
+    const desktop = historyScreen('comparison-desktop', '桌面对照样例');
+    const phone: DesignScreen = { ...historyScreen('comparison-phone', '手机对照样例'), viewport: 'phone' };
+    const artifactId = 'fixture-comparison-reference';
+    const renders: DesignThumbnailStatus['renders'] = Object.fromEntries([desktop, phone].map(screen => [screen.id,
+      { light: { id: artifactId, sha256: 'c'.repeat(64) }, dark: { id: artifactId, sha256: 'c'.repeat(64) } },
+    ]));
+    const draft: DesignEntry = { ...unbound, versions: [{ ...unbound.versions[0], screens: [desktop, phone] }] };
+    const input = { ...workspace, designs: [draft] };
+    const css = await layoutStyles(design(`&design=${draft.id}&version=1&tab=accept&check=compare`, input), draftStyles);
+    await withDesignBrowser(() => input, async (page, commands) => {
+      const reads: URLSearchParams[] = [];
+      await page.route(url => url.pathname === `/api/projects/${projectId}/design` && url.searchParams.get('view') === 'thumbnails', route => {
+        reads.push(new URL(route.request().url()).searchParams);
+        return route.fulfill({ json: { designId: draft.id, version: 1, state: 'ready', total: 4, completed: 4, renders } });
+      });
+      await page.route(`**/design/artifacts/${artifactId}`, route => route.fulfill({ contentType: 'image/png', body: thumbnailPng }));
+      const variants = [{ width: 1280, height: 800, screen: desktop }, { width: 375, height: 812, screen: phone }];
+      for (const { width, height, screen } of variants) {
+        await page.setViewportSize({ width, height });
+        await page.goto(browserDesignUrl({ design: draft.id, version: '1', tab: 'accept', check: 'compare' }));
+        await applyFixtureStyles(page, css);
+        const tab = page.getByRole('tab', { name: '对照图' });
+        await tab.waitFor();
+        expect(await tab.getAttribute('aria-selected')).toBe('true');
+        const table = page.getByRole('table', { name: '逐画面对照' });
+        const row = table.locator(`[data-screen="${screen.id}"]`);
+        const image = row.getByRole('button', { name: `看 ${screen.name} 对照图` }).locator('img');
+        await image.waitFor();
+        await image.scrollIntoViewIfNeeded();
+        const imageWidth = await image.evaluate(async node => {
+          const png = node as HTMLImageElement;
+          await png.decode();
+          return png.naturalWidth;
+        });
+        expect(imageWidth).toBe(1);
+        await row.getByText('缺实拍', { exact: true }).waitFor();
+        await row.getByText('未运行', { exact: true }).waitFor();
+        await checkAcceptanceLayout(page, `comparison-${width}`);
+        await row.getByRole('button', { name: `逐项对图 · ${screen.name}` }).click();
+        const dialog = page.getByRole('dialog', { name: new RegExp(screen.name) });
+        await dialog.getByRole('img', { name: /对照图 · 稿件/ }).waitFor();
+        expect(await dialog.getByRole('button', { name: '叠加' }).isDisabled()).toBe(true);
+        await page.keyboard.press('Escape');
+        await dialog.waitFor({ state: 'hidden' });
+      }
+      expect(reads.length).toBeGreaterThanOrEqual(2);
+      expect(reads.every(query => query.get('designId') === draft.id && query.get('version') === '1')).toBe(true);
+      expect(commands).toHaveLength(0);
+    });
+  }, 30_000);
+
   it('随画面显示右栏，全文关闭、右栏收起以及返回保持同一屏', async () => {
     await withDesignBrowser(() => historyWorkspace, async page => {
       await page.goto(browserDesignUrl({ design: historyDraft.id, version: '1' }));
@@ -232,8 +331,6 @@ describe('V17 交付工作区', () => {
 });
 
 describe('已发布的演示、评论和交付布局', () => {
-  const thumbnailPng = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGPwL5wJAAJsAVpBgUBhAAAAAElFTkSuQmCC', 'base64');
-
   it('同一份稿件的新版展示新右栏，历史版沿用原画面入口', async () => {
     await withDesignBrowser(() => guidedWorkspace, async page => {
       await page.goto(browserDesignUrl({ design: guidedDraft.id, version: '18' }));
@@ -588,6 +685,23 @@ async function layoutStyles(markup: string, cssFiles: string[]) {
     content: [{ raw: markup, extension: 'html' }],
   }), fromWeb('autoprefixer')]).process(styles.join('\n'), { from: path.resolve('web/src/index.css') });
   return css;
+}
+
+async function applyFixtureStyles(page: Page, css: string) {
+  await page.evaluate(styles => {
+    const tag = document.createElement('style');
+    tag.textContent = styles;
+    document.head.append(tag);
+  }, css);
+}
+
+async function checkAcceptanceLayout(page: Page, name: string) {
+  const panel = page.locator('.dw-acceptance');
+  const width = await panel.evaluate(node => ({ visible: node.clientWidth, content: node.scrollWidth }));
+  expect(width.visible).toBeGreaterThan(0);
+  expect(width.content).toBeLessThanOrEqual(width.visible + 1);
+  const evidence = process.env.CDS_DESIGN_QA_EVIDENCE;
+  if (evidence) await panel.screenshot({ path: path.join(evidence, `${name}.png`), animations: 'disabled' });
 }
 
 async function withLayout(markup: string, cssFiles: string[], check: (page: Page) => Promise<void>, options?: BrowserContextOptions) {

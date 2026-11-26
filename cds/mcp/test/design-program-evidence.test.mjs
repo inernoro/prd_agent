@@ -19,6 +19,8 @@ test('real stdio design MCP keeps capture and independent review within their ow
   let permissions = { write: true, visual: false, programRecheck: true };
   let replyProject = projectId;
   let replyFields = {};
+  const handoffRequests = [];
+  const handoff = { status: 'failed', cases: [{ caseId: 'identity', ruleIds: ['A-01'], step: 2, code: 'expectation' }] };
   const server = createServer(async (request, response) => {
     const endpoint = new URL(request.url, 'http://127.0.0.1').pathname;
     const send = (status, data) => {
@@ -26,7 +28,13 @@ test('real stdio design MCP keeps capture and independent review within their ow
       response.end(JSON.stringify(data));
     };
     if (request.headers['x-ai-access-key'] !== projectKey) return send(401, { error: 'fixture_key' });
-    if (request.method === 'GET' && endpoint === route) return send(200, { projectId, permissions, frameworks: [], designs: [] });
+    if (request.method === 'GET' && endpoint === route) {
+      const query = new URL(request.url, 'http://127.0.0.1').searchParams;
+      const fixed = query.get('designId') === target.designId && query.get('version') === '22';
+      if (fixed) handoffRequests.push(query.toString());
+      return send(200, { projectId, permissions, frameworks: [], designs: fixed
+        ? [{ id: target.designId, projectId, versions: [{ version: 22, handoff }] }] : [] });
+    }
     if (request.method !== 'POST' || ![route + '/acceptance/recheck', route + '/commands'].includes(endpoint)) {
       return send(404, { error: 'fixture_route' });
     }
@@ -88,6 +96,19 @@ test('real stdio design MCP keeps capture and independent review within their ow
   replyFields = {};
   replyProject = 'foreign-fixture';
   await assert.rejects(call(recheck), /回执/);
+
+  replyProject = projectId;
+  permissions = { write: true, visual: false, programRecheck: false, handoffCheck: true };
+  const readback = await client.callTool({ name: 'cds_design_read', arguments: { view: 'handoff', id: target.designId, version: 22 } });
+  assert(!readback.isError);
+  assert.deepEqual(JSON.parse(readback.content[0].text), { projectId, designId: target.designId, version: 22, handoff });
+  const check = { type: 'handoff.check', designId: target.designId, version: 22, requestId: 'handoff-key' };
+  assert.deepEqual(await call(check), { projectId, reused: false, result: { type: check.type, designId: check.designId, version: check.version } });
+  assert.deepEqual(commands.at(-1), { path: route + '/commands', body: check });
+  assert.equal(handoffRequests.length, 2);
+  replyFields = { version: 23 };
+  await assert.rejects(call(check), /不同稿件或版本/);
+  replyFields = {};
 
   permissions = { write: false, visual: false, programRecheck: false };
   assert(!(await client.listTools()).tools.some(item => item.name === tool));

@@ -1,3 +1,4 @@
+import { designViewports } from '../../src/shared/design-workspace.js';
 import { once } from 'node:events';
 import { createHash, createHmac } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -122,7 +123,8 @@ describe('private CDS design workspace', () => {
   }
 
   function openWorkspace(planning?: EngineeringPlanningService, storeDirectory = directory,
-    captureCover?: (prototype: Buffer, target: DesignReferenceTarget) => Promise<Buffer | undefined>) {
+    captureCover?: (prototype: Buffer, target: DesignReferenceTarget) => Promise<Buffer | undefined>,
+    referenceCapture?: import('../../src/services/design-framework-browser.js').DesignReferenceCapture) {
     const dependencies = {
       now: () => new Date(clock),
       approvedPlanFor: async (project: string, plan: string) => project === projectId && plan === 'PLN-approved'
@@ -147,6 +149,7 @@ describe('private CDS design workspace', () => {
     return new DesignWorkspaceService(new FileProjectRevisionStore<DesignWorkspaceCommit>(storeDirectory), {
       ...dependencies,
       ...(captureCover ? { captureCover } : {}),
+      ...(referenceCapture ? { referenceCapture } : {}),
       ...(planning ? {
         findDebt: async (project, debtId, sourceRef) => await planning.designAcceptanceDebt(project, debtId, sourceRef) === debtId,
         resolveDebtProposal: (project, proposalId, sourceRef) => planning.designAcceptanceDebt(project, proposalId, sourceRef),
@@ -228,6 +231,33 @@ describe('private CDS design workspace', () => {
       body: JSON.stringify({ type, requestId, ...fields }),
     });
   }
+
+  it('backfills old preview thumbnails on first authorized read, with the same assets on repeated reads', async () => {
+    const uploaded = await publish('thumbnail-old-draft', draft('Preview without screenshots'));
+    const { designId, version } = (await uploaded.json()).result;
+    const capture = vi.fn(async function* (_prototype: Buffer, targets: readonly DesignReferenceTarget[]) {
+      for (const target of targets) {
+        const size = designViewports[target.screen.viewport];
+        yield { ...target, bytes: png(size.width, size.height) };
+      }
+    });
+    base = await openApi(openWorkspace(undefined, directory, undefined, capture));
+    const path = '?view=thumbnails&designId=' + designId + '&version=' + version;
+    const first = await (await get(path)).json();
+    expect(first.state).toBe('running');
+    let complete: any;
+    await vi.waitFor(async () => {
+      complete = await (await get(path)).json();
+      expect(complete.state).toBe('ready');
+      expect(complete.completed).toBe(complete.total);
+    });
+    const reread = await (await get(path)).json();
+    expect(reread.renders).toEqual(complete.renders);
+    expect(capture).toHaveBeenCalledTimes(1);
+    const image = Object.values(complete.renders)[0] as { light: { id: string } };
+    const response = await get('/artifacts/' + image.light.id);
+    expect(response.headers.get('content-type')).toBe('image/png');
+  });
 
   describe('automatic design library covers', () => {
     function pausedCover() {
