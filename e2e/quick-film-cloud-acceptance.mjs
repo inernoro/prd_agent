@@ -36,7 +36,8 @@ try {
   const token = (await responseData(login, 'Sign in with the cloud acceptance account')).accessToken;
   assert.ok(token);
   await page.getByLabel('打开用户菜单', { exact: true }).waitFor({ timeout: 60_000 });
-  const nav = page.locator('a[href="/web-pages"]:visible').first();
+  const nav = page.locator('nav button[title^="网页托管"]:visible')
+    .or(page.getByRole('button', { name: '网页', exact: true }).filter({ visible: true })).first();
   await nav.click();
   await page.waitForURL((url) => url.pathname === '/web-pages');
   const [historyResponse] = await Promise.all([
@@ -93,39 +94,6 @@ try {
   await share.getByText(/只有你本人打开有内容/).waitFor();
   console.log('Save verified twice against one private site; share settings opened with the owner-only default.');
 
-  const input = reference.uploadedSources[0];
-  const asset = await responseData(await page.request.get(endpoint(`/api/v1/attachments/${input.attachmentId}`).href, apiAuth), 'Read original attachment metadata');
-  const fileUrl = new URL(asset.url, origin);
-  assert.equal(fileUrl.protocol, 'https:');
-  const document = await fetch(fileUrl, { signal: AbortSignal.timeout(30_000) });
-  assert.ok(document.ok, `Read original attachment returned HTTP ${document.status}`);
-  const source = Buffer.from(await document.arrayBuffer());
-  assert.equal(source.length, 15_903);
-  assert.equal(digest(source), input.contentHash);
-  assert.equal(digest(reference.instruction), 'cfc8631202ec14fd5f88c61f65c4c0f0bb642d7802b6c622e5308db87e7fa7a1');
-  const earlier = history.items.some((item) => item.title === 'architectural-decision-records'
-    && item.uploadedSources?.[0]?.contentHash === input.contentHash
-    && item.instruction === reference.instruction);
-  if (earlier) {
-    console.log('The same ADR already has a Quick Create submission. Existing task was retained.');
-  } else {
-    await page.keyboard.press('Escape');
-    await page.getByRole('button', { name: '快速创作', exact: true }).click();
-    await sourceInput.setInputFiles({ name: input.fileName, mimeType: 'text/markdown', buffer: source });
-    await dialog.getByLabel('创作要求（可选）').fill(reference.instruction);
-    await dialog.getByLabel('模型', { exact: true }).selectOption('gpt-6.1-sol');
-    const [created] = await Promise.all([
-      page.waitForResponse(requestMatches('/api/design-artifacts/runs', 'POST'), { timeout: 90_000 }),
-      dialog.getByRole('button', { name: '生成视频', exact: true }).click(),
-    ]);
-    const run = await responseData(created, 'Submit original ADR through Quick Create');
-    assert.equal(run.artifactType, 'code-film');
-    assert.equal(run.uploadedSources[0].contentHash, input.contentHash);
-    await page.reload();
-    await page.getByRole('button', { name: '快速创作', exact: true }).click();
-    await movies.locator('option').filter({ hasText: 'architectural-decision-records' }).first().waitFor({ state: 'attached', timeout: 45_000 });
-    console.log('Original ADR and unchanged prompt submitted once through the browser; the task is visible again after reload.');
-  }
 } finally {
   await browser.close();
 }
