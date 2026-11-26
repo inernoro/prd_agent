@@ -1944,6 +1944,9 @@ function projectKeyAllowsRequest(
       if (!/^\/api(?:\/|$)/i.test(url) || isPublicAccessRequestRoute(req.method, url)) return true;
       if (/^\/api\/projects$/i.test(url)) return req.method === 'GET' || req.method === 'HEAD';
       if (/^\/api\/config$/i.test(url)) return req.method === 'GET' || req.method === 'HEAD';
+      if (/^\/api\/env(?:\/[^/]+)?$/i.test(url)) {
+        return req.method === 'GET' || req.method === 'HEAD' || req.method === 'PUT' || req.method === 'DELETE';
+      }
       if ((req.method === 'POST' && /^\/api\/releases\/targets(?:\/local-prod|\/[^/]+\/reclaim)?$/i.test(url))
         || (req.method === 'PATCH' && /^\/api\/releases\/targets\/[^/]+$/i.test(url))) return hasProjectAccess || legacy;
       if (/^\/api\/branches\/state-audit$/i.test(url)) return false;
@@ -5964,7 +5967,7 @@ export function createServer(deps: ServerDeps): express.Express {
     defaultBranchFor: (projectId) => deps.stateService.getDefaultBranchFor(projectId),
     fileAnchorProbe: createPlanningFileAnchorProbe(projectId => {
       const project = deps.stateService.getProject(projectId);
-      return project && !project.mirror ? deps.stateService.getProjectRepoRoot(projectId, deps.config.repoRoot) : undefined;
+      return project && !project.mirror ? deps.stateService.getProjectSourceRoot(projectId, deps.config.repoRoot) : undefined;
     }),
   }, projectId => designWorkspace.planningLinks(projectId));
   lookupPlanningPreview = (projectId, number) => planning.pullRequestPreview(projectId, number);
@@ -6052,8 +6055,8 @@ export function createServer(deps: ServerDeps): express.Express {
     },
     sourcePackage: (projectId, commit, sourcePath) => {
       const project = deps.stateService.getProject(projectId);
-      return project && !project.mirror ? readDesignSourceZip(deps.stateService.getProjectRepoRoot(project.id, deps.config.repoRoot), commit, sourcePath)
-        : Promise.resolve(undefined);
+      const root = project && !project.mirror ? deps.stateService.getProjectSourceRoot(projectId, deps.config.repoRoot) : undefined;
+      return root ? readDesignSourceZip(root, commit, sourcePath) : Promise.resolve(undefined);
     },
     resolvePreview: async (projectId, pullRequest, commit) => {
       const preview = await planning.pullRequestPreview(projectId, pullRequest);

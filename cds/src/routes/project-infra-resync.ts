@@ -213,8 +213,8 @@ export function createProjectInfraResyncRouter(deps: InfraResyncDeps): Router {
     // 来源 1:项目根目录
     let repoCompose: { found: boolean; fileName?: string; yaml?: string; error?: string } = { found: false };
     try {
-      const repoRoot = stateService.getProjectRepoRoot(projectId, config.repoRoot);
-      const files = discoverComposeFiles(repoRoot);
+      const repoRoot = stateService.getProjectSourceRoot(projectId, config.repoRoot);
+      const files = repoRoot ? discoverComposeFiles(repoRoot) : [];
       if (files.length > 0) {
         const yaml = nodeFs.readFileSync(files[0], 'utf-8');
         repoCompose = { found: true, fileName: nodePath.basename(files[0]), yaml };

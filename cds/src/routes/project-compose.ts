@@ -253,8 +253,8 @@ export function createProjectComposeRouter(deps: ProjectComposeDeps): Router {
     const project = stateService.getProject(projectId);
     if (!project) { res.status(404).json({ error: '项目不存在' }); return; }
 
-    const repoRoot = stateService.getProjectRepoRoot(projectId, deps.repoRootFallback);
-    const repoYaml = readRepoComposeYaml(repoRoot);
+    const repoRoot = stateService.getProjectSourceRoot(projectId, deps.repoRootFallback);
+    const repoYaml = repoRoot ? readRepoComposeYaml(repoRoot) : null;
     let repoParsed = null;
     if (repoYaml) {
       try { repoParsed = parseCdsCompose(repoYaml); } catch { repoParsed = null; }

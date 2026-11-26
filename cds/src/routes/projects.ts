@@ -796,7 +796,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
    * 编一份假的目录清单不行（用户会照着它填一个不存在的路径）。
    */
   function listRepoTopLevelDirs(projectId: string): string[] {
-    const root = stateService.getProjectRepoRoot(projectId, config?.repoRoot || '');
+    const root = stateService.getProjectSourceRoot(projectId, config?.repoRoot || '');
     if (!root) return [];
     try {
       return nodeFs.readdirSync(root, { withFileTypes: true })
@@ -2847,7 +2847,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
   router.get('/projects/:id/detect-preview', (req, res) => {
     const project = stateService.getProject(req.params.id);
     if (!project) { res.status(404).json({ error: 'project_not_found' }); return; }
-    const repoRoot = stateService.getProjectRepoRoot(project.id, deps.config?.repoRoot || '');
+    const repoRoot = stateService.getProjectSourceRoot(project.id, deps.config?.repoRoot || '');
     if (!repoRoot || !nodeFs.existsSync(repoRoot)) {
       res.status(409).json({ error: 'repo_not_ready', message: '项目仓库尚未克隆完成,暂无法扫描。请等待 clone 完成后重试。' });
       return;

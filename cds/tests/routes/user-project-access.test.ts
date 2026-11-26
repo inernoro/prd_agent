@@ -1812,6 +1812,44 @@ describe('human project grants through the production server', () => {
     expect((await credentialCall('GET', project + '/design/intake', planningKey)).status).toBe(403);
   });
 
+  it('keeps environment operations on the credential project in shared mode', async () => {
+    const project = '/api/projects/project-a';
+    const issued = await call('POST', project + '/agent-keys', owner, { designAccess: 'read' });
+    expect((await call('PUT', project, owner, { agentKeyCollaboration: true })).status).toBe(200);
+    const key = issued.body.plaintext;
+    expect(await credentialCall('PUT', '/api/env/FIXTURE_PROJECT_SETTING?scope=project-a', key, { value: 'in-project' }))
+      .toMatchObject({ status: 200, body: { scope: 'project-a' } });
+    expect(await credentialCall('GET', '/api/env', key))
+      .toMatchObject({ status: 200, body: { scope: 'project-a', env: { FIXTURE_PROJECT_SETTING: 'in-project' }, globalEnv: {} } });
+    expect(await credentialCall('GET', '/api/env/audit', key)).toMatchObject({ status: 200, body: { scope: 'project-a' } });
+    for (const scope of ['_global', '_all', 'project-b']) {
+      expect((await credentialCall('GET', `/api/env?scope=${scope}`, key)).status).toBe(403);
+    }
+  });
+
+  it('does not substitute the CDS checkout for an unbound collaborative project', async () => {
+    const project = '/api/projects/project-a';
+    const issued = await call('POST', project + '/agent-keys', owner, { designAccess: 'read' });
+    const key = issued.body.plaintext;
+    state.updateProject('project-a', { repoPath: undefined });
+    fs.writeFileSync(path.join(dir, 'cds-compose.yml'), 'services:\n  fixture-instance-only:\n    image: fixture\n');
+    expect((await call('PUT', project, owner, { agentKeyCollaboration: true })).status).toBe(200);
+    expect(await credentialCall('GET', project + '/infra/resync/sources', key))
+      .toMatchObject({ status: 200, body: { repoCompose: { found: false } } });
+    expect(await credentialCall('POST', project + '/compose-drift-scan', key, { createImport: true }))
+      .toMatchObject({ status: 200, body: { report: { hasRepoCompose: false }, createdImportId: null } });
+    expect(await credentialCall('GET', project + '/detect-preview', key)).toMatchObject({
+      status: 409, body: { error: 'repo_not_ready' },
+    });
+    const repoPath = path.join(dir, 'project-checkout');
+    const yaml = 'services:\n  fixture-project-service:\n    image: fixture\n';
+    fs.mkdirSync(repoPath);
+    fs.writeFileSync(path.join(repoPath, 'cds-compose.yml'), yaml);
+    state.updateProject('project-a', { repoPath });
+    expect(await credentialCall('GET', project + '/infra/resync/sources', key))
+      .toMatchObject({ status: 200, body: { repoCompose: { found: true, yaml } } });
+  });
+
   it('lists keys newest first and separates verified user, agent, and unconfirmed sources', async () => {
     const keys = '/api/projects/project-a/agent-keys';
     // The historical label can be arbitrary. Linked machine credentials take

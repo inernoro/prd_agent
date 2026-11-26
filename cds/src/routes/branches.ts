@@ -13174,7 +13174,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
   function metadataOnlyGitRepository(entry: BranchEntry): string | undefined {
     try { fs.lstatSync(entry.worktreePath); return undefined; }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
-    return stateService.getProjectRepoRoot(entry.projectId || 'default', config.repoRoot);
+    return stateService.getProjectSourceRoot(entry.projectId || 'default', config.repoRoot);
   }
 
   // ── Pull latest code ──
@@ -14134,7 +14134,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           : `分支: \`${entry.branch}\`\n阶段: 准备独立部署源码`,
         force: true,
       });
-      const deploymentRepoRoot = stateService.getProjectRepoRoot(entry.projectId || 'default', config.repoRoot);
+      const deploymentRepoRoot = stateService.getProjectSourceRoot(entry.projectId || 'default', config.repoRoot) ?? entry.worktreePath;
       // Reject known-invalid declarations before any full source snapshot is allocated.
       // Runtime preflight still revalidates native identity and current references.
       for (const profile of profiles) assertProfileStorageBoundary(resolveEffectiveProfile(profile, inputBranch()), entry.worktreePath);
@@ -15597,7 +15597,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // Pull latest code
       logEvent({ step: 'pull', status: 'running', title: '正在拉取最新代码...', timestamp: new Date().toISOString() });
       const deployProject = entry.projectId ? stateService.getProject(entry.projectId) : undefined;
-      const deploymentRepoRoot = stateService.getProjectRepoRoot(entry.projectId || 'default', config.repoRoot);
+      const deploymentRepoRoot = stateService.getProjectSourceRoot(entry.projectId || 'default', config.repoRoot) ?? entry.worktreePath;
       assertProfileStorageBoundary(resolveEffectiveProfile(profile, inputBranch()), entry.worktreePath);
       let pullResult = isSyntheticCdsManagedRuntimeBranch(entry, deployProject)
         ? { head: entry.githubCommitSha || 'cds-managed-runtime', skipped: true, reason: 'synthetic-cds-managed-runtime' }
@@ -20256,12 +20256,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
 
-    // Use the project's actual repo root so stack detection looks at
-    // the right tree. Legacy projects (no per-project repoPath) fall
-    // back to config.repoRoot via getProjectRepoRoot.
-    const projectRepoRoot = stateService.getProjectRepoRoot(projectId, config.repoRoot);
-    const adminDir = path.join(projectRepoRoot, 'prd-admin');
-    const pm = fs.existsSync(adminDir) ? detectPackageManager(adminDir) : 'npm';
+    // Detect the package manager in this project's checkout when available.
+    const projectRepoRoot = stateService.getProjectSourceRoot(projectId, config.repoRoot);
+    const adminDir = projectRepoRoot && path.join(projectRepoRoot, 'prd-admin');
+    const pm = adminDir && fs.existsSync(adminDir) ? detectPackageManager(adminDir) : 'npm';
     const nodeCmd = nodeProfileCommands(pm);
 
     // Look up the project up-front — we need the slug both for the
@@ -20285,10 +20283,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // across all projects, so reading from it would let one project's compose
     // file silently contaminate a different project's build profiles.
     let composeYaml: string | null = null;
-    const composeCandidates: string[] = [
+    const composeCandidates = projectRepoRoot ? [
       path.join(projectRepoRoot, 'cds-compose.yaml'),
       path.join(projectRepoRoot, 'cds-compose.yml'),
-    ];
+    ] : [];
     // De-duplicate paths (projectRepoRoot may equal config.repoRoot for legacy)
     const seen = new Set<string>();
     for (const composePath of composeCandidates) {
@@ -20425,7 +20423,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const bodyScope = req.body && typeof req.body === 'object' && typeof (req.body as Record<string, unknown>).scope === 'string'
       ? ((req.body as Record<string, string>).scope).trim()
       : '';
-    return { scope: bodyScope || '_global', fromBody: !!bodyScope };
+    const key = (req as Parameters<typeof assertProjectAccess>[0]).cdsProjectKey;
+    const sharedProjectId = key && stateService.getProject(key.projectId)?.agentKeyCollaboration ? key.projectId : undefined;
+    return { scope: bodyScope || sharedProjectId || '_global', fromBody: !!bodyScope };
   }
 
   function resolveScope(req: import('express').Request): string {
@@ -20446,7 +20446,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // matching scope, or human cookie session) sees plaintext. Everyone else
     // gets `***[masked]***` — UI keeps rendering "X env vars configured" but
     // no machine credential walks away with the secret material.
-    const projKey = (req as any).cdsProjectKey as { projectId: string } | undefined;
+    const projKey = (req as Parameters<typeof assertProjectAccess>[0]).cdsProjectKey;
+    const shared = projKey && stateService.getProject(projKey.projectId)?.agentKeyCollaboration;
+    if (shared) {
+      if (scope === '_all') {
+        res.status(403).json({ error: 'global_env_forbidden', message: '这把凭据只能读取本项目的配置' });
+        return;
+      }
+      if (!allowEnvironmentScope(req, res, scope)) return;
+    }
     const humanOwner = isHumanSystemOwner(req);
     const maskValues = (env: Record<string, string>): Record<string, string> => {
       const out: Record<string, string> = {};
@@ -20492,7 +20500,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         // _global plaintext only when caller owns _global (i.e. cookie auth);
         // a project-scoped cdsp_ key sees its own project plaintext but
         // global stays masked (consistent with reveal/customEnv P1 model).
-        const globalEnv = ownerOkFor('_global') ? rawGlobal : maskValues(rawGlobal);
+        const globalEnv = shared ? {} : ownerOkFor('_global') ? rawGlobal : maskValues(rawGlobal);
         res.json({ env, scope, envMeta, missingRequiredEnvKeys, globalEnv });
         return;
       }
@@ -20557,7 +20565,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const stamped = req as Request & Parameters<typeof assertProjectAccess>[0];
     if (scope === '_global') {
       if (stamped.cdsProjectKey || (stamped.cdsAccess && stamped.cdsAccess.access.projects !== 'all')) {
-        res.status(403).json({ error: 'global_env_forbidden', message: '这把凭据无权修改全局配置' });
+        res.status(403).json({ error: 'global_env_forbidden', message: '这把凭据无权访问全局配置' });
         return false;
       }
       return true;
@@ -20598,6 +20606,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const env: Record<string, string> = {};
     for (const [k, v] of Object.entries(rawBody)) {
       if (k === 'scope' && fromBody) continue;
+      if (Object.hasOwn(Object.prototype, k) || typeof v !== 'string') {
+        res.status(400).json({ error: 'invalid_environment_variable', message: '环境变量须使用有效名称和字符串值' });
+        return;
+      }
       env[k] = v;
     }
     const previous = stateService.getCustomEnvScope(scope);
@@ -20615,15 +20627,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     appendEnvironmentAudit(stateService, req, scope, 'bulk-replace', previous, env);
     stateService.save();
-    syncCdsConfig();
+    if (scope === '_global') syncCdsConfig();
     res.json({ message: '环境变量已更新', env, scope });
   });
 
   router.put('/env/:key', (req, res) => {
     const { key } = req.params;
     const { value } = req.body as { value?: string };
-    if (value === undefined) {
-      res.status(400).json({ error: '值不能为空' });
+    if (Object.hasOwn(Object.prototype, key) || typeof value !== 'string') {
+      res.status(400).json({ error: 'invalid_environment_variable', message: '环境变量须使用有效名称和字符串值' });
       return;
     }
     const scope = resolveScope(req);
@@ -20643,7 +20655,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     appendEnvironmentAudit(stateService, req, scope, 'set', previous, stateService.getCustomEnvScope(scope), [key]);
     stateService.save();
-    syncCdsConfig();
+    if (scope === '_global') syncCdsConfig();
     res.json({ message: `Set ${key}`, scope });
   });
 
@@ -20662,7 +20674,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     //(典型场景:用户删了一个泄漏的 SMTP 密码,下次 webhook 自动建分支又把它注回去)
     if (scope !== '_global' && stateService.getProject(scope)) {
       const current = stateService.getDefaultEnv(scope);
-      if (key in current) {
+      if (Object.hasOwn(current, key)) {
         delete current[key];
         stateService.setDefaultEnv(scope, current);
       }

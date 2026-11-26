@@ -1505,7 +1505,7 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
   // ── Branch management ──
 
   getBranch(id: string): BranchEntry | undefined {
-    return this.state.branches[id];
+    return Object.hasOwn(this.state.branches, id) ? this.state.branches[id] : undefined;
   }
 
   getAllBranches(): BranchEntry[] {
@@ -4342,6 +4342,12 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     if (!projectId) return fallback;
     const project = this.getProject(projectId);
     return project?.repoPath || fallback;
+  }
+
+  /** For shared projects, use the bound checkout unless this is the legacy project. */
+  getProjectSourceRoot(projectId: string, fallback: string): string | undefined {
+    const project = this.getProject(projectId);
+    return project?.repoPath || (project?.agentKeyCollaboration && !project.legacyFlag ? undefined : fallback);
   }
 
   // ── FU-04: worktree layout migration bookkeeping ──
