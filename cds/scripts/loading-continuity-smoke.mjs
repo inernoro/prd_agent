@@ -147,8 +147,8 @@ try {
       await page.locator(`main .cds-workspace ${selector}`).first().waitFor({ state: 'hidden', timeout: 15000 });
       result.dataReplacedSkeleton = true;
       if (!before && scene.kind === 'personal-settings') {
-        await page.getByRole('heading', { name: '我的登录', exact: true }).waitFor();
-        await page.getByRole('button', { name: '修改本人口令', exact: true }).waitFor();
+        await page.getByRole('heading', { name: '个人设置', exact: true }).waitFor();
+        await page.getByRole('button', { name: '修改密码', exact: true }).waitFor();
       }
       if (!before && scene.kind === 'settings') {
         await page.getByRole('heading', { name: '登录方式', exact: true }).waitFor();
