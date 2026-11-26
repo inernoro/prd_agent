@@ -175,6 +175,32 @@ export interface QcWork {
   updatedAt: string;
 }
 
+/**
+ * 产物：已经生成的视频或网页，用来在创作时回看——自己做过的、团队做过的，同一个风格做出来是什么样。
+ * 只列已生成的成品；进行中、失败的任务在「我的作品」里管理。
+ */
+export interface QcAsset {
+  id: string;
+  /** 打开这个产物对应的任务 */
+  runId: string;
+  title: string;
+  kind: OutputKind;
+  templateId: string;
+  /** 视频时长（秒） */
+  durationSec?: number;
+  /** 网页节数 */
+  sections?: number;
+  /** 谁做的；自己的写「我」 */
+  ownerName: string;
+  mine: boolean;
+  publishStatus: PublishStatus;
+  /** 已发布时的网页托管站点编号，用于定位 */
+  siteId?: string;
+  updatedAt: string;
+}
+
+export type AssetScope = 'mine' | 'team';
+
 export interface CreateRunInput {
   kind: OutputKind;
   templateId: string;

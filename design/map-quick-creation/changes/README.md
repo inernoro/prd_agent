@@ -4,8 +4,8 @@
 
 | 从 | 验收项 新增/删除/改写 | 画面 新增/删除/改动 | 源码文件 | 文件 |
 |---|---|---|---|---|
-| V1 | 6/0/25 | 1/0/1 | 115 | `changes/v1-v6/summary.json`、`changes/v1-v6/changes.md`、`changes/v1-v6/source.diff` |
-| V2 | 4/0/10 | 1/0/1 | 113 | `changes/v2-v6/summary.json`、`changes/v2-v6/changes.md` |
-| V3 | 4/0/10 | 1/0/1 | 113 | `changes/v3-v6/summary.json`、`changes/v3-v6/changes.md` |
-| V4 | 4/0/10 | 1/0/1 | 113 | `changes/v4-v6/summary.json`、`changes/v4-v6/changes.md` |
-| V5 | 4/0/4 | 1/0/0 | 109 | `changes/v5-v6/summary.json`、`changes/v5-v6/changes.md` |
+| V1 | 9/0/25 | 4/0/1 | 116 | `changes/v1-v6/summary.json`、`changes/v1-v6/changes.md`、`changes/v1-v6/source.diff` |
+| V2 | 7/0/10 | 4/0/1 | 114 | `changes/v2-v6/summary.json`、`changes/v2-v6/changes.md` |
+| V3 | 7/0/10 | 4/0/1 | 114 | `changes/v3-v6/summary.json`、`changes/v3-v6/changes.md` |
+| V4 | 7/0/10 | 4/0/1 | 114 | `changes/v4-v6/summary.json`、`changes/v4-v6/changes.md` |
+| V5 | 7/0/4 | 4/0/0 | 110 | `changes/v5-v6/summary.json`、`changes/v5-v6/changes.md` |

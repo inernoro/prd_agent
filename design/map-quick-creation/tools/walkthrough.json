@@ -142,5 +142,17 @@
  "A-46": {
   "status": "passed",
   "note": "风格详情底部署名「Lemo-Opuscar by Lemomo (LemoLab) · 样片海报 CC BY 4.0」；源码差异只含 promptRef 位置字段，不含 STYLE.md 正文（grep「Style Prompt」「Essence」为 0）"
+ },
+ "A-47": {
+  "status": "passed",
+  "note": "assets / assets-team / phone-assets 两主题截图：右栏页签「风格 / 产物」（任务中为「本次 / 产物」）；选中产物大图、作者、时间、视频时长、风格与发布状态；筛选行「我的 / 团队」与「全部 / 视频 / 网页」带数量；卡片写时长、风格、作者与时间"
+ },
+ "A-48": {
+  "status": "passed",
+  "note": "交接场景 reuse-style-from-team-asset：团队里选林夏的「新版 OKR 填写指南」点「用这个风格」，风格按钮变为 ink-wash（中国水墨）；open-asset-during-run：生成中切到产物、点「打开」进入 asset-a-m1 任务；当前正在用的风格按钮置灰"
+ },
+ "A-49": {
+  "status": "passed",
+  "note": "原型团队数据全部是同团队可见的虚构样例；接口按 scope 取，过滤责任在服务端，可见范围列为待定问题"
  }
 }

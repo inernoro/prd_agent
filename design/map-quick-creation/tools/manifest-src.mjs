@@ -17,6 +17,8 @@ const screens = [
   { id: 'compose', name: '空态与选中模板（视频）', route: `#${Q}`, viewport: 'desktop', themes: both, entryReadySelector: ready('compose') },
   { id: 'compose-web', name: '产出切到网页', route: `#${Q}`, viewport: 'desktop', themes: both, entryReadySelector: ready('compose'), entryActions: ['[aria-label=选择产出] button:nth-child(2)'] },
   { id: 'style-picker', name: '输入框里就地换风格（15 类 99 种）', route: `#${Q}`, viewport: 'desktop', themes: both, entryReadySelector: '[data-qc=style-popover]', entryActions: ['[data-qc=style-chip]'] },
+  { id: 'assets', name: '右栏产物：回看我生成过的视频与网页', route: `#${Q}`, viewport: 'desktop', themes: both, entryReadySelector: '[data-qc=asset-detail]', entryActions: ['[aria-label=选择与资产] button:nth-child(2)'] },
+  { id: 'assets-team', name: '右栏产物 · 团队：同事用其他风格做的成品', route: `#${Q}`, viewport: 'desktop', themes: both, entryReadySelector: '[data-qc=asset-library][data-scope=team] [data-qc=asset-detail]', entryActions: ['[aria-label=选择与资产] button:nth-child(2)', '[aria-label=产物范围] button:nth-child(2)'] },
   { id: 'attachments', name: '多附件 · 收起（读取中与失败）', route: `#${Q}`, viewport: 'desktop', themes: both, entryReadySelector: '[data-qc=attachment-tray]', entryActions: ADD6 },
   { id: 'attachments-expanded', name: '多附件 · 展开管理', route: `#${Q}`, viewport: 'desktop', themes: both, entryReadySelector: '[data-qc=attachment-list]', entryActions: [...ADD6.slice(0, 5), '[data-qc=tray-toggle]'] },
   { id: 'queued', name: '已提交 · 排队中', route: `#${Q}?run=run-queued`, viewport: 'desktop', themes: both, entryReadySelector: ready('run-queued') },
@@ -35,6 +37,7 @@ const screens = [
   { id: 'phone-compose', name: '手机 · 创作（多附件）', route: `#${Q}`, viewport: 'phone', themes: both, entryReadySelector: '[data-qc=attachment-tray]', entryActions: ADD6.slice(0, 5) },
   { id: 'phone-queued', name: '手机 · 排队中', route: `#${Q}?run=run-queued`, viewport: 'phone', themes: both, entryReadySelector: ready('run-queued') },
   { id: 'phone-preview', name: '手机 · 预览成片', route: `#${Q}?run=run-published`, viewport: 'phone', themes: both, entryReadySelector: '[data-qc=video-player]', entryActions: ['[aria-label=对话与预览] button:nth-child(2)'] },
+  { id: 'phone-assets', name: '手机 · 预览页签里的产物', route: `#${Q}`, viewport: 'phone', themes: both, entryReadySelector: '[data-qc=asset-detail]', entryActions: ['[aria-label=对话与预览] button:nth-child(2)', '[aria-label=选择与资产] button:nth-child(2)'] },
   { id: 'phone-works', name: '手机 · 我的作品（长标题）', route: `#${Q}?view=works`, viewport: 'phone', themes: both, entryReadySelector: ready('works') },
   { id: 'concept-settings', name: '未来 · 设置概念稿（不在快捷版实现）', route: '#/concept/settings', viewport: 'desktop', themes: both, entryReadySelector: ready('concept-settings') },
   { id: 'concept-studio', name: '未来 · 逐幕调整概念稿（不在快捷版实现）', route: '#/concept/studio', viewport: 'desktop', themes: both, entryReadySelector: ready('concept-studio') },
@@ -88,17 +91,20 @@ const rows = [
   ['A-44', null, 'style-picker', 'human', D, '输入框里的风格按钮就地弹出选择面板（搜索 + 类别 + 列表），选中后面板关闭，按钮与右栏风格库同步；面板底部可去右栏看大图', '点风格按钮 → 面板含搜索、类别行与风格列表；点「中国水墨」后按钮写「中国水墨」，右栏同一张卡被选中'],
   ['A-45', null, 'compose', 'human', D, '「视频 / 网页」在输入框里切换，风格与产出相互独立：切换产出不改风格，切换风格不改产出', '切到网页后风格按钮仍是原风格；再选别的风格，产出仍是网页'],
   ['A-46', null, 'compose', 'human', D, '风格来源与授权写清：风格说明（STYLE.md，CC BY-NC 4.0）只按编号引用、界面与源码差异不含原文；样片海报署名「Lemo-Opuscar by Lemomo (LemoLab)」并注明 CC BY 4.0', '风格详情底部有署名与「样片海报 CC BY 4.0」；源码差异与界面里搜不到 STYLE.md 正文；类型字段 promptRef 只存位置'],
+  ['A-47', null, 'assets', 'screenshot', D, '右栏是「选择与资产」：新建时页签为「风格 / 产物」，任务中为「本次 / 产物」；产物页签只列已生成的视频与网页，上方是选中产物的大图、风格、作者、时间与发布状态，下方按「我的 / 团队」和视频、网页浏览', '产物页签首屏：选中产物大图带「视频 · 时长」，信息区写作者、时间、风格与「已发布」；筛选行有「我的 / 团队」与「全部 / 视频 / 网页」及数量；卡片写标题、风格、作者与时间'],
+  ['A-48', null, 'assets-team', 'human', D, '从产物复用：「用这个风格」把风格带回输入框（任务中则新建并带上风格），「打开」回到原任务，已发布的可去网页托管；当前正在用的风格不重复带回', '选同事的「新版 OKR 填写指南」点「用这个风格」→ 风格按钮变为「中国水墨」并提示；任务中点「打开」→ 进入该产物的任务'],
+  ['A-49', null, 'assets-team', 'human', D, '团队产物只列当前成员有权查看的成品：已发布的按网页托管的可见范围，未发布的只对作者和团队管理员可见（可见范围待确认，见待定问题）', '服务端按权限过滤后返回；原型的团队数据全部为同团队可见的虚构样例'],
 ];
 
 /* 关键操作：CDS 交接检查按 handoff.cases 实际执行 */
-const INTERACTIVE = new Set(['A-12', 'A-15', 'A-17', 'A-18', 'A-19', 'A-20', 'A-23', 'A-24', 'A-25', 'A-26', 'A-27', 'A-29', 'A-30', 'A-32', 'A-33', 'A-39', 'A-40', 'A-41', 'A-42', 'A-43', 'A-44', 'A-45']);
+const INTERACTIVE = new Set(['A-12', 'A-15', 'A-17', 'A-18', 'A-19', 'A-20', 'A-23', 'A-24', 'A-25', 'A-26', 'A-27', 'A-29', 'A-30', 'A-32', 'A-33', 'A-39', 'A-40', 'A-41', 'A-42', 'A-43', 'A-44', 'A-45', 'A-47', 'A-48']);
 /* 覆盖维度（CDS 六维）：每条验收项归一个维度，缺规则的维度在 risks 里写风险与理由 */
 const DIM = {
   compatibility: ['A-01', 'A-02', 'A-03', 'A-06', 'A-35', 'A-36', 'A-37'],
-  security: ['A-10', 'A-46'],
+  security: ['A-10', 'A-46', 'A-49'],
   operations: ['A-07', 'A-08', 'A-23'],
   performance: ['A-16', 'A-20', 'A-34'],
-  correctness: ['A-12', 'A-13', 'A-15', 'A-17', 'A-24', 'A-25', 'A-26', 'A-27', 'A-29', 'A-30', 'A-32', 'A-33', 'A-39', 'A-41', 'A-42', 'A-44', 'A-45'],
+  correctness: ['A-12', 'A-13', 'A-15', 'A-17', 'A-24', 'A-25', 'A-26', 'A-27', 'A-29', 'A-30', 'A-32', 'A-33', 'A-39', 'A-41', 'A-42', 'A-44', 'A-45', 'A-48'],
 };
 const dimensionOf = id => Object.entries(DIM).find(([, ids]) => ids.includes(id))?.[0] ?? 'experience';
 const acceptance = rows.map(([id, ruleId, screenId, how, slots, rule, expected, extra]) => ({ id, ...(ruleId ? { ruleId } : {}), screenId, how, slots, rule, expected, dimension: dimensionOf(id), ...(extra ?? {}), ...(INTERACTIVE.has(id) ? { interaction: true } : {}) }));
@@ -134,6 +140,22 @@ const cases = [
     { action: 'click', selector: '[aria-label=选择产出] button:nth-child(2)' },
     { action: 'expect', selector: '[data-qc-ready]', check: 'attribute', attribute: 'data-output', equals: 'web' },
     { action: 'expect', selector: '[data-qc=style-chip]', check: 'attribute', attribute: 'data-template', sameAs: 'style' },
+  ] },
+  { id: 'reuse-style-from-team-asset', title: '在产物页签看同事的成品，把它的风格带回输入框', screenId: 'compose', theme: 'light', ruleIds: ['A-47', 'A-48'], steps: [
+    { action: 'click', selector: '[aria-label=选择与资产] button:nth-child(2)' },
+    { action: 'expect', selector: '[data-qc=asset-library]', check: 'attribute', attribute: 'data-scope', equals: 'mine' },
+    { action: 'click', selector: '[aria-label=产物范围] button:nth-child(2)' },
+    { action: 'expect', selector: '[data-qc=asset-library]', check: 'attribute', attribute: 'data-scope', equals: 'team' },
+    { action: 'click', selector: '[data-asset=a-t1]' },
+    { action: 'expect', selector: '[data-qc=asset-detail]', check: 'attribute', attribute: 'data-asset-id', equals: 'a-t1' },
+    { action: 'click', selector: '[data-qc=asset-use-style]' },
+    { action: 'expect', selector: '[data-qc=style-chip]', check: 'attribute', attribute: 'data-template', equals: 'ink-wash' },
+  ] },
+  { id: 'open-asset-during-run', title: '任务进行中切到产物页签，打开以前的成品', screenId: 'generating', theme: 'dark', ruleIds: ['A-48'], steps: [
+    { action: 'click', selector: '[aria-label=选择与资产] button:nth-child(2)' },
+    { action: 'click', selector: '[data-asset=a-m1]' },
+    { action: 'click', selector: '[data-qc=asset-open]' },
+    { action: 'expect', selector: '[data-qc-ready]', check: 'attribute', attribute: 'data-run-id', equals: 'asset-a-m1' },
   ] },
   { id: 'submit-pasted-text', title: '粘贴长正文成为稿件附件后生成', screenId: 'compose', theme: 'light', ruleIds: ['A-41'], steps: [
     { action: 'fill', selector: '#qc-ask', value: SAMPLE_PASTE },
@@ -224,6 +246,7 @@ const cases = [
 ];
 const goals = [
   { id: 'G-01', goal: '一份文档 + 一个模板，最快路径得到成品', doneWhen: '首次打开即可选产出与模板，用示例、上传、知识库或粘贴放进稿件并快捷生成；没有稿件时按钮不可用且说明原因', items: ['A-11', 'A-12', 'A-13', 'A-39', 'A-41', 'A-42'] },
+  { id: 'G-11', goal: '右栏同时承担选择与资产：创作时能回看自己和团队生成过的产物', doneWhen: '右栏有「产物」页签，可按我的 / 团队与产出类型浏览已生成的成品，能打开原任务、把风格带回输入框、去网页托管；团队产物按权限过滤', items: ['A-47', 'A-48', 'A-49'] },
   { id: 'G-10', goal: '模板按 Lemo-Opuscar 风格库选择，并在输入框里决定产出与风格', doneWhen: '15 类 99 种风格可筛选、搜索、看样片说明；输入框里就地切换视频 / 网页与风格，两者相互独立；风格说明只按编号引用并署名来源', items: ['A-43', 'A-44', 'A-45', 'A-46'] },
   { id: 'G-02', goal: '附件再多也清楚、不堆一大把', doneWhen: '收起时只占一行，展开可分组管理，失败项单独处理；发送后可回看', items: ['A-14', 'A-15', 'A-16', 'A-17', 'A-18'] },
   { id: 'G-03', goal: '团队集中提交时，排队、后台继续和恢复都看得见', doneWhen: '排队写位置与预计开始；生成写阶段、进度与剩余；离开后能回到同一任务', items: ['A-19', 'A-20', 'A-21', 'A-22', 'A-23'] },
@@ -267,6 +290,7 @@ const manifest = {
     { dimension: 'performance', risk: '按风格库出片的真实耗时（风格库说明单支成片约 30–60 分钟），原型里的 3 分钟只是占位', reason: '原型无法测真实耗时；排队容量、超时与预计耗时须在实现前按服务端能力确认，已列入待定问题并在反馈线程提问' },
     { dimension: 'security', risk: '风格说明 STYLE.md 为 CC BY-NC 4.0，内置进产品属于商用', ruleIds: ['A-46'] },
     { dimension: 'security', risk: '前端请求绕过统一鉴权', ruleIds: ['A-10'] },
+    { dimension: 'security', risk: '团队产物把同事未发布的成品暴露给无权查看的人', ruleIds: ['A-49'] },
     { dimension: 'operations', risk: '用户离开或刷新后任务丢失、重复提交', ruleIds: ['A-08', 'A-23'] },
     { dimension: 'compatibility', risk: '手机与深浅主题下布局挤压、对比度不足', ruleIds: ['A-03', 'A-06', 'A-35'] },
   ],

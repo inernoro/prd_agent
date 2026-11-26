@@ -62,6 +62,37 @@
       "impl": "/quick-creation-agent"
     },
     {
+      "id": "assets",
+      "name": "右栏产物：回看我生成过的视频与网页",
+      "route": "#/quick-creation-agent",
+      "viewport": "desktop",
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "entryReadySelector": "[data-qc=asset-detail]",
+      "entryActions": [
+        "[aria-label=选择与资产] button:nth-child(2)"
+      ],
+      "impl": "/quick-creation-agent"
+    },
+    {
+      "id": "assets-team",
+      "name": "右栏产物 · 团队：同事用其他风格做的成品",
+      "route": "#/quick-creation-agent",
+      "viewport": "desktop",
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "entryReadySelector": "[data-qc=asset-library][data-scope=team] [data-qc=asset-detail]",
+      "entryActions": [
+        "[aria-label=选择与资产] button:nth-child(2)",
+        "[aria-label=产物范围] button:nth-child(2)"
+      ],
+      "impl": "/quick-creation-agent"
+    },
+    {
       "id": "attachments",
       "name": "多附件 · 收起（读取中与失败）",
       "route": "#/quick-creation-agent",
@@ -307,6 +338,22 @@
       "impl": "/quick-creation-agent?run=run-published"
     },
     {
+      "id": "phone-assets",
+      "name": "手机 · 预览页签里的产物",
+      "route": "#/quick-creation-agent",
+      "viewport": "phone",
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "entryReadySelector": "[data-qc=asset-detail]",
+      "entryActions": [
+        "[aria-label=对话与预览] button:nth-child(2)",
+        "[aria-label=选择与资产] button:nth-child(2)"
+      ],
+      "impl": "/quick-creation-agent"
+    },
+    {
       "id": "phone-works",
       "name": "手机 · 我的作品（长标题）",
       "route": "#/quick-creation-agent?view=works",
@@ -395,6 +442,13 @@
       "risk": "前端请求绕过统一鉴权",
       "ruleIds": [
         "A-10"
+      ]
+    },
+    {
+      "dimension": "security",
+      "risk": "团队产物把同事未发布的成品暴露给无权查看的人",
+      "ruleIds": [
+        "A-49"
       ]
     },
     {
@@ -1006,6 +1060,44 @@
       "rule": "风格来源与授权写清：风格说明（STYLE.md，CC BY-NC 4.0）只按编号引用、界面与源码差异不含原文；样片海报署名「Lemo-Opuscar by Lemomo (LemoLab)」并注明 CC BY 4.0",
       "expected": "风格详情底部有署名与「样片海报 CC BY 4.0」；源码差异与界面里搜不到 STYLE.md 正文；类型字段 promptRef 只存位置",
       "dimension": "security"
+    },
+    {
+      "id": "A-47",
+      "screenId": "assets",
+      "how": "screenshot",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "右栏是「选择与资产」：新建时页签为「风格 / 产物」，任务中为「本次 / 产物」；产物页签只列已生成的视频与网页，上方是选中产物的大图、风格、作者、时间与发布状态，下方按「我的 / 团队」和视频、网页浏览",
+      "expected": "产物页签首屏：选中产物大图带「视频 · 时长」，信息区写作者、时间、风格与「已发布」；筛选行有「我的 / 团队」与「全部 / 视频 / 网页」及数量；卡片写标题、风格、作者与时间",
+      "dimension": "experience",
+      "interaction": true
+    },
+    {
+      "id": "A-48",
+      "screenId": "assets-team",
+      "how": "human",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "从产物复用：「用这个风格」把风格带回输入框（任务中则新建并带上风格），「打开」回到原任务，已发布的可去网页托管；当前正在用的风格不重复带回",
+      "expected": "选同事的「新版 OKR 填写指南」点「用这个风格」→ 风格按钮变为「中国水墨」并提示；任务中点「打开」→ 进入该产物的任务",
+      "dimension": "correctness",
+      "interaction": true
+    },
+    {
+      "id": "A-49",
+      "screenId": "assets-team",
+      "how": "human",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "团队产物只列当前成员有权查看的成品：已发布的按网页托管的可见范围，未发布的只对作者和团队管理员可见（可见范围待确认，见待定问题）",
+      "expected": "服务端按权限过滤后返回；原型的团队数据全部为同团队可见的虚构样例",
+      "dimension": "security"
     }
   ],
   "goals": [
@@ -1020,6 +1112,16 @@
         "A-39",
         "A-41",
         "A-42"
+      ]
+    },
+    {
+      "id": "G-11",
+      "goal": "右栏同时承担选择与资产：创作时能回看自己和团队生成过的产物",
+      "doneWhen": "右栏有「产物」页签，可按我的 / 团队与产出类型浏览已生成的成品，能打开原任务、把风格带回输入框、去网页托管；团队产物按权限过滤",
+      "items": [
+        "A-47",
+        "A-48",
+        "A-49"
       ]
     },
     {
@@ -1270,6 +1372,92 @@
             "check": "attribute",
             "attribute": "data-template",
             "sameAs": "style"
+          }
+        ]
+      },
+      {
+        "id": "reuse-style-from-team-asset",
+        "title": "在产物页签看同事的成品，把它的风格带回输入框",
+        "screenId": "compose",
+        "theme": "light",
+        "ruleIds": [
+          "A-47",
+          "A-48"
+        ],
+        "steps": [
+          {
+            "action": "click",
+            "selector": "[aria-label=选择与资产] button:nth-child(2)"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-qc=asset-library]",
+            "check": "attribute",
+            "attribute": "data-scope",
+            "equals": "mine"
+          },
+          {
+            "action": "click",
+            "selector": "[aria-label=产物范围] button:nth-child(2)"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-qc=asset-library]",
+            "check": "attribute",
+            "attribute": "data-scope",
+            "equals": "team"
+          },
+          {
+            "action": "click",
+            "selector": "[data-asset=a-t1]"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-qc=asset-detail]",
+            "check": "attribute",
+            "attribute": "data-asset-id",
+            "equals": "a-t1"
+          },
+          {
+            "action": "click",
+            "selector": "[data-qc=asset-use-style]"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-qc=style-chip]",
+            "check": "attribute",
+            "attribute": "data-template",
+            "equals": "ink-wash"
+          }
+        ]
+      },
+      {
+        "id": "open-asset-during-run",
+        "title": "任务进行中切到产物页签，打开以前的成品",
+        "screenId": "generating",
+        "theme": "dark",
+        "ruleIds": [
+          "A-48"
+        ],
+        "steps": [
+          {
+            "action": "click",
+            "selector": "[aria-label=选择与资产] button:nth-child(2)"
+          },
+          {
+            "action": "click",
+            "selector": "[data-asset=a-m1]"
+          },
+          {
+            "action": "click",
+            "selector": "[data-qc=asset-open]"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-qc-ready]",
+            "check": "attribute",
+            "attribute": "data-run-id",
+            "equals": "asset-a-m1"
           }
         ]
       },

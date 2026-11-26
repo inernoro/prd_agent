@@ -23,6 +23,16 @@
       "errors": []
     },
     {
+      "id": "reuse-style-from-team-asset",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "id": "open-asset-during-run",
+      "status": "passed",
+      "errors": []
+    },
+    {
       "id": "submit-pasted-text",
       "status": "passed",
       "errors": []

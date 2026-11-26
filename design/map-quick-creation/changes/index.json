@@ -10,16 +10,16 @@
     "changes/v1-v6/source.diff"
    ],
    "acceptance": {
-    "added": 6,
+    "added": 9,
     "removed": 0,
     "changed": 25
    },
    "screens": {
-    "added": 1,
+    "added": 4,
     "removed": 0,
     "changed": 1
    },
-   "sourceFiles": 115
+   "sourceFiles": 116
   },
   {
    "version": 2,
@@ -29,16 +29,16 @@
     "changes/v2-v6/changes.md"
    ],
    "acceptance": {
-    "added": 4,
+    "added": 7,
     "removed": 0,
     "changed": 10
    },
    "screens": {
-    "added": 1,
+    "added": 4,
     "removed": 0,
     "changed": 1
    },
-   "sourceFiles": 113
+   "sourceFiles": 114
   },
   {
    "version": 3,
@@ -48,16 +48,16 @@
     "changes/v3-v6/changes.md"
    ],
    "acceptance": {
-    "added": 4,
+    "added": 7,
     "removed": 0,
     "changed": 10
    },
    "screens": {
-    "added": 1,
+    "added": 4,
     "removed": 0,
     "changed": 1
    },
-   "sourceFiles": 113
+   "sourceFiles": 114
   },
   {
    "version": 4,
@@ -67,16 +67,16 @@
     "changes/v4-v6/changes.md"
    ],
    "acceptance": {
-    "added": 4,
+    "added": 7,
     "removed": 0,
     "changed": 10
    },
    "screens": {
-    "added": 1,
+    "added": 4,
     "removed": 0,
     "changed": 1
    },
-   "sourceFiles": 113
+   "sourceFiles": 114
   },
   {
    "version": 5,
@@ -86,16 +86,16 @@
     "changes/v5-v6/changes.md"
    ],
    "acceptance": {
-    "added": 4,
+    "added": 7,
     "removed": 0,
     "changed": 4
    },
    "screens": {
-    "added": 1,
+    "added": 4,
     "removed": 0,
     "changed": 0
    },
-   "sourceFiles": 109
+   "sourceFiles": 110
   }
  ]
 }

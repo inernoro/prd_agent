@@ -1,7 +1,7 @@
 import { apiRequest } from '@/services/real/apiClient';
 import { useAuthStore } from '@/stores/authStore';
 import { fail, type ApiResponse } from '@/types/api';
-import type { CreateRunInput, QcAttachment, QcRun, QcTemplate, QcTemplateCategory, QcTemplateSource, QcWork } from '@/pages/quick-creation-agent/types';
+import type { AssetScope, CreateRunInput, QcAsset, QcAttachment, QcRun, QcTemplate, QcTemplateCategory, QcTemplateSource, QcWork } from '@/pages/quick-creation-agent/types';
 
 /**
  * 快速创作接口。生成在服务端排队与执行（Run/Worker），离开页面不取消；页面按任务编号恢复。
@@ -16,6 +16,11 @@ export function listQuickCreationTemplates() {
 
 export function listQuickCreationWorks() {
   return apiRequest<{ items: QcWork[]; total: number }>(`${base}/works`);
+}
+
+/* 产物：已生成的成品，按「我的 / 团队」取；用于创作时回看与复用风格 */
+export function listQuickCreationAssets(scope: AssetScope) {
+  return apiRequest<{ items: QcAsset[]; total: number }>(`${base}/assets?scope=${scope}`);
 }
 
 export function getQuickCreationRun(runId: string) {

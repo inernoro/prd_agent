@@ -2,8 +2,8 @@
   "runAt": "2026-11-26",
   "browser": "Chromium（Playwright），本机还原 CDS 预览容器（技能 design-preview-contract.json 的 CSP 响应头与桥接脚本、sandbox=\"allow-scripts\"），桌面 1440×900 与手机 390×844、浅色与深色",
   "url": "dist/index.html",
-  "total": 47,
-  "passed": 47,
+  "total": 50,
+  "passed": 50,
   "items": [
     {
       "id": "A-01",
@@ -39,7 +39,7 @@
       "id": "A-06",
       "name": "A-06 R-06 手机两栏改成「创作 / 预览」切换，375 宽没有整页横向溢出，本页新增的可点元素触控高度不小于 44px",
       "pass": true,
-      "note": "测量：phone-compose/light：溢出 0px；phone-compose/dark：溢出 0px；phone-queued/light：溢出 0px；phone-queued/dark：溢出 0px；phone-preview/light：溢出 0px；phone-preview/dark：溢出 0px；phone-works/light：溢出 0px；phone-works/dark：溢出 0px"
+      "note": "测量：phone-compose/light：溢出 0px；phone-compose/dark：溢出 0px；phone-queued/light：溢出 0px；phone-queued/dark：溢出 0px；phone-preview/light：溢出 0px；phone-preview/dark：溢出 0px；phone-assets/light：溢出 0px；phone-assets/dark：溢出 0px；phone-works/light：溢出 0px；phone-works/dark：溢出 0px"
     },
     {
       "id": "A-07",
@@ -282,10 +282,28 @@
       "note": "风格详情底部署名「Lemo-Opuscar by Lemomo (LemoLab) · 样片海报 CC BY 4.0」；源码差异只含 promptRef 位置字段，不含 STYLE.md 正文（grep「Style Prompt」「Essence」为 0）"
     },
     {
+      "id": "A-47",
+      "name": "A-47 右栏是「选择与资产」：新建时页签为「风格 / 产物」，任务中为「本次 / 产物」；产物页签只列已生成的视频与网页，上方是选中产物的大图、风格、作者、时间与发布状态，下方按「我的 / 团队」和视频、网页浏览",
+      "pass": true,
+      "note": "assets / assets-team / phone-assets 两主题截图：右栏页签「风格 / 产物」（任务中为「本次 / 产物」）；选中产物大图、作者、时间、视频时长、风格与发布状态；筛选行「我的 / 团队」与「全部 / 视频 / 网页」带数量；卡片写时长、风格、作者与时间"
+    },
+    {
+      "id": "A-48",
+      "name": "A-48 从产物复用：「用这个风格」把风格带回输入框（任务中则新建并带上风格），「打开」回到原任务，已发布的可去网页托管；当前正在用的风格不重复带回",
+      "pass": true,
+      "note": "交接场景 reuse-style-from-team-asset：团队里选林夏的「新版 OKR 填写指南」点「用这个风格」，风格按钮变为 ink-wash（中国水墨）；open-asset-during-run：生成中切到产物、点「打开」进入 asset-a-m1 任务；当前正在用的风格按钮置灰"
+    },
+    {
+      "id": "A-49",
+      "name": "A-49 团队产物只列当前成员有权查看的成品：已发布的按网页托管的可见范围，未发布的只对作者和团队管理员可见（可见范围待确认，见待定问题）",
+      "pass": true,
+      "note": "原型团队数据全部是同团队可见的虚构样例；接口按 scope 取，过滤责任在服务端，可见范围列为待定问题"
+    },
+    {
       "id": "C-01",
       "name": "C-01 预览容器零报错（所有画面 × 主题）",
       "pass": true,
-      "note": "48 次打开，控制台与 CSP 报错 0 条"
+      "note": "54 次打开，控制台与 CSP 报错 0 条"
     }
   ]
 }

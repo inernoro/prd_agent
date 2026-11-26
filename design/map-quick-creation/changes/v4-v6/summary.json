@@ -60,6 +60,41 @@
      "desktop-light",
      "desktop-dark"
     ]
+   },
+   {
+    "id": "A-47",
+    "rule": "右栏是「选择与资产」：新建时页签为「风格 / 产物」，任务中为「本次 / 产物」；产物页签只列已生成的视频与网页，上方是选中产物的大图、风格、作者、时间与发布状态，下方按「我的 / 团队」和视频、网页浏览",
+    "expected": "产物页签首屏：选中产物大图带「视频 · 时长」，信息区写作者、时间、风格与「已发布」；筛选行有「我的 / 团队」与「全部 / 视频 / 网页」及数量；卡片写标题、风格、作者与时间",
+    "how": "screenshot",
+    "screenId": "assets",
+    "slots": [
+     "desktop-light",
+     "desktop-dark"
+    ],
+    "interaction": true
+   },
+   {
+    "id": "A-48",
+    "rule": "从产物复用：「用这个风格」把风格带回输入框（任务中则新建并带上风格），「打开」回到原任务，已发布的可去网页托管；当前正在用的风格不重复带回",
+    "expected": "选同事的「新版 OKR 填写指南」点「用这个风格」→ 风格按钮变为「中国水墨」并提示；任务中点「打开」→ 进入该产物的任务",
+    "how": "human",
+    "screenId": "assets-team",
+    "slots": [
+     "desktop-light",
+     "desktop-dark"
+    ],
+    "interaction": true
+   },
+   {
+    "id": "A-49",
+    "rule": "团队产物只列当前成员有权查看的成品：已发布的按网页托管的可见范围，未发布的只对作者和团队管理员可见（可见范围待确认，见待定问题）",
+    "expected": "服务端按权限过滤后返回；原型的团队数据全部为同团队可见的虚构样例",
+    "how": "human",
+    "screenId": "assets-team",
+    "slots": [
+     "desktop-light",
+     "desktop-dark"
+    ]
    }
   ],
   "removed": [],
@@ -216,6 +251,35 @@
  "screens": {
   "added": [
    {
+    "id": "assets",
+    "name": "右栏产物：回看我生成过的视频与网页",
+    "route": "#/quick-creation-agent",
+    "viewport": "desktop",
+    "entryActions": [
+     "[aria-label=选择与资产] button:nth-child(2)"
+    ]
+   },
+   {
+    "id": "assets-team",
+    "name": "右栏产物 · 团队：同事用其他风格做的成品",
+    "route": "#/quick-creation-agent",
+    "viewport": "desktop",
+    "entryActions": [
+     "[aria-label=选择与资产] button:nth-child(2)",
+     "[aria-label=产物范围] button:nth-child(2)"
+    ]
+   },
+   {
+    "id": "phone-assets",
+    "name": "手机 · 预览页签里的产物",
+    "route": "#/quick-creation-agent",
+    "viewport": "phone",
+    "entryActions": [
+     "[aria-label=对话与预览] button:nth-child(2)",
+     "[aria-label=选择与资产] button:nth-child(2)"
+    ]
+   },
+   {
     "id": "style-picker",
     "name": "输入框里就地换风格（15 类 99 种）",
     "route": "#/quick-creation-agent",
@@ -259,6 +323,10 @@
  },
  "files": {
   "added": [
+   {
+    "path": "src/added/pages/quick-creation-agent/AssetLibrary.tsx",
+    "area": "源码"
+   },
    {
     "path": "src/added/pages/quick-creation-agent/Conversation.tsx",
     "area": "源码"
@@ -791,13 +859,13 @@
    "failed": []
   },
   "to": {
-   "passed": 47,
-   "total": 47,
+   "passed": 50,
+   "total": 50,
    "failed": []
   }
  },
  "source": {
-  "files": 113,
-  "bytes": 198813
+  "files": 114,
+  "bytes": 215313
  }
 }

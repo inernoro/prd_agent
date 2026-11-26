@@ -4,7 +4,7 @@
 import type { QcAttachment, QcRun, QcScene } from '@/pages/quick-creation-agent/types';
 /* 演示成片：由 tools/make-demo-film.mjs 用模板画面渲染、带示意音轨的 WebM，构建时内嵌为 data: 地址 */
 import filmUrl from './assets/demo-film.webm';
-import { attachmentQueue, fixedRuns, sampleDoc, scenes, stagesAt, templateCategories, templateSource, templates, webKeyPoints, webSections, works } from './fixtures';
+import { assets, attachmentQueue, fixedRuns, sampleDoc, scenes, stagesAt, templateCategories, templateSource, templates, webKeyPoints, webSections, works } from './fixtures';
 
 class MemStorage {
   private m = new Map<string, string>();
@@ -103,6 +103,13 @@ function getRun(id: string): QcRun | undefined {
   if (rec) return withPublish(recoveryRun(rec));
   const l = live.get(id);
   if (l) return withPublish(liveRun(id, l));
+  /* 产物对应的任务：按产物的标题、风格与发布状态，从同类成品演示任务派生 */
+  const a = id.startsWith('asset-') ? assets.find(x => x.runId === id) : undefined;
+  if (a) {
+    const base = fixedRuns[a.kind === 'web' ? 'run-web-done' : 'run-done'];
+    return withPublish({ ...base, id, title: a.title, kind: a.kind, templateId: a.templateId, ...(a.durationSec ? { durationSec: a.durationSec } : {}),
+      publish: a.publishStatus === 'done' ? { status: 'done', siteId: a.siteId, siteTitle: a.title, at: a.updatedAt } : { status: 'none' } });
+  }
   const f = fixedRuns[id];
   return f ? withPublish(f) : undefined;
 }
@@ -121,6 +128,13 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
   if (/user-preferences\/?$/.test(path)) return ok({ navOrder: [], navHidden: [], defaultNavOrder: [], defaultNavHidden: [] });
   if (!path.startsWith('/api/quick-creation')) return ok(null);
   if (path.endsWith('/templates')) return ok({ items: templates, categories: templateCategories, source: templateSource });
+  if (path.endsWith('/assets')) {
+    /* 团队视图按时间混排（演示数据里同事的成品更新），我的视图只列自己的 */
+    const mine = assets.filter(a => a.mine), others = assets.filter(a => !a.mine);
+    const items = url.searchParams.get('scope') !== 'team' ? mine
+      : Array.from({ length: Math.max(mine.length, others.length) }, (_, i) => [others[i], mine[i]]).flat().filter((a): a is typeof assets[number] => Boolean(a));
+    return ok({ items, total: items.length });
+  }
   if (path.endsWith('/works')) {
     const mine = [...live.entries()].reverse().map(([id, l]) => {
       const r = getRun(id)!;

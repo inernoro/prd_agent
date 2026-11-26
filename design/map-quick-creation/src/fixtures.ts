@@ -1,5 +1,5 @@
 /* 原型演示数据（虚构稿件与成员）。只用于原型，不进源码差异。实现方取证时用同一份数据（design.json demoData）。 */
-import type { FrameKey, QcAttachment, QcRun, QcScene, QcStage, QcTemplate, QcTemplateCategory, QcTemplateSource, QcWork, QcWebSection } from '@/pages/quick-creation-agent/types';
+import type { FrameKey, QcAsset, QcAttachment, QcRun, QcScene, QcStage, QcTemplate, QcTemplateCategory, QcTemplateSource, QcWork, QcWebSection } from '@/pages/quick-creation-agent/types';
 import catalog from './opuscar/catalog.json';
 
 /* 风格库：分类与风格取自 Lemo-Opuscar（tools/import-opuscar.py 生成 opuscar/catalog.json 与缩小后的样片海报）。
@@ -145,4 +145,29 @@ export const works: QcWork[] = [
     return { runId: i % 2 ? 'run-done' : 'run-published', title: titles[i % titles.length], kind, templateId: tpl, status: 'done', publishStatus: published ? 'done' : 'none',
       summary: kind === 'web' ? '4 节 · 适配手机' : `${1 + (i % 2)} 分 ${10 + i} 秒`, updatedAt: `11-${String(24 - Math.floor(i / 2)).padStart(2, '0')}` };
   }),
+];
+
+/* 产物（已生成的成品）：「我的」来自上面已完成的作品；「团队」再加几位同事用其他风格做的（人名与标题均为虚构） */
+const team: Array<[string, string, QcAsset['kind'], string, string]> = [
+  ['林夏', '新版 OKR 填写指南', 'video', 'ink-wash', '今天 15:02'],
+  ['周远', '季度客户满意度复盘', 'web', 'dataviz', '今天 13:40'],
+  ['陈一帆', '新人入职七天路线', 'video', 'transit-map', '今天 11:18'],
+  ['何岚', '支付链路如何工作', 'video', 'blueprint', '昨天 20:05'],
+  ['林夏', '春节值班安排', 'video', 'papercut-red', '昨天 17:31'],
+  ['周远', '产品发布会彩排要点', 'video', 'dark-keynote', '昨天 16:12'],
+  ['何岚', '数据库迁移步骤', 'web', 'iso-infographic', '11-24'],
+  ['陈一帆', '游戏化积分规则说明', 'video', 'pixel-rpg', '11-24'],
+  ['宋知', '安全培训：钓鱼邮件识别', 'video', 'chalkboard', '11-23'],
+  ['宋知', '一线门店陈列规范', 'web', 'watercolor', '11-22'],
+];
+export const assets: QcAsset[] = [
+  ...works.filter(w => w.status === 'done').map((w, i): QcAsset => ({
+    id: `a-m${i + 1}`, runId: `asset-a-m${i + 1}`, title: w.title, kind: w.kind, templateId: w.templateId,
+    ...(w.kind === 'video' ? { durationSec: 62 + ((i * 17) % 58) } : { sections: 4 }),
+    ownerName: '我', mine: true, publishStatus: w.publishStatus, ...(w.publishStatus === 'done' ? { siteId: `site-a-m${i + 1}` } : {}), updatedAt: w.updatedAt,
+  })),
+  ...team.map(([owner, title, kind, tpl, at], i): QcAsset => ({
+    id: `a-t${i + 1}`, runId: `asset-a-t${i + 1}`, title, kind, templateId: tpl, ...(kind === 'video' ? { durationSec: 48 + i * 7 } : { sections: 5 }),
+    ownerName: owner, mine: false, publishStatus: i % 3 === 2 ? 'none' : 'done', ...(i % 3 === 2 ? {} : { siteId: `site-a-t${i + 1}` }), updatedAt: at,
+  })),
 ];

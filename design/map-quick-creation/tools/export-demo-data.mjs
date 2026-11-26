@@ -26,6 +26,7 @@ const data = {
   attachments: [m.sampleDoc, ...m.attachmentQueue],
   runs: m.fixedRuns,
   works: m.works,
+  assets: m.assets,
 };
 mkdirSync(path.join(dir, '设计文档'), { recursive: true });
 writeFileSync(path.join(dir, '设计文档/演示数据.json'), JSON.stringify(data, null, 1) + '\n');

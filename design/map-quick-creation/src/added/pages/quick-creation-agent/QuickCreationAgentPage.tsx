@@ -13,7 +13,7 @@ import { Badge } from '@/components/design/Badge';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { PaneTabs, Segmented, WorkbenchLayout, WorkbenchPreview, fitComposerHeight, type WorkbenchPane } from '@/components/web-hosting/workbench/WorkbenchParts';
 import {
-  addKnowledgeAttachment, createQuickCreationRun, getQuickCreationRun, listQuickCreationTemplates, listQuickCreationWorks,
+  addKnowledgeAttachment, createQuickCreationRun, getQuickCreationRun, listQuickCreationAssets, listQuickCreationTemplates, listQuickCreationWorks,
   addTextAttachment, publishQuickCreationRun, retryAttachmentRead, retryQuickCreationRun, uploadQuickCreationAttachment,
 } from '@/services/real/quickCreation';
 import { AttachmentTray, MaterialsPanel, SentAttachments } from './AttachmentTray';
@@ -21,9 +21,10 @@ import { AgentTurn, UserTurn } from './Conversation';
 import { FailureCard, QueueCard, RunProgress } from './RunProgress';
 import { ProgressPreview, VideoPlayer, WebPreview } from './ResultPanel';
 import { StyleLibrary, StylePickerChip } from './StyleLibrary';
+import { AssetLibrary } from './AssetLibrary';
 import { WorksList } from './WorksList';
 import { MAX_ATTACHMENTS, formatChars, formatClock, summarizeAttachments } from './format';
-import type { OutputKind, QcAttachment, QcFailure, QcRun, QcTemplate, QcTemplateCategory, QcTemplateSource, QcWork } from './types';
+import type { AssetScope, OutputKind, QcAsset, QcAttachment, QcFailure, QcRun, QcTemplate, QcTemplateCategory, QcTemplateSource, QcWork } from './types';
 import './quickCreation.css';
 
 const OUTPUT_LABEL: Record<OutputKind, string> = { video: '视频', web: '网页' };
@@ -59,6 +60,11 @@ export function QuickCreationAgentPage() {
   /* 右栏此刻显示什么：资料面板（发送前管理 / 发送后回看）优先，否则按任务状态显示模板、过程或成品 */
   const [panel, setPanel] = useState<{ mode: 'manage' | 'review'; id?: string } | null>(null);
   const [pane, setPane] = useState<WorkbenchPane>('chat');
+  /* 右栏「选择与资产」：select 是选风格（新建）或看本次（任务中），assets 是回看已生成的产物 */
+  const [rightTab, setRightTab] = useState<'select' | 'assets'>('select');
+  const [assetScope, setAssetScope] = useState<AssetScope>('mine');
+  const [assets, setAssets] = useState<QcAsset[]>([]);
+  const [assetsLoading, setAssetsLoading] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const askRef = useRef<HTMLTextAreaElement>(null);
   useEffect(() => { if (askRef.current) fitComposerHeight(askRef.current); }, [ask]);
@@ -70,6 +76,18 @@ export function QuickCreationAgentPage() {
     void listQuickCreationWorks().then(res => { if (res.success) setWorks(res.data.items); });
   }, []);
   useEffect(() => { refreshWorks(); }, [refreshWorks, runId, view]);
+  /* 产物在打开「产物」页签或切换范围时读取 */
+  useEffect(() => {
+    if (rightTab !== 'assets') return;
+    let stop = false;
+    setAssetsLoading(true);
+    void listQuickCreationAssets(assetScope).then(res => {
+      if (stop) return;
+      setAssetsLoading(false);
+      if (res.success) setAssets(res.data.items); else toast.error('产物没有读到', res.error?.message || '请稍后重试');
+    });
+    return () => { stop = true; };
+  }, [rightTab, assetScope]);
 
   /* 风格与产出相互独立：同一个风格既能出视频也能出网页；默认选「视觉笔记」 */
   const DEFAULT_STYLE = 'sketchnote';
@@ -80,7 +98,7 @@ export function QuickCreationAgentPage() {
 
   /* 按任务编号加载 */
   useEffect(() => {
-    setRun(null); setRunError(null); setPanel(null);
+    setRun(null); setRunError(null); setPanel(null); setRightTab('select');
     if (!runId) return;
     let stop = false;
     void getQuickCreationRun(runId).then(res => {
@@ -388,13 +406,25 @@ export function QuickCreationAgentPage() {
     nextHint = '';
     actions = <Button size="sm" variant="secondary" className="max-md:min-h-11" data-qc="review-back" onClick={() => setPanel(null)}>回到预览</Button>;
     body = <MaterialsPanel mode="review" items={run.attachments} activeId={panel.id} onSelect={id => setPanel({ mode: 'review', id })} />;
+  } else if (rightTab === 'assets') {
+    previewTitle = '产物';
+    previewNote = `${assetScope === 'mine' ? '我' : '团队'}生成过的视频与网页，可回看、打开原任务或把风格带回输入框`;
+    nextHint = '';
+    body = <AssetLibrary assets={assets} loading={assetsLoading} scope={assetScope} onScopeChange={setAssetScope} templates={templates} currentStyleId={run ? undefined : template?.id}
+      onOpen={a => setParams({ run: a.runId })}
+      onUseStyle={a => {
+        const name = templates.find(t => t.id === a.templateId)?.name ?? '';
+        setTemplateId(a.templateId); setRightTab('select');
+        if (run) { setParams({}); setPane('chat'); }
+        toast.info(`已换成「${name}」风格`, run ? '放进稿件后即可用这个风格生成' : '输入框里的风格已同步');
+      }}
+      onOpenHosting={a => navigate(`/web-pages?focusSite=${encodeURIComponent(a.siteId ?? '')}`)} />;
   } else if (!run && template) {
     body = <StyleLibrary templates={templates} categories={categories} source={styleSource} selected={template} onSelect={setTemplateId} kind={kind} />;
   } else if (run && runTemplate) {
-    toolbar = <Badge size="sm">风格 · {runTemplate.name}</Badge>;
     if (run.status === 'done') {
       previewTitle = run.kind === 'video' ? '成片' : '网页';
-      previewNote = run.kind === 'video' ? `${formatClock(run.durationSec ?? 0)} · ${run.scenes?.length ?? 0} 幕 · 1080p${run.voice ? ` · 配音 ${run.voice}` : ''}` : `${run.sections?.length ?? 0} 节 · 桌面与手机都能读`;
+      previewNote = `${run.kind === 'video' ? `${formatClock(run.durationSec ?? 0)} · ${run.scenes?.length ?? 0} 幕 · 1080p${run.voice ? ` · 配音 ${run.voice}` : ''}` : `${run.sections?.length ?? 0} 节 · 桌面与手机都能读`} · 风格 ${runTemplate.name}`;
       nextHint = run.publish.status === 'done' ? '已发布，网页托管里能找到它；改了稿件可以用同一份资料再做一个。' : '满意的话在左边发布到网页托管；发布只上传，不会重新生成。';
       body = run.kind === 'video' ? <VideoPlayer run={run} template={runTemplate} /> : <WebPreview run={run} template={runTemplate} />;
     } else {
@@ -405,6 +435,14 @@ export function QuickCreationAgentPage() {
     }
   }
 
+  /* 选择与资产的页签：资料面板打开时让位给面板的动作 */
+  if (!panel && !runError) toolbar = (
+    /* 公共组件 Segmented 沿用正式实现（28px），触控高度差异记为框架债务 */
+    <span data-qc-touch-exempt>
+      <Segmented<'select' | 'assets'> label="选择与资产" value={rightTab} onChange={setRightTab}
+        options={[{ value: 'select', label: run ? '本次' : '风格', title: run ? '这次任务的过程与成品' : '选这次用的风格' }, { value: 'assets', label: '产物', title: '回看已生成的视频与网页' }]} />
+    </span>
+  );
   const preview = (
     <WorkbenchPreview title={previewTitle} note={previewNote} toolbar={toolbar} actions={actions} nextHint={nextHint}>
       {body}

@@ -1,3 +1,133 @@
+diff --git a/src/added/pages/quick-creation-agent/AssetLibrary.tsx b/src/added/pages/quick-creation-agent/AssetLibrary.tsx
+new file mode 100644
+--- /dev/null
++++ b/src/added/pages/quick-creation-agent/AssetLibrary.tsx
+@@ -0,0 +1,125 @@
++/**
++ * 右栏「产物」：已经生成的视频和网页。创作时回看自己和团队做过的成品，看同一个风格做出来是什么样，
++ * 并能一键打开原任务、把风格带回输入框，已发布的直接去网页托管。
++ * 只列已生成的成品；进行中、失败的任务在「我的作品」里管理，两处不重复。
++ * 版式与风格库一致：上方是选中产物的大图与信息，下方按「我的 / 团队」和产出类型浏览。
++ */
++import { useState } from 'react';
++import { ExternalLink, FolderOpen, Globe, Palette, Video } from 'lucide-react';
++import { cn } from '@/lib/cn';
++import { Badge } from '@/components/design/Badge';
++import { Button } from '@/components/design/Button';
++import { MapSpinner } from '@/components/ui/VideoLoader';
++import { Segmented } from '@/components/web-hosting/workbench/WorkbenchParts';
++import { StyleFrame } from './TemplateFrames';
++import type { AssetScope, OutputKind, QcAsset, QcTemplate } from './types';
++import { formatClock } from './format';
++
++type KindFilter = 'all' | OutputKind;
++
++function assetSize(a: QcAsset) {
++  return a.kind === 'video' ? formatClock(a.durationSec ?? 0) : `${a.sections ?? 0} 节`;
++}
++
++export function AssetLibrary({ assets, loading, scope, onScopeChange, templates, onOpen, onUseStyle, onOpenHosting, currentStyleId }: {
++  assets: QcAsset[];
++  loading: boolean;
++  scope: AssetScope;
++  onScopeChange: (scope: AssetScope) => void;
++  templates: QcTemplate[];
++  onOpen: (asset: QcAsset) => void;
++  onUseStyle: (asset: QcAsset) => void;
++  onOpenHosting: (asset: QcAsset) => void;
++  currentStyleId?: string;
++}) {
++  const [kind, setKind] = useState<KindFilter>('all');
++  const [selectedId, setSelectedId] = useState<string | null>(null);
++  const style = (id: string) => templates.find(t => t.id === id);
++  const list = assets.filter(a => kind === 'all' || a.kind === kind);
++  const selected = list.find(a => a.id === selectedId) ?? list[0];
++  const selectedStyle = selected && style(selected.templateId);
++  const count = (k: KindFilter) => assets.filter(a => k === 'all' || a.kind === k).length;
++
++  return (
++    <div className="h-full overflow-y-auto" style={{ overscrollBehavior: 'contain' }} data-qc="asset-library" data-scope={scope}>
++      {selected && selectedStyle ? (
++        <section className="grid gap-4 p-2.5 sm:p-4 lg:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)] lg:p-5" aria-label="选中的产物" data-qc="asset-detail" data-asset-id={selected.id}>
++          <div key={selected.id} className="qc-rise relative self-start overflow-hidden rounded-[12px] border border-token-subtle shadow-[var(--shadow-card-sm)]">
++            <StyleFrame template={selectedStyle} scene={2} />
++          </div>
++          <div className="flex min-w-0 flex-col">
++            <div className="flex items-center gap-2 text-[12px] text-token-muted">
++              <span>{selected.mine ? '我做的' : `${selected.ownerName} 做的`}</span><span>·</span><span>{selected.updatedAt}</span>
++              {selected.publishStatus === 'done' && <Badge size="sm" variant="success">已发布</Badge>}
++              {selected.publishStatus === 'failed' && <Badge size="sm" variant="warning">发布未完成</Badge>}
++            </div>
++            <div className="mt-2 text-[18px] font-semibold leading-7 text-token-primary">{selected.title}</div>
++            <div className="mt-1 flex items-center gap-1.5 text-[12.5px] text-token-secondary">
++              {selected.kind === 'video' ? <Video size={13} aria-hidden /> : <Globe size={13} aria-hidden />}{selected.kind === 'video' ? '视频' : '网页'} · {assetSize(selected)}
++            </div>
++            <div className="mt-2 flex items-center gap-2 text-[13px] text-token-secondary">
++              <span className="w-12 shrink-0 overflow-hidden rounded-[4px]"><StyleFrame template={{ ...selectedStyle, frame: undefined }} /></span>
++              <span className="min-w-0 truncate">风格 · {selectedStyle.name}</span>
++              {currentStyleId === selectedStyle.id && <span className="shrink-0 text-[11.5px] text-[color:var(--accent-primary)]">当前正在用</span>}
++            </div>
++            <p className="m-0 mt-3 text-[12.5px] leading-5 text-token-muted">
++              {selected.mine ? '打开可以继续发布或改做另一种产出。' : '打开只能查看；想做同样的效果，把风格带回输入框，再放进你自己的稿件。'}
++            </p>
++            <div className="mt-auto flex flex-wrap gap-2 pt-3">
++              <Button size="sm" variant="secondary" className="max-md:min-h-11" data-qc="asset-open" onClick={() => onOpen(selected)}><FolderOpen size={13} />打开</Button>
++              <Button size="sm" variant="secondary" className="max-md:min-h-11" data-qc="asset-use-style" disabled={currentStyleId === selectedStyle.id} onClick={() => onUseStyle(selected)}>
++                <Palette size={13} />用这个风格
++              </Button>
++              {selected.publishStatus === 'done' && selected.siteId && (
++                <Button size="sm" variant="ghost" className="max-md:min-h-11" data-qc="asset-hosting" onClick={() => onOpenHosting(selected)}><ExternalLink size={13} />在网页托管中查看</Button>
++              )}
++            </div>
++          </div>
++        </section>
++      ) : !loading && (
++        <div className="px-6 pb-2 pt-10 text-center text-[13px] leading-6 text-token-muted">
++          {scope === 'mine' ? '你还没有生成过产物。生成完成的视频和网页会出现在这里；切到「团队」看看同事做过的。' : '团队还没有生成过产物。'}
++        </div>
++      )}
++      <div className="sticky top-0 z-10 flex flex-wrap items-center gap-2 border-y border-token-subtle bg-[var(--bg-card)] px-2.5 py-2 sm:px-4 lg:px-5">
++        {/* 公共组件 Segmented 沿用正式实现（28px），触控高度差异记为框架债务 */}
++        <span data-qc-touch-exempt className="shrink-0">
++          <Segmented<AssetScope> label="产物范围" value={scope} onChange={s => { onScopeChange(s); setSelectedId(null); }}
++            options={[{ value: 'mine', label: '我的' }, { value: 'team', label: '团队' }]} />
++        </span>
++        <div role="radiogroup" aria-label="产出类型" className="flex gap-1.5">
++          {([['all', '全部'], ['video', '视频'], ['web', '网页']] as const).map(([k, label]) => (
++            <button key={k} type="button" role="radio" aria-checked={kind === k} onClick={() => { setKind(k); setSelectedId(null); }} data-kind={k}
++              className={cn('inline-flex h-7 items-center gap-1 rounded-full border px-2.5 text-[12px] max-md:h-11',
++                kind === k ? 'border-[color:var(--accent-primary)] bg-[var(--selection-bg)] font-medium text-token-primary' : 'border-token-subtle text-token-secondary hover-bg-soft')}>
++              {label}<span className="tabular-nums text-token-muted">{count(k)}</span>
++            </button>
++          ))}
++        </div>
++        {loading && <span className="ml-auto inline-flex items-center gap-1.5 text-[12px] text-token-muted"><MapSpinner size={12} />正在读取</span>}
++      </div>
++      <div role="radiogroup" aria-label="选择产物" className="grid grid-cols-2 gap-3 p-2.5 sm:grid-cols-3 sm:p-4 lg:p-5 2xl:grid-cols-4">
++        {list.map(a => {
++          const st = style(a.templateId);
++          const on = a.id === selected?.id;
++          return (
++            <button key={a.id} type="button" role="radio" aria-checked={on} onClick={() => setSelectedId(a.id)} data-asset={a.id}
++              className={cn('flex flex-col overflow-hidden rounded-[12px] border bg-[var(--bg-input)] text-left transition-[border-color,box-shadow]',
++                on ? 'border-[color:var(--accent-primary)] shadow-[0_0_0_1px_var(--accent-primary)]' : 'border-token-subtle hover:border-[var(--border-default)]')}>
++              <span className="block">
++                {st ? <StyleFrame template={st} scene={2} /> : <span className="block aspect-video bg-[var(--bg-secondary)]" />}
++              </span>
++              <span className="block px-2.5 py-2">
++                <span className="block truncate text-[13px] font-medium text-token-primary">{a.title}</span>
++                <span className="flex items-center gap-1 truncate text-[11.5px] text-token-muted">
++                  {a.kind === 'video' ? <Video size={11} className="shrink-0" aria-label="视频" /> : <Globe size={11} className="shrink-0" aria-label="网页" />}
++                  <span className="truncate">{assetSize(a)} · {st?.name ?? '未知风格'} · {a.mine ? '我' : a.ownerName} · {a.updatedAt}</span>
++                </span>
++              </span>
++            </button>
++          );
++        })}
++      </div>
++    </div>
++  );
++}
 diff --git a/src/added/pages/quick-creation-agent/AttachmentTray.tsx b/src/added/pages/quick-creation-agent/AttachmentTray.tsx
 --- a/src/added/pages/quick-creation-agent/AttachmentTray.tsx
 +++ b/src/added/pages/quick-creation-agent/AttachmentTray.tsx
@@ -448,7 +578,7 @@ new file mode 100644
 diff --git a/src/added/pages/quick-creation-agent/QuickCreationAgentPage.tsx b/src/added/pages/quick-creation-agent/QuickCreationAgentPage.tsx
 --- a/src/added/pages/quick-creation-agent/QuickCreationAgentPage.tsx
 +++ b/src/added/pages/quick-creation-agent/QuickCreationAgentPage.tsx
-@@ -1,30 +1,29 @@
+@@ -1,30 +1,30 @@
  /**
   * 快速创作智能体：一份文档 + 一个模板 → 能播放的视频或能浏览的网页，并发布到网页托管。
   * - 生成在服务端排队执行，离开页面不取消；地址里的 ?run= 让用户回到同一个任务。
@@ -470,8 +600,9 @@ diff --git a/src/added/pages/quick-creation-agent/QuickCreationAgentPage.tsx b/s
  import { MapSpinner } from '@/components/ui/VideoLoader';
 +import { PaneTabs, Segmented, WorkbenchLayout, WorkbenchPreview, fitComposerHeight, type WorkbenchPane } from '@/components/web-hosting/workbench/WorkbenchParts';
  import {
-   addKnowledgeAttachment, createQuickCreationRun, getQuickCreationRun, listQuickCreationTemplates, listQuickCreationWorks,
+-  addKnowledgeAttachment, createQuickCreationRun, getQuickCreationRun, listQuickCreationTemplates, listQuickCreationWorks,
 -  publishQuickCreationRun, retryAttachmentRead, retryQuickCreationRun, uploadQuickCreationAttachment,
++  addKnowledgeAttachment, createQuickCreationRun, getQuickCreationRun, listQuickCreationAssets, listQuickCreationTemplates, listQuickCreationWorks,
 +  addTextAttachment, publishQuickCreationRun, retryAttachmentRead, retryQuickCreationRun, uploadQuickCreationAttachment,
  } from '@/services/real/quickCreation';
 -import { AttachmentReview, AttachmentTray, SentAttachmentSummary } from './AttachmentTray';
@@ -482,15 +613,16 @@ diff --git a/src/added/pages/quick-creation-agent/QuickCreationAgentPage.tsx b/s
 -import { TemplateFrame } from './TemplateFrames';
 +import { ProgressPreview, VideoPlayer, WebPreview } from './ResultPanel';
 +import { StyleLibrary, StylePickerChip } from './StyleLibrary';
++import { AssetLibrary } from './AssetLibrary';
  import { WorksList } from './WorksList';
 -import { MAX_ATTACHMENTS, formatClock, summarizeAttachments } from './format';
 -import type { OutputKind, QcAttachment, QcFailure, QcRun, QcTemplate, QcWork } from './types';
 +import { MAX_ATTACHMENTS, formatChars, formatClock, summarizeAttachments } from './format';
-+import type { OutputKind, QcAttachment, QcFailure, QcRun, QcTemplate, QcTemplateCategory, QcTemplateSource, QcWork } from './types';
++import type { AssetScope, OutputKind, QcAsset, QcAttachment, QcFailure, QcRun, QcTemplate, QcTemplateCategory, QcTemplateSource, QcWork } from './types';
  import './quickCreation.css';
  
  const OUTPUT_LABEL: Record<OutputKind, string> = { video: '视频', web: '网页' };
-@@ -46,6 +45,8 @@ export function QuickCreationAgentPage() {
+@@ -46,6 +46,8 @@ export function QuickCreationAgentPage() {
    const view = params.get('view');
  
    const [templates, setTemplates] = useState<QcTemplate[]>([]);
@@ -499,7 +631,7 @@ diff --git a/src/added/pages/quick-creation-agent/QuickCreationAgentPage.tsx b/s
    const [works, setWorks] = useState<QcWork[]>([]);
    const [run, setRun] = useState<QcRun | null>(null);
    const [runError, setRunError] = useState<string | null>(null);
-@@ -55,43 +56,56 @@ export function QuickCreationAgentPage() {
+@@ -55,43 +57,73 @@ export function QuickCreationAgentPage() {
    const [attachments, setAttachments] = useState<QcAttachment[]>([]);
    const [ask, setAsk] = useState('');
    const [submitting, setSubmitting] = useState(false);
@@ -507,6 +639,11 @@ diff --git a/src/added/pages/quick-creation-agent/QuickCreationAgentPage.tsx b/s
 +  /* 右栏此刻显示什么：资料面板（发送前管理 / 发送后回看）优先，否则按任务状态显示模板、过程或成品 */
 +  const [panel, setPanel] = useState<{ mode: 'manage' | 'review'; id?: string } | null>(null);
 +  const [pane, setPane] = useState<WorkbenchPane>('chat');
++  /* 右栏「选择与资产」：select 是选风格（新建）或看本次（任务中），assets 是回看已生成的产物 */
++  const [rightTab, setRightTab] = useState<'select' | 'assets'>('select');
++  const [assetScope, setAssetScope] = useState<AssetScope>('mine');
++  const [assets, setAssets] = useState<QcAsset[]>([]);
++  const [assetsLoading, setAssetsLoading] = useState(false);
    const fileInput = useRef<HTMLInputElement>(null);
 +  const askRef = useRef<HTMLTextAreaElement>(null);
 +  useEffect(() => { if (askRef.current) fitComposerHeight(askRef.current); }, [ask]);
@@ -519,6 +656,18 @@ diff --git a/src/added/pages/quick-creation-agent/QuickCreationAgentPage.tsx b/s
      void listQuickCreationWorks().then(res => { if (res.success) setWorks(res.data.items); });
    }, []);
    useEffect(() => { refreshWorks(); }, [refreshWorks, runId, view]);
++  /* 产物在打开「产物」页签或切换范围时读取 */
++  useEffect(() => {
++    if (rightTab !== 'assets') return;
++    let stop = false;
++    setAssetsLoading(true);
++    void listQuickCreationAssets(assetScope).then(res => {
++      if (stop) return;
++      setAssetsLoading(false);
++      if (res.success) setAssets(res.data.items); else toast.error('产物没有读到', res.error?.message || '请稍后重试');
++    });
++    return () => { stop = true; };
++  }, [rightTab, assetScope]);
  
 -  const kindTemplates = templates.filter(t => t.kind === kind);
 -  const template = templates.find(t => t.id === (run?.templateId ?? templateId)) ?? kindTemplates[0];
@@ -535,7 +684,7 @@ diff --git a/src/added/pages/quick-creation-agent/QuickCreationAgentPage.tsx b/s
 +  /* 按任务编号加载 */
    useEffect(() => {
 -    setRun(null); setRunError(null); setReview({ open: false });
-+    setRun(null); setRunError(null); setPanel(null);
++    setRun(null); setRunError(null); setPanel(null); setRightTab('select');
      if (!runId) return;
      let stop = false;
 -    let timer: number | undefined;
@@ -575,7 +724,7 @@ diff --git a/src/added/pages/quick-creation-agent/QuickCreationAgentPage.tsx b/s
  
    /* ---------- 附件 ---------- */
    const addFile = async (file: File) => {
-@@ -108,7 +122,19 @@ export function QuickCreationAgentPage() {
+@@ -108,7 +140,19 @@ export function QuickCreationAgentPage() {
    const retryRead = async (id: string) => {
      setAttachments(list => list.map(a => (a.id === id ? { ...a, status: 'reading', progress: 0, error: undefined } : a)));
      const res = await retryAttachmentRead(id);
@@ -596,7 +745,7 @@ diff --git a/src/added/pages/quick-creation-agent/QuickCreationAgentPage.tsx b/s
    };
    const sum = summarizeAttachments(attachments);
    const hasText = attachments.some(a => a.status === 'ready' && a.kind !== 'image');
-@@ -177,186 +203,229 @@ export function QuickCreationAgentPage() {
+@@ -177,186 +221,249 @@ export function QuickCreationAgentPage() {
      );
    }
  
@@ -930,13 +1079,25 @@ diff --git a/src/added/pages/quick-creation-agent/QuickCreationAgentPage.tsx b/s
 +    nextHint = '';
 +    actions = <Button size="sm" variant="secondary" className="max-md:min-h-11" data-qc="review-back" onClick={() => setPanel(null)}>回到预览</Button>;
 +    body = <MaterialsPanel mode="review" items={run.attachments} activeId={panel.id} onSelect={id => setPanel({ mode: 'review', id })} />;
++  } else if (rightTab === 'assets') {
++    previewTitle = '产物';
++    previewNote = `${assetScope === 'mine' ? '我' : '团队'}生成过的视频与网页，可回看、打开原任务或把风格带回输入框`;
++    nextHint = '';
++    body = <AssetLibrary assets={assets} loading={assetsLoading} scope={assetScope} onScopeChange={setAssetScope} templates={templates} currentStyleId={run ? undefined : template?.id}
++      onOpen={a => setParams({ run: a.runId })}
++      onUseStyle={a => {
++        const name = templates.find(t => t.id === a.templateId)?.name ?? '';
++        setTemplateId(a.templateId); setRightTab('select');
++        if (run) { setParams({}); setPane('chat'); }
++        toast.info(`已换成「${name}」风格`, run ? '放进稿件后即可用这个风格生成' : '输入框里的风格已同步');
++      }}
++      onOpenHosting={a => navigate(`/web-pages?focusSite=${encodeURIComponent(a.siteId ?? '')}`)} />;
 +  } else if (!run && template) {
 +    body = <StyleLibrary templates={templates} categories={categories} source={styleSource} selected={template} onSelect={setTemplateId} kind={kind} />;
 +  } else if (run && runTemplate) {
-+    toolbar = <Badge size="sm">风格 · {runTemplate.name}</Badge>;
 +    if (run.status === 'done') {
 +      previewTitle = run.kind === 'video' ? '成片' : '网页';
-+      previewNote = run.kind === 'video' ? `${formatClock(run.durationSec ?? 0)} · ${run.scenes?.length ?? 0} 幕 · 1080p${run.voice ? ` · 配音 ${run.voice}` : ''}` : `${run.sections?.length ?? 0} 节 · 桌面与手机都能读`;
++      previewNote = `${run.kind === 'video' ? `${formatClock(run.durationSec ?? 0)} · ${run.scenes?.length ?? 0} 幕 · 1080p${run.voice ? ` · 配音 ${run.voice}` : ''}` : `${run.sections?.length ?? 0} 节 · 桌面与手机都能读`} · 风格 ${runTemplate.name}`;
 +      nextHint = run.publish.status === 'done' ? '已发布，网页托管里能找到它；改了稿件可以用同一份资料再做一个。' : '满意的话在左边发布到网页托管；发布只上传，不会重新生成。';
 +      body = run.kind === 'video' ? <VideoPlayer run={run} template={runTemplate} /> : <WebPreview run={run} template={runTemplate} />;
 +    } else {
@@ -947,6 +1108,14 @@ diff --git a/src/added/pages/quick-creation-agent/QuickCreationAgentPage.tsx b/s
 +    }
 +  }
 +
++  /* 选择与资产的页签：资料面板打开时让位给面板的动作 */
++  if (!panel && !runError) toolbar = (
++    /* 公共组件 Segmented 沿用正式实现（28px），触控高度差异记为框架债务 */
++    <span data-qc-touch-exempt>
++      <Segmented<'select' | 'assets'> label="选择与资产" value={rightTab} onChange={setRightTab}
++        options={[{ value: 'select', label: run ? '本次' : '风格', title: run ? '这次任务的过程与成品' : '选这次用的风格' }, { value: 'assets', label: '产物', title: '回看已生成的视频与网页' }]} />
++    </span>
++  );
 +  const preview = (
 +    <WorkbenchPreview title={previewTitle} note={previewNote} toolbar={toolbar} actions={actions} nextHint={nextHint}>
 +      {body}
@@ -1923,8 +2092,7 @@ diff --git a/src/added/pages/quick-creation-agent/types.ts b/src/added/pages/qui
 + */
  export interface QcTemplate {
 +  /** 风格编号，等于风格库的文件夹名（例如 sketchnote） */
-   id: string;
--  kind: OutputKind;
++  id: string;
 +  /** 中文名 */
 +  name: string;
 +  nameEn: string;
@@ -1945,13 +2113,8 @@ diff --git a/src/added/pages/quick-creation-agent/types.ts b/src/added/pages/qui
 +}
 +
 +export interface QcTemplateCategory {
-+  id: string;
-+  name: string;
-+  nameEn: string;
-+}
-+
-+/** 风格库来源与授权，显示在风格详情底部 */
-+export interface QcTemplateSource {
+   id: string;
+-  kind: OutputKind;
    name: string;
 -  /** 一句话风格 */
 -  tagline: string;
@@ -1959,6 +2122,12 @@ diff --git a/src/added/pages/quick-creation-agent/types.ts b/src/added/pages/qui
 -  goodFor: string;
 -  /** 画面渲染器 */
 -  frame: FrameKey;
++  nameEn: string;
++}
++
++/** 风格库来源与授权，显示在风格详情底部 */
++export interface QcTemplateSource {
++  name: string;
 +  url: string;
 +  posterLicense: string;
  }
@@ -1973,6 +2142,39 @@ diff --git a/src/added/pages/quick-creation-agent/types.ts b/src/added/pages/qui
    publish: QcPublish;
    createdAt: string;
    updatedAt: string;
+@@ -146,6 +175,32 @@ export interface QcWork {
+   updatedAt: string;
+ }
+ 
++/**
++ * 产物：已经生成的视频或网页，用来在创作时回看——自己做过的、团队做过的，同一个风格做出来是什么样。
++ * 只列已生成的成品；进行中、失败的任务在「我的作品」里管理。
++ */
++export interface QcAsset {
++  id: string;
++  /** 打开这个产物对应的任务 */
++  runId: string;
++  title: string;
++  kind: OutputKind;
++  templateId: string;
++  /** 视频时长（秒） */
++  durationSec?: number;
++  /** 网页节数 */
++  sections?: number;
++  /** 谁做的；自己的写「我」 */
++  ownerName: string;
++  mine: boolean;
++  publishStatus: PublishStatus;
++  /** 已发布时的网页托管站点编号，用于定位 */
++  siteId?: string;
++  updatedAt: string;
++}
++
++export type AssetScope = 'mine' | 'team';
++
+ export interface CreateRunInput {
+   kind: OutputKind;
+   templateId: string;
 diff --git a/src/added/services/real/quickCreation.ts b/src/added/services/real/quickCreation.ts
 --- a/src/added/services/real/quickCreation.ts
 +++ b/src/added/services/real/quickCreation.ts
@@ -1981,11 +2183,11 @@ diff --git a/src/added/services/real/quickCreation.ts b/src/added/services/real/
  import { useAuthStore } from '@/stores/authStore';
  import { fail, type ApiResponse } from '@/types/api';
 -import type { CreateRunInput, QcAttachment, QcRun, QcTemplate, QcWork } from '@/pages/quick-creation-agent/types';
-+import type { CreateRunInput, QcAttachment, QcRun, QcTemplate, QcTemplateCategory, QcTemplateSource, QcWork } from '@/pages/quick-creation-agent/types';
++import type { AssetScope, CreateRunInput, QcAsset, QcAttachment, QcRun, QcTemplate, QcTemplateCategory, QcTemplateSource, QcWork } from '@/pages/quick-creation-agent/types';
  
  /**
   * 快速创作接口。生成在服务端排队与执行（Run/Worker），离开页面不取消；页面按任务编号恢复。
-@@ -10,7 +10,8 @@ import type { CreateRunInput, QcAttachment, QcRun, QcTemplate, QcWork } from '@/
+@@ -10,13 +10,19 @@ import type { CreateRunInput, QcAttachment, QcRun, QcTemplate, QcWork } from '@/
  const base = '/api/quick-creation';
  
  export function listQuickCreationTemplates() {
@@ -1995,7 +2197,18 @@ diff --git a/src/added/services/real/quickCreation.ts b/src/added/services/real/
  }
  
  export function listQuickCreationWorks() {
-@@ -43,6 +44,11 @@ export function retryAttachmentRead(attachmentId: string) {
+   return apiRequest<{ items: QcWork[]; total: number }>(`${base}/works`);
+ }
+ 
++/* 产物：已生成的成品，按「我的 / 团队」取；用于创作时回看与复用风格 */
++export function listQuickCreationAssets(scope: AssetScope) {
++  return apiRequest<{ items: QcAsset[]; total: number }>(`${base}/assets?scope=${scope}`);
++}
++
+ export function getQuickCreationRun(runId: string) {
+   return apiRequest<QcRun>(`${base}/runs/${encodeURIComponent(runId)}`);
+ }
+@@ -43,6 +49,11 @@ export function retryAttachmentRead(attachmentId: string) {
    return apiRequest<QcAttachment>(`${base}/attachments/${encodeURIComponent(attachmentId)}/read`, { method: 'POST', body: {} });
  }
  
@@ -2024,7 +2237,7 @@ diff --git a/src/env.ts b/src/env.ts
 +import type { QcAttachment, QcRun, QcScene } from '@/pages/quick-creation-agent/types';
 +/* 演示成片：由 tools/make-demo-film.mjs 用模板画面渲染、带示意音轨的 WebM，构建时内嵌为 data: 地址 */
 +import filmUrl from './assets/demo-film.webm';
-+import { attachmentQueue, fixedRuns, sampleDoc, scenes, stagesAt, templateCategories, templateSource, templates, webKeyPoints, webSections, works } from './fixtures';
++import { assets, attachmentQueue, fixedRuns, sampleDoc, scenes, stagesAt, templateCategories, templateSource, templates, webKeyPoints, webSections, works } from './fixtures';
  
  class MemStorage {
    private m = new Map<string, string>();
@@ -2039,7 +2252,7 @@ diff --git a/src/env.ts b/src/env.ts
  const publishedAt = new Map<string, string>();
  
  /* 视频：排队 0–8 秒 → 分镜 8–16 → 配音 16–26 → 合成 26–31 → 已生成 */
-@@ -59,10 +65,42 @@ function liveRun(id: string, l: Live): QcRun {
+@@ -59,12 +65,51 @@ function liveRun(id: string, l: Live): QcRun {
  
  function withPublish(run: QcRun): QcRun {
    const at = publishedAt.get(run.id);
@@ -2082,8 +2295,17 @@ diff --git a/src/env.ts b/src/env.ts
 +  if (rec) return withPublish(recoveryRun(rec));
    const l = live.get(id);
    if (l) return withPublish(liveRun(id, l));
++  /* 产物对应的任务：按产物的标题、风格与发布状态，从同类成品演示任务派生 */
++  const a = id.startsWith('asset-') ? assets.find(x => x.runId === id) : undefined;
++  if (a) {
++    const base = fixedRuns[a.kind === 'web' ? 'run-web-done' : 'run-done'];
++    return withPublish({ ...base, id, title: a.title, kind: a.kind, templateId: a.templateId, ...(a.durationSec ? { durationSec: a.durationSec } : {}),
++      publish: a.publishStatus === 'done' ? { status: 'done', siteId: a.siteId, siteTitle: a.title, at: a.updatedAt } : { status: 'none' } });
++  }
    const f = fixedRuns[id];
-@@ -77,12 +115,12 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+   return f ? withPublish(f) : undefined;
+ }
+@@ -77,12 +122,19 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
    const method = (init?.method ?? 'GET').toUpperCase();
    const path = url.pathname;
    const body = typeof init?.body === 'string' ? JSON.parse(init.body || '{}') : {};
@@ -2095,10 +2317,17 @@ diff --git a/src/env.ts b/src/env.ts
    if (!path.startsWith('/api/quick-creation')) return ok(null);
 -  if (path.endsWith('/templates')) return ok({ items: templates });
 +  if (path.endsWith('/templates')) return ok({ items: templates, categories: templateCategories, source: templateSource });
++  if (path.endsWith('/assets')) {
++    /* 团队视图按时间混排（演示数据里同事的成品更新），我的视图只列自己的 */
++    const mine = assets.filter(a => a.mine), others = assets.filter(a => !a.mine);
++    const items = url.searchParams.get('scope') !== 'team' ? mine
++      : Array.from({ length: Math.max(mine.length, others.length) }, (_, i) => [others[i], mine[i]]).flat().filter((a): a is typeof assets[number] => Boolean(a));
++    return ok({ items, total: items.length });
++  }
    if (path.endsWith('/works')) {
      const mine = [...live.entries()].reverse().map(([id, l]) => {
        const r = getRun(id)!;
-@@ -96,6 +134,13 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+@@ -96,6 +148,13 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
      kbCursor += 1;
      return ok(next);
    }
@@ -2112,7 +2341,7 @@ diff --git a/src/env.ts b/src/env.ts
    const reread = path.match(/\/attachments\/([^/]+)\/read$/);
    if (reread) {
      const item = attachmentQueue.find(a => a.id === reread[1]);
-@@ -103,22 +148,39 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+@@ -103,22 +162,39 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
    }
    if (path.endsWith('/attachments') && method === 'POST') {
      seq += 1;
@@ -2158,7 +2387,7 @@ diff --git a/src/env.ts b/src/env.ts
      return ok(getRun(retry[1]));
    }
    const publish = path.match(/\/runs\/([^/]+)\/publish$/);
-@@ -126,7 +188,7 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+@@ -126,7 +202,7 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
      const id = publish[1];
      const tries = (publishTries.get(id) ?? 0) + 1;
      publishTries.set(id, tries);
@@ -2181,7 +2410,7 @@ diff --git a/src/fixtures.ts b/src/fixtures.ts
 -  { id: 'tpl-guide-page', kind: 'web', name: '导读长页', tagline: '左侧目录、页首三个重点、正文分节', goodFor: '适合规范、手册和长文档', frame: 'guide-page' },
 -  { id: 'tpl-card-digest', kind: 'web', name: '卡片速览', tagline: '一屏卡片，点开看细节', goodFor: '适合清单、要点和公告', frame: 'card-digest' },
 -];
-+import type { FrameKey, QcAttachment, QcRun, QcScene, QcStage, QcTemplate, QcTemplateCategory, QcTemplateSource, QcWork, QcWebSection } from '@/pages/quick-creation-agent/types';
++import type { FrameKey, QcAsset, QcAttachment, QcRun, QcScene, QcStage, QcTemplate, QcTemplateCategory, QcTemplateSource, QcWork, QcWebSection } from '@/pages/quick-creation-agent/types';
 +import catalog from './opuscar/catalog.json';
 +
 +/* 风格库：分类与风格取自 Lemo-Opuscar（tools/import-opuscar.py 生成 opuscar/catalog.json 与缩小后的样片海报）。
@@ -2219,7 +2448,7 @@ diff --git a/src/fixtures.ts b/src/fixtures.ts
  };
  
  /** 「我的作品」30 条：前几条对应上面的任务，其余用于检查长标题与数量 */
-@@ -124,17 +130,17 @@ const titles = [
+@@ -124,19 +130,44 @@ const titles = [
    '安全意识十分钟：密码、钓鱼邮件与外部分享链接的那些坑', '代码评审礼仪', '如何申请测试环境',
  ];
  export const works: QcWork[] = [
@@ -2246,6 +2475,33 @@ diff --git a/src/fixtures.ts b/src/fixtures.ts
      const published = i % 2 === 0;
      return { runId: i % 2 ? 'run-done' : 'run-published', title: titles[i % titles.length], kind, templateId: tpl, status: 'done', publishStatus: published ? 'done' : 'none',
        summary: kind === 'web' ? '4 节 · 适配手机' : `${1 + (i % 2)} 分 ${10 + i} 秒`, updatedAt: `11-${String(24 - Math.floor(i / 2)).padStart(2, '0')}` };
+   }),
+ ];
++
++/* 产物（已生成的成品）：「我的」来自上面已完成的作品；「团队」再加几位同事用其他风格做的（人名与标题均为虚构） */
++const team: Array<[string, string, QcAsset['kind'], string, string]> = [
++  ['林夏', '新版 OKR 填写指南', 'video', 'ink-wash', '今天 15:02'],
++  ['周远', '季度客户满意度复盘', 'web', 'dataviz', '今天 13:40'],
++  ['陈一帆', '新人入职七天路线', 'video', 'transit-map', '今天 11:18'],
++  ['何岚', '支付链路如何工作', 'video', 'blueprint', '昨天 20:05'],
++  ['林夏', '春节值班安排', 'video', 'papercut-red', '昨天 17:31'],
++  ['周远', '产品发布会彩排要点', 'video', 'dark-keynote', '昨天 16:12'],
++  ['何岚', '数据库迁移步骤', 'web', 'iso-infographic', '11-24'],
++  ['陈一帆', '游戏化积分规则说明', 'video', 'pixel-rpg', '11-24'],
++  ['宋知', '安全培训：钓鱼邮件识别', 'video', 'chalkboard', '11-23'],
++  ['宋知', '一线门店陈列规范', 'web', 'watercolor', '11-22'],
++];
++export const assets: QcAsset[] = [
++  ...works.filter(w => w.status === 'done').map((w, i): QcAsset => ({
++    id: `a-m${i + 1}`, runId: `asset-a-m${i + 1}`, title: w.title, kind: w.kind, templateId: w.templateId,
++    ...(w.kind === 'video' ? { durationSec: 62 + ((i * 17) % 58) } : { sections: 4 }),
++    ownerName: '我', mine: true, publishStatus: w.publishStatus, ...(w.publishStatus === 'done' ? { siteId: `site-a-m${i + 1}` } : {}), updatedAt: w.updatedAt,
++  })),
++  ...team.map(([owner, title, kind, tpl, at], i): QcAsset => ({
++    id: `a-t${i + 1}`, runId: `asset-a-t${i + 1}`, title, kind, templateId: tpl, ...(kind === 'video' ? { durationSec: 48 + i * 7 } : { sections: 5 }),
++    ownerName: owner, mine: false, publishStatus: i % 3 === 2 ? 'none' : 'done', ...(i % 3 === 2 ? {} : { siteId: `site-a-t${i + 1}` }), updatedAt: at,
++  })),
++];
 diff --git a/src/main.tsx b/src/main.tsx
 --- a/src/main.tsx
 +++ b/src/main.tsx
