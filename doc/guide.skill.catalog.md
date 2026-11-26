@@ -18,7 +18,7 @@
 | # | 分类 | 技能名 | 触发词 | 一句话说明 |
 |---|------|--------|--------|-----------|
 | 1 | 更新 主流程 | skill-validation | `/validate` | 需求质量评估：8 种气味检测 + 雷同排查 + 七维度评分 |
-| 2 | 更新 主流程 | plan-first | `/plan-first` | 先出方案后动手：输出方案 → 用户确认 → 执行 |
+| 2 | 更新 主流程 | cds-plan | `/cds-plan` | 先列阶段、步骤和验收待办，执行时逐项打勾并更新问题和阻塞 |
 | 3 | 更新 主流程 | risk-matrix | `/risk` | MECE 六维度风险矩阵（正确性/兼容/性能/安全/运维/体验） |
 | 4 | 更新 主流程 | flow-trace | `/trace` | 端到端数据流路径图（大白话版 + 技术细节版） |
 | 5 | 更新 主流程 | human-verify | `/verify` | 四角度模拟人工审查（魔鬼辩护/反向验证/边界/场景） |
@@ -88,7 +88,7 @@
 需求阶段          方案阶段          实现阶段          验证阶段            交付阶段
    │                │                │                │                  │
    ▼                ▼                ▼                ▼                  ▼
-/validate  →  /plan-first  →    编写代码    →   /verify       →   /preview
+/validate  →  /cds-plan  →    编写代码    →   /verify       →   /preview
    │          /risk              │           /scope-check       /handoff
    │          /trace             │           /cds-deploy        /weekly
    │                             │           /smoke
@@ -103,7 +103,7 @@
 
 **完整功能开发**：
 ```
-/validate → /plan-first → (用户确认) → 编码 → /verify → /scope-check → /cds-deploy → /smoke → /preview → /handoff
+/validate → /cds-plan → (用户确认) → 编码 → /verify → /scope-check → /cds-deploy → /smoke → /preview → /handoff
 ```
 
 **快速修复**：

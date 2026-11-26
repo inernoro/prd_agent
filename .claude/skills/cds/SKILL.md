@@ -672,7 +672,7 @@ $CLI self update --branch <branch> \
 
 触发词（严格）：`/cds-sync` / `/cds-sync-skill` / "帮我同步 cds 技能" / `cdscli sync-from-cds`。
 
-完整维护者工作流（drift 扫描 → plan-first → 改三文件 → 自检 → changelog）→ [reference/maintainer.md](reference/maintainer.md)
+完整维护者工作流（drift 扫描 → cds-plan → 改三文件 → 自检 → changelog）→ [reference/maintainer.md](reference/maintainer.md)
 
 ## 反馈缺口给上游 CDS 团队
 

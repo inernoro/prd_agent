@@ -94,7 +94,7 @@ const STEPS = ['经验', '角色', '技能', '交付', '开始'] as const
 
 const FALLBACK_SKILLS: StarterSkill[] = [
   { key: 'skill-validation', name: '需求澄清', description: '发现模糊、遗漏和不可验收的需求。', roles: ['pm', 'owner', 'domain-expert', 'dev', 'qa'], recommendedRoles: ['pm', 'owner', 'domain-expert', 'dev', 'qa'], groupKey: 'foundation', groupLabel: '基础方法' },
-  { key: 'plan-first', name: '先出方案', description: '动手前先说明路径、影响和取舍。', roles: ['pm', 'owner', 'domain-expert', 'dev'], recommendedRoles: ['pm', 'owner', 'domain-expert', 'dev'], groupKey: 'foundation', groupLabel: '基础方法' },
+  { key: 'cds-plan', name: '执行计划与进度', description: '分阶段列验收待办，执行时更新进度和阻塞。', roles: ['pm', 'owner', 'domain-expert', 'dev'], recommendedRoles: ['pm', 'owner', 'domain-expert', 'dev'], groupKey: 'foundation', groupLabel: '基础方法' },
   { key: 'risk-matrix', name: '风险矩阵', description: '提前识别业务、体验和上线风险。', roles: ['pm', 'owner', 'domain-expert', 'dev', 'qa'], recommendedRoles: ['pm', 'owner', 'domain-expert', 'qa'], groupKey: 'foundation', groupLabel: '基础方法' },
   { key: 'phase0-guard', name: '开工前置检查', description: '确认现状、边界和验证目标后再开始修改。', roles: ['pm', 'owner', 'domain-expert', 'dev', 'qa'], recommendedRoles: ['pm', 'owner', 'domain-expert'], groupKey: 'foundation', groupLabel: '基础方法' },
   { key: 'preview-url', name: '真实预览地址', description: '部署后读取 CDS 返回的真实访问地址。', roles: ['pm', 'owner', 'domain-expert', 'dev', 'qa'], recommendedRoles: ['pm', 'owner', 'domain-expert', 'dev', 'qa'], groupKey: 'foundation', groupLabel: '基础方法' },

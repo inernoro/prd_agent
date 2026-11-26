@@ -54,7 +54,7 @@ ls package.json pyproject.toml requirements.txt go.mod Cargo.toml pom.xml *.sln 
 
 | 探测到 | 推断 |
 |---|---|
-| 装了 `product-document-generator` / `skill-validation` / `plan-first` | 角色 = 产品经理 |
+| 装了 `product-document-generator` / `skill-validation` / `cds-plan` | 角色 = 产品经理 |
 | 装了 `code-hygiene` / `human-verify` / `conflict-resolution` | 角色 = 开发 |
 | 装了 `acceptance-checklist` / `acceptance-test-design` | 角色 = 测试 / 验收 |
 | 有 `package.json` | Node 项目，构建命令从 `scripts` 字段读 |

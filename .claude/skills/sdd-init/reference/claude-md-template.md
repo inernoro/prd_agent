@@ -36,7 +36,7 @@
 
 一两行的小修不用走这一步。判断标准：如果做错了要回滚超过 10 分钟，就先出方案。
 
-对应技能：`/plan-first`
+对应技能：`/cds-plan`
 
 ### 2. 完成的标准是「跑通」，不是「写完」
 
@@ -124,7 +124,7 @@
 ## 工作流
 
 ```
-需求  →  /validate  →  方案  →  /plan-first  →  /risk  →  实现  →  /verify  →  /uat  →  /handoff
+需求  →  /validate  →  方案  →  /cds-plan  →  /risk  →  实现  →  /verify  →  /uat  →  /handoff
 ```
 
 （上面出现但你还没装的技能，跑 `/sdd-init` 会告诉你怎么装。）

@@ -162,35 +162,35 @@ describe('SkillProxy', () => {
     expect(got.stale).toBe(false);
   });
 
-  it('CDS 本地携带的技能直接打包，不请求 MAP 中不存在的同名技能', async () => {
-    const localRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'local-skills-'));
-    fs.mkdirSync(path.join(localRoot, 'plan-first'), { recursive: true });
-    fs.writeFileSync(path.join(localRoot, 'plan-first', 'SKILL.md'), '# plan-first\n');
-    let calls = 0;
+  it('从上手助手选中 cds-plan 后可直接下载仓库技能', async () => {
+    const localRoot = fileURLToPath(new URL('../../../.claude/skills/', import.meta.url));
+    const fetchImpl = vi.fn(async () => new Response(null, { status: 404 }));
     const proxy = new SkillProxy({
       mapBase: 'https://map.example.test',
       cacheDir,
       localSkillRoots: [localRoot],
-      fetchImpl: async () => { calls += 1; return new Response(null, { status: 404 }); },
+      fetchImpl,
     });
 
-    try {
-      const result = await proxy.fetchSkill('plan-first');
-      expect(result.source).toBe('local');
-      expect(result.stale).toBe(false);
-      expect(result.body.subarray(0, 4)).toEqual(Buffer.from([0x50, 0x4b, 0x03, 0x04]));
-      expect(result.body.toString('utf8')).toContain('plan-first/SKILL.md');
-      expect(calls).toBe(0);
-    } finally {
-      fs.rmSync(localRoot, { recursive: true, force: true });
-    }
+    const { bundles } = await proxy.fetchBundles();
+    const skills = bundles.flatMap(bundle => bundle.skills);
+    const plan = skills.find(skill => skill.key === 'cds-plan');
+    expect(plan).toBeDefined();
+    expect(skills.some(skill => skill.key === 'plan-first')).toBe(false);
+
+    const result = await proxy.fetchSkill(plan!.key);
+    expect(result.source).toBe('local');
+    expect(result.stale).toBe(false);
+    expect(result.body.subarray(0, 4)).toEqual(Buffer.from([0x50, 0x4b, 0x03, 0x04]));
+    expect(result.body.toString('utf8')).toContain('cds-plan/SKILL.md');
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 
   it('来源自述如实数出本机自带的技能，剩下的算回源', async () => {
     // 上手助手的「技能来源」面板拿这两个数回答用户「我还能不能装」。
     // 数错了，用户会以为断网也能装上一个其实要回源的技能。
     const localRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'local-skills-'));
-    for (const key of ['plan-first', 'scope-check']) {
+    for (const key of ['cds-plan', 'scope-check']) {
       fs.mkdirSync(path.join(localRoot, key), { recursive: true });
       fs.writeFileSync(path.join(localRoot, key, 'SKILL.md'), `# ${key}\n`);
     }
@@ -220,7 +220,7 @@ describe('SkillProxy', () => {
   it('缓存里有现成包的技能不算「必须回源」', async () => {
     // zip 魔数开头才算数——判据要和下载路径的 readCache 用同一套校验。
     const zip = (name: string) => Buffer.concat([Buffer.from('PK\u0003\u0004'), Buffer.from(name)]);
-    fs.writeFileSync(path.join(cacheDir, 'plan-first.zip'), zip('cached'));
+    fs.writeFileSync(path.join(cacheDir, 'cds-plan.zip'), zip('cached'));
     // 过期缓存同样成立：把 mtime 推到很久以前，它仍是陈旧回退的来源。
     const longAgo = new Date(Date.now() - 400 * 24 * 3600 * 1000);
     fs.writeFileSync(path.join(cacheDir, 'scope-check.zip'), zip('stale'));
@@ -256,7 +256,7 @@ describe('SkillProxy', () => {
       Buffer.from('PK\u0003\u0004'),
       Buffer.alloc(4 * 1024 * 1024, 0x41),
     ]);
-    fs.writeFileSync(path.join(cacheDir, 'plan-first.zip'), big);
+    fs.writeFileSync(path.join(cacheDir, 'cds-plan.zip'), big);
 
     // 判据直接盯机制，不盯耗时：先写过一版「整个 fetchBundles 不超过 2s」的守卫，
     // 拿 readFileSync 整包读去撞它，24MB 照样 2s 内跑完——那条是假绿。

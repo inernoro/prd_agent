@@ -137,6 +137,15 @@ try {
     }
     assert(nameMismatch.length === 0, `[${bundle.key}] 所有 SKILL.md 的 frontmatter name 等于目录名${nameMismatch.length ? `（不符：${nameMismatch.join(', ')}）` : ''}`);
 
+    if (['pm-starter', 'dev-starter'].includes(bundle.key)) {
+      const plan = join(dest, 'cds-plan', 'SKILL.md');
+      assert(
+        existsSync(plan) && readFileSync(plan, 'utf8') === readFileSync(join(ROOT, '.claude', 'skills', 'cds-plan', 'SKILL.md'), 'utf8')
+          && !existsSync(join(dest, 'plan-first')),
+        `[${bundle.key}] 安装后的 cds-plan 使用新目录和完整的计划技能`,
+      );
+    }
+
     // 4c. 禁 emoji（CLAUDE.md 规则 0）—— 对外分发的内容尤其不能夹带
     const emoji = /[\u{1F000}-\u{1FAFF}\u{2700}-\u{27BF}\u{2600}-\u{26FF}]/u;
     const dirty = [];
@@ -207,7 +216,7 @@ console.log('[5] 配置校验负向用例');
 const original = readFileSync(BUNDLES_FILE, 'utf8');
 const cases = [
   ['引用不存在的技能', (c) => { c.bundles[0].includes.push('this-skill-does-not-exist'); }],
-  ['套装 key 与技能同名', (c) => { c.bundles[0].key = 'plan-first'; }],
+  ['套装 key 与技能同名', (c) => { c.bundles[0].key = 'cds-plan'; }],
   ['引用未定义的角色', (c) => { c.bundles[0].roles = ['nonexistent-role']; }],
 ];
 try {

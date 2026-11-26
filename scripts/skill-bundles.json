@@ -27,7 +27,7 @@
       "dev",
       "qa"
     ],
-    "plan-first": [
+    "cds-plan": [
       "pm",
       "dev"
     ],
@@ -165,7 +165,7 @@
         "sdd-init",
         "phase0-guard",
         "skill-validation",
-        "plan-first",
+        "cds-plan",
         "product-document-generator",
         "doc-writer",
         "risk-matrix",
@@ -192,7 +192,7 @@
       "includes": [
         "sdd-init",
         "phase0-guard",
-        "plan-first",
+        "cds-plan",
         "risk-matrix",
         "human-verify",
         "code-hygiene",

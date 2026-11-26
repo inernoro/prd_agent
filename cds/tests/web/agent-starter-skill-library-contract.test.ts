@@ -21,7 +21,7 @@ const source = fs.readFileSync(
 const styles = fs.readFileSync(path.join(process.cwd(), 'web/src/index.css'), 'utf8');
 
 const SKILLS = [
-  { key: 'plan-first', name: '先出方案', description: '动手前先说明路径、影响和取舍。', roles: [], recommendedRoles: [], groupKey: 'foundation', groupLabel: '基础方法' },
+  { key: 'cds-plan', name: '执行计划与进度', description: '分阶段列验收待办，执行时更新进度和阻塞。', roles: [], recommendedRoles: [], groupKey: 'foundation', groupLabel: '基础方法' },
   { key: 'scope-check', name: '分支边界审计', description: '识别越界、共享与未知的改动范围。', roles: [], recommendedRoles: [], groupKey: 'delivery', groupLabel: '研发交付' },
 ] as const;
 
@@ -34,9 +34,9 @@ function renderSheet(overrides: Record<string, unknown> = {}): string {
     onQuery: () => {},
     visibleSkills: SKILLS as never,
     totalCount: 2,
-    selectedKeys: ['plan-first'],
-    openedWith: ['plan-first'],
-    recommendedKeys: ['plan-first'],
+    selectedKeys: ['cds-plan'],
+    openedWith: ['cds-plan'],
+    recommendedKeys: ['cds-plan'],
     onToggle: () => {},
     onCancel: () => {},
     onDone: () => {},
