@@ -5345,8 +5345,13 @@ export function createServer(deps: ServerDeps): express.Express {
     const limitRaw = Number.parseInt(String(req.query.limit || '200'), 10) || 200;
     const limit = Math.max(1, Math.min(limitRaw, 1000));
     const since = typeof req.query.since === 'string' ? req.query.since : undefined;
+    const before = typeof req.query.before === 'string' ? req.query.before : undefined;
     if (since && Number.isNaN(Date.parse(since))) {
       res.status(400).json({ error: 'invalid_since', message: 'since must be an ISO timestamp' });
+      return;
+    }
+    if (before && Number.isNaN(Date.parse(before))) {
+      res.status(400).json({ error: 'invalid_before', message: 'before must be an ISO timestamp' });
       return;
     }
     const categoryRaw = typeof req.query.category === 'string' ? req.query.category : undefined;
@@ -5380,6 +5385,7 @@ export function createServer(deps: ServerDeps): express.Express {
       operationSource: typeof req.query.operationSource === 'string' ? req.query.operationSource : undefined,
       commitSha: typeof req.query.commitSha === 'string' ? req.query.commitSha : undefined,
       since,
+      before,
     });
     res.json({ ok: true, disabled: false, events, total: events.length });
   });

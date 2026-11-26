@@ -5316,14 +5316,21 @@ describe('Branch Routes', () => {
         input: { targetCommitSha: target, artifactAdmission: { state: 'waiting', reason: 'missing', profileIds: ['web'] } } });
       expect(run.events.some(event => event.detail?.reason === 'missing')).toBe(true);
       const observations = operationEvents.filter(event => event.source === 'artifact-verification');
-      if (monitor === '0') expect(observations).toEqual([]);
-      else expect(observations).toContainEqual(expect.objectContaining({
-        action: 'artifact-verification.attempt', branchId: id, commitSha: target, operationId: run.operationId,
-        details: expect.objectContaining({
+      const attemptLogs = run.events.filter(event => event.phase === 'artifact-check');
+      if (monitor === '0') {
+        expect(observations).toEqual([]);
+        expect(attemptLogs).toEqual([]);
+      } else {
+        const details = expect.objectContaining({
           runId: run.id, outcome: 'waiting', reason: 'missing', requiredProfiles: 2, executorId: 'local',
           pullRequests: 2, pullsSucceeded: 1, reusedImages: 0, lastStep: 'pull',
-        }),
-      }));
+        });
+        expect(observations).toContainEqual(expect.objectContaining({
+          action: 'artifact-verification.attempt', branchId: id, commitSha: target, operationId: run.operationId,
+          operationKind: 'deploy', operationTrigger: 'manual', details,
+        }));
+        expect(attemptLogs).toEqual([expect.objectContaining({ status: 'queued', detail: details })]);
+      }
       mock.addResponsePatternFirst(/docker pull/, () => ({ stdout: 'now published', stderr: '', exitCode: 0 }));
       const { refreshArtifactWaiters } = await import('../../src/services/artifact-admission-wait.js');
       const [pending] = await refreshArtifactWaiters({ coordinator: branchOperationCoordinator, containerService, getBranch: id => stateService.getBranch(id), recheckMs: 0 });

@@ -4,6 +4,7 @@ import {
 } from '../shared/artifact-verification-metrics.js';
 import type { DeploymentRun } from '../types.js';
 import type { ArtifactAdmission } from './artifact-admission.js';
+import type { BranchOperationRequest } from './branch-operation-coordinator.js';
 import type { ServerEventLogSink } from './server-event-log-store.js';
 
 export function artifactVerificationMonitorEnabled(): boolean {
@@ -65,7 +66,8 @@ export class ArtifactVerificationAttempt {
     finally { this.local.stepsMs[step] = (this.local.stepsMs[step] ?? 0) + Math.round(performance.now() - start); }
   }
 
-  record(sink: ServerEventLogSink, run: DeploymentRun, result?: ArtifactAdmission): void {
+  record(sink: ServerEventLogSink | null | undefined, run: DeploymentRun,
+    request: Pick<BranchOperationRequest, 'actor' | 'kind' | 'source' | 'requestId'>, result?: ArtifactAdmission) {
     const probe = this.executorId === 'local' ? this.snapshot() : this.executorProbe;
     const outcome = result?.state || 'interrupted';
     const executionMs = Math.round(performance.now() - this.startedAt);
@@ -75,14 +77,21 @@ export class ArtifactVerificationAttempt {
       outcome, executionMs, elapsedSinceAcceptedMs: Math.max(0, Date.now() - Date.parse(run.startedAt)),
       reason: result?.reason && ARTIFACT_WAIT_REASONS.includes(result.reason) ? result.reason : undefined,
     };
+    const level = result?.reason === 'verification-unavailable' ? 'warn' : 'info';
+    const profileId = result?.profileIds?.[0];
+    const counts = probe ? ` · 拉取请求 ${probe.pullRequests} · 复用 ${probe.reusedImages}` : '';
+    const message = `镜像核验${outcome === 'ready' ? '通过' : outcome === 'waiting' ? '等待重试' : '中断'} · ${executionMs} 毫秒 · 执行器 ${this.executorId}${profileId ? ` · 服务 ${profileId}` : ''}${counts}`;
     try {
-      sink.record({
-        category: 'system', severity: result?.reason === 'verification-unavailable' ? 'warn' : 'info',
+      sink?.record({
+        category: 'system', severity: level,
         source: ARTIFACT_VERIFICATION_SOURCE, action: 'artifact-verification.attempt',
-        message: `镜像核验${outcome === 'ready' ? '通过' : outcome === 'waiting' ? '等待重试' : '中断'} · ${executionMs} 毫秒`,
-        projectId: run.projectId, branchId: run.branchId, profileId: result?.profileIds?.[0], commitSha: run.commitSha,
-        operationId: run.operationId, operationTrigger: run.trigger, status: outcome, details: { ...details },
+        message,
+        projectId: run.projectId, branchId: run.branchId, profileId, commitSha: run.commitSha,
+        requestId: request.requestId, operationId: run.operationId, operationTrigger: run.trigger,
+        operationKind: request.kind, operationActor: request.actor, operationSource: request.source, status: outcome,
+        details: { ...details },
       });
     } catch { /* The diagnostic sink must not change deployment admission. */ }
+    return { level, message, details } as const;
   }
 }

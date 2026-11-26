@@ -326,6 +326,7 @@ describe('Server route ordering (regression)', () => {
             if (filter.requestId && event.requestId !== filter.requestId) return false;
             if (filter.operationId && event.operationId !== filter.operationId && event.details?.operationId !== filter.operationId) return false;
             if (filter.since && event.ts < new Date(filter.since)) return false;
+            if (filter.before && event.ts >= new Date(filter.before)) return false;
             return true;
           })
           .sort((a, b) => b.ts.getTime() - a.ts.getTime())
@@ -517,6 +518,9 @@ describe('Server route ordering (regression)', () => {
     expect(body.events[0].operationId).toBe('op-cancel');
     expect(body.events[0].requestId).toBe('req-cancel');
     expect(body.events[0].details.trigger).toBe('manual');
+    const window = await request(server, '/api/server-events?since=2026-05-26T23:00:00.000Z&before=2026-05-26T23:01:00.000Z');
+    expect(window.status).toBe(200);
+    expect(JSON.parse(window.body).events.map((event: ServerEventRecord) => event._id)).toEqual(['evt-start']);
   });
 
   it('real createServer treats /_cds/api/* as a master API alias, not SPA HTML', async () => {
@@ -2079,15 +2083,15 @@ describe('Server route ordering (regression)', () => {
     }
   });
 
-  it('real createServer rejects invalid /api/server-events since timestamps', async () => {
+  it.each(['since', 'before'])('real createServer rejects invalid /api/server-events %s timestamps', async (parameter) => {
     const app = buildRealServerWithEvents([]);
     server = await startServer(app);
 
-    const res = await request(server, '/api/server-events?since=not-a-date');
+    const res = await request(server, `/api/server-events?${parameter}=not-a-date`);
 
     expect(res.status).toBe(400);
     expect(res.contentType).toContain('application/json');
-    expect(JSON.parse(res.body).error).toBe('invalid_since');
+    expect(JSON.parse(res.body).error).toBe(`invalid_${parameter}`);
   });
 
   it('real createServer advertises bundled cdscli version on API responses', async () => {

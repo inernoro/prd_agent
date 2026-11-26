@@ -3250,7 +3250,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
   if (branchOperationCoordinator) registerArtifactWaitRefresher(branchOperationCoordinator, async () => {
     const ready = await refreshArtifactWaiters({ coordinator: branchOperationCoordinator, containerService,
       getBranch: id => stateService.getBranch(id), inspect: async (pending, input, entry, assertCurrent) => {
-        const monitoredRun = serverEventLogStore && artifactVerificationMonitorEnabled()
+        const monitoredRun = artifactVerificationMonitorEnabled()
           ? deploymentRunService?.getForOperation(pending.operationId, pending.generation) : undefined;
         const measurement = monitoredRun && new ArtifactVerificationAttempt(Boolean(input.artifactAdmission?.checkedAt));
         let result: ArtifactAdmission | undefined;
@@ -3262,7 +3262,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
                 checkedAt: new Date().toISOString(), reason: 'verification-unavailable', artifacts: [] };
             });
         } finally {
-          if (monitoredRun && measurement && serverEventLogStore) measurement.record(serverEventLogStore, monitoredRun, result);
+          if (monitoredRun && measurement) {
+            const log = measurement.record(serverEventLogStore, monitoredRun, pending.request, result);
+            if (result && deploymentRunService?.get(monitoredRun.id)?.status === 'queued') {
+              try {
+                deploymentRunService.append(monitoredRun.id, {
+                  phase: 'artifact-check', status: 'queued', level: log.level, message: log.message,
+                  detail: { ...log.details, profileIds: result.profileIds },
+                });
+              } catch { /* A diagnostic event cannot reject the deployment. */ }
+            }
+          }
         }
         if (result.state !== 'waiting' || !deploymentRunService) return result;
         const run = deploymentRunService.getForOperation(pending.operationId, pending.generation);
