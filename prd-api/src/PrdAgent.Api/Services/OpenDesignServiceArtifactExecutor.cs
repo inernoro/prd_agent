@@ -131,6 +131,19 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
             return new DesignArtifactProviderProbeResult(false, false, false, IncompleteConfigurationReason);
         }
 
+        return Logged(await ProbeCapabilitiesAsync(transport, ct));
+    }
+
+    internal async Task<bool> ProbeCodeFilmSlotAsync(Uri slot, CancellationToken ct)
+    {
+        var transport = OpenDesignTransportResolver.Resolve(_configuration);
+        if (transport.Transport != OpenDesignTransport.Service || transport.Problem != null || transport.ApiKey == null)
+            return false;
+        return (await ProbeCapabilitiesAsync(transport with { BaseUrl = slot }, ct)).AcceptingTasks;
+    }
+
+    private async Task<ProbeVerdict> ProbeCapabilitiesAsync(OpenDesignTransportResolution transport, CancellationToken ct)
+    {
         using var timeout = new CancellationTokenSource(ProbeTimeout);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, timeout.Token);
         try
@@ -141,24 +154,23 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
             var text = await response.Content.ReadAsStringAsync(linked.Token);
             if (!response.IsSuccessStatusCode)
             {
-                return Logged(Unavailable(
+                return Unavailable(
                     "设计执行服务暂时回报不了自身状态，OpenDesign 暂不可用：请稍后重试；持续出现请管理员查看设计执行服务的状态",
-                    $"capabilities status={(int)response.StatusCode} baseUrl={transport.BaseUrl}"));
+                    $"capabilities status={(int)response.StatusCode} baseUrl={transport.BaseUrl}");
             }
-            return Logged(MapCapabilities(text, transport.BaseUrl));
+            return MapCapabilities(text, transport.BaseUrl!);
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
-            return Logged(Unavailable(
+            return Unavailable(
                 "设计执行服务没有及时回报自身状态，OpenDesign 暂不可用：等它恢复即可，无需处理；持续出现请管理员查看设计执行服务是否在运行",
-                $"capabilities timeout={(int)ProbeTimeout.TotalSeconds}s baseUrl={transport.BaseUrl}"));
+                $"capabilities timeout={(int)ProbeTimeout.TotalSeconds}s baseUrl={transport.BaseUrl}");
         }
         catch (Exception ex) when (ex is HttpRequestException or IOException)
         {
-            _logger.LogWarning(ex, "读取设计执行服务能力失败 transport=service baseUrl={BaseUrl}", transport.BaseUrl);
             return Unavailable(
                 "MAP 连不上设计执行服务，OpenDesign 暂不可用：请管理员检查设计执行服务是否在运行，必要时把 OpenDesign 切回经 CDS 会话的旧路径",
-                $"capabilities error={ex.GetType().Name} baseUrl={transport.BaseUrl}").Result;
+                $"capabilities error={ex.GetType().Name} baseUrl={transport.BaseUrl}");
         }
     }
 

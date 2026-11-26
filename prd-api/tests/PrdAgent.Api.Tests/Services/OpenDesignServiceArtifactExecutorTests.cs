@@ -85,31 +85,31 @@ public sealed class OpenDesignServiceArtifactExecutorTests
     public async Task CodeFilmSlots_ExcludeUnavailableServiceAndAdmitItAfterRecovery()
     {
         using var service = new FakeDesignService();
-        using var client = new HttpClient(service, disposeHandler: false);
+        var executor = BuildExecutor(service, BuildBroker().Object);
         var slot = new Uri("http://film-one:8093");
         service.OnCapabilities(() => Json(HttpStatusCode.OK, new JsonObject
         {
             ["protocol"] = "map-design-executor-v1", ["healthy"] = false,
         }));
-        (await HostedSiteEditRunWorker.ProbeCodeFilmSlotAsync(client, slot, CancellationToken.None)).ShouldBeFalse();
+        (await executor.ProbeCodeFilmSlotAsync(slot, CancellationToken.None)).ShouldBeFalse();
 
         service.OnCapabilities(() => Json(HttpStatusCode.OK, new JsonObject
         {
             ["protocol"] = "other-executor", ["healthy"] = true, ["acceptingTasks"] = true,
         }));
-        (await HostedSiteEditRunWorker.ProbeCodeFilmSlotAsync(client, slot, CancellationToken.None)).ShouldBeFalse();
+        (await executor.ProbeCodeFilmSlotAsync(slot, CancellationToken.None)).ShouldBeFalse();
 
         service.OnCapabilities(() => Json(HttpStatusCode.OK, new JsonObject
         {
             ["protocol"] = "map-design-executor-v1", ["healthy"] = true, ["acceptingTasks"] = false,
         }));
-        (await HostedSiteEditRunWorker.ProbeCodeFilmSlotAsync(client, slot, CancellationToken.None)).ShouldBeFalse();
+        (await executor.ProbeCodeFilmSlotAsync(slot, CancellationToken.None)).ShouldBeFalse();
 
         service.OnCapabilities(() => Json(HttpStatusCode.OK, new JsonObject
         {
             ["protocol"] = "map-design-executor-v1", ["healthy"] = true, ["acceptingTasks"] = true,
         }));
-        (await HostedSiteEditRunWorker.ProbeCodeFilmSlotAsync(client, slot, CancellationToken.None)).ShouldBeTrue();
+        (await executor.ProbeCodeFilmSlotAsync(slot, CancellationToken.None)).ShouldBeTrue();
         service.CapabilityAuthorization.ShouldBeNull();
     }
 

@@ -24,7 +24,6 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
     internal static readonly TimeSpan RecoveryInterval = TimeSpan.FromSeconds(15);
     internal static readonly TimeSpan QueueRecoveryDelay = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan CodeFilmSlotProbeInterval = TimeSpan.FromSeconds(10);
-    private static readonly TimeSpan CodeFilmSlotProbeTimeout = TimeSpan.FromSeconds(5);
     private const int MaxModelInputChars = 240_000;
 
     /// <summary>同一 revision 的执行进程退出后（进程重启）给用户的原因。</summary>
@@ -48,7 +47,6 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
     private readonly ILogger<HostedSiteEditRunWorker> _logger;
     private readonly IReadOnlyList<Uri> _codeFilmSlots;
     private readonly int _codeFilmMinimumSlots;
-    private readonly IHttpClientFactory? _httpClients;
     private readonly string _instanceId = $"{Environment.MachineName}:{Guid.NewGuid():N}";
 
     public HostedSiteEditRunWorker(
@@ -57,8 +55,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         IRunEventStore events,
         ILogger<HostedSiteEditRunWorker> logger,
         PrdAgent.Core.Interfaces.ITaskExecutionCoordinator? taskExecutions = null,
-        IConfiguration? configuration = null,
-        IHttpClientFactory? httpClients = null)
+        IConfiguration? configuration = null)
     {
         _taskExecutions = taskExecutions;
         _scopeFactory = scopeFactory;
@@ -67,7 +64,6 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         _logger = logger;
         _codeFilmSlots = configuration == null ? [] : OpenDesignTransportResolver.CodeFilmSlots(configuration);
         _codeFilmMinimumSlots = OpenDesignTransportResolver.CodeFilmMinimumSlots(configuration);
-        _httpClients = httpClients;
     }
 
     protected override Task ExecuteAsync(CancellationToken stoppingToken)
@@ -89,38 +85,22 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             return;
         }
 
-        using var client = (_httpClients ?? throw new InvalidOperationException("缺少 OpenDesign HTTP 客户端工厂"))
-            .CreateClient(OpenDesignTransportServiceCollectionExtensions.ServiceHttpClientName);
         var startupPlan = await Task.WhenAll(_codeFilmSlots.Select(async slot =>
-            (Slot: slot, Ready: await ProbeCodeFilmSlotAsync(client, slot, stoppingToken))));
+            (Slot: slot, Ready: await ProbeCodeFilmSlotAsync(slot, stoppingToken))));
         var readyCount = startupPlan.Count(slot => slot.Ready);
         _logger.Log(readyCount < _codeFilmMinimumSlots ? LogLevel.Warning : LogLevel.Information,
             "代码视频启动槽位规划 configured={Configured} ready={Ready} targetMinimum={TargetMinimum}",
             startupPlan.Length, readyCount, _codeFilmMinimumSlots);
 
         await Task.WhenAll(startupPlan.Select(slot =>
-            ConsumeQueueAsync(RunKinds.CodeFilm, slot.Slot, stoppingToken, client, slot.Ready)));
+            ConsumeQueueAsync(RunKinds.CodeFilm, slot.Slot, stoppingToken, slot.Ready)));
     }
 
-    internal static async Task<bool> ProbeCodeFilmSlotAsync(HttpClient client, Uri slot, CancellationToken ct)
+    private async Task<bool> ProbeCodeFilmSlotAsync(Uri slot, CancellationToken ct)
     {
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        timeout.CancelAfter(CodeFilmSlotProbeTimeout);
-        try
-        {
-            using var response = await client.GetAsync(new Uri(slot, "/v1/capabilities"), timeout.Token);
-            if (!response.IsSuccessStatusCode) return false;
-            var body = await response.Content.ReadAsStringAsync(timeout.Token);
-            return OpenDesignServiceArtifactExecutor.MapCapabilities(body, slot).AcceptingTasks;
-        }
-        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
-        {
-            return false;
-        }
-        catch (Exception ex) when (ex is HttpRequestException or IOException)
-        {
-            return false;
-        }
+        using var scope = _scopeFactory.CreateScope();
+        var executor = scope.ServiceProvider.GetRequiredService<OpenDesignServiceArtifactExecutor>();
+        return await executor.ProbeCodeFilmSlotAsync(slot, ct);
     }
 
     private async Task ReconcileLoopAsync(CancellationToken stoppingToken)
@@ -145,7 +125,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
 
     private async Task ConsumeQueueAsync(
         string kind, Uri? codeFilmSlot, CancellationToken stoppingToken,
-        HttpClient? codeFilmClient = null, bool slotReady = true)
+        bool slotReady = true)
     {
         var nextProbeAt = DateTime.UtcNow + CodeFilmSlotProbeInterval;
         while (!stoppingToken.IsCancellationRequested)
@@ -153,11 +133,11 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             string? runId = null;
             try
             {
-                if (codeFilmSlot != null && codeFilmClient != null)
+                if (codeFilmSlot != null)
                 {
                     if (DateTime.UtcNow >= nextProbeAt)
                     {
-                        var ready = await ProbeCodeFilmSlotAsync(codeFilmClient, codeFilmSlot, stoppingToken);
+                        var ready = await ProbeCodeFilmSlotAsync(codeFilmSlot, stoppingToken);
                         nextProbeAt = DateTime.UtcNow + CodeFilmSlotProbeInterval;
                         if (slotReady != ready)
                             _logger.Log(ready ? LogLevel.Information : LogLevel.Warning,
