@@ -5,6 +5,8 @@ import { SitePreview } from '@/components/SitePreview';
 import type { SitePreviewHtmlSite } from './useSitePreviewHtml';
 import Threads from '@/components/reactbits/Threads';
 import { useDataTheme } from '@/hooks/useDataTheme';
+import { useMobileThemeStore } from '@/stores/mobileThemeStore';
+import { transitionThemeMode } from '@/lib/themeTransition';
 import type { SharedSiteInfo, ShareViewData } from '@/services/real/webPages';
 import { HostedCollectionReader, type CollectionReaderParts, type CollectionReaderRenderer } from './HostedCollectionReader';
 import './HostedShareCollection.css';
@@ -60,6 +62,7 @@ export default function HostedShareCollection({ data, collectionPath, action, co
   onSelect?: (id: string | null) => void; reader?: ReactNode | ((render: CollectionReaderRenderer) => ReactNode); related?: ReactNode; shareAccess?: SitePreviewHtmlSite['shareAccess']; sample?: boolean;
 }) {
   const theme = useDataTheme();
+  const setThemeMode = useMobileThemeStore(state => state.setMode);
   const [paused, setPaused] = useState(initialPaused);
   const [keyword, setKeyword] = useState('');
   const [section, setSection] = useState('');
@@ -125,7 +128,9 @@ export default function HostedShareCollection({ data, collectionPath, action, co
   return <main className={`hosted-share-collection hosted-ledger${large ? ' is-large' : ' is-small'}${selectedSiteId ? ' is-reading' : ''}${sample ? ' is-sample' : ''}`}>
     <HostedShareBackground paused={paused} />
     <header className="ledger-topbar"><div className="ledger-breadcrumb"><svg viewBox="0 0 20 20" width="20" height="20" fill="none" aria-hidden="true"><rect x="2" y="2" width="16" height="16" rx="3" stroke="currentColor" strokeWidth="1.5" /><path d="M5 13V7l5 4 5-4v6" stroke="currentColor" strokeWidth="1.5" /></svg><span>网页托管</span><i>/</i><a href={collectionPath} onClick={event => navigate(event, null)}>合集</a><i>/</i><strong>{data.title || `${data.sites.length} 个站点合集`}</strong>{sample && <span className="ledger-tag is-reference">示例数据</span>}</div>
-      <div className="ledger-header-actions">{controls}<button className="ledger-button is-ghost ledger-motion-toggle" aria-pressed={!paused} onClick={() => setPaused(!paused)}><Waves size={15} /><span>{paused ? '静止' : '动态'}</span></button><button className="ledger-button is-ghost" aria-label={theme === 'light' ? '切换深色' : '切换浅色'} onClick={() => { document.documentElement.dataset.theme = theme === 'light' ? 'dark' : 'light'; }}><Moon size={15} /><span>{theme === 'light' ? '浅色' : '深色'}</span></button>{action && <span className="ledger-header-divider" aria-hidden="true" />}{action}</div>
+      <div className="ledger-header-actions">{controls}<button className="ledger-button is-ghost ledger-motion-toggle" aria-pressed={!paused} onClick={() => setPaused(!paused)}><Waves size={15} /><span>{paused ? '静止' : '动态'}</span></button><button className="ledger-button is-ghost" aria-label={theme === 'light' ? '切换深色' : '切换浅色'} onClick={event => transitionThemeMode({
+        mode: theme === 'light' ? 'dark' : 'light', pathname: window.location.pathname, origin: event, commit: setThemeMode,
+      })}><Moon size={15} /><span>{theme === 'light' ? '浅色' : '深色'}</span></button>{action && <span className="ledger-header-divider" aria-hidden="true" />}{action}</div>
     </header>
     <div className="ledger-workspace">{large && directory}<div className="ledger-main" ref={mainRef}>
       {data.collectionNeedsUpdate && <p className="ledger-update-note" role="status">合集已有修改，本链接保留原成员快照。可在“管理合集”中重新生成分享，并停止旧链接。</p>}
