@@ -26,6 +26,8 @@ function matches(hash: string, candidate: Buffer): boolean {
 export function inspectAccessRecovery(state: StateService, projectId: string, plaintext: string): {
   state: AccessRecoveryState; principalId?: string; kind: 'user' | 'project';
   design?: { keyId: string; revoked: boolean };
+  issuedByAccountId?: string | null;
+  credentialId?: string;
 } | undefined {
   if (!plaintext.startsWith('cdsu_') && !plaintext.startsWith('cdsp_')) return undefined;
   const hash = createHash('sha256').update(plaintext).digest();
@@ -39,7 +41,10 @@ export function inspectAccessRecovery(state: StateService, projectId: string, pl
   if (kind === 'user' && !principalId) return { state: 'credential-unusable', kind };
   const design = 'designAccess' in credential && credential.designAccess
     ? { keyId: credential.id, revoked: Boolean(credential.revokedAt) } : undefined;
-  const identity = { principalId, kind, ...(design ? { design } : {}) } as const;
+  const identity = {
+    principalId, kind, credentialId: credential.id, ...(design ? { design } : {}),
+    ...(credential.issuedByAccountId === undefined ? {} : { issuedByAccountId: credential.issuedByAccountId }),
+  } as const;
   if (principalId) {
     const blocked = principalRecoveryBlock(state, principalId, projectId);
     if (blocked) return { state: blocked, ...identity };

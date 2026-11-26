@@ -62,7 +62,8 @@ async function runWithDebtList(browser, base, mobile, run, initialDebt = active,
       }
       if (pathname === '/api/auth/status') return route.fulfill({ json: { authenticated: true, enabled: true,
         mode: 'basic', user: { ...actor, name: actor.label, isSystemOwner: true } } });
-      if (pathname === target) return route.fulfill({ json: { ...resolveFixture(target), permissions: ['read', 'write'] } });
+      if (pathname === target) return route.fulfill({ json: { ...resolveFixture(target), permissions: ['read', 'write'],
+        timeline: { debts: [], debtEvents: [] } } });
       if (pathname === `${target}/debts`) return route.fulfill({ json: { projectId, today: '2026-11-20',
         items: [url.searchParams.get('view') === 'repaid' ? paid : initialDebt], nextCursor: null } });
       if (pathname === `${target}/debts/${initialDebt.id}`) return route.fulfill({ json: { projectId, debt: initialDebt, events: [progressEvent], brief } });
@@ -78,7 +79,7 @@ async function runWithDebtList(browser, base, mobile, run, initialDebt = active,
     await page.goto(base + '/project-list');
     if (mobile) await button(page, '打开导航菜单').tap();
     await page.getByRole('link', { name: '工程规划', exact: true }).click();
-    await page.getByRole('heading', { name: '待你确认', exact: true }).waitFor();
+    await page.getByRole('region', { name: '工程规划时间线', exact: true }).waitFor();
     const debtBranch = page.getByRole('button', { name: /^债务分支/ });
     if (mobile) await debtBranch.tap();
     else await debtBranch.click();

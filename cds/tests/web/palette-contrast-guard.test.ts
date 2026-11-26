@@ -71,6 +71,9 @@ describe('实色按钮、状态标记和焦点框的对比度', () => {
     ['status-ink', 'info'],
     ['bad-foreground', 'bad'],
     ['foreground', 'hairline-strong'],
+    ['ok-ink', 'card'],
+    ['warn-ink', 'card'],
+    ['muted-foreground', 'card'],
   ];
 
   for (const theme of ['dark', 'light']) {
@@ -101,19 +104,22 @@ describe('主色：填充用 primary，文字用 primary-ink', () => {
     expect(css).toContain('color: hsl(var(--primary-ink)');
   });
 
-  it('Tailwind 生成主色填充、浅底主色文字与主色填充上的字色', async () => {
-    const requireFromWeb = createRequire(path.join(WEB, 'package.json'));
-    const postcss = requireFromWeb('postcss');
-    const tailwind = requireFromWeb('tailwindcss');
-    const loadConfig = requireFromWeb('tailwindcss/loadConfig');
+  it('Tailwind 为按钮底色和文字分别生成正确的 token', async () => {
+    const fromWeb = createRequire(path.join(path.dirname(TW_CONFIG), 'package.json'));
+    const postcss = fromWeb('postcss');
+    const tailwind = fromWeb('tailwindcss');
+    const loadConfig = fromWeb('tailwindcss/loadConfig');
     const compiled = await postcss([tailwind({
       ...loadConfig(TW_CONFIG),
-      content: [{ raw: 'bg-primary text-primary text-primary-foreground', extension: 'html' }],
+      content: [{ raw: 'bg-primary text-primary text-primary-foreground text-ok-ink text-warn-ink', extension: 'html' }],
     })]).process('@tailwind utilities;', { from: undefined });
-
     expect(compiled.css).toMatch(/\.bg-primary\s*\{[^}]*background-color:\s*hsl\(var\(--primary\)/);
-    expect(compiled.css).toMatch(/\.text-primary\s*\{[^}]*color:\s*hsl\(var\(--primary-ink\)/);
-    expect(compiled.css).toMatch(/\.text-primary-foreground\s*\{[^}]*color:\s*hsl\(var\(--primary-foreground\)/);
+    for (const [rule, tokenName] of [
+      ['text-primary', 'primary-ink'], ['text-primary-foreground', 'primary-foreground'],
+      ['text-ok-ink', 'ok-ink'], ['text-warn-ink', 'warn-ink'],
+    ]) {
+      expect(compiled.css).toMatch(new RegExp(`\\.${rule}\\s*\\{[^}]*color:\\s*hsl\\(var\\(--${tokenName}\\)`));
+    }
   });
 });
 

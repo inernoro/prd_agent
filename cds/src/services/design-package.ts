@@ -2,9 +2,14 @@ import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fromBuffer, type Entry, type ZipFile } from 'yauzl';
+import previewContract from '../shared/design-preview-contract.json' with { type: 'json' };
 import { crc32 } from '../utils/zip.js';
-import { designSlots, designViewports, type DesignDeliveryFile, type DesignMaterial, type DesignRule, type DesignScreen, type DesignTheme } from '../shared/design-workspace.js';
-import { planningText, rejectPlanning } from './engineering-planning-input.js';
+import { designSlots, designViewports, type DesignDeliveryFile, type DesignDemoData, type DesignDemoStep, type DesignFrameworkCharter, type DesignGoal, type DesignMaterial,
+  type DesignRule, type DesignScope, type DesignScreen, type DesignTheme, type DesignVideo } from '../shared/design-workspace.js';
+import { designHandoffChecks, type DesignHandoffPlan, type DesignHandoffStep } from '../shared/design-handoff.js';
+import { designDimensions, designObjectiveMethods, type DesignAcceptancePlan, type DesignCoverageRecord, type DesignDimension } from '../shared/design-methods.js';
+import { rejectDesignGate, validateDesignPublicationGate, type DesignPublicationGateContext } from './design-publication-gate.js';
+import { PlanningError, planningText, rejectPlanning } from './engineering-planning-input.js';
 
 const mib = 1024 * 1024;
 export const designPackageLimit = 4 * mib;
@@ -24,6 +29,24 @@ export function designId(value: unknown, name: string): string {
   const id = planningText(value, name, 120);
   if (!/^[A-Za-z0-9_.-]+$/.test(id) || id === '.' || id === '..' || Object.hasOwn(Object.prototype, id)) invalidDesign(`${name} 不是有效编号`);
   return id;
+}
+
+export function designScopeId(value: unknown, label: string): string {
+  const id = designId(value, label);
+  if (!/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/.test(id) || id.length > 64) return invalidDesign(`${label}须使用小写字母、数字或短横线`);
+  return id;
+}
+
+export function parseDesignScope(value: unknown): DesignScope {
+  const input = designRecord(value, '稿件归属', ['systemId', 'moduleId', 'related']);
+  const ref = (item: Record<string, unknown>) => ({
+    systemId: designScopeId(item.systemId, '系统编号'), moduleId: designScopeId(item.moduleId, '模块编号'),
+  });
+  const primary = ref(input);
+  const related = list(input.related, '关联模块', 12, row => ref(designRecord(row, '关联模块', ['systemId', 'moduleId'])), true);
+  const key = (row: typeof primary) => row.systemId + '/' + row.moduleId;
+  if (related.some(row => key(row) === key(primary))) invalidDesign('关联模块不可重复主归属');
+  return { ...primary, ...(related.length ? { related: unique(related, key, '关联模块').sort((a, b) => key(a).localeCompare(key(b))) } : {}) };
 }
 
 export function designCommit(value: unknown): string {
@@ -78,6 +101,71 @@ export function designPngDimensions(bytes: Buffer): { width: number; height: num
   return undefined;
 }
 
+export function isDesignMp4(bytes: Buffer): boolean {
+  return bytes.length >= 16 && bytes.readUInt32BE(0) >= 16 && bytes.readUInt32BE(0) <= bytes.length
+    && bytes.toString('ascii', 4, 8) === 'ftyp';
+}
+
+function parseDesignPresentation(input: Record<string, unknown>, screens: DesignScreen[], file: (name: string) => Buffer | undefined) {
+  const screensById = new Set(screens.map(screen => screen.id));
+  const demo = input.demo === undefined ? undefined : unique(list(input.demo, '演示流程', 80, (value): DesignDemoStep => {
+    const step = designRecord(value, '演示步骤', ['screen', 'title', 'tip']);
+    const screen = designId(step.screen, '演示画面');
+    if (!screensById.has(screen)) return invalidDesign('演示步骤引用了不存在的画面');
+    return { screen,
+      ...(step.title === undefined ? {} : { title: planningText(step.title, '演示标题', 180) }),
+      ...(step.tip === undefined ? {} : { tip: planningText(step.tip, '演示提示', 600) }) };
+  }), step => step.screen, '演示画面');
+  const videos = input.videos === undefined ? undefined : list(input.videos, '稿件视频', 1, (value): Omit<DesignVideo, 'artifactId'> => {
+    const video = designRecord(value, '稿件视频', ['page', 'file', 'title', 'chapters']);
+    const name = relativeFile(video.file);
+    const bytes = /\.mp4$/i.test(name) && file(name);
+    if (video.page !== 'accept' || !bytes || !isDesignMp4(bytes)) return invalidDesign('验收视频须引用稿件包内的有效 MP4 文件');
+    const chapters = unique(list(video.chapters, '视频章节', designObjectiveMethods.length, value => {
+      const chapter = designRecord(value, '视频章节', ['method', 'title', 'start']);
+      const method = designObjectiveMethods.find(([id]) => id === chapter.method)?.[0];
+      const start = chapter.start;
+      if (!method || typeof start !== 'number' || !Number.isFinite(start) || start < 0 || start > 86_400) {
+        return invalidDesign('视频章节须指定验收方式和有效的开始秒数');
+      }
+      return { method, start, title: planningText(chapter.title, '章节标题', 180) };
+    }), chapter => chapter.method, '视频章节');
+    if (!chapters.length || chapters.some((chapter, index) => index > 0 && chapter.start <= chapters[index - 1].start)) {
+      return invalidDesign('视频章节须按开始时间递增排列');
+    }
+    return { page: video.page, file: name, title: planningText(video.title, '视频标题', 180), chapters };
+  });
+  return { demo, videos };
+}
+
+function parseDesignGoals(value: unknown, acceptance: DesignRule[]): DesignGoal[] | undefined {
+  if (value === undefined) return undefined;
+  const available = new Set(acceptance.map(rule => rule.id));
+  return unique(list(value, '目标', 60, input => {
+    const data = designRecord(input, '目标', ['id', 'goal', 'doneWhen', 'items', 'where']);
+    const items = unique(list(data.items, '目标验收项', 60, id => designId(id, '验收项')), id => id, '目标验收项');
+    if (items.some(id => !available.has(id))) invalidDesign('目标引用了本版不存在的验收项');
+    const where = data.where === undefined ? undefined : planningText(data.where, '目标的验收入口', 240);
+    if (!items.length && !where) invalidDesign('目标须关联验收项或说明在哪验收');
+    return { id: designId(data.id, '目标编号'), goal: planningText(data.goal, '目标', 260),
+      doneWhen: planningText(data.doneWhen, '完成条件', 1200), items, ...(where ? { where } : {}) };
+  }), goal => goal.id, '目标');
+}
+
+function parseDesignDemoData(value: unknown, read: (name: string) => string | undefined): DesignDemoData | undefined {
+  if (value === undefined) return undefined;
+  const data = designRecord(value, '演示数据', ['files', 'sha256', 'note']);
+  const files = unique(list(data.files, '演示数据文件', 2, relativeFile), file => file, '演示数据文件');
+  if (files.length !== 2 || !['src/fixtures.ts', 'src/data-design.ts'].every(file => files.includes(file))) {
+    return invalidDesign('演示数据应声明 fixtures.ts 和 data-design.ts 两份源码');
+  }
+  const sources = files.map(name => read(name) ?? invalidDesign('请在稿件包内提供演示数据源码'));
+  const sha256 = designDigest(sources.map(text => text.replace(/\r\n/g, '\n')).join(''));
+  if (data.sha256 !== sha256) return invalidDesign('演示数据声明的摘要与包内源码不符');
+  const note = data.note === undefined ? undefined : planningText(data.note, '演示数据说明', 600);
+  return { files, sha256, ...(note ? { note } : {}) };
+}
+
 async function zipEntries(bytes: Buffer, onlyPath?: string): Promise<Map<string, Buffer>> {
   if (!Buffer.isBuffer(bytes) || !bytes.length || bytes.length > designPackageLimit) invalidDesign('稿件包须是 4 MiB 以内的 ZIP');
   const zip = await new Promise<ZipFile>((resolve, reject) => fromBuffer(bytes, {
@@ -127,15 +215,17 @@ export async function readArchivedDesignFile(bytes: Buffer, filename: string): P
   return (await zipEntries(bytes, filename)).get(filename);
 }
 
-export async function readDesignFrameworkSource(bytes: Buffer): Promise<DesignMaterial> {
+export async function readDesignFrameworkSource(bytes: Buffer): Promise<{ material: DesignMaterial; charter?: DesignFrameworkCharter }> {
   const files = await zipEntries(bytes);
   const text = (name: string) => {
     const content = files.get(name);
     return content?.length ? decoder.decode(content).replace(/\r\n/g, '\n').trim() : undefined;
   };
   const colors = text('tokens.json');
-  return { tokens: colors ? designRecord(JSON.parse(colors), 'Git 框架令牌') : undefined,
-    rules: text('rules.md'), components: text('components.md'), skeleton: text('skeleton.html') };
+  const charter = text('charter.json') ?? text('spec/charter.json');
+  return { material: { tokens: colors ? designRecord(JSON.parse(colors), 'Git 框架令牌') : undefined,
+    rules: text('rules.md'), components: text('components.md'), skeleton: text('skeleton.html') },
+    ...(charter ? { charter: parseFrameworkCharter(JSON.parse(charter)) } : {}) };
 }
 
 function list<T>(value: unknown, label: string, max: number, parse: (item: unknown) => T, optional = false): T[] {
@@ -147,6 +237,39 @@ function list<T>(value: unknown, label: string, max: number, parse: (item: unkno
 function unique<T>(rows: T[], id: (row: T) => string, name: string) {
   if (new Set(rows.map(id)).size !== rows.length) invalidDesign(`${name} 编号重复`);
   return rows;
+}
+
+export function parseFrameworkCharter(value: unknown): DesignFrameworkCharter {
+  const charter = designRecord(value, '框架初衷与范围', ['status', 'intent', 'problems', 'nonGoals', 'scope', 'owner', 'example', 'ruleSources', 'moduleDiffs']);
+  const status = charter.status;
+  if (status !== 'draft' && status !== 'adopted' && status !== 'deprecated') return invalidDesign('框架状态须为草案、已采用或已停用');
+  const scope = designRecord(charter.scope, '适用范围', ['system', 'modules']);
+  const textList = (value: unknown, label: string) => [...new Set(list(value, label, 24, item => planningText(item, label, 400)))];
+  const result: DesignFrameworkCharter = {
+    status, intent: planningText(charter.intent, '设计初衷', 400),
+    problems: textList(charter.problems, '要解决的问题'), nonGoals: textList(charter.nonGoals, '不解决什么'),
+    scope: { system: planningText(scope.system, '适用系统', 120), modules: textList(scope.modules, '适用模块') },
+    owner: planningText(charter.owner, '维护人', 120),
+  };
+  if (charter.example !== undefined) {
+    const example = designRecord(charter.example, '示意稿', ['designId', 'version']);
+    const version = example.version;
+    if (typeof version !== 'number' || !Number.isSafeInteger(version) || version < 1) return invalidDesign('示意稿必须指定稿件版本');
+    result.example = { designId: designId(example.designId, '示意稿编号'), version };
+  }
+  if (charter.ruleSources !== undefined) result.ruleSources = list(charter.ruleSources, '规则来源', 60, item => {
+    const row = designRecord(item, '规则来源', ['rule', 'from', 'evidence']);
+    return { rule: planningText(row.rule, '规则', 120), from: planningText(row.from, '来源', 240),
+      evidence: planningText(row.evidence, '依据', 600) };
+  });
+  if (charter.moduleDiffs !== undefined) result.moduleDiffs = list(charter.moduleDiffs, '模块差异', 32, item => {
+    const row = designRecord(item, '模块差异', ['module', 'diff', 'reason', 'decision']);
+    const decision = row.decision;
+    if (decision !== 'module' && decision !== 'framework' && decision !== 'pending') return invalidDesign('模块差异须说明处理结果');
+    return { module: planningText(row.module, '模块', 120), diff: planningText(row.diff, '差异', 600),
+      reason: planningText(row.reason, '差异原因', 600), decision };
+  });
+  return result;
 }
 
 function screen(value: unknown): DesignScreen {
@@ -163,11 +286,53 @@ function screen(value: unknown): DesignScreen {
   if (!themes.length) invalidDesign('每个画面至少须有一个主题');
   const entryActions = list(input.entryActions, '原型进入操作', 6,
     selector => planningText(selector, '原型进入控件选择器', 300), true);
+  const entryTimeoutMs = input.entryTimeoutMs;
+  if (entryTimeoutMs !== undefined && (typeof entryTimeoutMs !== 'number' || !Number.isInteger(entryTimeoutMs)
+    || entryTimeoutMs < previewContract.minTimeoutMs || entryTimeoutMs > previewContract.maxTimeoutMs)) {
+    return invalidDesign('画面进入超时须在 500–15000 毫秒之间');
+  }
   return { id: designId(input.id, '画面编号'), name, route, viewport, themes,
     impl: input.impl == null ? null : localDesignPath(input.impl),
     ...(entryActions.length ? { entryActions } : {}),
+    ...(entryTimeoutMs === undefined ? {} : { entryTimeoutMs }),
     ...(input.entryReadySelector === undefined ? {} : { entryReadySelector: planningText(input.entryReadySelector, '原型画面就绪选择器', 300) }),
     ...(input.readySelector === undefined ? {} : { readySelector: planningText(input.readySelector, '画面就绪选择器', 300) }) };
+}
+
+export function parseDesignDimension(value: unknown): DesignDimension {
+  if (typeof value !== 'string' || !Object.hasOwn(designDimensions, value)) return invalidDesign('请选择有效的验收覆盖维度');
+  return value as DesignDimension;
+}
+
+function parseAcceptancePlan(value: unknown): DesignAcceptancePlan {
+  const input = designRecord(value, '验收手段', designObjectiveMethods.map(([id]) => id));
+  const plan: DesignAcceptancePlan = {};
+  for (const [id, name] of designObjectiveMethods) {
+    if (input[id] === undefined) continue;
+    const method = designRecord(input[id], name, ['applicable', 'enabled', 'reason']);
+    if (typeof method.applicable !== 'boolean') return invalidDesign(`${name} 须声明是否适用`);
+    if (method.enabled !== undefined && typeof method.enabled !== 'boolean') return invalidDesign(`${name} 启用状态须为布尔值`);
+    if (!method.applicable && method.enabled) return invalidDesign(`${name} 不适用时不能启用`);
+    const reason = method.reason === undefined && method.applicable ? undefined : planningText(method.reason, `${name} 的适用说明`, 600);
+    plan[id] = { applicable: method.applicable, ...(method.enabled === undefined ? {} : { enabled: method.enabled }), ...(reason ? { reason } : {}) };
+  }
+  return plan;
+}
+
+function parseCoverage(value: unknown, acceptance: DesignRule[]): DesignCoverageRecord[] {
+  const known = new Set(acceptance.map(item => item.id));
+  const rows = list(value, '覆盖风险', 60, item => {
+    const row = designRecord(item, '覆盖风险', ['dimension', 'risk', 'ruleIds', 'reason']);
+    const dimension = parseDesignDimension(row.dimension);
+    const risk = planningText(row.risk, '风险说明', 600);
+    const ruleIds = unique(list(row.ruleIds, '覆盖规则编号', 60, value => designId(value, '覆盖规则编号'), true), id => id, '覆盖规则');
+    const reason = row.reason === undefined ? undefined : planningText(row.reason, '不适用原因', 600);
+    if (Boolean(ruleIds.length) === Boolean(reason) || ruleIds.some(id => !known.has(id))) {
+      return invalidDesign('覆盖风险须引用本稿件验收项或填写不适用原因');
+    }
+    return { dimension, risk, ruleIds, ...(reason ? { reason } : {}) };
+  });
+  return unique(rows, row => `${row.dimension}/${row.risk}`, '覆盖风险');
 }
 
 function rule(value: unknown, screens: DesignScreen[]): DesignRule {
@@ -191,8 +356,96 @@ function rule(value: unknown, screens: DesignScreen[]): DesignRule {
     }
     probe = { type: method.type, tolerance: method.tolerance as number | undefined };
   }
+  if (input.interaction !== undefined && input.interaction !== true) invalidDesign('交互验收项须声明为需执行的行为');
   return { id: designId(input.id, '验收编号'), rule: planningText(input.rule, '验收规则', 600), how, priority, slots,
-    screenId, probe, expected: input.expected === undefined ? undefined : planningText(input.expected, '验收期望', 800) };
+    screenId, probe, ...(input.interaction ? { interaction: true as const } : {}), expected: input.expected === undefined ? undefined : planningText(input.expected, '验收期望', 800),
+    ...(input.dimension === undefined ? {} : { dimension: parseDesignDimension(input.dimension) }),
+    ...(input.requirementRef === undefined ? {} : { requirementRef: designId(input.requirementRef, '需求条款编号') }) };
+}
+
+function handoffSelector(value: unknown) {
+  const selector = planningText(value, '场景控件', 240);
+  if (/>>|[\u0000-\u001f]|^(?:css|text|xpath|internal:[^=]+)=/i.test(selector)) invalidDesign('场景控件须使用本画面内的 CSS 选择器');
+  return selector;
+}
+
+function handoffValue(value: unknown) {
+  if (typeof value !== 'string' || value.length > 1600 || value.includes('\0')) return invalidDesign('场景测试值须为最多 1600 字的文字');
+  return value;
+}
+
+function parseHandoffStep(value: unknown, remembered: Set<string>): DesignHandoffStep {
+  const step = designRecord(value, '场景步骤');
+  const selector = handoffSelector(step.selector);
+  if (step.action === 'click') {
+    designRecord(value, '点击步骤', ['action', 'selector']);
+    return { action: step.action, selector };
+  }
+  if (step.action === 'fill' || step.action === 'select') {
+    designRecord(value, '填写或选择步骤', ['action', 'selector', 'value']);
+    return { action: step.action, selector, value: handoffValue(step.value) };
+  }
+  if (step.action === 'attach') {
+    designRecord(value, '添加文本附件', ['action', 'selector', 'name', 'value']);
+    const name = planningText(step.name, '虚构附件名称', 120);
+    if (/[\u0000-\u001f\\/:]/.test(name) || !/\.(txt|md|markdown)$/i.test(name)) {
+      invalidDesign('请提供没有目录的文本附件名称');
+    }
+    return { action: step.action, selector, name, value: handoffValue(step.value) };
+  }
+  const check = designHandoffChecks.find(check => check === step.check) ?? invalidDesign('请选择受支持的检查方式');
+  const reading = check === 'text' || check === 'attribute' || check === 'value';
+  const attribute = check === 'attribute' ? planningText(step.attribute, '页面属性', 80) : undefined;
+  if ((attribute && !/^[a-zA-Z_][a-zA-Z0-9_.:-]*$/.test(attribute)) || (!attribute && step.attribute !== undefined)) {
+    invalidDesign('请填写有效的页面属性');
+  }
+  if (step.action === 'remember' && reading) {
+    designRecord(value, '记录操作前状态', ['action', 'selector', 'check', 'attribute', 'as']);
+    const name = designId(step.as, '状态编号');
+    if (remembered.has(name)) invalidDesign('同一场景的状态编号不可重复');
+    remembered.add(name);
+    return { action: step.action, selector, check, attribute, as: name };
+  }
+  if (step.action !== 'expect') return invalidDesign('不支持的场景步骤');
+  designRecord(value, '结果检查步骤', ['action', 'selector', 'check', 'attribute', 'equals', 'sameAs']);
+  if (step.sameAs !== undefined) {
+    const name = designId(step.sameAs, '操作前状态编号');
+    if (!reading || !remembered.has(name) || step.equals !== undefined) return invalidDesign('请引用同一场景中已记录的状态');
+    return { action: step.action, selector, check, attribute, sameAs: name };
+  }
+  if (reading) return { action: step.action, selector, check, attribute, equals: handoffValue(step.equals) };
+  if (step.equals !== undefined && typeof step.equals !== 'boolean') return invalidDesign('该检查的期望值须为真或假');
+  if (step.equals === false && (check === 'media-playing' || check === 'audio-playing' || check === 'fullscreen')) {
+    return invalidDesign('媒体播放和全屏须验证实际进入对应状态');
+  }
+  return { action: step.action, selector, check, equals: step.equals ?? true };
+}
+
+export function parseDesignHandoffPlan(value: unknown, screens: DesignScreen[], acceptance: DesignRule[]): DesignHandoffPlan {
+  const definition = designRecord(value, '交接场景', ['cases']);
+  const rules = new Map(acceptance.map(item => [item.id, item]));
+  const cases = unique(list(definition.cases, '交接场景', 24, raw => {
+    const item = designRecord(raw, '交接场景', ['id', 'title', 'screenId', 'ruleIds', 'theme', 'steps']);
+    const screenId = designId(item.screenId, '画面编号');
+    const screen = screens.find(row => row.id === screenId) ?? invalidDesign('交接场景引用了不存在的画面');
+    const theme = screen.themes.find(value => value === (item.theme ?? screen.themes[0])) ?? invalidDesign('场景主题须来自画面清单');
+    const ruleIds = unique(list(item.ruleIds, '关联验收项', 12, value => {
+      const id = designId(value, '验收项编号');
+      if (!rules.has(id)) invalidDesign('交接场景引用了不存在的验收项');
+      return id;
+    }), id => id, '验收项');
+    const remembered = new Set<string>();
+    const steps = list(item.steps, '场景步骤', 24, value => parseHandoffStep(value, remembered));
+    const acts = steps.some(row => row.action === 'click' || row.action === 'fill' || row.action === 'select' || row.action === 'attach');
+    if (!ruleIds.length || steps.at(-1)?.action !== 'expect' || (!acts && ruleIds.some(id => rules.get(id)?.interaction))) {
+      return invalidDesign('场景须关联验收条款，并在操作后检查结果');
+    }
+    return { id: designId(item.id, '场景编号'), title: planningText(item.title, '场景标题', 120), screenId, ruleIds, theme, steps };
+  }), item => item.id, '交接场景');
+  if (!cases.length || acceptance.some(rule => rule.interaction && !cases.some(item => item.ruleIds.includes(rule.id)))) {
+    return invalidDesign('请为每项交互要求补齐可运行的交接场景');
+  }
+  return { cases };
 }
 
 const deliveryText = /\.(?:md|mdx|txt|json|ya?ml|html?|css|[cm]?js|ts|tsx|jsx|csv|toml|xml|svg)$/i;
@@ -240,7 +493,7 @@ function describeDesignDelivery(entries: Map<string, Buffer>, root: string, inpu
     if (rendered.has(path)) return 'render';
     if (/^(?:交付说明|handoff|delivery)\.md$/i.test(path)) return 'guide';
     if (docs.has(path)) return 'document';
-    if (within(path, base(frameworkDraft)) || within(path, 'spec')) return 'framework';
+    if (within(path, base(frameworkDraft)) || within(path, 'spec') || path === 'charter.json') return 'framework';
     if (within(path, base(source))) return 'source';
     return 'attachment';
   }
@@ -267,7 +520,7 @@ export async function readDesignPackage(bytes: Buffer) {
   let entries: Map<string, Buffer>;
   try { entries = await zipEntries(bytes); } catch { return invalidDesign('无法读取稿件 ZIP，检查完整性、文件类型、路径和体积'); }
   const manifests = [...entries.keys()].filter(name => name === 'design.json' || /^[^/]+\/design\.json$/.test(name));
-  if (manifests.length !== 1) invalidDesign('稿件包只能包含一份根级 design.json');
+  if (manifests.length !== 1) rejectDesignGate('G-01', '稿件包须包含一份根级 design.json');
   const manifest = manifests[0];
   const root = manifest.slice(0, -'design.json'.length);
   if (root && [...entries.keys()].some(name => !name.startsWith(root))) invalidDesign('稿件文件须位于同一目录');
@@ -283,12 +536,20 @@ export async function readDesignPackage(bytes: Buffer) {
     if (value === undefined) return undefined;
     try { return designRecord(JSON.parse(value), '稿件 JSON'); } catch { return invalidDesign('稿件包含无效的 JSON 对象'); }
   };
-  const input = json('design.json')!;
-  const rationale = planningText(utf8(input.rationale ?? '思路.md', 64 * 1024), '设计思路', 64 * 1024);
+  function gateField<T>(rule: Parameters<typeof rejectDesignGate>[0], message: string, read: () => T): T {
+    try { return read(); } catch (error) {
+      if (!(error instanceof PlanningError)) throw error;
+      return rejectDesignGate(rule, message);
+    }
+  }
+  const input = gateField('G-01', 'design.json 须为有效的 JSON 对象', () => json('design.json'))!;
+  const rationale = gateField('G-04', '请随包提供有效的 UTF-8 设计思路', () =>
+    planningText(utf8(input.rationale ?? '思路.md', 64 * 1024), '设计思路', 64 * 1024));
   const prototypeFile = input.prototype ?? 'dist/index.html';
-  const html = utf8(prototypeFile, 4 * mib);
-  if (!html || !/<(?:!doctype html|html|head|body|main|div)\b/i.test(html)) return invalidDesign('缺少可打开的单文件 HTML 原型');
-  const screens = unique(list(input.screens, '画面清单', 80, screen), row => row.id, '画面');
+  const html = gateField('G-04', '请随包提供有效的 UTF-8 原型', () => utf8(prototypeFile, 4 * mib));
+  if (!html || !/<(?:!doctype html|html|head|body|main|div)\b/i.test(html)) return rejectDesignGate('G-04', '缺少可打开的单文件 HTML 原型');
+  const screens = gateField('G-02', '画面编号、路径、视口、主题或就绪条件无效', () =>
+    unique(list(input.screens, '画面清单', 80, screen), row => row.id, '画面'));
   const renders = screens.flatMap(screen => screen.themes.flatMap(theme => {
     const content = file(`screens/${screen.id}.${theme}.png`);
     if (!content) return [];
@@ -302,9 +563,15 @@ export async function readDesignPackage(bytes: Buffer) {
   if (Buffer.byteLength(html) + renders.reduce((sum, capture) => sum + capture.content.length, 0) > 8 * mib) {
     return invalidDesign('单个稿件版本的原型和截图最多 8 MiB');
   }
-  const acceptance = unique(list(input.acceptance, '验收项', 60, value => rule(value, screens), true), row => row.id, '验收项');
+  const acceptance = gateField('G-03', '验收项最多 60 条，须使用唯一编号和有效的画面与检查方法', () =>
+    unique(list(input.acceptance, '验收项', 60, value => rule(value, screens), true), row => row.id, '验收项'));
+  const handoffPlan = input.handoff === undefined ? undefined : parseDesignHandoffPlan(input.handoff, screens, acceptance);
+  const presentation = parseDesignPresentation(input, screens, file);
+  const goals = parseDesignGoals(input.goals, acceptance);
+  const demoData = parseDesignDemoData(input.demoData, name => utf8(name, 512 * 1024));
   const spec: DesignMaterial = { tokens: json('spec/tokens.json'), rules: utf8('spec/rules.md', 64 * 1024),
     components: utf8('spec/components.md', 64 * 1024), skeleton: utf8('spec/skeleton.html', 64 * 1024) };
+  const charter = json('spec/charter.json') ?? json('charter.json');
   const framework = input.framework == null ? undefined : designId(input.framework, '框架编号');
   const frameworkVersion = input.frameworkVersion;
   if (frameworkVersion !== undefined && (!framework || typeof frameworkVersion !== 'number'
@@ -312,13 +579,31 @@ export async function readDesignPackage(bytes: Buffer) {
   const delivery = describeDesignDelivery(entries, root, input, relativeFile(prototypeFile),
     relativeFile(input.rationale ?? '思路.md'), relativeFile(input.checks ?? 'checks/result.json'),
     new Set(renders.map(row => `screens/${row.screenId}.${row.theme}.png`)));
+  const checks = gateField('G-05', '自检结果须为有效的 JSON 对象', () => json(input.checks ?? 'checks/result.json'));
+  const acceptanceMode = input.acceptanceMode;
+  if (acceptanceMode !== undefined && acceptanceMode !== 'objective') return invalidDesign('不支持的验收模式');
+  const evidenceProtocol = input.evidenceProtocol;
+  if (evidenceProtocol !== undefined && evidenceProtocol !== 'program-v1') return invalidDesign('不支持的程序取证协议');
+  if (evidenceProtocol && !['src/fixtures.ts', 'src/data-design.ts'].every(path => delivery.index.some(row => row.path === path))) {
+    invalidDesign('程序取证须随稿提交虚构演示数据');
+  }
   return {
     packageId: input.id === undefined ? undefined : designId(input.id, '稿件编号'),
     project: planningText(input.project, '项目', 160), title: planningText(input.title, '稿件标题', 180), rationale,
     sha256: designDigest(bytes), filesSha256: designDigest(JSON.stringify(delivery.index.map(file => [file.path, file.sha256]))),
-    prototype: Buffer.from(html), screens, acceptance, spec, renders, delivery,
-    checks: json(input.checks ?? 'checks/result.json'),
-    framework, frameworkVersion,
+    prototype: Buffer.from(html), screens, acceptance, spec, renders, delivery, ...presentation, goals, demoData, handoffPlan,
+    acceptancePlan: input.acceptancePlan === undefined ? undefined : parseAcceptancePlan(input.acceptancePlan),
+    acceptanceMode: acceptanceMode === 'objective' ? 'objective' as const : undefined,
+    evidenceProtocol: evidenceProtocol === 'program-v1' ? evidenceProtocol : undefined,
+    risks: input.risks === undefined ? undefined : parseCoverage(input.risks, acceptance),
+    frameworkCharter: charter && parseFrameworkCharter(charter),
+    checks,
+    validatePublicationGate(context: DesignPublicationGateContext) {
+      validateDesignPublicationGate({ manifest: input, archiveBytes: bytes.length,
+        files: new Map([...entries].map(([name, content]) => [name.slice(root.length), content])),
+        indexedFiles: delivery.index, screens, acceptance }, context);
+    },
+    framework, frameworkVersion, scope: input.scope === undefined ? undefined : parseDesignScope(input.scope),
     group: input.group === undefined ? undefined : planningText(input.group, '稿件分组', 80),
     tags: unique(list(input.tags, '稿件标签', 30, tag => planningText(tag, '标签', 60), true), row => row, '标签'),
     decisionIds: unique(list(input.decisionIds, '关联决策', 20, id => designId(id, '决策编号'), true), row => row, '关联决策'),

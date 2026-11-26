@@ -398,6 +398,7 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
   const notificationIdentity = authStatus?.user?.id || authStatus?.user?.username || authStatus?.user?.githubLogin || undefined;
   const previewAccessIdentity = !previewInstance && authStatus?.previewAccessNotices ? notificationIdentity : undefined;
   const designReviewIdentity = !previewInstance && authStatus?.designReviewNotices ? notificationIdentity : undefined;
+  const accountApprovalIdentity = !previewInstance && authStatus?.accountApprovalNotices ? notificationIdentity : undefined;
   const [mirrorSummary, setMirrorSummary] = useState<PreviewMirrorSummary | null>(null);
   useEffect(() => {
     let cancelled = false;
@@ -553,7 +554,8 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
           当前页面的 TopBar 宿主。授权、导入、更新和 GitHub 提交通知只在这里聚合。 */}
       {canManageSettings || previewAccessIdentity || designReviewIdentity ? <SiteNoticeInbox canReadAccessRequests={canReadAccessRequests} operatorPendingCount={operatorPendingCount}
         onOpenOperatorRequests={() => setOperatorOpenRequest(value => value + 1)}
-        includeOperations={canManageSettings} previewAccessIdentity={previewAccessIdentity} designReviewIdentity={designReviewIdentity} /> : null}
+        includeOperations={canManageSettings} previewAccessIdentity={previewAccessIdentity} designReviewIdentity={designReviewIdentity}
+        accountApprovalIdentity={accountApprovalIdentity} /> : null}
     </div>
     </MobileNavContext.Provider>
     </ConsoleAuthContext.Provider>
@@ -616,6 +618,7 @@ function RailNav({
   onBugReport,
   onNavigate,
 }: RailNavProps & { onNavigate?: () => void }): JSX.Element {
+  const { status } = useContext(ConsoleAuthContext);
   return (
     <>
       <div className="cds-rail-section">
@@ -786,6 +789,7 @@ function RailNav({
           <span className="cds-rail-short">设置</span>
         </Link>
         </> : !authPending ? (
+          <>
           <Link to="/cds-settings#activity" className="cds-rail-item"
             data-active={active === 'cds-settings' ? 'true' : 'false'}
             aria-label="个人操作痕迹" title="查看自己的操作记录" onClick={onNavigate}>
@@ -793,6 +797,15 @@ function RailNav({
             <span className="cds-rail-full">个人操作痕迹</span>
             <span className="cds-rail-short">痕迹</span>
           </Link>
+          {status?.user?.role === 'admin' ? (
+            <Link to="/cds-settings#users" className="cds-rail-item"
+              aria-label="账号与登录" title="管理个人账号和登录方式" onClick={onNavigate}>
+              <SlidersHorizontal />
+              <span className="cds-rail-full">账号与登录</span>
+              <span className="cds-rail-short">账号</span>
+            </Link>
+          ) : null}
+          </>
         ) : null}
       </div>
       <div className="cds-rail-footer">
@@ -1148,7 +1161,15 @@ export function TopBar({ left, center, right, centerWide = false, actionsPending
     if (!actionsOpen) return undefined;
     const prev = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
-    return () => { document.body.style.overflow = prev; };
+    // 窗口变宽时更多按钮可能隐藏，随之收起操作面板和遮罩。
+    const closeHiddenActions = (): void => {
+      if (kebabRef.current?.getClientRects().length === 0) setActionsOpen(false);
+    };
+    window.addEventListener('resize', closeHiddenActions);
+    return () => {
+      window.removeEventListener('resize', closeHiddenActions);
+      document.body.style.overflow = prev;
+    };
   }, [actionsOpen]);
   useFocusTrap(actionsOpen, sheetRef);
   // ⋮ sheet 的键盘可关闭:焦点被困在 sheet 内时,必须能用 Esc 退出(与抽屉一致),
@@ -1183,66 +1204,56 @@ export function TopBar({ left, center, right, centerWide = false, actionsPending
       >
         <Menu />
       </button>
-      <div className="cds-topbar-lead flex min-w-0 flex-1 items-center gap-3 md:flex-none">
-        {/* 桌面端 left 槽不收缩;手机端允许收缩 + 截断,作为单行 app-bar 标题。 */}
-        <div className="cds-topbar-left flex min-w-0 shrink items-center gap-3 md:shrink-0">{left}</div>
+      <div className="cds-topbar-lead flex min-w-0 flex-1 items-center gap-3 md:flex-initial">
+        <div className="cds-topbar-left flex min-w-0 shrink items-center gap-3">{left}</div>
       </div>
       {/* center(分支搜索 / Git URL 快建)单实例 + 纯 CSS 重定位:桌面行内居中扩展,
           手机端 order 靠后 + w-full,配合 header flex-wrap 落到 app-bar 第二行整宽。
           单 DOM 节点跨断点不卸载重挂(Bugbot #741 Low「Resize remounts」),
           也不双份挂载(避免分支搜索 ref/dropdown 状态被破坏)。 */}
       {center ? (
-        <div className={`cds-topbar-center order-1 w-full min-w-0 md:order-none md:w-auto md:flex-1 ${centerWide ? 'md:max-w-none' : 'md:max-w-[40rem]'}`}>
+        <div className={`cds-topbar-center order-1 w-full min-w-0 md:order-none md:w-auto md:min-w-40 md:flex-1 ${centerWide ? 'md:max-w-none' : 'md:max-w-[40rem]'}`}>
           {center}
         </div>
       ) : null}
-      {/* 桌面端:动作按钮平铺，**永远贴右**。
-          `ml-auto` 不能省：left 槽在桌面端是 md:flex-none（不撑开），没有 center 的页面
-          就没有任何东西把动作推到右边，于是「刷新 / 添加 XX」会紧挨着面包屑堆在左上角。
-          用户 2026-09-14 原话：「添加按钮要在右侧，主动操作按钮都在右上角哦，不要堆积在
-          左上角，这是用户心智问题」——左上是「我在哪」，右上是「我要做什么」，
-          两者挤在一起，读者每次都得重新分辨哪个是标题哪个是按钮。
-          有 center 的页面 center 自己 md:flex-1 会吃掉空白，这里的 ml-auto 无副作用。 */}
-      {right ? <div className="cds-topbar-actions ml-auto hidden shrink-0 items-center gap-2 md:flex">{right}</div> : null}
-      {/* 手机端:动作收进 ⋮ 溢出菜单,点开是竖向 action sheet —— 真正的移动端形态,
-          而非把一排 PC 工具栏按钮硬塞进窄屏。 */}
-      {right ? (
-        <div className="ml-auto md:hidden">
-          <button
-            ref={kebabRef}
-            type="button"
-            className="cds-icon-button"
-            onClick={actionsPending ? undefined : toggleSheet}
-            aria-label="更多操作"
-            aria-expanded={actionsOpen}
-            aria-disabled={actionsPending || undefined}
-          >
-            <MoreVertical />
-          </button>
-          {/* backdrop + sheet 通过 portal 挂到 <body>,逃离 .cds-topbar 的
-              backdrop-filter 包含块,fixed backdrop 才能盖满整个视口(Bugbot #741)。
-              不在容器上 auto-close:right 槽可能含嵌套 Radix 菜单(项目列表「一键部署」),
-              点一下就收起会破坏二级菜单 —— 改为点 backdrop / Esc 关闭。 */}
-          {actionsOpen
-            ? createPortal(
-                <>
-                  <div className="cds-topbar-sheet-backdrop" onClick={() => setActionsOpen(false)} />
-                  <div
-                    ref={sheetRef}
-                    className="cds-topbar-sheet"
-                    role="menu"
-                    style={sheetPosition}
-                  >
-                    {right}
-                  </div>
-                </>,
-                document.body,
-              )
-            : null}
-        </div>
-      ) : null}
-      <InstanceSwitcher />
-      <div id="cds-information-center-host" className="relative shrink-0" />
+      {/* 全局入口和页面动作共用右侧空间。没有页面动作的顶栏也保持靠右。 */}
+      <div className="cds-topbar-trailing ml-auto flex shrink-0 items-center gap-2 md:gap-3">
+        {right ? <div className="cds-topbar-actions hidden items-center gap-2 xl:flex">{right}</div> : null}
+        {right ? (
+          <div className="xl:hidden">
+            <button
+              ref={kebabRef}
+              type="button"
+              className="cds-icon-button"
+              onClick={actionsPending ? undefined : toggleSheet}
+              aria-label="更多操作"
+              aria-expanded={actionsOpen}
+              aria-disabled={actionsPending || undefined}
+            >
+              <MoreVertical />
+            </button>
+            {/* portal 避开顶栏的 backdrop-filter，允许遮罩盖住视口和面板打开二级菜单。 */}
+            {actionsOpen
+              ? createPortal(
+                  <>
+                    <div className="cds-topbar-sheet-backdrop" onClick={() => setActionsOpen(false)} />
+                    <div
+                      ref={sheetRef}
+                      className="cds-topbar-sheet"
+                      role="menu"
+                      style={sheetPosition}
+                    >
+                      {right}
+                    </div>
+                  </>,
+                  document.body,
+                )
+              : null}
+          </div>
+        ) : null}
+        <InstanceSwitcher />
+        <div id="cds-information-center-host" className="relative shrink-0" />
+      </div>
     </header>
   );
 }
@@ -1271,12 +1282,12 @@ export interface CrumbProps {
  */
 export function Crumb({ items }: CrumbProps): JSX.Element {
   return (
-    <nav className="cds-crumb" aria-label="面包屑">
+    <nav className="cds-crumb min-w-0" aria-label="面包屑">
       {items.map((item, idx) => {
         const isLast = idx === items.length - 1;
-        const className = isLast ? 'cds-crumb-active' : 'transition-colors hover:text-foreground';
+        const className = cn('truncate', isLast ? 'cds-crumb-active' : 'transition-colors hover:text-foreground');
         return (
-          <span key={`${item.label}-${idx}`} className="inline-flex items-center gap-1.5">
+          <span key={`${item.label}-${idx}`} className="inline-flex min-w-0 items-center gap-1.5">
             {item.href && !isLast ? (
               item.href.startsWith('/') && !item.href.startsWith('//') ? <Link to={item.href} className={className}>
                 {item.label}

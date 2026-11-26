@@ -14,6 +14,7 @@ on:
       - 'e2e/specs/branch-release-flow.spec.ts'
       - 'e2e/specs/gateway-audio.spec.ts'
       - 'e2e/specs/collection-scroll-compat.spec.ts'
+      - 'e2e/specs/design-prototype-mobile-compat.spec.ts'
       - 'e2e/fixtures/admin-operations*'
       - 'cds/scripts/fixtures/mobile-layout-fixtures.mjs'
       - '.github/workflows/admin-operations-compat.yml'
@@ -29,6 +30,7 @@ on:
       - 'e2e/specs/branch-release-flow.spec.ts'
       - 'e2e/specs/gateway-audio.spec.ts'
       - 'e2e/specs/collection-scroll-compat.spec.ts'
+      - 'e2e/specs/design-prototype-mobile-compat.spec.ts'
       - 'e2e/fixtures/admin-operations*'
       - 'cds/scripts/fixtures/mobile-layout-fixtures.mjs'
       - '.github/workflows/admin-operations-compat.yml'
@@ -37,7 +39,7 @@ on:
       scenario:
         description: '验收范围'
         type: choice
-        options: [all, audio, entry]
+        options: [all, audio, entry, design]
         default: all
 
 permissions:
@@ -56,13 +58,20 @@ jobs:
         with:
           node-version: '20'
       - name: Install frontend and browser test dependencies
+        env:
+          BROWSER_SCENARIO: ${{ inputs.scenario }}
         run: |
           pnpm -C cds/web install --frozen-lockfile
           pnpm -C llmgw/web install --frozen-lockfile
           pnpm -C e2e install --frozen-lockfile
           sudo python3 "${{ github.workspace }}/scripts/ci/normalize-ubuntu-apt-sources.py" --root / --mirror princeton
-          pnpm -C e2e exec playwright install --with-deps chromium firefox webkit
+          if [ "$BROWSER_SCENARIO" = "design" ]; then
+            pnpm -C e2e exec playwright install --with-deps webkit
+          else
+            pnpm -C e2e exec playwright install --with-deps chromium firefox webkit
+          fi
       - name: Start a real system audio output for browser acceptance
+        if: ${{ inputs.scenario != 'design' }}
         run: |
           sudo apt-get update
           sudo apt-get install -y pulseaudio pulseaudio-utils
@@ -97,15 +106,19 @@ jobs:
             GATEWAY_AUDIO_MONITOR=gateway_acceptance.monitor pnpm -C e2e exec playwright test -c admin-operations.config.ts gateway-audio.spec.ts --workers=1
           elif [ "$BROWSER_SCENARIO" = "entry" ]; then
             pnpm -C e2e exec playwright test -c admin-operations.config.ts --grep '电影式接入全流程' --repeat-each=2 --workers=2
+          elif [ "$BROWSER_SCENARIO" = "design" ]; then
+            pnpm -C e2e exec playwright test -c admin-operations.config.ts design-prototype-mobile-compat.spec.ts --project=webkit --workers=1
           else
             pnpm -C e2e exec playwright test -c admin-operations.config.ts --workers=2
           fi
       - name: Verify natural request results and retained log scrolling
+        if: ${{ inputs.scenario != 'design' }}
         env:
           PLAYWRIGHT_MODULE: ${{ github.workspace }}/e2e/node_modules/@playwright/test/index.mjs
           CHECK_OUT: ${{ github.workspace }}/work/compat/log-result-height
         run: pnpm -C llmgw/web exec node scripts/check-log-result-height.mjs
       - name: Verify provider maintenance workspace
+        if: ${{ inputs.scenario != 'design' }}
         env:
           PLAYWRIGHT_MODULE: ${{ github.workspace }}/e2e/node_modules/@playwright/test/index.mjs
           CHECK_OUT: ${{ github.workspace }}/work/compat/provider-workspace

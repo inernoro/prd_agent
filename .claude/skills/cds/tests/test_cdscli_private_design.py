@@ -1,14 +1,17 @@
 """Use the real CLI parser, local Git, and a loopback publication fixture."""
 
+import base64
 import contextlib
 import importlib.util
 import io
 import json
 import os
+import struct
 import subprocess
 import tempfile
 import threading
 import unittest
+import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest import mock
@@ -18,7 +21,8 @@ from zipfile import ZipFile
 CLI = Path(__file__).resolve().parents[1] / 'cli' / 'cdscli.py'
 PROJECT = 'private-design-fixture'
 KEY = 'cdsp_private_fixture_only'
-ROUTE = f'/api/projects/{PROJECT}/design/packages'
+API = f'/api/projects/{PROJECT}/design'
+ROUTE = f'{API}/packages'
 DESIGN = 'DSN-fixture'
 GIT_ENV = {'PATH': os.defpath, 'LANG': 'C.UTF-8', 'GIT_CONFIG_NOSYSTEM': '1', 'GIT_CONFIG_GLOBAL': '/dev/null'}
 
@@ -26,11 +30,38 @@ GIT_ENV = {'PATH': os.defpath, 'LANG': 'C.UTF-8', 'GIT_CONFIG_NOSYSTEM': '1', 'G
 class PrivatePublishCliTest(unittest.TestCase):
     def setUp(self):
         self.writes = []
+        self.cookies = []
+        self.run = {'id': 'RUN-fixture', 'version': 9, 'commit': 'a' * 40, 'pullRequest': 42, 'cells': []}
+        self.returned_slot = None
+        self.returned_record_id = None
+        self.handoff_response_version = None
+        self.can_record = True
+        self.can_recheck = False
+        self.program_receipt = {}
+        self.handoff = {'status': 'failed', 'cases': [{'ruleIds': ['A-01'], 'code': 'expectation', 'step': 2, 'owner': 'design'}]}
+        self.program_receipt_project = PROJECT
         fixture = self
 
         class Handler(BaseHTTPRequestHandler):
             def log_message(self, *_args):
                 pass
+
+            def respond(self, status, data):
+                response = json.dumps(data).encode()
+                self.send_response(status)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Content-Length', str(len(response)))
+                self.end_headers()
+                self.wfile.write(response)
+
+            def do_GET(self):
+                if urlsplit(self.path).path != API:
+                    self.respond(404, {'error': 'fixture_route_missing'})
+                    return
+                self.respond(200, {'projectId': PROJECT, 'permissions': {'write': True, 'visual': fixture.can_record,
+                                                                        'programRecheck': fixture.can_recheck},
+                                   'frameworks': [], 'designs': [{'projectId': PROJECT, 'id': DESIGN,
+                                   'versions': [{'version': 9, 'title': 'Fixture', 'handoff': fixture.handoff}], 'runs': [fixture.run]}]})
 
             def do_POST(self):
                 target = urlsplit(self.path)
@@ -38,14 +69,39 @@ class PrivatePublishCliTest(unittest.TestCase):
                 query = {key: values[0] for key, values in parse_qs(target.query).items()}
                 fixture.writes.append((target.path, self.headers['X-AI-Access-Key'],
                                        self.headers['Content-Type'], query, body))
-                reused = len(fixture.writes) > 1 and fixture.writes[-1] == fixture.writes[0]
-                response = json.dumps({'projectId': PROJECT, 'reused': reused,
-                                       'result': {'type': 'package', 'designId': DESIGN, 'version': 5}}).encode()
-                self.send_response(200 if reused else 201)
-                self.send_header('Content-Type', 'application/json')
-                self.send_header('Content-Length', str(len(response)))
-                self.end_headers()
-                self.wfile.write(response)
+                fixture.cookies.append(self.headers['Cookie'])
+                reused = fixture.writes[-1] in fixture.writes[:-1]
+                project = PROJECT
+                result = {'type': 'package', 'designId': DESIGN, 'version': 5}
+                if target.path in (f'{API}/commands', f'{API}/acceptance/recheck', f'{API}/handoff/check'):
+                    payload = json.loads(body)
+                    action = payload['type'].split('.', 1)[-1]
+                    result = {field: payload[field] for field in ('type', 'designId')}
+                    if action in ('enable', 'disable'):
+                        result.update(version=payload['version'], id=fixture.returned_record_id or payload['method'])
+                    elif action == 'check':
+                        result.update(version=fixture.handoff_response_version or payload['version'])
+                    else:
+                        result.update(runId=payload['runId'], version=fixture.run['version'])
+                    if action == 'visual':
+                        result.update(screenId=payload['screenId'], slot=fixture.returned_slot or payload['slot'])
+                        if not reused and not fixture.returned_slot:
+                            key = f"{payload['screenId']}/{payload['slot']}"
+                            fixture.run['visual'] = {key: {'checks': payload['checks'], 'imageId': 'art-implementation',
+                                                           'referenceImageId': 'art-reference'}}
+                    elif action in ('flow', 'smoke'):
+                        record = payload[action]
+                        result['id'] = fixture.returned_record_id or record['id']
+                        if not reused and not fixture.returned_record_id:
+                            fixture.run['flows' if action == 'flow' else action] = [record]
+                    elif action in ('capture', 'recheck'):
+                        project = fixture.program_receipt_project
+                        result.update(screenId=payload['screenId'], slot=payload['slot'])
+                        result.update(fixture.program_receipt)
+                elif target.path == f'{API}/feedback':
+                    payload = json.loads(body)
+                    result = {'type': payload['type'], 'designId': DESIGN, 'id': payload['feedbackId'], 'version': 8}
+                self.respond(200 if reused else 201, {'projectId': project, 'reused': reused, 'result': result})
 
         server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
         thread = threading.Thread(target=server.serve_forever, kwargs={'poll_interval': 0.02}, daemon=True)
@@ -78,8 +134,11 @@ class PrivatePublishCliTest(unittest.TestCase):
         return subprocess.check_output(['git', *args], cwd=self.repo, env=GIT_ENV)
 
     def call(self, *args, directory=None):
-        cli_path = CLI
-        spec = importlib.util.spec_from_file_location('private_design_cli', cli_path)
+        return self.invoke('publish', DESIGN, '--dir', str(directory or self.directory),
+                           '--intent', 'revise', '--design-key', 'reports/summary', '--expected-version', '4', *args)
+
+    def invoke(self, *args, member_session=None):
+        spec = importlib.util.spec_from_file_location('private_design_cli', CLI)
         cli = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(cli)
         base_run = subprocess.run
@@ -91,13 +150,14 @@ class PrivatePublishCliTest(unittest.TestCase):
             return base_run(command, **kwargs)
 
         stdout, stderr = io.StringIO(), io.StringIO()
+        authentication = mock.patch.object(cli, '_human_session_headers', return_value=member_session) \
+            if member_session else contextlib.nullcontext()
         previous = Path.cwd()
         try:
             os.chdir(self.repo)
             with mock.patch.dict(os.environ, self.env, clear=True), mock.patch.object(cli.subprocess, 'run', record), \
-                    contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as ended:
-                cli.main(['design', 'publish', DESIGN, '--dir', str(directory or self.directory),
-                          '--intent', 'revise', '--design-key', 'reports/summary', '--expected-version', '4', *args])
+                    authentication, contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as ended:
+                cli.main(['design', *args])
         finally:
             os.chdir(previous)
         return ended.exception.code, stdout.getvalue(), stderr.getvalue()
@@ -123,6 +183,24 @@ class PrivatePublishCliTest(unittest.TestCase):
             found = {item.filename: archive.read(item) for item in archive.infolist() if not item.is_dir()}
         self.assertEqual(found, self.files)
         self.assertTrue(any('archive' in command for command in self.git_ops))
+
+    def test_handoff_reads_and_retries_only_the_fixed_version(self):
+        code, output, error = self.invoke('handoff', DESIGN, '--version', '9')
+        self.assertEqual(code, 0, output or error)
+        self.assertEqual(json.loads(output)['data'], {'projectId': PROJECT, 'designId': DESIGN, 'version': 9, 'handoff': self.handoff})
+        self.assertEqual(self.writes, [])
+        for reused in (False, True):
+            code, output, error = self.invoke('handoff', DESIGN, '--version', '9', '--run', '--request-id', 'fixture-handoff')
+            self.assertEqual(code, 0, output or error)
+            self.assertEqual(json.loads(output)['data']['reused'], reused)
+        self.assertEqual(self.writes[0], self.writes[1])
+        self.assertEqual(self.writes[0][0], f'{API}/handoff/check')
+        self.assertEqual(json.loads(self.writes[0][-1]), {'type': 'handoff.check',
+            'designId': DESIGN, 'version': 9, 'requestId': 'fixture-handoff'})
+        self.handoff_response_version = 10
+        code, output, error = self.invoke('handoff', DESIGN, '--version', '9', '--run')
+        self.assertNotEqual(code, 0)
+        self.assertIn('不同稿件或版本', output + error)
 
     def test_private_directory_revision_keeps_local_bytes_and_replays_original_id(self):
         self.check_receipts('--private', '--request-id', 'private-cli-fixture', mode='private')
@@ -159,6 +237,191 @@ class PrivatePublishCliTest(unittest.TestCase):
         self.assertNotEqual(code, 0)
         self.assertIn('稿件子目录', output or stderr)
         self.assertEqual(self.writes, [])
+
+    def test_visual_record_and_readback_keep_the_exact_row_and_local_images(self):
+        def png(width, height):
+            def chunk(kind, data):
+                return struct.pack('>I', len(data)) + kind + data + struct.pack('>I', zlib.crc32(kind + data))
+
+            header = struct.pack('>IIBBBBB', width, height, 8, 0, 0, 0, 0)
+            pixels = zlib.compress(bytes((width + 1) * height))
+            return b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', header) + chunk(b'IDAT', pixels) + chunk(b'IEND', b'')
+
+        checks = {'V-02': {'status': 'failed', 'evidence': '成员标题顶边 y=212，筛选器 y=208，差 4 px。'}}
+        (self.repo / 'checks.json').write_text(json.dumps(checks, ensure_ascii=False), encoding='utf-8')
+        screenshot = png(1280, 800)
+        for image in ('reference.png', 'implementation.png'):
+            (self.repo / image).write_bytes(screenshot)
+        flags = ('visual', DESIGN, '--run', self.run['id'], '--commit', self.run['commit'], '--screen', 'members',
+                 '--slot', 'desktop-light', '--file', 'checks.json', '--implementation', 'implementation.png',
+                 '--path', '/members/', '--reference', 'reference.png', '--request-id', 'cli-visual-fixture')
+
+        for reused in (False, True):
+            code, output, stderr = self.invoke(*flags)
+            self.assertEqual(code, 0, output or stderr)
+            self.assertIs(json.loads(output)['data']['reused'], reused)
+        self.assertEqual(self.writes[0], self.writes[1])
+        uri, key, content_type, query, body = self.writes[0]
+        self.assertEqual((uri, key, content_type, query), (f'{API}/commands', KEY, 'application/json', {}))
+        data_url = 'data:image/png;base64,' + base64.b64encode(screenshot).decode('ascii')
+        self.assertEqual(json.loads(body), {'type': 'acceptance.visual', 'requestId': 'cli-visual-fixture',
+                                          'designId': DESIGN, 'runId': self.run['id'], 'commit': self.run['commit'],
+                                          'screenId': 'members', 'slot': 'desktop-light', 'checks': checks,
+                                          'image': data_url, 'referenceImage': data_url,
+                                          'measured': {'width': 1280, 'height': 800, 'theme': 'light', 'path': '/members/'}})
+        code, output, stderr = self.invoke('result', DESIGN, '--run', self.run['id'])
+        self.assertEqual(code, 0, output or stderr)
+        self.assertEqual(json.loads(output)['data']['run']['visual']['members/desktop-light']['checks'], checks)
+        self.returned_slot = 'desktop-dark'
+        code, output, stderr = self.invoke(*flags)
+        self.assertNotEqual(code, 0, output or stderr)
+        self.assertIn('回执', output or stderr)
+
+    def test_supplement_uses_the_feedback_reply_endpoint(self):
+        body = '## 诉求\n\n回复入口增加补写。\n\n## 怎么算解决\n\n关闭后仍保留往来。'
+        code, output, stderr = self.invoke('feedback-reply', DESIGN, '--feedback-id', 'FDB-previous',
+                                           '--body', body, '--supplement', '--request-id', 'cli-supplement-fixture')
+        self.assertEqual(code, 0, output or stderr)
+        self.assertEqual(len(self.writes), 1)
+        route, key, content_type, _, payload = self.writes[0]
+        self.assertEqual((route, key, content_type), (f'{API}/feedback', KEY, 'application/json'))
+        self.assertEqual(json.loads(payload), {'type': 'feedback.reply', 'requestId': 'cli-supplement-fixture',
+                                             'designId': DESIGN, 'feedbackId': 'FDB-previous', 'body': body, 'supplement': True})
+
+    def test_program_recheck_uses_its_own_route_and_keeps_the_same_request_on_retry(self):
+        self.can_record, self.can_recheck = False, True
+        flags = (DESIGN, '--run', self.run['id'], '--screen', 'members', '--slot', 'phone-dark')
+        code, output, stderr = self.invoke('capture', *flags)
+        self.assertNotEqual(code, 0, output or stderr)
+        self.assertIn('权限', output or stderr)
+        self.assertEqual(self.writes, [])
+
+        code, output, stderr = self.invoke('recheck', *flags, '--project', 'foreign-fixture')
+        self.assertNotEqual(code, 0, output or stderr)
+        self.assertEqual(self.writes, [])
+
+        expected = {'type': 'acceptance.recheck', 'designId': DESIGN, 'runId': self.run['id'],
+                    'screenId': 'members', 'slot': 'phone-dark'}
+        for reused in (False, True):
+            code, output, stderr = self.invoke('recheck', *flags)
+            self.assertEqual(code, 0, output or stderr)
+            self.assertEqual(json.loads(output)['data'], {
+                'projectId': PROJECT, 'reused': reused, 'result': {**expected, 'version': self.run['version']},
+            })
+        self.assertEqual(self.writes[0], self.writes[1])
+        route, key, content_type, query, payload = self.writes[0]
+        self.assertEqual((route, key, content_type, query), (f'{API}/acceptance/recheck', KEY, 'application/json', {}))
+        command = json.loads(payload)
+        self.assertRegex(command.pop('requestId'), r'^[a-f0-9]{64}$')
+        self.assertEqual(command, expected)
+
+    def test_program_capture_rejects_a_receipt_for_another_project_run_screen_or_slot(self):
+        flags = ('capture', DESIGN, '--run', self.run['id'], '--screen', 'members', '--slot', 'desktop-light',
+                 '--request-id', 'cli-program-capture-fixture')
+        code, output, stderr = self.invoke(*flags)
+        self.assertEqual(code, 0, output or stderr)
+        route, key, content_type, query, body = self.writes[0]
+        self.assertEqual((route, key, content_type, query), (f'{API}/commands', KEY, 'application/json', {}))
+        self.assertEqual(json.loads(body), {'type': 'acceptance.capture', 'designId': DESIGN, 'runId': self.run['id'],
+                                          'screenId': 'members', 'slot': 'desktop-light',
+                                          'requestId': 'cli-program-capture-fixture'})
+        for field, value in (('runId', 'RUN-other'), ('screenId', 'other-screen'), ('slot', 'phone-dark')):
+            with self.subTest(field=field):
+                self.program_receipt = {field: value}
+                code, output, stderr = self.invoke(*flags)
+                self.assertNotEqual(code, 0, output or stderr)
+                self.assertIn('回执', output or stderr)
+        self.program_receipt = {}
+        self.program_receipt_project = 'foreign-fixture'
+        code, output, stderr = self.invoke(*flags)
+        self.assertNotEqual(code, 0, output or stderr)
+        self.assertIn('当前项目', output or stderr)
+
+    def test_member_toggles_acceptance_method_and_checks_receipt(self):
+        session = {'Cookie': 'cds_session=fixture-member', 'X-AI-Access-Key': ''}
+        reason = '本地夹具的流程环境正在恢复。'
+        flags = (DESIGN, '--version', '9', '--method', 'flow', '--as-user', 'fixture-member')
+        for action, extra in (('disable', ('--reason', reason)), ('enable', ())):
+            with self.subTest(action=action):
+                request_id = f'cli-{action}-method-fixture'
+                command = (f'{action}-method', *flags, '--request-id', request_id, *extra)
+                code, output, stderr = self.invoke(*command, member_session=session)
+                self.assertEqual(code, 0, output or stderr)
+                self.assertEqual(json.loads(output)['data'], {
+                    'projectId': PROJECT, 'reused': False,
+                    'result': {'type': f'acceptance.{action}', 'designId': DESIGN, 'version': 9, 'id': 'flow'},
+                })
+                route, key, content_type, query, payload = self.writes[-1]
+                self.assertEqual((route, key, content_type, query), (f'{API}/commands', '', 'application/json', {}))
+                self.assertEqual(self.cookies[-1], session['Cookie'])
+                expected = {'type': f'acceptance.{action}', 'designId': DESIGN, 'version': 9,
+                            'method': 'flow', 'requestId': request_id}
+                if action == 'disable':
+                    expected['reason'] = reason
+                self.assertEqual(json.loads(payload), expected)
+
+        self.returned_record_id = 'smoke'
+        code, output, stderr = self.invoke('enable-method', *flags, '--request-id', 'wrong-method-receipt', member_session=session)
+        self.assertNotEqual(code, 0, output or stderr)
+        self.assertIn('验收回执', output or stderr)
+
+    def test_disable_method_requires_reason_before_request(self):
+        code, output, stderr = self.invoke('disable-method', DESIGN, '--version', '9',
+                                           '--method', 'flow', '--as-user', 'fixture-member')
+        self.assertEqual(code, 2, output or stderr)
+        self.assertIn('--reason', output or stderr)
+        self.assertEqual(self.writes, [])
+
+    def test_flow_and_smoke_records_reuse_acceptance_permissions_and_verify_the_returned_id(self):
+        records = {
+            'flow': {'id': 'new-member', 'title': '成员初始化', 'dimension': 'correctness', 'role': '成员',
+                     'steps': [{'action': '进入成员页面', 'expected': '显示成员列表',
+                                'actual': '显示夹具中的三条记录', 'status': 'passed'}]},
+            'smoke': {'id': 'members-api', 'title': '成员 API 冒烟', 'dimension': 'operations',
+                      'target': 'api', 'path': '/api/members', 'expected': '返回成员列表',
+                      'actual': '返回夹具数据，状态 200', 'status': 'passed'},
+        }
+        record_path = self.repo / 'record.json'
+        for action, record in records.items():
+            with self.subTest(action=action):
+                self.writes.clear()
+                self.returned_record_id = None
+                flags = (action, DESIGN, '--run', self.run['id'], '--commit', self.run['commit'],
+                         '--file', record_path.name, '--request-id', f'cli-{action}-fixture')
+                record_path.write_text(json.dumps(record, ensure_ascii=False), encoding='utf-8')
+                self.can_record = False
+                code, output, stderr = self.invoke(*flags)
+                self.assertNotEqual(code, 0, output or stderr)
+                self.assertIn('权限', output or stderr)
+                self.assertEqual(self.writes, [])
+
+                self.can_record = True
+                record_path.write_text('[]', encoding='utf-8')
+                code, output, stderr = self.invoke(*flags)
+                self.assertNotEqual(code, 0, output or stderr)
+                self.assertEqual(self.writes, [])
+                record_path.write_text(json.dumps(record, ensure_ascii=False), encoding='utf-8')
+
+                for reused in (False, True):
+                    code, output, stderr = self.invoke(*flags)
+                    self.assertEqual(code, 0, output or stderr)
+                    receipt = json.loads(output)['data']
+                    self.assertIs(receipt['reused'], reused)
+                    self.assertEqual(receipt['result']['id'], record['id'])
+                self.assertEqual(self.writes[0], self.writes[1])
+                route, key, content_type, query, payload = self.writes[0]
+                self.assertEqual((route, key, content_type, query), (f'{API}/commands', KEY, 'application/json', {}))
+                self.assertEqual(json.loads(payload), {'type': f'acceptance.{action}', 'requestId': f'cli-{action}-fixture',
+                                                      'designId': DESIGN, 'runId': self.run['id'], 'commit': self.run['commit'],
+                                                      action: record})
+                code, output, stderr = self.invoke('result', DESIGN, '--run', self.run['id'])
+                self.assertEqual(code, 0, output or stderr)
+                self.assertEqual(json.loads(output)['data']['run']['flows' if action == 'flow' else action], [record])
+
+                self.returned_record_id = 'wrong-record'
+                code, output, stderr = self.invoke(*flags)
+                self.assertNotEqual(code, 0, output or stderr)
+                self.assertIn('回执', output or stderr)
 
 
 if __name__ == '__main__':

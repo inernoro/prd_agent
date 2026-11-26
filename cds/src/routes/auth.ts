@@ -18,6 +18,8 @@
  */
 
 import { Router, type Request, type Response } from 'express';
+import type { CdsSession } from '../domain/auth.js';
+import { buildAccountSignoutCookie } from '../services/account-signout-proof.js';
 import { AuthService, AuthServiceError } from '../services/auth-service.js';
 import { GH_SESSION_COOKIE, LEGACY_SESSION_COOKIE, SSO_SESSION_COOKIE, readBrowserCookie, sessionCookieName } from '../services/browser-session-cookies.js';
 export { GH_SESSION_COOKIE, LEGACY_SESSION_COOKIE, SSO_SESSION_COOKIE, sessionCookieName } from '../services/browser-session-cookies.js';
@@ -48,6 +50,11 @@ export function buildSessionCookie(token: string, expiresAt: string, secure: boo
   ];
   if (secure) parts.push('Secure');
   return parts.join('; ');
+}
+
+export function buildAccountSessionCookies(session: CdsSession, secure: boolean, hostSessionCookies = false): string[] {
+  return [buildSessionCookie(session.token, session.expiresAt, secure, hostSessionCookies),
+    buildAccountSignoutCookie(session, secure, hostSessionCookies)];
 }
 
 export function buildLogoutCookie(secure: boolean, hostSessionCookies = false): string {
@@ -135,14 +142,14 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
       });
 
       res.append('Set-Cookie', [
-        buildSessionCookie(result.session.token, result.session.expiresAt, cookieSecure, hostSessionCookies),
+        ...buildAccountSessionCookies(result.session, cookieSecure, hostSessionCookies),
         buildLegacyLogoutCookie(cookieSecure, hostSessionCookies),
         buildSsoLogoutCookie(cookieSecure, hostSessionCookies),
       ]);
       res.redirect(302, result.redirect || '/project-list');
     } catch (err) {
       if (err instanceof AuthServiceError) {
-        const status = err.code === 'org_not_allowed' ? 403 : err.code === 'state_mismatch' ? 400 : 500;
+        const status = err.code === 'org_not_allowed' || err.code === 'identity_detached' ? 403 : err.code === 'state_mismatch' ? 400 : 500;
         res.status(status).send(renderErrorPage(formatError(err), '/login'));
         return;
       }
@@ -226,7 +233,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
     // 漏掉的话：服务端过期时间被推后（后续中间件看到「还很新鲜」就不再续期），
     // 而浏览器那份 cookie 仍在原时间点死掉 —— 用户照样掉登录。
     if (result.renewed && token) {
-      res.setHeader('Set-Cookie', buildSessionCookie(token, session.expiresAt, cookieSecure, hostSessionCookies));
+      res.setHeader('Set-Cookie', buildAccountSessionCookies(session, cookieSecure, hostSessionCookies));
     }
     res.json({
       user: {
@@ -266,6 +273,8 @@ function formatError(err: AuthServiceError): string {
       return `首次登录初始化失败：${err.message}`;
     case 'account_disabled':
       return '账号已被禁用，无法登录，请联系系统所有者';
+    case 'identity_detached':
+      return '使用另一种方式登录 CDS 后重新绑定 GitHub';
     default:
       return '登录失败';
   }

@@ -19,8 +19,8 @@ import { processNetworkTeardowns, type NetworkTeardownState } from './network-te
  *   2. docker ps 查询失败（exitCode!=0）→ 本轮直接放弃，绝不在信息不全时动手；
  *   3. state 空库守卫：projects/branches/infraServices 全空时跳过——空库更可能是
  *      state 加载失败或全新安装，而不是"所有容器都成了孤儿"；
- *   4. 默认只 stop 不 rm（用户拍板"至少要停止"）；容器和它的数据卷留给
- *      人工 / 项目删除路径处置；
+ *   4. 孤儿先停止。仅在已持久化的删除记录、实时引用和可写层均确认时，
+ *      退役无业务数据的历史应用容器；
  *   5. 逃生阀：CDS_ORPHAN_CONTAINER_REAPER=0 整体关闭。
  */
 import { createHash } from 'node:crypto';
@@ -73,7 +73,7 @@ export interface OrphanContainerAction {
   kind: 'infra' | 'app' | 'proxy';
   /** 关联到的 owner 标识（infra 无从考证时为空） */
   ownerHint?: string;
-  action: 'stopped' | 'stop-failed' | 'already-stopped';
+  action: 'stopped' | 'stop-failed' | 'already-stopped' | 'retired';
   detail?: string;
 }
 
@@ -88,6 +88,63 @@ export function isOrphanReaperEnabled(env: NodeJS.ProcessEnv = process.env): boo
 }
 
 const quote = (s: string): string => `'${String(s).replace(/'/g, `'\\''`)}'`;
+
+interface RetiredAppIdentity {
+  id: string;
+  name: string;
+  branchId: string;
+  projectId: string;
+  createdAt: string;
+  imageReferences: string[];
+}
+
+const APP_RETIREMENT_AGE_MS = 7 * 86_400_000;
+const RUNTIME_LAYER_CHANGES = new Set([
+  'C /usr', 'C /usr/local', 'C /usr/local/bin', 'A /usr/local/bin/ffmpeg', 'A /usr/local/bin/ffprobe',
+  'C /etc', 'C /etc/nginx', 'C /etc/nginx/conf.d', 'C /etc/nginx/conf.d/default.conf',
+  'C /var', 'C /var/cache', 'C /var/cache/nginx', 'A /var/cache/nginx/fastcgi_temp',
+  'A /var/cache/nginx/proxy_temp', 'A /var/cache/nginx/scgi_temp', 'A /var/cache/nginx/uwsgi_temp',
+  'A /var/cache/nginx/client_temp',
+]);
+const RUNTIME_TOOL_MOUNTS = new Set(['/usr/local/bin/ffmpeg', '/usr/local/bin/ffprobe']);
+
+async function retireOrphanApp(
+  shell: IShellExecutor, container: DiscoveredContainer, instanceId: string,
+  mayRetire: (identity: RetiredAppIdentity) => boolean,
+): Promise<RetiredAppIdentity | undefined> {
+  if (!shell.execOwnedOperation) return;
+  const format = '{"id":{{json .Id}},"name":{{json .Name}},"image":{{json .Image}},"reference":{{json .Config.Image}},"labels":{{json .Config.Labels}},"state":{{json .State}},"mounts":{{json .Mounts}},"createdAt":{{json .Created}}}';
+  const inspection = await shell.exec(`docker inspect --type container --format ${quote(format)} ${quote(container.name)}`,
+    { timeout: 5000, executionLane: 'observation' });
+  if (inspection.exitCode !== 0) return;
+  const row = JSON.parse(inspection.stdout);
+  const labels = row.labels || {};
+  const finished = Date.parse(row.state?.FinishedAt);
+  if (!/^[a-f0-9]{64}$/.test(row.id) || row.name !== '/' + container.name
+    || labels['cds.instance'] !== instanceId || labels['cds.managed'] !== 'true' || labels['cds.type'] !== 'app'
+    || labels['cds.protected'] === 'true' || !labels['cds.branch.id'] || !labels['cds.project.id'] || !labels['cds.profile.id']
+    || row.state?.Status !== 'exited' || row.state.Running !== false || !Number.isFinite(finished)
+    || Date.now() - finished < APP_RETIREMENT_AGE_MS || !Array.isArray(row.mounts)
+    || row.mounts.some((mount: { Type: string; RW: boolean; Destination: string }) =>
+      mount.Type !== 'bind' || mount.RW !== false || !RUNTIME_TOOL_MOUNTS.has(mount.Destination))) return;
+  if (!/^sha256:[a-f0-9]{64}$/.test(row.image)) return;
+  const image = await shell.exec(`docker image inspect --format '{"tags":{{json .RepoTags}},"digests":{{json .RepoDigests}}}' ${quote(row.image)}`,
+    { timeout: 5000, executionLane: 'observation' });
+  if (image.exitCode !== 0) return;
+  const { tags, digests } = JSON.parse(image.stdout);
+  const identity: RetiredAppIdentity = {
+    id: row.id, name: container.name, branchId: labels['cds.branch.id'], projectId: labels['cds.project.id'],
+    createdAt: row.createdAt, imageReferences: [row.image, row.reference, ...(tags || []), ...(digests || [])].filter(Boolean),
+  };
+  if (!mayRetire(identity)) return;
+  const diff = await shell.exec(`docker diff ${quote(row.id)}`, { timeout: 5000, executionLane: 'observation' });
+  if (diff.exitCode !== 0 || diff.stdout.trim().split('\n').some(line => line.trim() && !RUNTIME_LAYER_CHANGES.has(line.trim()))) return;
+  const removed = await shell.execOwnedOperation(`docker rm ${quote(row.id)}`, {
+    timeout: 10_000, executionLane: 'operation', executionPurpose: 'temporary-cleanup',
+    beforeStart: () => { if (!mayRetire(identity)) throw new Error('容器重新出现部署或回滚引用'); },
+  });
+  if (removed.exitCode === 0 && removed.stdout.trim() === row.id) return identity;
+}
 
 /**
  * 无论 state 里有没有，永远不许收割的系统级容器（自断状态库 = 自杀）。
@@ -261,6 +318,7 @@ export async function sweepOrphanCdsContainers(opts: {
   env?: NodeJS.ProcessEnv;
   /** 本 CDS 实例 id（computeCdsInstanceId）。传入后跳过带异实例 label 的容器。 */
   instanceId?: string;
+  mayRetireApp?: (identity: RetiredAppIdentity) => boolean;
 }): Promise<OrphanSweepResult> {
   const { shell, state, eventLog } = opts;
   if (!isOrphanReaperEnabled(opts.env)) return { skippedReason: 'disabled', actions: [] };
@@ -370,6 +428,7 @@ export async function sweepOrphanCdsContainers(opts: {
     if (withinGracePeriod(c, nowMs)) continue;
     await stopOne(c, 'infra', undefined);
   }
+  const oldExitedApps: DiscoveredContainer[] = [];
   for (const c of appContainers) {
     if (belongsToOtherInstance(c)) continue;
     const branchId = c.labels.match(/cds\.branch\.id=([^,]+)/)?.[1];
@@ -382,6 +441,21 @@ export async function sweepOrphanCdsContainers(opts: {
     if (branchId && !profileId && knownBranchIds.has(branchId)) continue;
     if (withinGracePeriod(c, nowMs)) continue;
     await stopOne(c, 'app', branchId);
+    if (!c.running && nowMs - c.createdAtMs >= APP_RETIREMENT_AGE_MS) oldExitedApps.push(c);
+  }
+  if (opts.mayRetireApp && opts.instanceId && oldExitedApps.length) {
+    // Rotate the bounded inspection window so held containers do not starve the tail.
+    const offset = Math.floor(nowMs / 3_600_000) * 16 % oldExitedApps.length;
+    for (const c of [...oldExitedApps.slice(offset), ...oldExitedApps.slice(0, offset)].slice(0, 16)) {
+      try {
+        const retired = await retireOrphanApp(shell, c, opts.instanceId, opts.mayRetireApp);
+        if (!retired) continue;
+        actions.push({ containerName: c.name, kind: 'app', ownerHint: retired.branchId, action: 'retired' });
+        eventLog?.record({ category: 'container', severity: 'info', source: 'orphan-container-reaper',
+          action: 'container.orphan.retired', message: '已退役无业务数据的历史应用容器',
+          containerName: c.name, details: { projectId: retired.projectId, branchId: retired.branchId, containerId: retired.id } });
+      } catch { /* A malformed inspection or changed reference cannot authorize deletion. */ }
+    }
   }
   // 外部访问代理容器（cds.type=resource-external-access，Codex P1）：公网 TCP
   // 端口暴露，判归属必须严格——不是「分支还在就算有主」，而是「有一条**启用中**

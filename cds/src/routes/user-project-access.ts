@@ -3,8 +3,8 @@ import crypto from 'node:crypto';
 import type { StateService } from '../services/state.js';
 import type { AuthService } from '../services/auth-service.js';
 import type { CdsUser } from '../domain/auth.js';
-import { isHumanSystemOwner } from '../services/human-auth.js';
-import { humanPrincipalId, supportsHumanProjectGrant, beginHumanProjectGrantUpdate, isHumanProjectGrantUpdatePending,
+import { isAuthenticatedHuman, isHumanSystemOwner } from '../services/human-auth.js';
+import { accountAdministrationScope, canManageAccountScope, humanPrincipalId, supportsHumanProjectGrant, beginHumanProjectGrantUpdate, isHumanProjectGrantUpdatePending,
   humanProjectGrantUpdateStatus, markHumanProjectGrantRecovery,
   boundedHumanAccessFlush as boundedFlush, reconcileHumanAccessRestore as reconcileGrantRestore,
   type FinishHumanAccessUpdate } from '../services/human-project-access.js';
@@ -17,8 +17,10 @@ export function createUserProjectAccessRouter(deps: {
   const { stateService: state, authService: auth } = deps;
   const handle = async (req: Request, res: Response): Promise<void> => {
     const previewRequest: unknown = req.method === 'POST' ? req.body?.previewRequestId : undefined;
-    if (previewRequest === undefined && !isHumanSystemOwner(req)) {
-      res.status(403).json({ error: '仅系统所有者可管理用户项目授权。' }); return;
+    const actor = (req as typeof req & { cdsUser?: CdsUser }).cdsUser;
+    const scopedAdmin = previewRequest === undefined && !isHumanSystemOwner(req);
+    if (scopedAdmin && (!actor?.isAdministrator || actor.authProvider === 'sso' || !isAuthenticatedHuman(req))) {
+      res.status(403).json({ error: '需要系统所有者或账号管理员权限。' }); return;
     }
     const previewApproved = () => typeof previewRequest === 'string' && req.is('application/json')
       && req.headers['sec-fetch-site'] !== 'cross-site'
@@ -32,7 +34,10 @@ export function createUserProjectAccessRouter(deps: {
         res.status(403).json({ error: '没有可由你处理的预览访问申请。' }); return;
       }
       const user = await auth.findUserById(req.params.id);
-      if (!user) { res.status(404).json({ error: '用户不存在，请刷新用户列表。' }); return; }
+      if (!user || (scopedAdmin && !canManageAccountScope(state, actor!, user))) {
+        res.status(404).json({ error: '当前管理范围内没有该账号。' }); return;
+      }
+      const allowed = scopedAdmin ? accountAdministrationScope(state, actor!.id) : undefined;
       const principalId = humanPrincipalId(user.id);
       if (isHumanProjectGrantUpdatePending(state, principalId)) {
         const update = humanProjectGrantUpdateStatus(state, principalId);
@@ -46,11 +51,17 @@ export function createUserProjectAccessRouter(deps: {
           res.status(400).json({ error: '系统所有者始终可访问全部项目，无需逐项授权。' }); return;
         }
         const input = req.method === 'POST' ? [...current().map(grant => grant.projectId), req.params.projectId] : req.body?.projectIds;
-        if (!Array.isArray(input) || input.some(id => typeof id !== 'string' || !supportsHumanProjectGrant(state.getProject(id)))) {
+        if (!Array.isArray(input) || input.some(id => typeof id !== 'string')) {
+          res.status(400).json({ error: '请选择可操作分支的项目。' }); return;
+        }
+        if (allowed && input.some(id => !allowed.has(id))) {
+          res.status(403).json({ error: '只能授予当前管理员已获授权的项目。' }); return;
+        }
+        if (input.some(id => !supportsHumanProjectGrant(state.getProject(id)))) {
           res.status(400).json({ error: '请选择可操作分支的项目；共享服务暂不支持账号项目授权。' }); return;
         }
         const ids = new Set<string>(input.map(id => state.getProject(id)!.id));
-        const actor = (req as typeof req & { cdsUser: CdsUser }).cdsUser;
+        if (!actor) { res.sendStatus(401); return; }
         const actorLogin = actor.username || actor.githubLogin;
         const now = new Date().toISOString();
         finishUpdate = beginHumanProjectGrantUpdate(state, principalId, 'grants');
@@ -61,6 +72,14 @@ export function createUserProjectAccessRouter(deps: {
         if (!lockedUser) { res.status(404).json({ error: '用户不存在，请刷新用户列表。' }); return; }
         if (previewRequest !== undefined && (lockedUser.status !== 'active' || !await previewApproved())) {
           res.status(403).json({ error: '申请人或审批权限已变化，请刷新申请。' }); return;
+        }
+        if (allowed) {
+          const freshActor = await auth.findUserById(actor.id);
+          const freshScope = accountAdministrationScope(state, actor.id);
+          if (!freshActor?.isAdministrator || freshActor.status !== 'active'
+            || [...ids].some(id => !freshScope.has(id)) || current().some(grant => !freshScope.has(grant.projectId))) {
+            res.status(403).json({ error: '当前管理范围已更新，请重新打开项目授权。' }); return;
+          }
         }
         const priorPrincipal = state.getPrincipal(principalId);
         const priorGrantIds = new Set(state.getProjectGrants().filter(g => g.principalId === principalId).map(g => g.id));
@@ -142,7 +161,7 @@ export function createUserProjectAccessRouter(deps: {
       if (previewRequest !== undefined) {
         res.set('Cache-Control', 'private, no-store').json({ projectId: req.params.projectId, state: 'ready' }); return;
       }
-      res.json({ userId: user.id, allProjects: user.isSystemOwner, projects: state.getProjects().filter(supportsHumanProjectGrant).map(p => ({
+      res.json({ userId: user.id, allProjects: user.isSystemOwner, projects: state.getProjects().filter(supportsHumanProjectGrant).filter(p => !allowed || allowed.has(p.id)).map(p => ({
         id: p.id, name: p.aliasName || p.name, repository: p.gitRepoUrl,
         previouslyAuthorized: state.getProjectGrants().some(g => g.principalId === humanPrincipalId(user.id) && g.projectId === p.id),
         authorized: user.isSystemOwner || active.has(p.id),

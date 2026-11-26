@@ -23,6 +23,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { MongoAuthStore } from '../../../src/infra/auth-store/mongo-store.js';
 import type { IAuthMongoHandle, IAuthCollection } from '../../../src/infra/auth-store/mongo-handle.js';
 import type { CdsUser, CdsSession, CdsWorkspace, CdsWorkspaceMember, CdsWorkspaceInvite, UserActivityRecord } from '../../../src/domain/auth.js';
+import { GithubIdentityDetachedError } from '../../../src/domain/auth.js';
 import { DEFAULT_SESSION_TTL_MS } from '../../../src/infra/auth-store/memory-store.js';
 
 // ── Fake collection ───────────────────────────────────────────────────────────
@@ -30,9 +31,12 @@ import { DEFAULT_SESSION_TTL_MS } from '../../../src/infra/auth-store/memory-sto
 class FakeAuthCollection<T extends Record<string, unknown>> implements IAuthCollection<T> {
   public readonly docs = new Map<string, T>();
 
-  /** Simple field-equality filter matching. */
   private matches(doc: T, filter: Record<string, unknown>): boolean {
-    return Object.entries(filter).every(([k, v]) => (doc as Record<string, unknown>)[k] === v);
+    return Object.entries(filter).every(([key, value]) => {
+      const actual = doc[key];
+      if (typeof value === 'object' && value !== null && '$exists' in value) return (key in doc) === value.$exists;
+      return Array.isArray(actual) ? actual.includes(value) : actual === value;
+    });
   }
 
   private findFirst(filter: Record<string, unknown>): T | undefined {
@@ -88,13 +92,26 @@ class FakeAuthCollection<T extends Record<string, unknown>> implements IAuthColl
   }
 
   async updateOne(filter: Record<string, unknown>, update: Record<string, unknown>): Promise<void> {
-    const setFields = (update as { $set?: Record<string, unknown> }).$set ?? {};
+    await this.updateOneMatched(filter, update);
+  }
+
+  async updateOneMatched(filter: Record<string, unknown>, update: {
+    $set?: Record<string, unknown>;
+    $unset?: Record<string, unknown>;
+    $addToSet?: Record<string, unknown>;
+  }): Promise<boolean> {
     for (const [key, doc] of this.docs.entries()) {
-      if (this.matches(doc, filter)) {
-        this.docs.set(key, { ...doc, ...setFields });
-        return;
+      if (!this.matches(doc, filter)) continue;
+      const updated: Record<string, unknown> = { ...doc, ...update.$set };
+      for (const field of Object.keys(update.$unset ?? {})) delete updated[field];
+      for (const [field, value] of Object.entries(update.$addToSet ?? {})) {
+        const previous = updated[field];
+        updated[field] = [...new Set([...(Array.isArray(previous) ? previous : []), value])];
       }
+      this.docs.set(key, updated as T);
+      return true;
     }
+    return false;
   }
 
   async deleteOne(filter: Record<string, unknown>): Promise<void> {
@@ -209,6 +226,21 @@ describe('MongoAuthStore', () => {
     const second = await store.upsertUser(sampleInput({ githubId: 2, githubLogin: 'bob' }));
     expect(second.isSystemOwner).toBe(false);
     expect(await store.countUsers()).toBe(2);
+  });
+
+  it('preserves a detached GitHub identity across repository instances without auto-creating another user', async () => {
+    const input = sampleInput();
+    const user = await store.upsertUser(input);
+    const now = new Date();
+    expect(await store.detachIdentity(user, 'github', {
+      sessionRevision: 'revoked', lastAccountAction: { id: 'receipt', action: 'unlink-github', at: now.toISOString() },
+    }, now)).toBe(true);
+
+    const reopened = new MongoAuthStore(handle);
+    expect(await reopened.findUserByGithubId(input.githubId)).toBeNull();
+    await expect(reopened.upsertUser(input)).rejects.toBeInstanceOf(GithubIdentityDetachedError);
+    expect(await reopened.countUsers()).toBe(1);
+    expect(await reopened.findUserById(user.id)).toMatchObject({ sessionRevision: 'revoked' });
   });
 
   // ── Scenario 4: re-login updates fields, preserves id ──────────────────

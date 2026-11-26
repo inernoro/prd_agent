@@ -9,9 +9,14 @@ const AUTH_ENV_KEYS = [
   'CDS_AUTH_MODE',
   'CDS_USERNAME',
   'CDS_PASSWORD',
+  'CDS_BASIC_SESSION_GENERATION',
   'CDS_PUBLIC_BASE_URL',
   'CDS_GITHUB_CLIENT_ID',
   'CDS_GITHUB_CLIENT_SECRET',
+  'CDS_ACCOUNT_GITHUB_CLIENT_ID',
+  'CDS_ACCOUNT_GITHUB_CLIENT_SECRET',
+  'CDS_GOOGLE_CLIENT_ID',
+  'CDS_GOOGLE_CLIENT_SECRET',
   'CDS_PASSKEYS_ENABLED',
   'CDS_SYSTEM_PASSWORD_APPROVER_IDS',
   'CDS_SSO_ENABLED',
@@ -581,6 +586,7 @@ describe('Server route ordering (regression)', () => {
           local: true,
           sso: false,
         },
+        accountProviders: { github: false, google: false },
         capabilities: {
           userManagement: true,
           userActivity: true,
@@ -970,7 +976,7 @@ describe('Server route ordering (regression)', () => {
     }
   });
 
-  describe('environment owner password rotation', () => {
+  describe('environment owner password rotation with passkey approval', () => {
     const owner = 'fixture-environment-owner';
     const oldPassword = 'Synthetic-before-Q8a61yR!';
     const newPassword = 'Synthetic-after-X4c73kD!';
@@ -1016,6 +1022,7 @@ describe('Server route ordering (regression)', () => {
       vi.stubEnv('CDS_AUTH_MODE', 'basic');
       vi.stubEnv('CDS_USERNAME', undefined);
       vi.stubEnv('CDS_PASSWORD', undefined);
+      vi.stubEnv('CDS_BASIC_SESSION_GENERATION', undefined);
       vi.stubEnv('CDS_MODE', 'standalone');
       vi.stubEnv('CDS_SSO_ENABLED', 'false');
       vi.stubEnv('CDS_PASSKEYS_ENABLED', enableApproval ? '1' : undefined);
@@ -1136,10 +1143,13 @@ describe('Server route ordering (regression)', () => {
       expect((await rotate(oldPassword, newPassword, approved.headers, approved.assertion)).status).toBe(200);
       const updated = fs.readFileSync(envFile, 'utf8');
       const passwordAssignment = /^\s*(?:export\s+)?CDS_PASSWORD=/;
+      const sessionGenerationAssignment = /^\s*(?:export\s+)?CDS_BASIC_SESSION_GENERATION=/;
       const withoutRotation = (text: string) => text.split('\n')
-        .filter(line => !passwordAssignment.test(line) && !line.startsWith('# CDS_SYSTEM_PASSWORD_ROTATION ')).join('\n');
+        .filter(line => !passwordAssignment.test(line) && !sessionGenerationAssignment.test(line)
+          && !line.startsWith('# CDS_SYSTEM_PASSWORD_ROTATION ')).join('\n');
       expect(withoutRotation(updated) === withoutRotation(content(oldPassword)), 'unrelated settings are preserved').toBe(true);
       expect(updated.split('\n').filter(line => passwordAssignment.test(line)).length).toBe(1);
+      expect(updated.split('\n').filter(line => sessionGenerationAssignment.test(line))).toHaveLength(1);
       expect(fs.statSync(envFile).mode & 0o777).toBe(0o600);
       checkUnmodified(decoy, content(unrelatedPassword));
       for (const prior of [oldBrowser, oldLegacyLogin]) expect((await request(server, '/api/me', prior)).status).toBe(401);
@@ -1163,6 +1173,7 @@ describe('Server route ordering (regression)', () => {
       const previousServer = server;
       await new Promise<void>(resolve => previousServer.close(() => resolve()));
       vi.stubEnv('CDS_PASSWORD', undefined);
+      vi.stubEnv('CDS_BASIC_SESSION_GENERATION', undefined);
       loadCdsEnvFile();
       server = await createFixtureServer(authStore);
       expect((await login(oldPassword)).status).toBe(401);
@@ -1184,7 +1195,11 @@ describe('Server route ordering (regression)', () => {
       }
       const unavailable = await rotate(oldPassword, newPassword, cookie);
       expect(unavailable.status).toBe(409);
-      expect(errorCode(unavailable)).toBe('system_password_approval_unavailable');
+      expect(errorCode(unavailable)).toBe('account_action_required');
+      const noPasskeyApproval = await requestJson(server!, 'POST', rotatePath + '/approval',
+        { oldPassword, newPassword }, cookie);
+      expect(noPasskeyApproval.status).toBe(409);
+      expect(errorCode(noPasskeyApproval)).toBe('system_password_approval_unavailable');
       checkUnmodified(envFile, content(oldPassword));
 
       expect((await requestJson(server, 'POST', '/api/auth/users', {
@@ -1226,6 +1241,482 @@ describe('Server route ordering (regression)', () => {
       fs.mkdirSync(lock, { mode: 0o700 });
       fs.writeFileSync(path.join(lock, 'owner'), `${process.pid}\nsynthetic-owner\n`, { mode: 0o600 });
       expect((await rotate(oldPassword, newPassword, approved.headers, approved.assertion)).status).toBe(409);
+      expect(fs.existsSync(path.join(lock, 'owner'))).toBe(true);
+      checkUnmodified(envFile, content(oldPassword));
+      expect((await request(server, '/api/me', cookie)).status).toBe(200);
+    });
+  });
+
+  describe('environment owner password rotation with a recorded account action', () => {
+    const owner = 'fixture-environment-owner';
+    const oldPassword = 'Synthetic-before-Q8a61yR!';
+    const newPassword = 'Synthetic-after-X4c73kD!';
+    const unrelatedPassword = 'Synthetic-stale-Z9u65pL!';
+    const member = 'fixture-local-member';
+    const memberPassword = 'Synthetic-member-V7r32gW!';
+    const nextMemberPassword = 'Synthetic-member-next-P6j17nK!';
+    const localOwner = 'fixture-local-owner';
+    const localOwnerPassword = 'Synthetic-local-owner-S3z52tM!';
+    const agentKey = 'cdsp_rotation_synthetic_project_key';
+    const staticKey = 'rotation-fixture-static-key';
+    const projectId = 'rotation-fixture-project';
+    const personalPath = '/api/auth/change-password';
+    const systemPath = '/api/auth/system-password';
+    const noticePath = '/api/auth/sign-in-notice';
+    const systemProof = 'cds_system_session_proof';
+    const reason = 'Scheduled rotation of the shared system account in this fixture';
+    const agentHeaders = { 'X-AI-Access-Key': agentKey };
+    const staticHeaders = { 'X-AI-Access-Key': staticKey };
+    const desktopAgent = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36';
+    const mobileAgent = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.2 Mobile/15E148 Safari/604.1';
+
+    interface RotationRequest {
+      id: string;
+      targetName: string;
+      expiresAt: string;
+      status: string;
+      affectedSessions: number;
+    }
+
+    beforeEach(() => {
+      for (const name of ['log', 'info', 'warn', 'error'] as const) vi.spyOn(console, name).mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+      vi.restoreAllMocks();
+    });
+
+    function configure() {
+      const envFile = path.join(tmpDir, 'selected-auth.env');
+      const decoy = path.join(tmpDir, '.cds.env');
+      const content = (password: string) => [
+        '# Synthetic owner configuration',
+        `export CDS_USERNAME="${owner}"`,
+        '',
+        `CDS_PASSWORD='${password}'`,
+        '# Adjacent values retain exact bytes',
+        "export CDS_MODE='standalone'",
+        '',
+      ].join('\n');
+      fs.writeFileSync(envFile, content(oldPassword), { mode: 0o600 });
+      fs.writeFileSync(decoy, content(unrelatedPassword), { mode: 0o600 });
+      vi.stubEnv('CDS_ENV_FILE', envFile);
+      vi.stubEnv('CDS_AUTH_MODE', 'basic');
+      vi.stubEnv('CDS_USERNAME', undefined);
+      vi.stubEnv('CDS_PASSWORD', undefined);
+      vi.stubEnv('CDS_BASIC_SESSION_GENERATION', undefined);
+      vi.stubEnv('CDS_AI_ACCESS_KEY', staticKey);
+      vi.stubEnv('CDS_MODE', 'standalone');
+      vi.stubEnv('CDS_SSO_ENABLED', 'false');
+      loadCdsEnvFile();
+      return { envFile, decoy, content };
+    }
+
+    function createFixtureServer(authStore?: MemoryAuthStore) {
+      return startServer(buildRealServerWithEvents([], state => {
+        if (state.getProject(projectId)) return;
+        const now = new Date().toISOString();
+        state.addProject({ id: projectId, slug: projectId, name: 'Synthetic project', kind: 'git', createdAt: now, updatedAt: now });
+        state.addAgentKey(projectId, { id: 'rotation-fixture-key', label: 'synthetic', scope: 'rw',
+          hash: crypto.createHash('sha256').update(agentKey).digest('hex'), createdAt: now });
+      }, authStore));
+    }
+
+    function login(password: string, username = owner, endpoint = '/api/auth/login', headers: http.OutgoingHttpHeaders = {}) {
+      return requestJson(server!, 'POST', endpoint, { username, password }, headers);
+    }
+
+    function issuedCookie(response: HttpResponse, name: string): string | undefined {
+      return response.headers['set-cookie']?.map(line => line.split(';', 1)[0]).find(pair =>
+        [name, `__Host-${name}`].some(candidate => pair.startsWith(`${candidate}=`) && pair.length > candidate.length + 1),
+      );
+    }
+
+    function browserCookie(loginResponse: HttpResponse, name = 'cds_token') {
+      expect(loginResponse.status).toBe(200);
+      const cookie = issuedCookie(loginResponse, name);
+      expect(Boolean(cookie), 'expected an authenticated browser cookie').toBe(true);
+      const proof = name === 'cds_token' ? issuedCookie(loginResponse, systemProof) : undefined;
+      return { Cookie: [cookie, proof].filter(Boolean).join('; ') };
+    }
+
+    interface SystemBrowser {
+      authCookie: string;
+      proofCookie?: string;
+      userAgent: string;
+    }
+
+    async function systemBrowser(userAgent: string, endpoint = '/api/auth/login', password = oldPassword): Promise<SystemBrowser> {
+      const response = await login(password, owner, endpoint, { 'User-Agent': userAgent });
+      expect(response.status).toBe(200);
+      const authCookie = issuedCookie(response, 'cds_token');
+      expect(Boolean(authCookie), 'a shared-account login keeps the ordinary authentication cookie').toBe(true);
+      return {
+        authCookie: authCookie!,
+        proofCookie: issuedCookie(response, systemProof),
+        userAgent,
+      };
+    }
+
+    function systemBrowserHeaders(browser: SystemBrowser): http.OutgoingHttpHeaders {
+      return {
+        Cookie: [browser.authCookie, browser.proofCookie].filter(Boolean).join('; '),
+        'User-Agent': browser.userAgent,
+      };
+    }
+
+    async function refreshSystemBrowser(browser: SystemBrowser): Promise<SystemBrowser> {
+      const response = await request(server!, '/api/me', systemBrowserHeaders(browser));
+      expect(response.status).toBe(200);
+      return {
+        ...browser,
+        authCookie: issuedCookie(response, 'cds_token') ?? browser.authCookie,
+        proofCookie: issuedCookie(response, systemProof) ?? browser.proofCookie,
+      };
+    }
+
+    function changePersonal(before: string, after: string, headers: http.OutgoingHttpHeaders) {
+      return requestJson(server!, 'POST', personalPath, { oldPassword: before, newPassword: after }, headers);
+    }
+
+    function prepare(headers: http.OutgoingHttpHeaders) {
+      return requestJson(server!, 'POST', `${systemPath}/prepare`, { reason }, headers);
+    }
+
+    function confirm(
+      id: string, headers: http.OutgoingHttpHeaders, before = oldPassword, after = newPassword,
+      options: { targetName?: string; notify?: boolean } = {},
+    ) {
+      return requestJson(server!, 'POST', `${systemPath}/${id}/confirm`, {
+        targetName: owner,
+        oldPassword: before,
+        newPassword: after,
+        notify: true,
+        ...options,
+      }, headers);
+    }
+
+    async function prepareRequest(headers: http.OutgoingHttpHeaders): Promise<RotationRequest> {
+      const response = await prepare(headers);
+      expect(response.status).toBe(201);
+      const pending = (JSON.parse(response.body) as { request: RotationRequest }).request;
+      expect(typeof pending.id === 'string' && pending.id.length > 0).toBe(true);
+      expect(pending.targetName).toBe(owner);
+      expect(Date.parse(pending.expiresAt)).toBeGreaterThan(Date.now());
+      expect(pending.status).toBe('pending');
+      expect([oldPassword, newPassword].some(secret => response.body.includes(secret)), 'approval response contains no password').toBe(false);
+      return pending;
+    }
+
+    function expectCompleted(response: HttpResponse, id: string) {
+      expect(response.status).toBe(200);
+      const completed = (JSON.parse(response.body) as { request: RotationRequest }).request;
+      expect({ id: completed.id, status: completed.status }).toEqual({ id, status: 'completed' });
+      expect([oldPassword, newPassword].some(secret => response.body.includes(secret)), 'rotation receipt contains no password').toBe(false);
+    }
+
+    async function restartFixture(authStore: MemoryAuthStore) {
+      await flushAllJsonStateStores();
+      if (server?.listening) {
+        const current = server;
+        await new Promise<void>(resolve => current.close(() => resolve()));
+      }
+      vi.stubEnv('CDS_PASSWORD', undefined);
+      vi.stubEnv('CDS_BASIC_SESSION_GENERATION', undefined);
+      loadCdsEnvFile();
+      server = await createFixtureServer(authStore);
+    }
+
+    function checkRotationFile(filename: string, original: string) {
+      const updated = fs.readFileSync(filename, 'utf8');
+      const passwordAssignment = /^\s*(?:export\s+)?CDS_PASSWORD=/;
+      const signingAssignment = /^\s*(?:export\s+)?CDS_BASIC_SESSION_GENERATION=/;
+      const withoutRotation = (text: string) => text.split('\n').filter(line =>
+        !passwordAssignment.test(line) && !signingAssignment.test(line),
+      ).join('\n');
+      expect(withoutRotation(updated) === withoutRotation(original), 'adjacent configuration is preserved byte for byte').toBe(true);
+      expect(updated.split('\n').filter(line => passwordAssignment.test(line)).length).toBe(1);
+      const signing = updated.split('\n').filter(line => signingAssignment.test(line));
+      expect(signing.length).toBe(1);
+      expect(fs.statSync(filename).mode & 0o777).toBe(0o600);
+      return signing[0]!;
+    }
+
+    function machineCredential(password: string) {
+      return { 'X-CDS-Token': crypto.createHash('sha256').update(`cds:${owner}:${password}`).digest('hex') };
+    }
+
+    function checkUnmodified(filename: string, expected: string) {
+      expect(fs.readFileSync(filename, 'utf8') === expected, 'configuration bytes were preserved').toBe(true);
+    }
+
+    function errorCode(response: HttpResponse): unknown {
+      try { return JSON.parse(response.body).code; } catch { return undefined; }
+    }
+
+    it('registers independently refreshed shared-account browsers and exposes safe session summaries', async () => {
+      configure();
+      server = await createFixtureServer(new MemoryAuthStore());
+      const desktopLogin = await systemBrowser(desktopAgent);
+      const mobileLogin = await systemBrowser(mobileAgent, '/api/login');
+      expect(Boolean(desktopLogin.proofCookie && mobileLogin.proofCookie), 'each shared-account login issues session proof').toBe(true);
+      expect((await request(server, '/api/me', { Cookie: desktopLogin.proofCookie })).status).toBe(401);
+      const proofValue = desktopLogin.proofCookie!.split('=', 2)[1];
+      expect((await request(server, '/api/me', { Cookie: `cds_gh_session=${proofValue}` })).status).toBe(401);
+      const desktop = await refreshSystemBrowser(desktopLogin);
+      const mobile = await refreshSystemBrowser(mobileLogin);
+      expect(desktop.proofCookie === mobile.proofCookie, 'the browsers have distinct proofs').toBe(false);
+
+      const status = await request(server, systemPath, systemBrowserHeaders(desktop));
+      expect(status.status).toBe(200);
+      const { sessions } = JSON.parse(status.body) as {
+        sessions: Array<{ device: string; location: string | null; createdAt: string; lastSeenAt: string }>;
+      };
+      expect(Array.isArray(sessions)).toBe(true);
+      expect(sessions.length).toBe(2);
+      expect(sessions.map(session => session.device).sort()).toEqual(['Linux', 'iOS']);
+      for (const session of sessions) {
+        expect(Object.keys(session).sort()).toEqual(['createdAt', 'device', 'lastSeenAt', 'location']);
+        const created = Date.parse(session.createdAt);
+        const seen = Date.parse(session.lastSeenAt);
+        expect(Number.isFinite(created) && Number.isFinite(seen) && seen >= created).toBe(true);
+      }
+      const rawSecrets = [desktop.authCookie, desktop.proofCookie!, mobile.authCookie, mobile.proofCookie!]
+        .map(cookie => cookie.slice(cookie.indexOf('=') + 1));
+      for (const secret of [...rawSecrets, oldPassword, newPassword]) {
+        expect(status.body.includes(secret), 'session summaries contain no plaintext credential').toBe(false);
+      }
+      for (const rawAgent of [desktopAgent, mobileAgent]) {
+        expect(status.body.includes(rawAgent), 'session summaries use safe device labels').toBe(false);
+      }
+      expect((await prepareRequest(systemBrowserHeaders(desktop))).affectedSessions).toBe(2);
+    });
+
+    it('requires proof for a rotated shared-account browser to read its sign-in notice', async () => {
+      configure();
+      const authStore = new MemoryAuthStore();
+      server = await createFixtureServer(authStore);
+      const browser = await refreshSystemBrowser(await systemBrowser(desktopAgent));
+      const pending = await prepareRequest(systemBrowserHeaders(browser));
+      expectCompleted(await confirm(pending.id, systemBrowserHeaders(browser)), pending.id);
+      expect((await request(server, '/api/me', { Cookie: browser.authCookie })).status).toBe(401);
+
+      for (const headers of [{}, { Cookie: browser.authCookie }, { Cookie: `${systemProof}=fixture-unregistered-proof` }]) {
+        const notice = await request(server, noticePath, headers);
+        expect(notice.status).toBe(200);
+        expect((JSON.parse(notice.body) as { notice: unknown }).notice === null).toBe(true);
+      }
+      expect(Boolean(browser.proofCookie), 'the stale browser can still prove its registered session').toBe(true);
+      const proof = { Cookie: browser.proofCookie! };
+      expect((await request(server, '/api/me', proof)).status).toBe(401);
+      const noticed = await request(server, noticePath, proof);
+      expect(noticed.status).toBe(200);
+      const notice = (JSON.parse(noticed.body) as {
+        notice: { action: string; at: string; requestId?: string; receiptId?: string } | null;
+      }).notice;
+      expect(notice?.action).toBe('rotate-system-password');
+      expect(Number.isFinite(Date.parse(notice?.at ?? ''))).toBe(true);
+      if (notice?.requestId !== undefined) expect(notice.requestId).toBe(pending.id);
+      if (notice?.receiptId !== undefined) expect(notice.receiptId).toBe(pending.id);
+      expect(Object.keys(notice ?? {}).every(key => ['action', 'at', 'requestId', 'receiptId'].includes(key))).toBe(true);
+      expect(noticed.body.includes(oldPassword) || noticed.body.includes(newPassword), 'sign-in notice contains no password').toBe(false);
+
+      const freshBrowser = await systemBrowser(desktopAgent, '/api/auth/login', newPassword);
+      expect((await request(server, '/api/me', systemBrowserHeaders(freshBrowser))).status).toBe(200);
+      const freshNotice = await request(server, noticePath, { Cookie: freshBrowser.proofCookie });
+      expect(freshNotice.status).toBe(200);
+      expect((JSON.parse(freshNotice.body) as { notice: unknown }).notice === null).toBe(true);
+      await restartFixture(authStore);
+      const afterRestart = await request(server, noticePath, proof);
+      expect(afterRestart.status).toBe(200);
+      expect((JSON.parse(afterRestart.body) as { notice: typeof notice }).notice).toEqual(notice);
+      expect((await request(server, '/api/me', { Cookie: browser.authCookie })).status).toBe(401);
+    });
+
+    it('directs the live system owner to one-time approval from the former password route', async () => {
+      const { envFile, content } = configure();
+      server = await createFixtureServer();
+      const cookie = browserCookie(await login(oldPassword));
+      const response = await changePersonal(oldPassword, newPassword, cookie);
+      expect(response.status).toBe(409);
+      expect(errorCode(response)).toBe('account_action_required');
+      checkUnmodified(envFile, content(oldPassword));
+      expect((await request(server, '/api/me', cookie)).status).toBe(200);
+    });
+
+    it('requires distinct confirmations and keeps original sessions invalid after restoring the prior password and restarting', async () => {
+      const { envFile, decoy, content } = configure();
+      const authStore = new MemoryAuthStore();
+      server = await createFixtureServer(authStore);
+      const oldBrowser = browserCookie(await login(oldPassword));
+      const oldLegacyLogin = browserCookie(await login(oldPassword, owner, '/api/login'));
+      expect((await request(server, '/api/projects', machineCredential(oldPassword))).status).toBe(200);
+      expect((await request(server, `/api/projects/${projectId}`, agentHeaders)).status).toBe(200);
+      const localUser = await requestJson(server, 'POST', '/api/auth/users', { username: member, password: memberPassword }, oldBrowser);
+      expect(localUser.status).toBe(201);
+      const memberBrowser = browserCookie(await login(memberPassword, member), 'cds_gh_session');
+      const secondOwner = await requestJson(server, 'POST', '/api/auth/users', {
+        username: localOwner, password: localOwnerPassword, isSystemOwner: true,
+      }, oldBrowser);
+      expect(secondOwner.status).toBe(201);
+      const secondOwnerId = (JSON.parse(secondOwner.body) as { user: { id: string } }).user.id;
+      const localOwnerBrowser = browserCookie(await login(localOwnerPassword, localOwner), 'cds_gh_session');
+
+      const first = await prepareRequest(oldBrowser);
+      checkUnmodified(envFile, content(oldPassword));
+      expect((await request(server, '/api/me', oldBrowser)).status).toBe(200);
+      expectCompleted(await confirm(first.id, oldBrowser), first.id);
+      const firstSigning = checkRotationFile(envFile, content(oldPassword));
+      checkUnmodified(decoy, content(unrelatedPassword));
+      for (const prior of [oldBrowser, oldLegacyLogin]) expect((await request(server, '/api/me', prior)).status).toBe(401);
+      for (const route of ['/api/auth/login', '/api/login']) {
+        expect((await login(oldPassword, owner, route)).status).toBe(401);
+        expect((await request(server, '/api/me', browserCookie(await login(newPassword, owner, route)))).status).toBe(200);
+      }
+      expect((await request(server, '/api/projects', machineCredential(oldPassword))).status).toBe(401);
+      expect((await request(server, '/api/projects', machineCredential(newPassword))).status).toBe(200);
+      expect((await request(server, `/api/projects/${projectId}`, agentHeaders)).status).toBe(200);
+      expect((await request(server, '/api/me', memberBrowser)).status).toBe(200);
+
+      const firstRotatedBrowser = browserCookie(await login(newPassword));
+      const replay = await confirm(first.id, firstRotatedBrowser, newPassword, unrelatedPassword);
+      expectCompleted(replay, first.id);
+      expect(checkRotationFile(envFile, content(oldPassword)) === firstSigning, 'replaying approval preserves the completed rotation').toBe(true);
+      expect((await login(unrelatedPassword)).status).toBe(401);
+      await restartFixture(authStore);
+      expect((await login(oldPassword)).status).toBe(401);
+      expect((await request(server, '/api/me', firstRotatedBrowser)).status).toBe(200);
+      expect((await request(server, '/api/me', oldBrowser)).status).toBe(401);
+
+      const restore = await prepareRequest(localOwnerBrowser);
+      expect(restore.id).not.toBe(first.id);
+      expectCompleted(await confirm(restore.id, localOwnerBrowser, newPassword, oldPassword), restore.id);
+      const restoredSigning = checkRotationFile(envFile, content(oldPassword));
+      expect(restoredSigning === firstSigning, 'each confirmation rotates the signing seed').toBe(false);
+      checkUnmodified(decoy, content(unrelatedPassword));
+      for (const prior of [oldBrowser, oldLegacyLogin, firstRotatedBrowser]) {
+        expect((await request(server, '/api/me', prior)).status).toBe(401);
+      }
+      expect((await login(newPassword)).status).toBe(401);
+      const restoredBrowser = browserCookie(await login(oldPassword));
+      expect((await request(server, '/api/me', restoredBrowser)).status).toBe(200);
+      await restartFixture(authStore);
+      for (const prior of [oldBrowser, oldLegacyLogin, firstRotatedBrowser]) {
+        expect((await request(server, '/api/me', prior)).status).toBe(401);
+      }
+      expect((await request(server, '/api/me', restoredBrowser)).status).toBe(200);
+      expect((await login(oldPassword)).status).toBe(200);
+      expect((await request(server, `/api/projects/${projectId}`, agentHeaders)).status).toBe(200);
+      expect((await request(server, '/api/me', memberBrowser)).status).toBe(200);
+
+      const audit = await request(server, '/api/auth/activity', restoredBrowser);
+      expect(audit.status).toBe(200);
+      const activity = await authStore.listActivity();
+      const storedReceipts = [];
+      for (const [receiptId, actorId, actorName] of [
+        [first.id, `basic:${owner}`, owner],
+        [restore.id, secondOwnerId, localOwner],
+      ]) {
+        const stored = await authStore.accountActions?.get(receiptId);
+        expect({
+          id: stored?.id,
+          status: stored?.status,
+          targetName: stored?.targetName,
+          action: stored?.action,
+          reason: stored?.reason,
+          requestedBy: stored?.requestedByAccountId,
+          approvedBy: stored?.approvedByAccountId,
+          executedBy: stored?.executedByAccountId,
+        }).toEqual({
+          id: receiptId,
+          status: 'completed',
+          targetName: owner,
+          action: 'rotate-system-password',
+          reason,
+          requestedBy: actorId,
+          approvedBy: actorId,
+          executedBy: actorId,
+        });
+        expect(activity.filter(entry => entry.action === 'rotate-system-password'
+          && entry.summary.includes(receiptId) && entry.userLogin === actorName).length).toBe(1);
+        storedReceipts.push(stored);
+      }
+      const evidence = [audit.body, JSON.stringify(activity), JSON.stringify(storedReceipts)];
+      for (const secret of [oldPassword, newPassword, memberPassword, localOwnerPassword, unrelatedPassword]) {
+        expect(evidence.some(value => value.includes(secret)), 'account audit contains no plaintext credentials').toBe(false);
+      }
+    });
+
+    it('requires owner identity, exact username, notification acknowledgement and valid passwords while preserving personal changes', async () => {
+      const { envFile, content } = configure();
+      server = await createFixtureServer();
+      const cookie = browserCookie(await login(oldPassword));
+      const pending = await prepareRequest(cookie);
+      const metadata = await request(server, systemPath, cookie);
+      expect(metadata.status).toBe(200);
+      expect([oldPassword, newPassword].some(secret => metadata.body.includes(secret)), 'system account metadata contains no password').toBe(false);
+      expect((await request(server, '/api/projects', staticHeaders)).status).toBe(200);
+      expect((await request(server, `/api/projects/${projectId}`, agentHeaders)).status).toBe(200);
+      expect((await request(server, '/api/projects', machineCredential(oldPassword))).status).toBe(200);
+      expect((await requestJson(server, 'POST', '/api/auth/users', { username: member, password: memberPassword }, cookie)).status).toBe(201);
+      const local = browserCookie(await login(memberPassword, member), 'cds_gh_session');
+      for (const headers of [{}, agentHeaders, staticHeaders, machineCredential(oldPassword), local]) {
+        expect([401, 403]).toContain((await request(server, systemPath, headers)).status);
+        expect([401, 403]).toContain((await prepare(headers)).status);
+        expect([401, 403]).toContain((await confirm(pending.id, headers)).status);
+        checkUnmodified(envFile, content(oldPassword));
+      }
+      const wrongName = await confirm(pending.id, cookie, oldPassword, newPassword, { targetName: 'fixture-other-owner' });
+      expect(wrongName.status).toBe(400);
+      const noNotice = await confirm(pending.id, cookie, oldPassword, newPassword, { notify: undefined });
+      expect(noNotice.status).toBe(400);
+      const rejectedNotice = await confirm(pending.id, cookie, oldPassword, newPassword, { notify: false });
+      expect(rejectedNotice.status).toBe(400);
+      const wrongPassword = await confirm(pending.id, cookie, unrelatedPassword);
+      expect(wrongPassword.status).toBe(400);
+      expect(errorCode(wrongPassword) === 'invalid_credentials').toBe(true);
+      expect((await confirm(pending.id, cookie, oldPassword, 'weak')).status).toBe(400);
+      checkUnmodified(envFile, content(oldPassword));
+
+      expect((await changePersonal(oldPassword, newPassword, local)).status).toBe(400);
+      expect((await changePersonal(memberPassword, nextMemberPassword, local)).status).toBe(200);
+      expect((await request(server, '/api/me', local)).status).toBe(401);
+      expect((await login(memberPassword, member)).status).toBe(401);
+      expect((await login(nextMemberPassword, member)).status).toBe(200);
+      expect((await request(server, '/api/me', cookie)).status).toBe(200);
+      checkUnmodified(envFile, content(oldPassword));
+    });
+
+    it('leaves the externally replaced authority and active sessions intact when the file disagrees', async () => {
+      const { envFile, decoy, content } = configure();
+      const authStore = new MemoryAuthStore();
+      server = await createFixtureServer(authStore);
+      const cookie = browserCookie(await login(oldPassword));
+      const pending = await prepareRequest(cookie);
+      fs.writeFileSync(envFile, content(unrelatedPassword));
+      const denied = await confirm(pending.id, cookie);
+      expect(denied.status).toBe(409);
+      expect(errorCode(denied) === 'system_password_source_mismatch').toBe(true);
+      const failed = await authStore.accountActions?.get(pending.id);
+      expect(failed?.status).toBe('failed');
+      expect(failed?.failureCode).toBe('system_password_source_mismatch');
+      checkUnmodified(envFile, content(unrelatedPassword));
+      checkUnmodified(decoy, content(unrelatedPassword));
+      expect((await request(server, '/api/me', cookie)).status).toBe(200);
+      expect((await login(oldPassword)).status).toBe(200);
+      expect((await login(newPassword)).status).toBe(401);
+    });
+
+    it('rejects a concurrent writer lock without taking over the selected file', async () => {
+      const { envFile, content } = configure();
+      server = await createFixtureServer();
+      const cookie = browserCookie(await login(oldPassword));
+      const pending = await prepareRequest(cookie);
+      const lock = `${envFile}.write.lock`;
+      fs.mkdirSync(lock, { mode: 0o700 });
+      fs.writeFileSync(path.join(lock, 'owner'), `${process.pid}\nsynthetic-owner\n`, { mode: 0o600 });
+      expect([409, 423, 503]).toContain((await confirm(pending.id, cookie)).status);
       expect(fs.existsSync(path.join(lock, 'owner'))).toBe(true);
       checkUnmodified(envFile, content(oldPassword));
       expect((await request(server, '/api/me', cookie)).status).toBe(200);

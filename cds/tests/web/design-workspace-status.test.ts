@@ -12,19 +12,22 @@ const entry: DesignEntry = { id: 'DSN-fixture', projectId: 'fixture', versions: 
 
 describe('design board signatures', () => {
   it('only displays a signature for the current draft, frozen version and linked PR', () => {
-    expect(designStatus(entry)).toBe('signed');
+    expect(designStatus(entry)).toBe('passed');
     const second = { ...first, version: 2 };
-    expect(designStatus({ ...entry, versions: [first, second] })).toBe('active');
-    expect(designStatus({ ...entry, versions: [first, second], frozen: 2 })).toBe('active');
-    expect(designStatus({ ...entry, pullRequest: 8 })).toBe('active');
-    expect(designStatus({ ...entry, pullRequest: undefined })).toBe('frozen');
-    expect(designStatus({ ...entry, currentSignoffRunId: null })).toBe('active');
-    expect(designStatus({ ...entry, currentSignoffRunId: signed.id })).toBe('signed');
+    expect(designStatus({ ...entry, versions: [first, second] })).toBe('draft');
+    expect(designStatus({ ...entry, versions: [first, second], frozen: 2 })).toBe('draft');
+    expect(designStatus({ ...entry, pullRequest: 8 })).toBe('draft');
+    expect(designStatus({ ...entry, pullRequest: undefined })).toBe('draft');
+    expect(designStatus({ ...entry, runs: [] })).toBe('draft');
+    expect(designStatus({ ...entry, currentSignoffRunId: null })).toBe('draft');
+    expect(designStatus({ ...entry, currentSignoffRunId: signed.id })).toBe('passed');
   });
 
   it('keeps the latest run authoritative for the currently linked PR', () => {
     const open = { ...signed, id: 'new-run', signed: undefined, verdict: 'needs_evidence' as const };
-    expect(designStatus({ ...entry, runs: [signed, open] })).toBe('active');
-    expect(designStatus({ ...entry, runs: [signed, { ...open, pullRequest: 8 }] })).toBe('signed');
+    expect(designStatus({ ...entry, runs: [signed, open] })).toBe('draft');
+    expect(designStatus({ ...entry, runs: [signed, { ...open, pullRequest: 8 }] })).toBe('passed');
+    const failure = { ...open, verdict: 'failed' as const };
+    expect(designStatus({ ...entry, versions: [first, { ...first, version: 2 }], runs: [failure] })).toBe('failed');
   });
 });

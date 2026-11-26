@@ -78,9 +78,11 @@ function RequestTarget({ request }: { request: AccessRequest }): JSX.Element | n
 export function AccessRequestInbox({
   onCountChange,
   placement = 'inline',
+  queue = 'inbox',
 }: {
   onCountChange?: (count: number) => void;
   placement?: 'inline' | 'floating';
+  queue?: 'inbox' | 'all';
 } = {}): JSX.Element | null {
   const events = useCdsEvents();
   const location = useLocation();
@@ -113,7 +115,7 @@ export function AccessRequestInbox({
 
   const refresh = useCallback(async () => {
     try {
-      const result = await refreshGate.run(() => apiRequest<AccessRequestsResponse>('/api/access-requests'));
+      const result = await refreshGate.run(() => apiRequest<AccessRequestsResponse>(queue === 'all' ? '/api/access-requests?queue=all' : '/api/access-requests'));
       if (!mounted.current) return;
       setRefreshError('');
       if (result.kind === 'forbidden') { setPending([]); setReceipts([]); return; }
@@ -126,7 +128,7 @@ export function AccessRequestInbox({
     } catch (error) {
       if (mounted.current) setRefreshError(error instanceof Error ? error.message : '请求失败，请稍后重试');
     }
-  }, [refreshGate]);
+  }, [refreshGate, queue]);
 
   useEffect(() => { void refresh(); }, [refresh]);
 

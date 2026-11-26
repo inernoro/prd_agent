@@ -116,6 +116,41 @@ describe('Agent sessions through the real basic-auth server', () => {
     });
   }
 
+  it.each([
+    ['/acceptance/recheck', { type: 'acceptance.recheck', runId: 'RUN-fixture', screenId: 'main', slot: 'desktop-light' }],
+    ['/handoff/check', { type: 'handoff.check', version: 1 }],
+  ])('设计发布凭据在本项目的 %s 仅能发起对应检查', async (suffix, input) => {
+    vi.stubEnv('CDS_STORAGE_MODE', 'json');
+    function designHeaders(designAccess: 'publish' | 'feedback' | 'read') {
+      const key = 'cdsp_fixture_' + crypto.randomUUID();
+      state.addAgentKey(projectId, {
+        id: crypto.randomUUID(), label: '合成设计凭据', hash: crypto.createHash('sha256').update(key).digest('hex'),
+        scope: 'rw', designAccess, createdAt: new Date().toISOString(),
+      });
+      return { 'X-AI-Access-Key': key };
+    }
+    const publisher = designHeaders('publish');
+    const feedback = designHeaders('feedback');
+    const reader = designHeaders('read');
+    const server = await start();
+    const own = `/api/projects/${projectId}/design`;
+    const remote = `/api/projects/${otherProjectId}/design`;
+    const check = { ...input, requestId: 'design-check-fixture', designId: 'DSN-fixture' };
+    const allowed = await request(server, 'POST', own + suffix, publisher, check);
+    expect(allowed).toMatchObject({ status: 404, body: { error: 'design_not_found', message: '该稿件不存在' } });
+    expect((await request(server, 'POST', own + suffix, publisher, { ...check, type: 'acceptance.sign' })).status).toBe(400);
+    for (const [endpoint, actor] of [
+      [remote + suffix, publisher],
+      [own + suffix, feedback],
+      [own + suffix, reader],
+      [own + '/commands', publisher],
+    ] as const) {
+      expect(await request(server, 'POST', endpoint, actor, check)).toMatchObject({
+        status: 403, body: { error: 'design_key_scope' },
+      });
+    }
+  });
+
   it.each(['bearer', 'X-AI-Access-Key', 'ai-access-key'])('preserves connection project and principal through %s', async (kind) => {
     const server = await start();
     const foreignCatalog = await request(server, 'GET', `/api/projects/${otherProjectId}/agent-runtime-providers`, headers(kind));

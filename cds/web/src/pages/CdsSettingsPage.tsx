@@ -2,6 +2,7 @@ import { consoleAccountIdentity } from '@/lib/consoleIdentity';
 import { SettingsDirectory } from '@/pages/cds-settings/SettingsDirectory';
 import { useSettingsTabVisibility } from '@/pages/cds-settings/useSettingsTabVisibility';
 import { lazy, Suspense, useContext, useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { SettingsLoadingContext, SettingsPageSkeleton, SystemSettingsContentSkeleton } from '@/components/skeletons/SettingsSkeleton';
 import { Activity, BellRing, Boxes, Database, Github, History, KeyRound, Monitor, Network, Plug, Save, ServerCog, Settings, ShieldAlert, ShieldCheck, TerminalSquare, Timer, Users, Wrench } from 'lucide-react';
 
@@ -12,6 +13,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { fetchAuthPublicStatus, type CdsAuthPublicStatus } from '@/lib/api';
 import type { SettingsGroupLabel } from '@/lib/settingsTaxonomy';
 import { bottomRightToastStyle } from '@/lib/overlayOffsets';
+import { MotionLink, useSurfaceNavigate } from '@/components/layout/RouteMotion';
+import { accountViews, availableAccountLogins, readAccountView, type AccountView } from './cds-settings/accountAccess';
+import { LoginMethodsTab, MyAccountTab } from './cds-settings/tabs/MyAccountTab';
+import './status/monitor-frame.css';
+import './cds-settings/account-settings.css';
 
 const AccessKeysTab = lazy(() => import('@/pages/cds-settings/tabs/AccessKeysTab').then((m) => ({ default: m.AccessKeysTab })));
 const IdentityTab = lazy(() => import('@/pages/cds-settings/tabs/IdentityTab').then((m) => ({ default: m.IdentityTab })));
@@ -47,6 +53,7 @@ type TabValue =
   | 'overview'
   | 'auth'
   | 'users'
+  | 'my-account'
   | 'activity'
   | 'access-keys'
   | 'identity'
@@ -96,8 +103,9 @@ const tabGroups: TabGroup[] = [
     // 这是谁、从哪来、谁能进：账号、密钥、权限、GitHub、外部系统
     label: '接入',
     items: [
-      { value: 'auth', label: '登录与认证', icon: KeyRound },
-      { value: 'users', label: '用户管理', icon: Users },
+      { value: 'my-account', label: '我的账号', icon: ShieldCheck },
+      { value: 'auth', label: '登录方式', icon: KeyRound },
+      { value: 'users', label: '账号与登录', icon: Users },
       // 2026-05-28 删:运维控制台 Tab 与弹窗审批流(OperatorApprovalModal)100%
       // 功能重叠,且暴露面更大。AI 发起请求 → 右下角弹窗 → 一键允许的流程
       // 已覆盖所有 op,Tab 上点击执行的入口反而有误操作风险。后端注册表保留。
@@ -132,7 +140,7 @@ const tabGroups: TabGroup[] = [
     // 它跑得怎么样：痕迹、投递日志、容量
     label: '观测',
     items: [
-      { value: 'activity', label: '用户痕迹', icon: Activity },
+      { value: 'activity', label: '账号审计', icon: Activity },
       { value: 'webhook-log', label: 'Webhook 日志', icon: Activity },
       { value: 'docker-network', label: 'Docker 网络容量', icon: Network },
     ],
@@ -276,18 +284,35 @@ function SettingsTabFallback({ tab = 'auth' }: { tab?: TabValue }): JSX.Element 
 }
 
 export function settingsTitleForViewer(status: ShellAuthStatus | null): string {
+  if (status?.user?.role === 'admin') return '账号设置';
   return status?.user && !canManageSystemSettings(status) ? '个人痕迹' : '系统设置';
 }
 
-export function settingsTabForViewer(requested: TabValue, canManageSettings: boolean): TabValue {
-  return canManageSettings ? requested : 'activity';
+export function settingsTabForViewer(requested: TabValue, canManageSettings: boolean, isAdmin = false): TabValue {
+  if (canManageSettings || requested === 'my-account' || requested === 'activity') return requested;
+  if (!isAdmin) return 'activity';
+  return requested === 'auth' ? 'auth' : 'users';
 }
 
 export function CdsSettingsPage(): JSX.Element {
   const [requestedTab, setActiveTab] = useState<TabValue>(() => getInitialTab());
+  const [searchParams] = useSearchParams();
+  const navigate = useSurfaceNavigate();
+  const accountView = readAccountView(searchParams);
+  const searchForView = (view: AccountView, selectedId?: string): URLSearchParams => {
+    const next = new URLSearchParams(searchParams);
+    next.set('accountView', view);
+    next.delete('accountSelection');
+    if (selectedId) next.set('accountSelection', selectedId);
+    return next;
+  };
+  const selectAccountView = (view: AccountView, selectedId?: string): void => {
+    navigate({ search: `?${searchForView(view, selectedId)}`, hash: '#users' });
+  };
   const { status: viewerStatus, pending: viewerPending, retry: retryViewer } = useContext(ConsoleAuthContext);
   const canManageSettings = canManageSystemSettings(viewerStatus);
-  const activeTab = settingsTabForViewer(requestedTab, canManageSettings);
+  const isAdmin = viewerStatus?.user?.role === 'admin';
+  const activeTab = settingsTabForViewer(requestedTab, canManageSettings, isAdmin);
   const tabsListRef = useSettingsTabVisibility(activeTab);
   const [toast, setToast] = useState('');
   // null = 探测中;'probe-failed' = 没问出来。**探测失败不等于「认证未启用」**:
@@ -295,23 +320,26 @@ export function CdsSettingsPage(): JSX.Element {
   // CDS_AUTH_MODE 再重启」——拿推断出来的模式当权威结论，正是 expectation-management
   // 要治的那种失控。所以失败单列一态，给可重试的诊断而不是编一个模式。
   const [authMode, setAuthMode] = useState<CdsAuthPublicStatus['mode'] | 'probe-failed' | null>(null);
-  const [authCapabilities, setAuthCapabilities] = useState<CdsAuthPublicStatus['capabilities'] | null>(null);
+  const [authStatus, setAuthStatus] = useState<CdsAuthPublicStatus | null>(null);
   const [authProbeError, setAuthProbeError] = useState('');
   const [authProbeSeq, setAuthProbeSeq] = useState(0);
+  const authCapabilities = authStatus?.capabilities;
   const usersVisible = authCapabilities?.userManagement === true;
   const activityVisible = authCapabilities?.userActivity === true;
+  const loginMethods = authStatus ? <LoginMethodsTab loginMethods={authStatus.loginMethods}
+    accountProviders={authStatus.accountProviders} canListAccounts={usersVisible} /> : null;
 
   useEffect(() => {
     let alive = true;
     // /api/auth/public-status 在所有认证模式下都挂载(server.ts:1802,早于 github-only 块),
     // 是判定当前模式的权威且安全入口。
     setAuthMode(null);
-    setAuthCapabilities(null);
+    setAuthStatus(null);
     fetchAuthPublicStatus()
       .then((status) => {
         if (alive) {
           setAuthMode(status.mode);
-          setAuthCapabilities(status.capabilities);
+          setAuthStatus(status);
           setAuthProbeError('');
         }
       })
@@ -323,10 +351,10 @@ export function CdsSettingsPage(): JSX.Element {
     return () => { alive = false; };
   }, [authProbeSeq]);
 
-  // 所有者保留原模式提示；成员只能看自己的痕迹，深链也不能挂载维护页。
   const visibleTabGroups = canManageSettings ? tabGroups : [
+    { label: '接入', items: tabs.filter(tab => tab.value === 'my-account' || (isAdmin && (tab.value === 'auth' || tab.value === 'users'))) },
     { label: '观测', items: tabs.filter(tab => tab.value === 'activity') },
-  ];
+  ] satisfies TabGroup[];
 
   useEffect(() => {
     if (!viewerStatus) return;
@@ -355,9 +383,18 @@ export function CdsSettingsPage(): JSX.Element {
               items={[
                 { label: 'CDS', href: '/project-list' },
                 { label: settingsTitleForViewer(viewerStatus) },
+                ...(activeTab === 'users' ? [{ label: '账号与登录' }] : []),
               ]}
             />
           }
+          center={activeTab === 'users' && (canManageSettings || isAdmin) ? (
+            <nav aria-label="账号与登录视图" className="monitor-view-nav account-access-view-nav">
+              {accountViews.map(([view, label]) => (
+                <MotionLink key={view} aria-current={accountView === view ? 'page' : undefined}
+                  to={{ search: `?${searchForView(view)}`, hash: '#users' }}>{label}</MotionLink>
+              ))}
+            </nav>
+          ) : undefined}
         />
       }
     >
@@ -379,11 +416,13 @@ export function CdsSettingsPage(): JSX.Element {
           className="cds-settings-shell"
         >
           <div className="cds-settings-layout">
-            <SettingsDirectory groups={visibleTabGroups} value={activeTab} label="CDS 系统设置目录" onChange={value => setActiveTab(value as TabValue)} />
+            <SettingsDirectory groups={visibleTabGroups} value={activeTab} label="CDS 系统设置目录"
+              minHeight={['users', 'auth', 'my-account', 'activity'].includes(activeTab) ? 52 : undefined}
+              onChange={value => setActiveTab(value as TabValue)} />
               <div className="cds-settings-desktop-directory">
               <TabsList ref={tabsListRef} aria-label="CDS 系统设置分区" className="cds-settings-nav cds-settings-rail">
               <div className="cds-settings-rail-head">
-                <div className="text-sm font-semibold">{canManageSettings ? 'CDS 系统设置' : '个人痕迹'}</div>
+                <div className="text-sm font-semibold">{canManageSettings ? 'CDS 系统设置' : isAdmin ? '账号设置' : '个人设置'}</div>
                 <div className="truncate font-mono text-[0.6875rem] text-muted-foreground">{canManageSettings ? 'system' : 'account'}</div>
               </div>
               {visibleTabGroups.map((group, groupIdx) => (
@@ -414,13 +453,25 @@ export function CdsSettingsPage(): JSX.Element {
                   {activeTab === 'overview' ? <OverviewTab /> : null}
                 </TabsContent>
                 <TabsContent value="auth">
-                  {activeTab === 'auth' ? <AuthTab /> : null}
+                  {activeTab === 'auth' && authStatus
+                    ? canManageSettings ? <AuthTab>{loginMethods}</AuthTab> : loginMethods
+                    : null}
+                </TabsContent>
+                <TabsContent value="my-account">
+                  {activeTab === 'my-account' && authStatus ? (
+                    <MyAccountTab key={consoleAccountIdentity(viewerStatus) || 'unconfirmed'}
+                      loginMethods={authStatus.loginMethods} accountProviders={authStatus.accountProviders} />
+                  ) : null}
                 </TabsContent>
                 <TabsContent value="users">
-                  {activeTab !== 'users' ? null : usersVisible ? (
+                  {activeTab !== 'users' ? null : usersVisible && authStatus ? (
                     <UsersTab
                       onToast={setToast}
                       durableUsers={authCapabilities?.durableUsers === true}
+                      availableLogins={availableAccountLogins(authStatus.loginMethods, authStatus.accountProviders)}
+                      view={accountView}
+                      changeView={selectAccountView}
+                      selectionId={searchParams.get('accountSelection') ?? undefined}
                     />
                   ) : (
                     <AuthModeGatedNotice
@@ -434,7 +485,8 @@ export function CdsSettingsPage(): JSX.Element {
                 </TabsContent>
                 <TabsContent value="activity">
                   {activeTab !== 'activity' ? null : activityVisible ? (
-                    <ActivityTab key={consoleAccountIdentity(viewerStatus) || 'unconfirmed'} canViewAll={canManageSettings} />
+                    <ActivityTab key={consoleAccountIdentity(viewerStatus) || 'unconfirmed'} canViewAll={canManageSettings}
+                      canFilterAccounts={isAdmin && viewerStatus?.user?.authProvider !== 'sso'} />
                   ) : !canManageSettings ? (
                     <p className="text-sm text-muted-foreground">当前认证方式不提供个人操作记录，请联系系统所有者。</p>
                   ) : (

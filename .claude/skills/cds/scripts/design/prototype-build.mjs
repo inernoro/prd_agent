@@ -19,7 +19,7 @@
 //     "title": "原型标题"
 //   }
 // 输出 <稿件目录>/dist/index.html，单文件内联。head 里写构建指纹 <meta name="cds-prototype-build" content='{...}'>，
-// 门禁 G-10 用它判定原型是不是由正式前端构建的（2026-11-25 DSN-2A3B7293 的原型是手写 HTML，自己抄了一份令牌）。
+// 门禁 G-10 用它判定原型是不是由正式前端构建的。
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
@@ -32,7 +32,7 @@ const argv = process.argv.slice(2); const opt = k => { const i = argv.indexOf(`-
 const draft = path.resolve(opt('dir') ?? '.');
 const checkout = path.resolve(opt('checkout') ?? '');
 const fail = message => { console.error(message); process.exit(1); };
-if (!existsSync(path.join(draft, 'prototype.json'))) fail(`${draft} 里没有 prototype.json（cdscli design scaffold 会生成；字段见本脚本开头）`);
+if (!existsSync(path.join(draft, 'prototype.json'))) fail(`${draft} 里没有 prototype.json，请按本脚本开头的字段配置正式基线和入口`);
 const config = JSON.parse(readFileSync(path.join(draft, 'prototype.json'), 'utf8'));
 const web = path.join(checkout, config.web ?? 'cds/web');
 if (!existsSync(path.join(web, 'package.json'))) fail(`检出里找不到正式前端：${web}`);

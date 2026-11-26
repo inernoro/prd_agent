@@ -25,6 +25,7 @@ export function buildAgentSetupGuide(origin: string, selection: AgentSetupSelect
     `已有 CLI 先运行 python3 <技能根>/cds/cli/cdscli.py --version。最低版本为 ${getAgentSetupMinCliVersion(selection)}，低于最低版本或没有 setup-check 命令时，用下面的归档更新整个技能包。`,
     `缺少技能或需要更新时，从 ${origin}/api/skills/cds-pack/download 匿名下载完整技能归档到当前工作区的临时目录。用本机工具解压，核对 skills/ 下的 ${CDS_SKILL_KEYS.join('、')} 以及 cds/cli/cds-skill-manifest.json，验证清单摘要后安装到本工作区的技能根。现有项目授权可继续使用。`,
     ...(design ? [
+      '发布框架和稿件使用同一个设计发布授权。已有授权时，读取 cds-design 技能即可继续发布。',
       'Windows 可以使用本机 Python 启动工作区的 CLI。CLI 0.26.10 起，带 CRLF 换行的技能文本按 LF 计算后与发布摘要一致时，自检可以通过。',
     ] : [
       `也可下载 ${origin}/api/bootstrap/cds-only 到临时文件，检查内容并在宿主允许时运行。安装范围是当前项目工作区。`,

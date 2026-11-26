@@ -36,7 +36,8 @@ export async function verifyEngineeringPlanningRefresh(browser, base, out) {
       return route.fulfill({ json: { enabled: true, authenticated: true, user: { ...actor, name: actor.label, isSystemOwner: true } } });
     }
     if (pathname === target) {
-      return route.fulfill({ json: { ...resolveFixture(target), permissions: ['read', 'write'] } });
+      return route.fulfill({ json: { ...resolveFixture(target), permissions: ['read', 'write'],
+        timeline: { debts: [], debtEvents: [] } } });
     }
     if (pathname === target + '/debts') return route.fulfill({ json: { projectId, today, items: [debt], nextCursor: null } });
     if (pathname === detailPath) {
@@ -66,7 +67,7 @@ export async function verifyEngineeringPlanningRefresh(browser, base, out) {
   try {
     await page.goto(base + '/project-list');
     await page.getByRole('link', { name: '工程规划', exact: true }).click();
-    await page.getByRole('heading', { name: '待你确认', exact: true }).waitFor();
+    await page.getByRole('region', { name: '工程规划时间线', exact: true }).waitFor();
     await page.getByRole('button', { name: /^债务分支/ }).click();
     await page.getByRole('button', { name: title, exact: true }).click();
     const drawer = page.getByRole('dialog', { name: title, exact: true });

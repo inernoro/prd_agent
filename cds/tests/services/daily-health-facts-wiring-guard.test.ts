@@ -196,9 +196,9 @@ describe('每日体检的事实来源接线守卫', () => {
       + '把运维支去找一份其实存在的本地备份',
     ).toContain('value.offsiteOnlyTargets');
     expect(
-      source,
+      facts,
       '读出来还要真的喂进判定（形状 2：建了一半）',
-    ).toContain('backup: { lastCompletedAt, coverageGaps, failedTargets, offsiteOnlyTargets }');
+    ).toMatch(/backup:\s*\{[^}]*\bfailedTargets\b[^}]*\boffsiteOnlyTargets\b/);
   });
 
   /**

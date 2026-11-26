@@ -164,6 +164,7 @@ const SYSTEM_PROJECT_ID = '__system__';
  * 只在「本方法确定只改了 global rest」的 mutator 上使用。
  */
 const HINT_GLOBAL: StateSaveHint[] = [{ kind: 'global' }];
+const HINT_SELF_UPDATE_HISTORY: StateSaveHint[] = [{ kind: 'selfUpdateHistory' }];
 
 /**
  * 本 CDS 进程的代次。基础设施维护 job 的执行体只存在于进程内存里，所以「谁开的」
@@ -5330,10 +5331,9 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     });
     while (list.length > StateService.SELF_UPDATE_HISTORY_MAX) list.shift();
     this.state.selfUpdateHistory = list;
-    // 同步落盘 — 即将 process.exit 的路径上若不存,新进程读不到 record。
-    // save() 同步写文件,失败会抛但调用方应 catch + log,不阻断主流程。
+    // 只保存更新历史。重启前的 flush 仍等它真实落盘，Mongo split 无需为一条记录重做全量快照。
     try {
-      this.save();
+      this.save(HINT_SELF_UPDATE_HISTORY);
     } catch (err) {
       // 写盘失败不影响 self-update 主链路 — 顶多丢这条历史,记错误日志即可。
       console.warn('[state] recordSelfUpdate save failed:', (err as Error).message);
@@ -5358,7 +5358,7 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
       list.splice(index, 1);
       this.state.selfUpdateHistory = [...originals.filter(row => !list.includes(row)), ...list]
         .slice(-StateService.SELF_UPDATE_HISTORY_MAX);
-      this.save();
+      this.save(HINT_SELF_UPDATE_HISTORY);
     };
   }
 

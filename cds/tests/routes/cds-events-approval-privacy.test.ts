@@ -31,14 +31,28 @@ it('broadcasts approval SQL/results only to a verified human owner; other authen
   app.use('/api', createCdsEventsRouter());
   await new Promise<void>(resolve => { server = app.listen(0, '127.0.0.1', resolve); });
   const port = (server!.address() as { port: number }).port;
+  const unscopedMember = await fetch(`http://127.0.0.1:${port}/api/cds-events`, {
+    headers: { 'x-test-role': 'member' }, signal: AbortSignal.timeout(2000),
+  });
+  expect(unscopedMember.status).toBe(403);
+  expect(await unscopedMember.json()).toEqual({ error: 'account_notification_scope_required' });
+
   const roles = ['owner', 'local-owner', 'member', 'sso', 'unverified-owner', 'project-key', 'global-key'];
   const streams = await Promise.all(roles.map(role => new Promise<{ role: string; done: Promise<string> }>((resolve, reject) => {
-    const request = http.get({ hostname: '127.0.0.1', port, path: '/api/cds-events', headers: { 'x-test-role': role } }, response => {
+    const path = role === 'member' ? '/api/cds-events?scope=account-notifications' : '/api/cds-events';
+    const request = http.get({ hostname: '127.0.0.1', port, path, headers: { 'x-test-role': role } }, response => {
+      if (response.statusCode !== 200 || !response.headers['content-type']?.startsWith('text/event-stream')) {
+        response.resume();
+        reject(new Error(`${role}: expected HTTP 200 event stream, received ${response.statusCode}`));
+        return;
+      }
       const done = new Promise<string>((finish, fail) => {
         let raw = '';
         response.on('data', chunk => { raw += chunk.toString(); if (raw.includes('privacy-barrier')) finish(raw); });
-        response.on('error', error => { if ((error as NodeJS.ErrnoException).code !== 'ECONNRESET') fail(error); });
+        response.once('end', () => fail(new Error(`${role}: event stream ended before privacy-barrier`)));
+        response.once('error', fail);
       });
+      void done.catch(() => undefined); // The assertions still await the original promise below.
       resolve({ role, done });
     });
     clients.push(request); request.on('error', reject);
@@ -47,10 +61,11 @@ it('broadcasts approval SQL/results only to a verified human owner; other authen
     cdsEventsBus.publish(type, { projectId: 'p1', request: { sql: 'private-sql-canary', result: 'private-result-canary' } });
   }
   cdsEventsBus.publish('heartbeat', { barrier: 'privacy-barrier' });
-  for (const stream of streams) {
-    const raw = await stream.done;
+  await Promise.all(streams.map(async ({ role, done }) => {
+    const raw = await done;
     expect(raw).toContain('privacy-barrier');
-    if (['owner', 'local-owner'].includes(stream.role)) { expect(raw).toContain('private-sql-canary'); expect(raw).toContain('private-result-canary'); }
+    if (role === 'member') expect(raw).not.toContain('event: self.status');
+    if (['owner', 'local-owner'].includes(role)) { expect(raw).toContain('private-sql-canary'); expect(raw).toContain('private-result-canary'); }
     else { expect(raw).not.toContain('operator.request.'); expect(raw).not.toContain('private-sql-canary'); expect(raw).not.toContain('private-result-canary'); }
-  }
+  }));
 });

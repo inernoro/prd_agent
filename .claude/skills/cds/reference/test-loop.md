@@ -19,7 +19,7 @@ CDS 上有两类测试，先都列出来，再按用户的话选：
 ## 二、领取
 
 - 结构化任务：`cdscli acceptance claim <任务编号> --agent <智能体名称>`。执行期间定时 `acceptance heartbeat <任务编号>`；中途放弃就 `acceptance release <任务编号>`，交还给别人。领取票据不打印。
-- 设计稿验收：只测实施基线那一版。`cdscli design accept <稿件编号> --pr <PR 编号> --commit <完整提交>` 创建验收运行，同时自动采集截图。只建运行、证据由人补时加 `--start-only`。
+- 设计稿验收：只测实施基线那一版。先按[逐画面对照](design-intake.md#逐画面对照)固定实施基线的实际提交。声明程序证据的稿件使用 `cdscli design capture` 和 `cdscli design recheck`，由不同授权主体复跑。
 
 ## 三、执行
 
@@ -32,7 +32,7 @@ CDS 上有两类测试，先都列出来，再按用户的话选：
 | 类型 | 写回 |
 | --- | --- |
 | 结构化任务 | 每个用例：`acceptance result <任务编号> --case <用例编号> --file <结果.json>`；全部写完后 `acceptance complete <任务编号>`，再 `acceptance archive-report <任务编号>` |
-| 设计稿验收 | 补证据：`design record <稿件编号> --run <运行编号> --file <证据> --commit <完整提交>`；读结果：`design result <稿件编号>` |
+| 设计稿验收 | 按稿件契约使用程序取证并读 `design result <稿件编号>`。要求程序取证的版本会拒收手填结论。 |
 | 发现的问题 | 设计问题写成实施反馈：MCP `cds_design_feedback {type:"feedback.create", category:"acceptance", screenId, evidence}`。设计方改稿时会读到。代码缺陷交给对应的修复流程 |
 
 结果文件里不放凭据、真实账号或个人数据。

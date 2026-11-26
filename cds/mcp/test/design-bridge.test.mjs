@@ -13,20 +13,28 @@ test('design tools read fixed versions and upload Git-bound bytes only with publ
   const root = await mkdtemp(path.join(tmpdir(), 'cds-design-mcp-'));
   const bytes = Buffer.from('fixture package bytes');
   await writeFile(path.join(root, 'draft.zip'), bytes);
-  const versions = [{ version: 1, title: 'First draft' }, { version: 2, title: 'Second draft' }];
+  const demo = [{ screen: 'members', title: '打开成员', tip: '先查看成员清单。' }];
+  const videos = [{ page: 'accept', file: 'videos/acceptance.mp4', title: '验收演示', artifactId: 'artifact-fixture',
+    chapters: [{ method: 'compare', title: '对照图', start: 0 }] }];
+  const methodSettings = { flow: { enabled: false, by: 'fixture-reviewer', at: '2026-11-25T00:00:00.000Z',
+    reason: '合成流程环境正在恢复。' } };
+  const versions = [{ version: 1, title: 'First draft' }, { version: 2, title: 'Second draft', demo, videos }];
   let write = false;
   let responseProject = projectId;
   const writes = [];
+  const reads = [];
   const server = createServer(async (request, response) => {
     const url = new URL(request.url, 'http://127.0.0.1');
     if (request.method === 'POST') {
       const chunks = [];
       for await (const chunk of request) chunks.push(chunk);
       writes.push({ url, type: request.headers['content-type'], key: request.headers['x-ai-access-key'], bytes: Buffer.concat(chunks) });
-    }
+    } else reads.push(Object.fromEntries(url.searchParams));
     const value = request.method === 'POST' ? { projectId, reused: writes.length > 1,
       result: { type: 'package', designId: 'DSN-fixture', version: 2 } }
-      : { projectId: responseProject, permissions: { write }, designs: [{ projectId, id: 'DSN-fixture', versions }], frameworks: [{ projectId, id: 'FW-fixture', versions }] };
+      : { projectId: responseProject, permissions: { write },
+        designs: [{ projectId, id: 'DSN-fixture', versions, methodSettings: { 2: methodSettings } }],
+        frameworks: [{ projectId, id: 'FW-fixture', versions }] };
     response.writeHead(request.method === 'POST' && writes.length === 1 ? 201 : 200, { 'content-type': 'application/json' });
     response.end(JSON.stringify(value));
   });
@@ -44,6 +52,12 @@ test('design tools read fixed versions and upload Git-bound bytes only with publ
 
   assert.deepEqual((await bridge.listTools()).map(row => row.name), [read]);
   assert.deepEqual(await bridge.call(read, { view: 'framework', id: 'FW-fixture', version: 1 }), { projectId, id: 'FW-fixture', version: versions[0] });
+  const delivery = await bridge.call(read, { view: 'delivery', id: draft.designId, version: 2 });
+  assert.deepEqual({ demo: delivery.demo, videos: delivery.videos, methodSettings: delivery.methodSettings },
+    { demo, videos, methodSettings });
+  const former = await bridge.call(read, { view: 'delivery', id: draft.designId, version: 1 });
+  for (const key of ['demo', 'videos', 'methodSettings']) assert.equal(Object.hasOwn(former, key), false);
+  assert.deepEqual(reads.filter(row => row.designId), [{ designId: draft.designId, version: '2' }, { designId: draft.designId, version: '1' }]);
   await assert.rejects(bridge.call(publish, draft), /没有稿件发布权限/);
   assert.equal(writes.length, 0);
 
@@ -85,7 +99,10 @@ async function intakeFixture(t) {
   const former = { designId: 'DSN-legacy', latestVersion: 2, sourceCommit: 'b'.repeat(40), sourcePaths: ['design/profile'] };
   let intakeProject = projectId;
   let protocolVersion = 1;
-  const intake = write => ({ protocolVersion, projectId: intakeProject, permissions: { write },
+  let frameworkPublish;
+  const permissions = write => ({ write, ...(frameworkPublish ? { frameworkPublish: write } : {}) });
+  const frameworkWrites = [];
+  const intake = write => ({ protocolVersion, projectId: intakeProject, permissions: permissions(write),
     designs: [{ ...stored, canRevise: write }, { ...former, canRevise: false }] });
   const server = createServer(async (request, response) => {
     const url = new URL(request.url, 'http://127.0.0.1');
@@ -97,7 +114,7 @@ async function intakeFixture(t) {
     if (request.method === 'GET' && url.pathname === `${route}/intake`) {
       value = intake(write);
     } else if (request.method === 'GET' && url.pathname === route) {
-      value = { projectId, permissions: { write }, frameworks: [], designs: [stored, former].map(row => ({ projectId, id: row.designId,
+      value = { projectId, permissions: permissions(write), frameworks: [], designs: [stored, former].map(row => ({ projectId, id: row.designId,
         versions: [{ version: row.latestVersion, title: row.designId, sourceCommit: row.sourceCommit }] })) };
     } else if (request.method === 'POST' && url.pathname === `${route}/packages` && write) {
       const chunks = [];
@@ -111,6 +128,18 @@ async function intakeFixture(t) {
         status = 409;
         value = { error: 'design_intake_conflict', message: '本地夹具的私有上游明细' };
       }
+      if (url.searchParams.get('requestId') === 'intake-fixture-gate') {
+        status = 400;
+        value = { error: 'G-07', message: '本地夹具的私有上游明细' };
+      }
+    } else if (request.method === 'POST' && url.pathname === `${route}/frameworks/publish` && write && frameworkPublish) {
+      const chunks = [];
+      for await (const chunk of request) chunks.push(chunk);
+      const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      frameworkWrites.push(body);
+      value = { projectId, reused: false, result: { type: body.type,
+        frameworkId: body.requestId === 'mismatched-receipt' ? 'FW-other' : body.frameworkId, version: body.expectedVersion + 1 } };
+      status = 201;
     } else {
       status = write || request.method === 'GET' ? 404 : 403;
       value = { error: 'fixture_route_error' };
@@ -129,7 +158,8 @@ async function intakeFixture(t) {
     await rm(root, { recursive: true, force: true });
   });
   const base = { zipPath: 'draft.zip', sourceCommit: 'c'.repeat(40), sourcePath: 'design/accounts', requestId: 'intake-fixture-release' };
-  return { projectId, route, calls, writes, stored, bytes, writeKey, readKey, intake, reader, publisher, base,
+  return { projectId, route, calls, writes, stored, bytes, writeKey, readKey, intake, reader, publisher, base, frameworkWrites,
+    enableFrameworkPublish: () => { frameworkPublish = true; },
     setIntakeProject: value => { intakeProject = value; }, setProtocolVersion: value => { protocolVersion = value; } };
 }
 
@@ -153,6 +183,24 @@ test('intake reads the authoritative project endpoint and scopes the result to t
   setProtocolVersion(2);
   await assert.rejects(reader.call(tool, { view: 'intake' }));
   assert.equal(writes.length, 0);
+});
+
+test('framework publication is discoverable with project write access and validates the returned version', async t => {
+  const { projectId, reader, publisher, frameworkWrites, enableFrameworkPublish } = await intakeFixture(t);
+  const tool = 'cds_design_framework_publish';
+  assert.equal((await publisher.listTools()).some(row => row.name === tool), false);
+  enableFrameworkPublish();
+  assert.equal((await publisher.listTools()).some(row => row.name === tool), true);
+  assert.equal((await reader.listTools()).some(row => row.name === tool), false);
+  const args = { frameworkId: 'FW-shared', requestId: 'fixture-publish-framework', title: 'Shared',
+    sourceCommit: 'a'.repeat(40), expectedVersion: 0, material: { rules: '# Shared' } };
+  await assert.rejects(reader.call(tool, args), /框架发布权限/);
+  await assert.rejects(publisher.call(tool, { ...args, expectedVersion: -1 }), /expectedVersion/);
+  assert.equal(frameworkWrites.length, 0);
+  assert.deepEqual(await publisher.call(tool, args), { projectId, reused: false,
+    result: { type: 'framework.publish', frameworkId: 'FW-shared', version: 1 } });
+  assert.deepEqual(frameworkWrites, [{ type: 'framework.publish', ...args }]);
+  await assert.rejects(publisher.call(tool, { ...args, requestId: 'mismatched-receipt' }), /回执/);
 });
 
 test('publish forwards create and revision identity through the Git-bound package route', async t => {
@@ -194,4 +242,146 @@ test('intake conflicts direct the agent to the authoritative baseline without ec
     assert.doesNotMatch(error.message, /私有上游明细/);
     return true;
   });
+});
+
+test('publish preserves an actionable gate code without echoing archived contents', async t => {
+  const { publisher, base, stored } = await intakeFixture(t);
+  await assert.rejects(publisher.call('cds_design_publish', { ...base, intent: 'revise', designId: stored.designId,
+    expectedVersion: stored.latestVersion, requestId: 'intake-fixture-gate' }), error => {
+    assert.match(error.message, /G-07/);
+    assert.doesNotMatch(error.message, /私有上游明细/);
+    return true;
+  });
+});
+
+test('visual acceptance is limited to the bound project and validates the exact returned row', async t => {
+  const projectId = 'fixture-visual';
+  const designId = 'DSN-visual';
+  const runId = 'RUN-visual';
+  const projectKey = 'cdsp_fixture_visual';
+  const root = await mkdtemp(path.join(tmpdir(), 'cds-design-visual-'));
+  const bytes = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jR1sAAAAASUVORK5CYII=', 'base64');
+  await writeFile(path.join(root, 'implementation.png'), bytes);
+  const route = `/api/projects/${projectId}/design`;
+  const run = { id: runId, version: 9, pullRequest: 42, commit: 'a'.repeat(40), createdAt: '2026-11-23T00:00:00.000Z',
+    verdict: 'needs_evidence', cells: [], previewUrl: 'https://preview.example.test/', issues: {} };
+  const command = { type: 'acceptance.visual', designId, requestId: 'visual-fixture', runId, commit: run.commit,
+    screenId: 'members', slot: 'desktop-light', checks: { 'V-01': { status: 'passed', evidence: '页头、标签、主体、浮层和底部依次核对' } },
+    imagePath: 'implementation.png', measured: { width: 1280, height: 800, theme: 'light', path: '/members' } };
+  let canRecord = false;
+  let returnedSlot = command.slot;
+  const writes = [];
+  const bridge = createDesignBridge({ root, projectId, projectKey, host: 'https://cds.example.test' }, {
+    fetchImpl: async (url, options) => {
+      assert.equal(options.headers['X-AI-Access-Key'], projectKey);
+      const parsed = new URL(url);
+      if (options.method === 'GET') {
+        assert.equal(parsed.pathname, route);
+        return Response.json({ projectId, permissions: { write: true, visual: canRecord }, frameworks: [],
+          designs: [{ projectId, id: designId, versions: [{ version: 9 }], runs: [run] }] });
+      }
+      assert.equal(options.method, 'POST');
+      assert.equal(parsed.pathname, `${route}/commands`);
+      const body = JSON.parse(options.body);
+      writes.push(body);
+      return Response.json({ projectId, reused: writes.length > 1,
+        result: { type: command.type, designId, runId, version: 9, screenId: command.screenId, slot: returnedSlot } });
+    },
+  });
+  t.after(async () => {
+    await bridge.close();
+    await rm(root, { recursive: true, force: true });
+  });
+
+  const tool = 'cds_design_acceptance';
+  assert(!(await bridge.listTools()).some(row => row.name === tool));
+  await assert.rejects(bridge.call(tool, command), /权限|授权/);
+  assert.equal(writes.length, 0);
+
+  canRecord = true;
+  assert((await bridge.listTools()).some(row => row.name === tool));
+  assert.deepEqual(await bridge.call('cds_design_read', { view: 'run', id: designId, runId }), { projectId, id: designId, run });
+  assert.deepEqual(await bridge.call('cds_design_read', { view: 'run', id: designId }), { projectId, id: designId, run });
+  await assert.rejects(bridge.call('cds_design_read', { view: 'run', id: designId, runId: 'RUN-other' }));
+  for (const invalid of [
+    { ...command, projectId: 'another-project' },
+    { ...command, checks: { 'V-11': { status: 'passed', evidence: 'Fixture check' } } },
+    { ...command, imagePath: '../outside.png' },
+  ]) await assert.rejects(bridge.call(tool, invalid));
+  assert.equal(writes.length, 0);
+
+  const { imagePath: _localOnly, ...fields } = command;
+  const expectedBody = { ...fields, image: `data:image/png;base64,${bytes.toString('base64')}` };
+  assert.equal((await bridge.call(tool, command)).reused, false);
+  assert.equal((await bridge.call(tool, command)).reused, true);
+  assert.deepEqual(writes, [expectedBody, expectedBody]);
+  returnedSlot = 'phone-dark';
+  await assert.rejects(bridge.call(tool, command), /回执/);
+});
+
+test('flow and smoke records share project-scoped acceptance tools and match their returned identifiers', async t => {
+  const projectId = 'fixture-execution';
+  const projectKey = 'cdsp_fixture_execution';
+  const designId = 'DSN-execution';
+  const runId = 'RUN-execution';
+  const commit = 'b'.repeat(40);
+  const route = `/api/projects/${projectId}/design`;
+  const flow = { id: 'new-member', title: '新成员流程', dimension: 'correctness', role: '成员',
+    steps: [{ action: '打开本项目的成员页', expected: '显示成员列表', actual: '显示 3 个夹具成员', status: 'passed' }] };
+  const smoke = { id: 'members-page', title: '成员页冒烟', dimension: 'experience', target: 'page', path: '/members/',
+    expected: '显示页面标题', actual: '显示成员管理', status: 'passed' };
+  const recordFlow = { type: 'acceptance.flow', requestId: 'flow-fixture', designId, runId, commit, flow };
+  const recordSmoke = { type: 'acceptance.smoke', requestId: 'smoke-fixture', designId, runId, commit, smoke };
+  const run = { id: runId, version: 11, commit, cells: [] };
+  const writes = [];
+  let canRecord = false;
+  let overrideReceipt = {};
+  const bridge = createDesignBridge({ projectId, projectKey, host: 'https://cds.example.test' }, {
+    fetchImpl: async (url, options) => {
+      assert.equal(options.headers['X-AI-Access-Key'], projectKey);
+      const parsed = new URL(url);
+      if (options.method === 'GET') {
+        assert.equal(parsed.pathname, route);
+        return Response.json({ projectId, permissions: { write: true, visual: canRecord }, frameworks: [],
+          designs: [{ projectId, id: designId, versions: [{ version: 11 }], runs: [run] }] });
+      }
+      assert.equal(options.method, 'POST');
+      assert.equal(parsed.pathname, `${route}/commands`);
+      const body = JSON.parse(options.body);
+      writes.push(body);
+      if (body.flow) run.flows = [body.flow];
+      if (body.smoke) run.smoke = [body.smoke];
+      return Response.json({ projectId, reused: false,
+        result: { type: body.type, designId, runId, version: run.version, id: (body.flow ?? body.smoke).id, ...overrideReceipt } });
+    },
+  });
+  t.after(async () => { await bridge.close(); });
+
+  const tool = 'cds_design_acceptance';
+  assert(!(await bridge.listTools()).some(row => row.name === tool));
+  await assert.rejects(bridge.call(tool, recordFlow), /权限|授权/);
+  await assert.rejects(bridge.call(tool, recordSmoke), /权限|授权/);
+  canRecord = true;
+  assert((await bridge.listTools()).some(row => row.name === tool));
+  for (const invalid of [
+    { ...recordFlow, projectId: 'another-project' },
+    { ...recordFlow, flow: { ...flow, dimension: 'other' } },
+    { ...recordFlow, flow: { ...flow, steps: [{ ...flow.steps[0], status: 'unverified' }] } },
+    { ...recordSmoke, smoke: { ...smoke, target: 'browser' } },
+    { ...recordSmoke, smoke: { ...smoke, path: 'https://legacy.example.test/' } },
+    { ...recordSmoke, flow },
+  ]) await assert.rejects(bridge.call(tool, invalid));
+  assert.equal(writes.length, 0);
+
+  assert.equal((await bridge.call(tool, recordFlow)).result.id, flow.id);
+  assert.equal((await bridge.call(tool, recordSmoke)).result.id, smoke.id);
+  assert.deepEqual(writes, [recordFlow, recordSmoke]);
+  assert.deepEqual(await bridge.call('cds_design_read', { view: 'run', id: designId, runId }), {
+    projectId, id: designId, run: { id: runId, version: 11, commit, cells: [], flows: [flow], smoke: [smoke] },
+  });
+  overrideReceipt = { id: 'another-check' };
+  await assert.rejects(bridge.call(tool, recordFlow), /回执/);
+  await assert.rejects(bridge.call(tool, recordSmoke), /回执/);
+  overrideReceipt = { runId: 'RUN-another' };
+  await assert.rejects(bridge.call(tool, recordSmoke), /回执/);
 });

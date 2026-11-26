@@ -8,11 +8,19 @@
 //   - POST /api/self-refresh 立刻 202 返回 jobId,git fetch 在后台跑,进度走事件流
 
 import { Router, type Request, type Response } from 'express';
-import { isHumanSystemOwner } from '../services/human-auth.js';
+import { isAuthenticatedHuman, isHumanSystemOwner } from '../services/human-auth.js';
+import { isAccessRequestRecipient } from './access-requests.js';
 import { selfStatusCache, type RefreshTrigger } from '../services/self-status-cache.js';
 import { cdsEventsBus, type CdsEventEnvelope } from '../services/cds-events-bus.js';
+import type { StateService } from '../services/state.js';
+import { ACCOUNT_NOTIFICATION_SCOPE } from '../services/key-notification-routing.js';
+import { isScopedHuman } from '../services/human-project-access.js';
 
-export function createCdsEventsRouter(): Router {
+export function createCdsEventsRouter(options: {
+  stateService?: StateService;
+  authDisabled?: boolean;
+  canNotifySession?: (req: Request) => Promise<boolean>;
+} = {}): Router {
   const router = Router();
 
   /**
@@ -28,6 +36,11 @@ export function createCdsEventsRouter(): Router {
    * 出错:永不返回 4xx/5xx,即使 snapshot 抛错也只是不发 self.status 而已
    */
   router.get('/cds-events', (req: Request, res: Response) => {
+    const personal = req.query.scope === ACCOUNT_NOTIFICATION_SCOPE;
+    if ((personal && !isAuthenticatedHuman(req)) || (!personal && isScopedHuman(req))) {
+      res.status(403).json({ error: 'account_notification_scope_required' });
+      return;
+    }
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
@@ -57,6 +70,14 @@ export function createCdsEventsRouter(): Router {
       // Only the verified human who can approve may receive this broadcast.
       // Agents retain their caller-bound request polling endpoint.
       if (env.type.startsWith('operator.request.') && !isHumanSystemOwner(req)) return false;
+      if (env.type.startsWith('access-request.')) {
+        const data = env.data as { requestId?: string } | null | undefined;
+        const item = data?.requestId ? options.stateService?.getAccessRequest(data.requestId) : undefined;
+        const legacyAudience = !personal && (options.authDisabled === true || isAuthenticatedHuman(req));
+        if (item) return isAccessRequestRecipient(item, req, legacyAudience, options.stateService);
+        return legacyAudience && env.type === 'access-request.progress' && !data?.requestId;
+      }
+      if (personal) return env.type === 'heartbeat';
       if (!projectScope) return true;
       if (env.type === 'heartbeat') return true;
       const pid = (env.data as { projectId?: string } | null | undefined)?.projectId;
@@ -78,7 +99,7 @@ export function createCdsEventsRouter(): Router {
     // 1) 立即发当前 snapshot(self.status)。snapshot 可能是空的 EMPTY,无碍。
     //    project-scoped key 不发 —— self.status 是全局 CDS 健康,不属于单项目。
     try {
-      if (!projectScope) {
+      if (!projectScope && !personal) {
         const snapshot = selfStatusCache.getSnapshot();
         write({
           type: 'self.status',
@@ -94,7 +115,13 @@ export function createCdsEventsRouter(): Router {
 
     // 2) 订阅 bus(project-scoped key 只放行命中自己项目的事件)
     const unsubscribe = cdsEventsBus.subscribe((envelope) => {
-      if (envelopeAllowed(envelope)) write(envelope);
+      if (!envelopeAllowed(envelope)) return;
+      if (envelope.type.startsWith('access-request.') && envelope.data && typeof envelope.data === 'object') {
+        const { pendingCount: _total, ...data } = envelope.data as Record<string, unknown>;
+        if (options.canNotifySession) {
+          void options.canNotifySession(req).then(allowed => { if (allowed && envelopeAllowed(envelope)) write({ ...envelope, data }); }).catch(() => {});
+        } else write({ ...envelope, data });
+      } else write(envelope);
     });
 
     // 3) heartbeat — 每 25s 一条,带服务端 ts。前端用它做 SSE 连接健康判断。
@@ -106,7 +133,7 @@ export function createCdsEventsRouter(): Router {
       const ok = write({
         type: 'heartbeat',
         ts: new Date().toISOString(),
-        data: {
+        data: personal ? {} : {
           subscribers: cdsEventsBus.listenerCount(),
           cacheRefreshAt: selfStatusCache.getSnapshot().lastRefreshAt,
         },
@@ -127,9 +154,11 @@ export function createCdsEventsRouter(): Router {
 
     // 5) 首个客户端连上 + cache 未跑过完整 refresh → 触发一次。
     //    多客户端连上时由 cache 内部 dedupe(同 trigger 5s 内不重跑),无害。
-    const snapshot = selfStatusCache.getSnapshot();
-    if (!snapshot.lastRefreshAt || snapshot.lastRefreshTrigger === 'startup') {
-      selfStatusCache.enqueueRefresh('stream-subscribe', { dedupeWindowMs: 5_000 });
+    if (!personal) {
+      const snapshot = selfStatusCache.getSnapshot();
+      if (!snapshot.lastRefreshAt || snapshot.lastRefreshTrigger === 'startup') {
+        selfStatusCache.enqueueRefresh('stream-subscribe', { dedupeWindowMs: 5_000 });
+      }
     }
   });
 

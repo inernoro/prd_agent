@@ -31,7 +31,7 @@ export interface AgentSetupSelection {
 }
 
 export function getAgentSetupMinCliVersion(selection: AgentSetupSelection): string {
-  return selection.mission === 'design-publish' ? '0.26.22' : AGENT_SETUP_MIN_CLI_VERSION;
+  return selection.mission === 'design-publish' ? '0.26.23' : AGENT_SETUP_MIN_CLI_VERSION;
 }
 
 export function parseAgentSetupSelection(query: Record<string, unknown>): AgentSetupSelection | null {

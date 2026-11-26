@@ -1,0 +1,80 @@
+{
+  "status": "adopted",
+  "intent": "从正式 CDS 提炼公共壳、导航和主题规范，让稿件、实现页面和验收使用可定位、可复用的同版参考。",
+  "problems": [
+    "规划、设计和已有模块需要复用同一组授权导航、实例入口与通知位置。",
+    "稿件续版后，团队需要能查到实际采用的框架版本和实施基线。",
+    "手机和浅暗主题需要有可复现的画面状态、对照图和验证办法。"
+  ],
+  "nonGoals": [
+    "业务权限与审批规则由各模块维护。",
+    "监控的健康矩阵、图表密度和专用工具由监控模块维护。"
+  ],
+  "scope": {
+    "system": "CDS",
+    "modules": [
+      "公共壳",
+      "项目与分支",
+      "审查",
+      "工程规划",
+      "设计"
+    ]
+  },
+  "owner": "CDS 平台维护",
+  "example": {
+    "designId": "DSN-40F72C21",
+    "version": 1
+  },
+  "ruleSources": [
+    {
+      "rule": "R-01",
+      "from": "CDS 公共壳与导航",
+      "evidence": "cds/web/src/components/layout/AppShell.tsx"
+    },
+    {
+      "rule": "R-02",
+      "from": "CDS 全站主题",
+      "evidence": "cds/web/src/index.css"
+    },
+    {
+      "rule": "R-03",
+      "from": "CDS 界面尺度与字体令牌",
+      "evidence": "cds/web/src/index.css"
+    },
+    {
+      "rule": "R-04",
+      "from": "FW-CDS-UI V2 模块规则",
+      "evidence": "以实际模块的图表、密度、授权和已有组件为依据记录差异。"
+    },
+    {
+      "rule": "R-07",
+      "from": "工程规划与设计 V2 的窄屏验证",
+      "evidence": "cds/tests/web/design-v2-workspace.test.ts"
+    },
+    {
+      "rule": "R-11",
+      "from": "稿件和框架的固定版本登记",
+      "evidence": "cds/src/services/design-workspace.ts"
+    }
+  ],
+  "moduleDiffs": [
+    {
+      "module": "监控",
+      "diff": "健康矩阵、专用状态和数据密度",
+      "reason": "监控需要并排查看服务和探针状态，沿用现有监控页面。",
+      "decision": "module"
+    },
+    {
+      "module": "工程规划",
+      "diff": "推进看板在横向容器中保留四列",
+      "reason": "窄宽下最左列和页面级动作需直接可用，纵向阅读随主区滚动。",
+      "decision": "module"
+    },
+    {
+      "module": "设计",
+      "diff": "画布、证据定位和稿件多版本对照",
+      "reason": "需要在同一项目内读取原型与实现，并保留来源和验收证据。",
+      "decision": "module"
+    }
+  ]
+}

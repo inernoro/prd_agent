@@ -14,7 +14,7 @@ import os from 'node:os';
 import path from 'node:path';
 import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
-import { createBranchRouter } from './routes/branches.js';
+import { createBranchRouter, parseGitHubRepoFullName } from './routes/branches.js';
 import { SelfMaintenanceRuntime } from './services/self-maintenance-runtime.js';
 import { deploymentPhaseBudget } from './services/deployment-phase-budget.js';
 import { createDeploymentRunsRouter } from './routes/deployment-runs.js';
@@ -37,7 +37,7 @@ import { isPublicAgentSetupRoute } from './shared/agent-setup.js';
 import { isMonitorOnboardingAgentRoute } from './shared/monitor-onboarding.js';
 import { SkillProxy } from './services/skill-proxy.js';
 import { createAccessRequestsRouter } from './routes/access-requests.js';
-import { isAuthenticatedHuman, isHumanSystemOwner } from './services/human-auth.js';
+import { isAuthenticatedHuman, isHumanSystemOwner, verifiedHumanAccountId } from './services/human-auth.js';
 import { humanPrincipalId, isHumanProjectGrantUpdatePending, supportsHumanProjectGrant } from './services/human-project-access.js';
 import { createCredentialSelfCheckRouter } from './routes/credential-self-check.js';
 import { createIdentityRouter, resolveUserCredential, userCredentialRouteAllowed } from './routes/identity.js';
@@ -71,7 +71,13 @@ import { hasActiveGrant } from './services/identity.js';
 import { rejectPlanning } from './services/engineering-planning-input.js';
 import { createDesignWorkspaceRouter, normalizedDesignPath } from './routes/design-workspace.js';
 import { DesignWorkspaceService, type DesignWorkspaceCommit } from './services/design-workspace.js';
-import { createDesignFrameworkBrowser } from './services/design-framework-browser.js';
+import { createDesignFrameworkBrowser, createDesignReferenceBrowser } from './services/design-framework-browser.js';
+import { createDesignCoverContainer, createDesignHandoffContainer, createDesignReferenceContainer } from './services/design-cover-container.js';
+import { computeCdsPrebuiltImageRef } from './services/cds-prebuilt.js';
+import { createDesignAcceptanceBrowser } from './services/design-acceptance-browser.js';
+import { createDesignPreviewBuild } from './services/design-preview-build.js';
+import { computePublishedBranchWebEntries, publicPreviewHost } from './services/branch-web-entrypoints.js';
+import { servingRuntime } from './services/service-runtime.js';
 import { designShareHandoffConfig } from './services/design-share-handoff.js';
 import { readDesignSourceZip } from './services/design-package.js';
 import { FileProjectRevisionStore, MongoProjectRevisionStore, type ProjectRevisionStore } from './services/project-revision-store.js';
@@ -101,6 +107,7 @@ import { HostCapacitySamplingService } from './services/host-capacity-sampling.j
 import { createHostCapacitySamplingRouter } from './routes/host-capacity-sampling.js';
 import { HostCapacityObservationService } from './services/host-capacity-observation.js';
 import { createHostCapacityObservationRouter } from './routes/host-capacity-observation.js';
+import { backupDirCandidates } from './services/infra-backup-schedule.js';
 import { isSealingEnabled } from './infra/secret-seal.js';
 import { createPeerSyncRouter, createPeerSyncAdminRouter } from './routes/peer-sync.js';
 import { createSnapshotsRouter } from './routes/snapshots.js';
@@ -148,17 +155,25 @@ import { maskBranchExtraProfilesEnv } from './services/secret-masker.js';
 import {
   buildLegacyLogoutCookie,
   buildLogoutCookie,
-  buildSessionCookie,
+  buildAccountSessionCookies,
   buildSsoLogoutCookie,
   createAuthRouter,
   GH_SESSION_COOKIE,
 } from './routes/auth.js';
 import { createAuthLocalRouter } from './routes/auth-local.js';
+import { createSystemPasswordRouter } from './routes/system-password.js';
+import { createAccountIdentitiesRouter } from './routes/account-identities.js';
+import { createAccountRecoveryRouters } from './routes/account-recovery.js';
+import { createKeyNotificationOwnersRouter } from './routes/key-notification-owners.js';
+import { createAccountProposalsRouter } from './routes/account-proposals.js';
+import { AccountActionError } from './services/account-actions.js';
+import { githubAccountOAuth, googleAccountOAuth, type AccountOAuthDriver } from './services/account-oauth.js';
 import { authCookie, createPasskeyRouter, isRecentAuthentication, readAuthCookie, trustedAuthOrigin } from './routes/passkeys.js';
 import { createHostedSsoRouter } from './routes/hosted-sso.js';
 import { HostedSso } from './services/hosted-sso.js';
 import { protectControlBrowser } from './middleware/browser-origin.js';
-import { LEGACY_SESSION_COOKIE, readBrowserCookie, sessionCookieName } from './services/browser-session-cookies.js';
+import { buildAccountSignoutCookie } from './services/account-signout-proof.js';
+import { ACCOUNT_SIGNOUT_PROOF_COOKIE, LEGACY_SESSION_COOKIE, readBrowserCookie, sessionCookieName } from './services/browser-session-cookies.js';
 import { toPublicUser, type CdsUser } from './domain/auth.js';
 import {
   TICKET_SSO_COOKIE,
@@ -698,8 +713,11 @@ function tokenMatches(actual: string | undefined, expected: string): boolean {
     && crypto.timingSafeEqual(actualBytes, expectedBytes);
 }
 
-function isPasswordChangeRequest(req: express.Request): boolean {
-  return req.method === 'POST' && /^\/(?:_cds\/)?api\/auth\/change-password(?:\/approval)?\/?$/i.test(req.path);
+function isAccountCredentialRequest(req: express.Request): boolean {
+  const path = req.path.replace(/^\/_cds\/api\//i, '/api/');
+  if (/^\/api\/auth\/(?:recovery-requests|account-action-audit|my-sessions|account-proposals|key-notification-owners|external\/(?:github|google))(?:\/|$)/i.test(path)) return true;
+  if (req.method !== 'POST' && req.method !== 'PATCH') return false;
+  return /^\/api\/(?:login|auth\/(?:login|bootstrap|change-password(?:\/approval)?|users(?:\/[^/]+)?|account-actions(?:\/[^/]+\/[^/]+)?|system-password\/.*|invitations\/activate))\/?$/i.test(path);
 }
 
 function normalizedSealedStoragePath(value: unknown): string | null {
@@ -978,6 +996,16 @@ export function resolveApiLabel(method: string, path: string): string {
   // Normalize: remove /api prefix, trim trailing slash
   const p = path.replace(/^\/api/, '').replace(/\/$/, '')
     .replace(/^\/cluster\/identity\/map-connections(?=\/|$)/, '/cds-system/connections');
+  if (method === 'POST' && /^\/auth\/system-password\/[^/]+\/confirm$/.test(p)) return '确认变更系统账号口令';
+  if (method === 'POST' && /^\/auth\/recovery-requests\/[^/]+\/verify$/.test(p)) return '核实需恢复的身份';
+  if (method === 'POST' && /^\/auth\/recovery-requests\/[^/]+\/approve$/.test(p)) return '确认签发身份恢复链接';
+  if (method === 'GET' && /^\/auth\/users\/[^/]+\/impact$/.test(p)) return '估算账号操作影响';
+  if (method === 'GET' && /^\/auth\/account-proposals\/[^/]+$/.test(p)) return '回读设备提交的账号提案';
+  if (method === 'GET' && /^\/auth\/external\/(github|google)\/(start|callback)$/.test(p)) return '验证第三方登录身份';
+  if (method === 'DELETE' && /^\/auth\/external\/(github|google)\/link$/.test(p)) return '解除本人第三方身份绑定';
+  if (method === 'POST' && /^\/auth\/external\/(github|google)\/start$/.test(p)) return '发起第三方账号激活';
+  if (method === 'POST' && /^\/auth\/account-actions\/[^/]+\/confirm$/.test(p)) return '确认账号操作';
+  if (method === 'POST' && /^\/auth\/account-actions\/[^/]+\/(reject|cancel)$/.test(p)) return '关闭账号操作申请';
   if (method === 'PATCH' && /^\/dts\/policies\/[^/]+$/.test(p)) return '调整账号同步规则';
   if (/^\/dts\/runs\/[^/]+(?:\/(?:pause|resume|cancel))?$/.test(p)) return method === 'GET' ? '查看同步进度' : '管理同步任务';
 
@@ -1278,6 +1306,20 @@ export function resolveApiLabel(method: string, path: string): string {
     'GET /auth/users': '列出用户',
     'POST /auth/users': '创建本地账号',
     'GET /auth/activity': '查看用户操作痕迹',
+    'GET /auth/account-actions': '查看账号操作申请',
+    'GET /auth/account-action-audit': '查看账号审批审计',
+    'GET /auth/my-sessions': '查看本人登录会话',
+    'POST /auth/account-action-audit/backfill': '补录历史账号事件',
+    'POST /auth/account-actions': '登记账号操作申请',
+    'GET /auth/sign-in-notice': '查看本人退出原因',
+    'GET /auth/system-password': '读取系统账号状态',
+    'POST /auth/system-password/prepare': '登记系统账号口令变更',
+    'POST /auth/invitations/activate': '激活受邀请的账号',
+    'POST /auth/recovery-requests': '登记身份恢复申请',
+    'GET /auth/recovery-requests': '查看身份恢复申请',
+    'GET /auth/key-notification-owners': '查看 Key 通知归属',
+    'POST /auth/key-notification-owners/assign': '确认 Key 通知交接',
+    'POST /auth/account-proposals': '登记智能体账号提案',
     // 用户 / 系统基础信息
     'GET /me': '获取当前用户',
     'GET /status': '获取系统状态',
@@ -1387,9 +1429,14 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^GET \/projects\/[^/]+\/design$/, '查看设计工作区'],
     [/^GET \/projects\/[^/]+\/design\/reviewers$/, '查看可选评审人'],
     [/^GET \/projects\/[^/]+\/design\/artifacts\/[^/]+$/, '读取设计附件'],
+    [/^POST \/projects\/[^/]+\/design\/viewed$/, '记录设计已读'],
     [/^POST \/projects\/[^/]+\/design\/packages$/, '发布设计稿件'],
     [/^POST \/projects\/[^/]+\/design\/commands$/, '保存设计操作'],
+    [/^POST \/projects\/[^/]+\/design\/handoff\/check$/, '运行设计交接检查'],
+    [/^POST \/projects\/[^/]+\/design\/frameworks\/publish$/, '发布设计框架'],
+    [/^POST \/projects\/[^/]+\/design\/acceptance\/recheck$/, '独立复验设计'],
     [/^POST \/projects\/[^/]+\/design\/feedback$/, '保存实施反馈'],
+    [/^POST \/projects\/[^/]+\/design\/feedback\/attachments$/, '保存实施反馈对照图'],
     [/^POST \/projects\/[^/]+\/design\/shares\/[^/]+\/handoff$/, '交接稿件分享'],
     [/^GET \/projects\/[^/]+\/planning\/changes$/, '读取配置变更'],
     [/^GET \/projects\/[^/]+\/planning\/preview\/[^/]+$/, '核对预览访问'],
@@ -1898,9 +1945,13 @@ function projectKeyAllowsRequest(
     if (!key.designAccess) return false;
     const route = '/api/projects/:projectId/design';
     const path = normalizedDesignPath(url);
-    return read && (path === route || path === `${route}/intake` || path === `${route}/artifacts/:artifactId`)
-      || ((key.designAccess === 'feedback' || key.designAccess === 'publish') && method === 'POST' && path === `${route}/feedback`)
-      || (key.designAccess === 'publish' && method === 'POST' && path === `${route}/packages`);
+    return read && (path === route || path === `${route}/intake` || path === `${route}/diff` || path === `${route}/installed`
+      || path === `${route}/artifacts/:artifactId`)
+      || ((key.designAccess === 'feedback' || key.designAccess === 'publish') && method === 'POST'
+        && (path === `${route}/feedback` || path === `${route}/feedback/attachments`))
+      || (key.designAccess === 'publish' && method === 'POST'
+        && (path === `${route}/packages` || path === `${route}/frameworks/publish` || path === `${route}/handoff/check`
+          || path === `${route}/acceptance/recheck`));
   }
   if (/^\/planning(?:\/|$)/.test(suffix)) {
     const path = normalizedPlanningPath(url);
@@ -2321,7 +2372,11 @@ export function createServer(deps: ServerDeps): express.Express {
     roots: { 'cds-worktrees': deps.config.worktreeBase,
       ...(deps.config.reposBase ? { 'cds-repositories': deps.config.reposBase } : {}),
       'cds-build-cache': deps.stateService.getCacheBase(),
-      'cds-skill-cache': path.join(deps.config.repoRoot, '.cds', 'skill-cache') },
+      'cds-skill-cache': path.join(deps.config.repoRoot, '.cds', 'skill-cache'),
+      'containerd-image-content': path.join(process.env.CDS_CONTAINERD_DATA_ROOT || '/var/lib/containerd', 'io.containerd.content.v1.content'),
+      ...Object.fromEntries(backupDirCandidates({ slug: deps.stateService.projectSlug, repoRoot: deps.config.repoRoot })
+        .map((directory, index) => [`cds-backups-${index + 1}`, directory])),
+    },
     observation: hostCapacityObservation,
     persist: enabled => deps.stateService.updateHostCapacitySamplingEnabled(enabled),
   });
@@ -2372,7 +2427,7 @@ export function createServer(deps: ServerDeps): express.Express {
   // 让请求内容绕过路由级保护。匹配语义与 Express 默认的大小写/尾斜杠一致。
   app.use((req, res, next) => {
     if (/^\/(?:login|preview-access|auth\/sso)\/?$/i.test(req.path)) res.setHeader('Referrer-Policy', 'no-referrer');
-    if (isPasswordChangeRequest(req) || isSealedStorageRequest(req) || isDatabasePassCredentialRequest(req) || normalizedPrivateWorkspacePath(req.path) || /^\/api\/cluster\/identity\//i.test(req.path)) {
+    if (isAccountCredentialRequest(req) || isSealedStorageRequest(req) || isDatabasePassCredentialRequest(req) || normalizedPrivateWorkspacePath(req.path) || /^\/api\/cluster\/identity\//i.test(req.path)) {
       (res.locals as { cdsSuppressRequestBodyLog?: boolean }).cdsSuppressRequestBodyLog = true;
       (res.locals as { cdsSuppressRequestDetails?: boolean }).cdsSuppressRequestDetails = true;
       (res.locals as { cdsSuppressActivity?: boolean }).cdsSuppressActivity = true;
@@ -2784,7 +2839,7 @@ export function createServer(deps: ServerDeps): express.Express {
       activeCleanupTimer.unref?.();
     };
     const hostedIdentityTraffic = isHostedIdentityTraffic(req.originalUrl || req.url);
-    const suppressPreviewBody = hostedIdentityTraffic || isPasswordChangeRequest(req) || isDatabasePassCredentialRequest(req) || !!normalizedPrivateWorkspacePath(req.path)
+    const suppressPreviewBody = hostedIdentityTraffic || isAccountCredentialRequest(req) || isDatabasePassCredentialRequest(req) || !!normalizedPrivateWorkspacePath(req.path)
       || /^\/api\/cluster\/identity\//i.test(req.path)
       || [req.originalUrl, req.url].some((value) => isHostedSitePreviewRequest(value || '/'));
     const requestCapture = createBodyCapture(suppressPreviewBody ? 0 : undefined, req.headers['content-type']);
@@ -2921,6 +2976,8 @@ export function createServer(deps: ServerDeps): express.Express {
   // See doc/design.cds.multi-project.md section 七.
   const cdsUser = process.env.CDS_USERNAME;
   let cdsPass = process.env.CDS_PASSWORD;
+  let basicSessionGeneration = process.env.CDS_BASIC_SESSION_GENERATION || '';
+  const browserPassword = () => basicSessionGeneration ? `${cdsPass}\0${basicSessionGeneration}` : cdsPass!;
   const rawAuthMode = (process.env.CDS_AUTH_MODE || '').toLowerCase();
   const authMode: 'disabled' | 'basic' | 'github' =
     rawAuthMode === 'github' ? 'github' :
@@ -2968,6 +3025,39 @@ export function createServer(deps: ServerDeps): express.Express {
       })
     : null;
   if (authService) app.locals.cdsAuthService = authService;
+  const systemAccount = authEnabled && cdsUser ? legacyAuthUser(cdsUser, 'basic') : undefined;
+  const systemProofCookieName = sessionCookieName('cds_system_session_proof', hostSessionCookies);
+  const systemProofCookie = (token: string, ttl: number) => `${systemProofCookieName}=${token}; Path=/; Max-Age=${Math.max(0, Math.floor(ttl / 1000))}; SameSite=Lax; HttpOnly${cookieSecure ? '; Secure' : ''}`;
+  const systemBrowserProof = (req: express.Request) => readBrowserCookie(req.headers.cookie, systemProofCookieName);
+  const rememberSystemBrowser = async (req: express.Request, fresh = false): Promise<string[] | undefined> => {
+    if (!authService || !systemAccount) return undefined;
+    // Proof is only recorded after the legacy password or existing login was verified.
+    const revision = basicSessionGeneration || undefined;
+    try {
+      const filtered = systemBrowserProof(req);
+      const session = await authService.rememberSystemBrowser(systemAccount.id, revision, fresh ? undefined : filtered, {
+        userAgent: (req.get('user-agent') || '').slice(0, 384) || null,
+        ipAddress: getRemoteAddr(req) ?? null,
+      });
+      if ((basicSessionGeneration || undefined) !== revision) return undefined;
+      return [systemProofCookie(session.token, Date.parse(session.expiresAt) - Date.now()),
+        buildAccountSignoutCookie(session, cookieSecure, hostSessionCookies)];
+    } catch {
+      return undefined;
+    }
+  };
+  const accountRecovery = authService ? createAccountRecoveryRouters(authService) : null;
+  const accountProviders: Partial<Record<'github' | 'google', AccountOAuthDriver>> = {};
+  if (authService && !isPreviewInstance()) {
+    const githubId = process.env.CDS_ACCOUNT_GITHUB_CLIENT_ID;
+    const githubSecret = process.env.CDS_ACCOUNT_GITHUB_CLIENT_SECRET;
+    if (githubId && githubSecret) {
+      accountProviders.github = githubAccountOAuth(new GitHubOAuthClient({ clientId: githubId, clientSecret: githubSecret }), allowedOrgs);
+    }
+    const googleId = process.env.CDS_GOOGLE_CLIENT_ID;
+    const googleSecret = process.env.CDS_GOOGLE_CLIENT_SECRET;
+    if (googleId && googleSecret) accountProviders.google = googleAccountOAuth(googleId, googleSecret);
+  }
   const planningMongoUri = process.env.CDS_STORAGE_MODE === 'json' ? undefined : process.env.CDS_MONGO_URI;
   const workspaceStateDirectory = path.dirname(deps.stateFile ?? path.join(deps.config.repoRoot, '.cds', 'state.json'));
   const previewAccessStore: ProjectRevisionStore<PreviewAccessCommit> = planningMongoUri
@@ -3193,12 +3283,12 @@ export function createServer(deps: ServerDeps): express.Express {
         const current = await authService.validateSession(token ?? null);
         if (current) {
           user = current.user; session = { createdAt: current.session.createdAt, expiresAt: current.session.expiresAt };
-          if (current.renewed && token) res.setHeader('Set-Cookie', buildSessionCookie(token, current.session.expiresAt, cookieSecure, hostSessionCookies));
+          if (current.renewed && token) res.setHeader('Set-Cookie', buildAccountSessionCookies(current.session, cookieSecure, hostSessionCookies));
         }
       }
-      if (!user && authEnabled && verifyHumanSessionToken(readBrowserCookie(req.headers.cookie, sessionCookieName(LEGACY_SESSION_COOKIE, hostSessionCookies)), cdsUser!, cdsPass!, sessionTtlMs)) {
+      if (!user && authEnabled && verifyHumanSessionToken(readBrowserCookie(req.headers.cookie, sessionCookieName(LEGACY_SESSION_COOKIE, hostSessionCookies)), cdsUser!, browserPassword(), sessionTtlMs)) {
         user = legacyAuthUser(cdsUser!, 'basic'); basicHuman = true;
-        res.setHeader('Set-Cookie', basicSessionCookie(issueHumanSessionToken(cdsUser!, cdsPass!), sessionTtlMs, cookieSecure, hostSessionCookies));
+        res.setHeader('Set-Cookie', basicSessionCookie(issueHumanSessionToken(cdsUser!, browserPassword()), sessionTtlMs, cookieSecure, hostSessionCookies));
       }
       if (user && !session) session = { createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + sessionTtlMs).toISOString() };
       const legacyMachine = !user && authEnabled && tokenMatches(req.headers['x-cds-token'] as string | undefined, validToken);
@@ -3253,6 +3343,22 @@ export function createServer(deps: ServerDeps): express.Express {
     void clusterIdentity.authenticate(req, res).then(handled => { if (!handled) next(); }).catch(next);
   });
 
+  app.get('/api/auth/sign-in-notice', async (req, res, next) => {
+    res.setHeader('Cache-Control', 'private, no-store');
+    try {
+      const token = readBrowserCookie(req.headers.cookie, sessionCookieName(GH_SESSION_COOKIE, hostSessionCookies));
+      const browserProof = readBrowserCookie(req.headers.cookie, sessionCookieName(ACCOUNT_SIGNOUT_PROOF_COOKIE, hostSessionCookies));
+      const event = await authService?.signInNotice(token ?? null, browserProof);
+      const systemEvent = !event && systemAccount
+        ? await authService?.systemSignInNotice(systemAccount.id, basicSessionGeneration || undefined, systemBrowserProof(req), browserProof) : null;
+      res.json({ notice: event ?? systemEvent ?? null });
+    } catch (error) { next(error); }
+  });
+  if (authService) app.use('/api', createAccountIdentitiesRouter({
+    authService, providers: accountProviders, legacyGithubEnabled: authMode === 'github', publicBaseUrl, ...browserCookieOptions,
+  }));
+  if (accountRecovery) app.use('/api', accountRecovery.publicRouter);
+
   app.get('/api/auth/public-status', (req, res) => {
     const ssoConfig = resolveSsoConfig();
     const sso = publicTicketSsoConfig(ssoConfig);
@@ -3267,11 +3373,12 @@ export function createServer(deps: ServerDeps): express.Express {
       mode: publicMode,
       enabled: authMode !== 'disabled' || sso.enabled,
       loginMethods: {
-        github: authMode === 'github',
+        github: authMode === 'github' || Boolean(accountProviders.github),
         local: authMode === 'basic' || authMode === 'github',
         sso: sso.enabled,
         ...(passkeysEnabled(req) ? { passkey: true } : {}),
       },
+      accountProviders: { github: Boolean(accountProviders.github), google: Boolean(accountProviders.google) },
       capabilities: {
         userManagement: localUserManagementEnabled,
         userActivity: localUserManagementEnabled,
@@ -3393,7 +3500,10 @@ export function createServer(deps: ServerDeps): express.Express {
     // bootstrap 会在每次重启后重新开放，github 模式下首个访客即可自封 system owner
     // （PR #865 Codex P1）。
     const bootstrapAllowed = !(authStore instanceof MemoryAuthStore);
-    app.use('/api', createAuthLocalRouter({ authService, stateService: deps.stateService, ...browserCookieOptions, bootstrapAllowed }));
+    app.use('/api', createAuthLocalRouter({
+      authService, stateService: deps.stateService, ...browserCookieOptions, bootstrapAllowed,
+      availableProviders: { github: true, google: Boolean(accountProviders.google) },
+    }));
 
     console.log(
       `  Auth: github mode (allowedOrgs: ${allowedOrgs.join(',') || '(any GitHub login allowed)'})`,
@@ -3401,14 +3511,16 @@ export function createServer(deps: ServerDeps): express.Express {
   }
 
   if (authEnabled) {
-    app.post('/api/login', (req, res) => {
+    app.post('/api/login', async (req, res) => {
       const { username, password } = req.body || {};
       if (username === cdsUser && password === cdsPass) {
-        const humanSessionToken = issueHumanSessionToken(cdsUser!, cdsPass!);
+        const humanSessionToken = issueHumanSessionToken(cdsUser!, browserPassword());
+        const proof = await rememberSystemBrowser(req, true);
         res.setHeader('Set-Cookie', [
           basicSessionCookie(humanSessionToken, sessionTtlMs, cookieSecure, hostSessionCookies),
           buildLogoutCookie(cookieSecure, hostSessionCookies),
           buildSsoLogoutCookie(cookieSecure, hostSessionCookies),
+          ...(proof ?? []),
         ]);
         res.json({ success: true });
       } else {
@@ -3416,11 +3528,14 @@ export function createServer(deps: ServerDeps): express.Express {
       }
     });
 
-    app.post('/api/logout', (_req, res) => {
+    app.post('/api/logout', (req, res) => {
+      const proof = systemBrowserProof(req);
+      if (proof) void authService?.logout(proof).catch(() => {});
       res.setHeader('Set-Cookie', [
         buildLegacyLogoutCookie(cookieSecure, hostSessionCookies),
         buildLogoutCookie(cookieSecure, hostSessionCookies),
         buildSsoLogoutCookie(cookieSecure, hostSessionCookies),
+        systemProofCookie('', 0),
       ]);
       res.json({ success: true });
     });
@@ -3953,7 +4068,7 @@ export function createServer(deps: ServerDeps): express.Express {
         if (persistedSession.renewed && persistedToken) {
           res.setHeader(
             'Set-Cookie',
-            buildSessionCookie(persistedToken, persistedSession.session.expiresAt, cookieSecure, hostSessionCookies),
+            buildAccountSessionCookies(persistedSession.session, cookieSecure, hostSessionCookies),
           );
         }
         (req as any).cdsUser = persistedSession.user;
@@ -3965,7 +4080,7 @@ export function createServer(deps: ServerDeps): express.Express {
       const cookieToken = readBrowserCookie(req.headers.cookie, sessionCookieName(LEGACY_SESSION_COOKIE, hostSessionCookies));
       const headerToken = req.headers['x-cds-token'] as string | undefined;
       const humanCookieValid = authEnabled
-        && verifyHumanSessionToken(cookieToken, cdsUser!, cdsPass!, sessionTtlMs);
+        && verifyHumanSessionToken(cookieToken, cdsUser!, browserPassword(), sessionTtlMs);
       const machineHeaderValid = tokenMatches(headerToken, validToken);
       if (humanCookieValid || machineHeaderValid) {
         // 滑动续期：basic 模式的 cds_token 是静态派生值、服务端没有会话记录，
@@ -3973,8 +4088,17 @@ export function createServer(deps: ServerDeps): express.Express {
         // basic 部署会停在签发时那个固定期限上，完全吃不到统一的 7 天滑动策略。
         // header token（x-cds-token）走机器凭据，不涉及 cookie，不参与续期。
         if (humanCookieValid) {
-          const renewedToken = issueHumanSessionToken(cdsUser!, cdsPass!);
-          res.setHeader('Set-Cookie', basicSessionCookie(renewedToken, sessionTtlMs, cookieSecure, hostSessionCookies));
+          const renewedToken = issueHumanSessionToken(cdsUser!, browserPassword());
+          const revision = basicSessionGeneration;
+          const proof = systemBrowserProof(req) || req.path === '/api/auth/status' ? await rememberSystemBrowser(req) : undefined;
+          if (basicSessionGeneration !== revision) {
+            res.status(401).json({ error: 'session_ended', message: '系统账号会话已结束，请重新登录' });
+            return;
+          }
+          res.setHeader('Set-Cookie', [
+            basicSessionCookie(renewedToken, sessionTtlMs, cookieSecure, hostSessionCookies),
+            ...(proof ?? []),
+          ]);
           (req as any)._cdsCookieAuth = true;
           (req as any)._cdsBasicHumanAuth = true;
           (req as any).cdsUser = legacyAuthUser(cdsUser!, 'basic');
@@ -4091,10 +4215,12 @@ export function createServer(deps: ServerDeps): express.Express {
 
     app.post('/api/auth/change-password', (req, res, next) => {
       if (!isBasicHuman(req) || !cdsUser || !cdsPass) { next(); return; }
+      if (!approval && authService) { next(); return; }
       if (!canApprove(req, res) || !approval) return;
       const newPassword = validatePassword(req, res);
       if (!newPassword) return;
       const oldPassword = cdsPass;
+      const previousGeneration = basicSessionGeneration;
       const systemUsername = cdsUser;
       const ticket = readAuthCookie(req.get('cookie'), approvalCookie);
       res.append('Set-Cookie', authCookie(approvalCookie, '', 0));
@@ -4103,12 +4229,13 @@ export function createServer(deps: ServerDeps): express.Express {
           res.status(403).json({ code: 'system_password_approval_required', error: '请用已指定的管理员通行密钥批准本次改密。' });
           return;
         }
-        if (cdsPass !== oldPassword) {
+        if (cdsPass !== oldPassword || basicSessionGeneration !== previousGeneration) {
           res.status(409).json({ code: 'system_password_stale', error: '系统密码已变更，请重新登录后再发起。' });
           return;
         }
+        const generation = crypto.randomUUID();
         try {
-          if (!rotateBasicPasswordInEnv(basicEnvFilePath, oldPassword, newPassword, {
+          if (!rotateBasicPasswordInEnv(basicEnvFilePath, oldPassword, newPassword, { sessionGeneration: generation, audit: {
             id: crypto.randomUUID(),
             userId: approver.id,
             userLogin: approver.username || approver.githubLogin,
@@ -4117,7 +4244,7 @@ export function createServer(deps: ServerDeps): express.Express {
             targetId: legacyAuthUser(systemUsername, 'basic').id,
             summary: `批准并修改系统账号 ${systemUsername} 的登录密码`,
             at: new Date().toISOString(),
-          })) {
+          } })) {
             res.status(409).json({ code: 'system_password_source_mismatch', error: '系统配置中的密码与当前登录配置不一致' });
             return;
           }
@@ -4130,11 +4257,50 @@ export function createServer(deps: ServerDeps): express.Express {
           return;
         }
         cdsPass = newPassword;
+        basicSessionGeneration = generation;
         process.env.CDS_PASSWORD = newPassword;
+        process.env.CDS_BASIC_SESSION_GENERATION = generation;
         validToken = makeToken(systemUsername, newPassword);
         res.setHeader('Set-Cookie', [buildLegacyLogoutCookie(cookieSecure, hostSessionCookies), authCookie(approvalCookie, '', 0)]);
         res.json({ ok: true });
       }).catch(next);
+    });
+  }
+
+  if (basicEnvFilePath && authService && cdsUser && cdsPass) {
+    app.use('/api', createSystemPasswordRouter({
+      authService,
+      target: { id: legacyAuthUser(cdsUser, 'basic').id, name: cdsUser },
+      currentGeneration: () => basicSessionGeneration,
+      sessions: () => authService.systemBrowserSessions(legacyAuthUser(cdsUser, 'basic').id, basicSessionGeneration || undefined),
+      verifyPassword: password => tokenMatches(password, cdsPass!),
+      rotate: (current, next, generation, expectedGeneration) => {
+        if (basicSessionGeneration !== expectedGeneration || !tokenMatches(current, cdsPass!)) {
+          throw new AccountActionError(409, 'account_impact_changed', '系统账号已变更，请重新确认');
+        }
+        try {
+          if (!rotateBasicPasswordInEnv(basicEnvFilePath, current, next, { sessionGeneration: generation })) {
+            throw new AccountActionError(409, 'system_password_source_mismatch', '系统配置中的口令与当前登录配置不一致');
+          }
+        } catch (error) {
+          if (error instanceof EnvFileBusyError) {
+            throw new AccountActionError(409, 'system_password_source_busy', '系统配置正在更新，请稍后重试');
+          }
+          throw error;
+        }
+        cdsPass = next;
+        basicSessionGeneration = generation;
+        process.env.CDS_PASSWORD = next;
+        process.env.CDS_BASIC_SESSION_GENERATION = generation;
+        validToken = makeToken(cdsUser, next);
+      },
+    }));
+    app.post('/api/auth/change-password', (req, res, next) => {
+      if ((req as express.Request & { _cdsBasicHumanAuth?: boolean })._cdsBasicHumanAuth !== true) {
+        next();
+        return;
+      }
+      res.status(409).json({ code: 'account_action_required', error: '请在系统账号中逐次确认这次口令变更' });
     });
   }
 
@@ -4149,20 +4315,28 @@ export function createServer(deps: ServerDeps): express.Express {
       bootstrapAllowed: false,
       reservedUsernames: cdsUser ? [cdsUser] : [],
       systemPasswordActivity: basicEnvFilePath ? () => readSystemPasswordActivity(basicEnvFilePath) : undefined,
-      legacyLogin: ({ username, password }) => {
+      availableProviders: { github: Boolean(accountProviders.github), google: Boolean(accountProviders.google) },
+      legacyLogin: async ({ username, password }, req) => {
         if (username !== cdsUser || password !== cdsPass) return null;
         return {
           user: toPublicUser(legacyAuthUser(cdsUser!, 'basic')),
           setCookie: basicSessionCookie(
-            issueHumanSessionToken(cdsUser!, cdsPass!),
+            issueHumanSessionToken(cdsUser!, browserPassword()),
             sessionTtlMs,
             cookieSecure,
             hostSessionCookies,
           ),
+          proofCookies: await rememberSystemBrowser(req, true),
         };
       },
     }));
   }
+  if (accountRecovery) app.use('/api', accountRecovery.managedRouter);
+  if (authService) app.use('/api', createAccountProposalsRouter(authService, deps.stateService));
+  if (authService) app.use('/api', createKeyNotificationOwnersRouter({
+    state: deps.stateService, auth: authService,
+    systemAccount,
+  }));
   if (authMode === 'disabled' && !publicTicketSsoConfig(resolveSsoConfig()).enabled) {
     console.warn(
       '  Auth warning: disabled — set CDS_AUTH_MODE=github (+ CDS_GITHUB_CLIENT_ID/SECRET/ALLOWED_ORGS) or CDS_USERNAME/CDS_PASSWORD to enable login',
@@ -4197,7 +4371,7 @@ export function createServer(deps: ServerDeps): express.Express {
           const headerToken = typeof req.headers['x-cds-token'] === 'string'
             ? req.headers['x-cds-token']
             : '';
-          return verifyHumanSessionToken(cookieToken, cdsUser!, cdsPass!, sessionTtlMs)
+          return verifyHumanSessionToken(cookieToken, cdsUser!, browserPassword(), sessionTtlMs)
             || tokenMatches(headerToken, validToken);
         }
         return false;
@@ -4323,6 +4497,7 @@ export function createServer(deps: ServerDeps): express.Express {
         name?: string | null;
         avatarUrl?: string | null;
         isSystemOwner?: boolean;
+        isAdministrator?: boolean;
         authProvider?: string;
       };
     }).cdsUser;
@@ -4348,6 +4523,7 @@ export function createServer(deps: ServerDeps): express.Express {
           name: sessionUser.name ?? sessionUser.githubLogin ?? sessionUser.username ?? null,
           avatarUrl: sessionUser.avatarUrl ?? null,
           isSystemOwner: Boolean(sessionUser.isSystemOwner),
+          role: sessionUser.isSystemOwner ? 'owner' : sessionUser.isAdministrator ? 'admin' : 'member',
           authProvider: sessionUser.authProvider ?? (authMode === 'github' ? 'github' : 'legacy'),
         }
       : authMode === 'basic'
@@ -4360,6 +4536,7 @@ export function createServer(deps: ServerDeps): express.Express {
       },
       previewAccessNotices: !isPreviewInstance() && Boolean(previewAccessPerson(req)),
       designReviewNotices: !isPreviewInstance() && Boolean(authService && previewAccessPerson(req)),
+      accountApprovalNotices: !isPreviewInstance() && Boolean(authService?.accountActions && isHumanSystemOwner(req)),
       mode: ssoIdentity ? 'sso' : authMode,
       enabled: authMode !== 'disabled' || Boolean(ssoIdentity),
       activeProvider,
@@ -5796,8 +5973,37 @@ export function createServer(deps: ServerDeps): express.Express {
     ? new MongoProjectRevisionStore<DesignWorkspaceCommit>(planningMongoUri, process.env.CDS_MONGO_DB || 'cds_state_db', 'cds_design_workspace_commits')
     : new FileProjectRevisionStore<DesignWorkspaceCommit>(path.join(
       path.dirname(deps.stateFile ?? path.join(deps.config.repoRoot, '.cds', 'state.json')), 'design-workspace'));
+  const isolatedDesignBrowser = !isPreviewInstance() && clusterIdentity.getConfig()?.role !== 'member'
+    && fs.existsSync(path.join(deps.config.repoRoot, 'cds', 'web', 'dist', '.build-sha'));
+  const resolveDesignBrowserImage = async () => {
+    const cwd = deps.config.repoRoot;
+    const sha = await fs.promises.readFile(path.join(cwd, 'cds', 'web', 'dist', '.build-sha'), 'utf8').catch(() => '');
+    if (!sha || deps.stateService.getActiveSelfUpdate()) return undefined;
+    const origin = await deps.shell.exec('git remote get-url origin', { cwd, timeout: 3000 });
+    const image = origin.exitCode === 0 && computeCdsPrebuiltImageRef(parseGitHubRepoFullName(origin.stdout), sha);
+    return image ? image.replace('/cds-dist:', '/cds-design-cover:') : undefined;
+  };
   designWorkspace = new DesignWorkspaceService(designStore, {
+    publicBaseUrl,
+    approvedPlanFor: (projectId, planId) => planning.approvedDesignRequirement(projectId, planId),
     frameworkProbe: createDesignFrameworkBrowser(process.env.CDS_DESIGN_BROWSER_EXECUTABLE),
+    referenceCapture: isolatedDesignBrowser ? createDesignReferenceContainer(deps.shell, resolveDesignBrowserImage)
+      : createDesignReferenceBrowser(process.env.CDS_DESIGN_BROWSER_EXECUTABLE),
+    handoff: isolatedDesignBrowser ? { check: createDesignHandoffContainer(deps.shell, resolveDesignBrowserImage) } : {},
+    ...(isolatedDesignBrowser ? { captureCover: createDesignCoverContainer(deps.shell, resolveDesignBrowserImage) } : {}),
+    captureAcceptance: createDesignAcceptanceBrowser(path.join(deps.config.repoRoot, 'cds', 'web', 'dist'),
+      process.env.CDS_DESIGN_BROWSER_EXECUTABLE,
+      createDesignPreviewBuild(async ({ projectId, commit, preview }) => {
+        if (isPreviewInstance() || clusterIdentity.getConfig()?.role === 'member') return undefined;
+        const current = await planning.pullRequestPreview(projectId, preview.pullRequest);
+        if (current?.status !== 'ready' || current.commit !== commit || current.url !== preview.url || !current.branchId) return undefined;
+        const branch = deps.stateService.getBranch(current.branchId);
+        const host = publicPreviewHost(deps.config);
+        if (!branch || branch.projectId !== projectId || branch.executorId || !host) return undefined;
+        const primary = computePublishedBranchWebEntries(deps.stateService, branch, host)[0];
+        if (!primary?.serviceId) return undefined;
+        return servingRuntime(branch.services[primary.serviceId])?.containerId;
+      }, deps.shell)),
     reviewer: async (projectId, id) => {
       const user = await authService?.findUserById(id);
       return user && activeProjectMember(user, projectId) ? { id, label: user.name || user.username || user.githubLogin } : undefined;
@@ -5812,6 +6018,34 @@ export function createServer(deps: ServerDeps): express.Express {
       return preview?.status === 'ready' && preview.url && preview.commit && (!commit || preview.commit === commit)
         ? { commit: preview.commit, url: preview.url } : undefined;
     },
+    resolveInstalled: async (projectId, commit) => {
+      const project = deps.stateService.getProject(projectId);
+      const projectRepo = parseGitHubRepoFullName(project?.githubRepoFullName ?? project?.gitRepoUrl);
+      if (!projectRepo || project?.mirror || isPreviewInstance() || clusterIdentity.getConfig()?.role === 'member') return undefined;
+      const repoRoot = deps.config.repoRoot;
+      try {
+        const restartStatus = resolveRestartStatus({
+          activeSelfUpdate: deps.stateService.getActiveSelfUpdate(), restartWait: getRestartWait(),
+          lastSelfUpdate: deps.stateService.getSelfUpdateHistory(1)[0],
+          daemonReadyAt: deps.stateService.getState().daemonReadyAt ?? null,
+          pidStartedAt: (globalThis as { __CDS_PROCESS_STARTED_AT?: string }).__CDS_PROCESS_STARTED_AT ?? null,
+        });
+        if (restartStatus === 'pending' || restartStatus === 'incomplete') return undefined;
+        const dist = path.join(repoRoot, 'cds', 'web', 'dist');
+        const sha = (await fs.promises.readFile(path.join(dist, '.build-sha'), 'utf8')).trim().toLowerCase();
+        if (!/^[a-f0-9]{40}$/.test(sha) || (commit && commit !== sha) || fs.existsSync(path.join(dist, '.build-error'))) return undefined;
+        const options = { cwd: repoRoot, timeout: 3000 };
+        const [head, remote] = await Promise.all([
+          deps.shell.exec('git rev-parse --verify HEAD', options), deps.shell.exec('git remote get-url origin', options),
+        ]);
+        if (head.exitCode !== 0 || head.stdout.trim().toLowerCase() !== sha || remote.exitCode !== 0
+          || parseGitHubRepoFullName(remote.stdout)?.toLowerCase() !== projectRepo.toLowerCase()
+          || deps.stateService.getActiveSelfUpdate()) return undefined;
+        return { commit: sha, url: new URL(publicBaseUrl).origin };
+      } catch {
+        return undefined;
+      }
+    },
     findDebt: async (projectId, debtId, sourceRef) => await planning.designAcceptanceDebt(projectId, debtId, sourceRef) === debtId,
     resolveDebtProposal: (projectId, proposalId, sourceRef) => planning.designAcceptanceDebt(projectId, proposalId, sourceRef),
     createDebt: async ({ projectId, actor, sourceRef, title, actual, version, pullRequest, commit, expected, high }) => {
@@ -5819,7 +6053,7 @@ export function createServer(deps: ServerDeps): express.Express {
       const url = new URL('/design', publicBaseUrl);
       url.search = new URLSearchParams({ project: projectId, design: designId, version: String(version), tab: 'accept', run: runId }).toString();
       const source = { type: 'test', ref: sourceRef, url: url.href };
-      const draft = { title, summary: `稿件 V${version} · PR #${pullRequest} · 提交 ${commit}\n${actual}`,
+      const draft = { title, summary: `稿件 V${version} · ${pullRequest === undefined ? '主用 CDS' : `PR #${pullRequest}`} · 提交 ${commit}\n${actual}`,
         priority: high ? 'high' : 'mid', criteria: [expected.slice(0, 400)] };
       const requestId = 'design-debt-' + crypto.createHash('sha256').update(sourceRef).digest('hex');
       const command = actor.kind === 'human' ? { type: 'debt.create', requestId, source, ...draft }
@@ -5837,7 +6071,9 @@ export function createServer(deps: ServerDeps): express.Express {
       .map(user => ({ id: user.id, label: user.name || user.username || user.githubLogin })),
     resolveAccess: (req, projectId) => {
       const actor = resolveEngineeringPlanningAccess(req, deps.stateService, projectId, 'design');
-      return actor ? { ...actor, steward: actor.kind === 'human' && isHumanSystemOwner(req) } : null;
+      const user = (req as express.Request & { cdsUser?: CdsUser }).cdsUser;
+      return actor ? { ...actor, steward: actor.kind === 'human' && isHumanSystemOwner(req),
+        feedbackSupplement: actor.kind === 'human' && user?.isAdministrator === true } : null;
     },
   }));
   app.get('/api/auth/design/notices', async (req, res) => {
@@ -6105,7 +6341,27 @@ export function createServer(deps: ServerDeps): express.Express {
   // 2026-05-28: 单一 SSE 通道 + 任务化刷新。
   // 必须挂在 createBranchRouter 之后,因为 cache.init() 在 branches.ts 里执行,
   // cds-events 路由要读已 init 好的 cache。
-  app.use('/api', createCdsEventsRouter());
+  app.use('/api', createCdsEventsRouter({
+    stateService: deps.stateService,
+    authDisabled: authMode === 'disabled' && !publicTicketSsoConfig(resolveSsoConfig()).enabled,
+    canNotifySession: async req => {
+      if (authMode === 'disabled' && !publicTicketSsoConfig(resolveSsoConfig()).enabled) return true;
+      const connectedAccountId = verifiedHumanAccountId(req);
+      if (!connectedAccountId) return false;
+      const local = readBrowserCookie(req.headers.cookie, sessionCookieName(GH_SESSION_COOKIE, hostSessionCookies));
+      const current = local ? await authService?.validateSession(local, { renew: false }) : null;
+      const initial = (req as express.Request & { cdsUser?: CdsUser }).cdsUser;
+      if (current?.user.id === connectedAccountId &&
+          current.user.isSystemOwner === initial?.isSystemOwner &&
+          Boolean(current.user.isAdministrator) === Boolean(initial?.isAdministrator)) return true;
+      if (systemAccount?.id === connectedAccountId && verifyHumanSessionToken(
+        readBrowserCookie(req.headers.cookie, sessionCookieName(LEGACY_SESSION_COOKIE, hostSessionCookies)),
+        cdsUser!, browserPassword(), sessionTtlMs,
+      )) return true;
+      const sso = connectedAccountId.startsWith('sso:') ? ticketSsoSession(req, ticketSsoSessionStore, hostSessionCookies) : null;
+      return Boolean(sso && `sso:${sso.identity.subject}` === connectedAccountId);
+    },
+  }));
 
   // 2026-05-28: 运维控制台 — 取代"需要 SSH 上服务器"的运维操作。
   // 提供 nginx reload / 配置 dump / shell 等高级操作的 UI 一键执行入口。

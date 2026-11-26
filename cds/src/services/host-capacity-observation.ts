@@ -9,7 +9,7 @@ export interface CapacityReport {
   sources: Record<string, Trend & { path: string; device: string | null; bytes: number | null }>;
   filesystems: Record<string, Trend & { totalBytes: number; usedBytes: number; availableBytes: number;
     totalInodes: number; availableInodes: number; usedPercent: number; inodeUsedPercent: number | null;
-    daysToFull: number | null; daysToReserve: number | null }>;
+    daysToFull: number | null; daysToReserve: number | null; daysToDeploymentFreeze?: number | null }>;
   alerts: Array<{ code: string; severity: Exclude<CapacityStatus, 'ok'>; device?: string }>;
   policy: { warningPercent: number; criticalPercent: number; reserveBytes: number; horizonDays: number; maxSamples: number };
 }
@@ -66,6 +66,13 @@ export function validateCapacityReport(raw: unknown, host: string, now: number):
     requireAlert(device, 'bytes-warning', percent >= p.warningPercent && percent < p.criticalPercent);
     requireAlert(device, 'reserve-low', d.availableBytes <= p.reserveBytes);
     requireAlert(device, 'reserve-exhaustion-forecast', days !== null && days <= p.horizonDays);
+    if (d.daysToDeploymentFreeze !== undefined) {
+      const freezeDays = d.bytesPerDay !== null && d.bytesPerDay > 0
+        ? Math.max(0, d.availableBytes - d.totalBytes * (1 - (p.criticalPercent - .5) / 100)) / d.bytesPerDay : null;
+      if (!nullable(d.daysToDeploymentFreeze) || (freezeDays === null) !== (d.daysToDeploymentFreeze === null)
+        || (freezeDays !== null && d.daysToDeploymentFreeze !== null && Math.abs(freezeDays - d.daysToDeploymentFreeze) > 0.0001)) invalid();
+      requireAlert(device, 'deployment-freeze-forecast', freezeDays !== null && freezeDays <= p.horizonDays);
+    }
     requireAlert(device, 'growth-baseline-missing', d.windowSeconds === null);
   }
   if (sourceRows.some(s => s.bytes === null) && !raw.alerts.some((a: any) => a.severity === 'unknown')) invalid();
@@ -176,7 +183,7 @@ export class HostCapacityObservationService {
     if (next.status !== 'ok') {
       if (signal !== this.lastSignal || this.now() - this.lastSignalAt >= 3600_000) {
         this.options.publish('capacity.observation.risk', { targetId: 'host-capacity-observation', message:
-          next.reason ?? `容量增长检查为${next.status === 'critical' ? '严重风险' : '预警'}；${Object.values(next.report?.filesystems ?? {}).map(d => `占用${d.usedPercent.toFixed(1)}%，文件节点占用${d.inodeUsedPercent === null ? '未知' : d.inodeUsedPercent.toFixed(1) + '%'}，预计${d.daysToReserve === null ? '未知' : d.daysToReserve.toFixed(1) + '天'}触及安全余量`).join('；')}。请核对来源增长与保留项`,
+          next.reason ?? `容量增长检查为${next.status === 'critical' ? '严重风险' : '预警'}；${Object.values(next.report?.filesystems ?? {}).map(d => `占用${d.usedPercent.toFixed(1)}%，预计${d.daysToDeploymentFreeze == null ? '未知' : d.daysToDeploymentFreeze.toFixed(1) + '天'}触及部署冻结`).join('；')}${next.report?.alerts.some(a => a.code.startsWith('source-growth:containerd-')) ? '；镜像内容增长偏快' : ''}${next.report?.alerts.some(a => a.code.startsWith('source-growth:cds-backups-')) ? '；备份增长偏快' : ''}。请核对来源增长与保留项`,
         });
         this.lastSignal = signal; this.lastSignalAt = this.now();
       }
