@@ -17,7 +17,8 @@ const missingSession = '请求没有可验证的智能体会话声明';
 export function appendEnvironmentAudit(state: StateService, req: Request, scope: string, op: EnvChangeLogEntry['op'],
   before: Record<string, string>, after: Record<string, string>, touched?: string[], options: { rotation?: boolean; profileId?: string } = {}) {
   const global = scope === '_global';
-  const project = state.getProject(scope);
+  const candidate = state.getProject(scope);
+  const project = candidate?.id === scope ? candidate : undefined;
   const branch = project ? undefined : state.getBranch(scope);
   const projectId = global ? scope : project?.id ?? (branch && (branch.projectId || 'default'));
   if (!projectId || project?.mirror || branch?.mirror) return;

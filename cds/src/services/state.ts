@@ -1505,7 +1505,7 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
   // ── Branch management ──
 
   getBranch(id: string): BranchEntry | undefined {
-    return this.state.branches[id];
+    return Object.hasOwn(this.state.branches, id) ? this.state.branches[id] : undefined;
   }
 
   getAllBranches(): BranchEntry[] {
@@ -1925,7 +1925,7 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
    * 由 migrateGlobalsToProjects() 一次性 seed, 之后 setProject* 不再写它。
    * 老 setDefaultBranch(id) 显式 API 仍然能改它（保留 legacy 调用兼容）。
    */
-  setProjectDefaultBranch(projectId: string, branchId: string | null): void {
+  setProjectDefaultBranch(projectId: string, branchId: string | null, { seedGlobal = true } = {}): void {
     const project = this.getProject(projectId);
     if (project) {
       project.defaultBranch = branchId;
@@ -1934,7 +1934,7 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     // 仅在 legacy state.defaultBranch 还未被 seed 过 (== null/undefined) 时
     // 把第一个真实值塞进去，给 proxy.ts 这种 single-project 时代的兜底
     // 路径一个起步值。已经有值就不动。
-    if (this.state.defaultBranch == null && branchId) {
+    if (seedGlobal && this.state.defaultBranch == null && branchId) {
       this.state.defaultBranch = branchId;
     }
   }
@@ -4344,6 +4344,12 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     return project?.repoPath || fallback;
   }
 
+  /** For shared projects, use the bound checkout unless this is the legacy project. */
+  getProjectSourceRoot(projectId: string, fallback: string): string | undefined {
+    const project = this.getProject(projectId);
+    return project?.repoPath || (project?.agentKeyCollaboration && !project.legacyFlag ? undefined : fallback);
+  }
+
   // ── FU-04: worktree layout migration bookkeeping ──
 
   /** Current layout version stamped in state.json (undefined = legacy flat). */
@@ -4594,14 +4600,22 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
    * 就会出现 "刚写的 env get 不到" 的回归（custom-env-scope 单测）。
    */
   getCustomEnvScope(scope: string = GLOBAL_ENV_SCOPE): Record<string, string> {
-    if (scope !== GLOBAL_ENV_SCOPE) {
-      const project = this.getProject(scope);
-      if (project?.customEnv) {
-        return { ...project.customEnv };
-      }
+    const project = this.environmentProject(scope);
+    if (project?.customEnv) return { ...project.customEnv };
+    const scopes = this.state.customEnv;
+    return scopes && Object.hasOwn(scopes, scope) ? { ...scopes[scope] } : {};
+  }
+
+  /** Project environment callers use canonical IDs. A branch ID can match a project slug. */
+  private environmentProject(scope: string): Project | undefined {
+    if (scope === GLOBAL_ENV_SCOPE) return undefined;
+    const project = this.getProject(scope);
+    if (project?.id !== scope) return undefined;
+    const branch = this.getBranch(scope);
+    if (branch && (branch.projectId || 'default') !== project.id) {
+      throw new Error('环境变量范围同时匹配两个项目');
     }
-    const bucket = (this.state.customEnv || {})[scope];
-    return bucket ? { ...bucket } : {};
+    return project;
   }
 
   /**
@@ -4615,13 +4629,11 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
    *     非项目桶，原样保留）
    */
   setCustomEnv(env: Record<string, string>, scope: string = GLOBAL_ENV_SCOPE): void {
-    if (scope !== GLOBAL_ENV_SCOPE) {
-      const project = this.getProject(scope);
-      if (project) {
-        project.customEnv = { ...env };
-        project.updatedAt = new Date().toISOString();
-        return;
-      }
+    const project = this.environmentProject(scope);
+    if (project) {
+      project.customEnv = { ...env };
+      project.updatedAt = new Date().toISOString();
+      return;
     }
     if (!this.state.customEnv) this.state.customEnv = { [GLOBAL_ENV_SCOPE]: {} };
     this.state.customEnv[scope] = { ...env };
@@ -4629,14 +4641,12 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
 
   /** Upsert a single var in the given scope. 路由规则同 setCustomEnv。 */
   setCustomEnvVar(key: string, value: string, scope: string = GLOBAL_ENV_SCOPE): void {
-    if (scope !== GLOBAL_ENV_SCOPE) {
-      const project = this.getProject(scope);
-      if (project) {
-        if (!project.customEnv) project.customEnv = {};
-        project.customEnv[key] = value;
-        project.updatedAt = new Date().toISOString();
-        return;
-      }
+    const project = this.environmentProject(scope);
+    if (project) {
+      if (!project.customEnv) project.customEnv = {};
+      project.customEnv[key] = value;
+      project.updatedAt = new Date().toISOString();
+      return;
     }
     if (!this.state.customEnv) this.state.customEnv = { [GLOBAL_ENV_SCOPE]: {} };
     if (!this.state.customEnv[scope]) this.state.customEnv[scope] = {};
@@ -4645,13 +4655,11 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
 
   /** Remove a single var from the given scope. 路由规则同 setCustomEnv。 */
   removeCustomEnvVar(key: string, scope: string = GLOBAL_ENV_SCOPE): void {
-    if (scope !== GLOBAL_ENV_SCOPE) {
-      const project = this.getProject(scope);
-      if (project?.customEnv) {
-        delete project.customEnv[key];
-        project.updatedAt = new Date().toISOString();
-        return;
-      }
+    const project = this.environmentProject(scope);
+    if (project?.customEnv) {
+      delete project.customEnv[key];
+      project.updatedAt = new Date().toISOString();
+      return;
     }
     const bucket = (this.state.customEnv || {})[scope];
     if (!bucket) return;

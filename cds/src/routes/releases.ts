@@ -87,7 +87,7 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
   /** 项目主 clone 的路径。取不到（旧项目 / 无 repoRoot）就是 undefined，绝不回落到 cwd。 */
   const projectRepoRoot = (projectId: string): string | undefined => {
     try {
-      const root = deps.stateService.getProjectRepoRoot(projectId, stateRoot || '');
+      const root = deps.stateService.getProjectSourceRoot(projectId, stateRoot || '');
       return root && root.trim() ? root.trim() : undefined;
     } catch {
       return undefined;

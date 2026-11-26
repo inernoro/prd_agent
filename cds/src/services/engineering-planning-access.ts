@@ -7,7 +7,7 @@ import { isAuthenticatedHuman } from './human-auth.js';
 import { dtsCredentialAllowed } from './dts-access.js';
 
 export function resolveEngineeringPlanningAccess(req: Request, state: StateService, projectId: string,
-  workspace: 'planning' | 'design' = 'planning'): (PlanningActor & { gitPublishOnly?: true; feedback?: true }) | null {
+  workspace: 'planning' | 'design' = 'planning'): (PlanningActor & { gitPublishOnly?: true; requireGitSource?: true; feedback?: true }) | null {
   const project = state.getProject(projectId);
   if (!project || project.id !== projectId || project.mirror) return null;
   const request = req as Request & {
@@ -24,6 +24,10 @@ export function resolveEngineeringPlanningAccess(req: Request, state: StateServi
     if (!credential) return null;
     const publisherKeyId = workspace === 'design' ? credential.designPublisherKeyId ?? credential.id : credential.id;
     const identity = { kind: 'agent' as const, id: credential.principalId ?? `project-key:${publisherKeyId}`, label: credential.label };
+    if (project.agentKeyCollaboration) {
+      return { ...identity, permissions: ['read', 'propose', 'write'], projectCollaborator: true,
+        ...(workspace === 'design' && credential.designAccess === 'publish' ? { requireGitSource: true } : {}) };
+    }
     if (workspace === 'design' && credential.designAccess) {
       if (credential.designAccess === 'publish') return { ...identity, permissions: ['read', 'write'], gitPublishOnly: true };
       return { ...identity, permissions: ['read'], ...(credential.designAccess === 'feedback' ? { feedback: true } : {}) };
@@ -42,5 +46,6 @@ export function resolveEngineeringPlanningAccess(req: Request, state: StateServi
     id: request.cdsUser.id,
     label: request.cdsUser.name || request.cdsUser.username || request.cdsUser.id,
     permissions: ['read', 'propose', 'write', 'approve'],
+    ...(project.agentKeyCollaboration ? { projectCollaborator: true } : {}),
   };
 }

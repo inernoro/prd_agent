@@ -149,17 +149,15 @@ describe('设计交接服务端门禁', () => {
     expect(checkHandoff).toHaveBeenCalledTimes(1);
   });
 
-  it('本项目的设计发布凭据只可重跑本人发布的版本', async () => {
+  it('本项目的设计发布凭据可以重跑协作者提交的固定版本', async () => {
     const api = await openApi();
     const designId = await api.publish(draft(1, { handoff: handoffPlan }));
     const fields = { designId, version: 1 };
     await api.readHandoff(designId, 1, 'unavailable');
-    const denied = await api.command('handoff.check', fields, project, 'other-publisher');
-    expect(denied.status).toBe(403);
     expect(checkHandoff).toHaveBeenCalledTimes(1);
 
     checkHandoff.mockResolvedValueOnce([{ caseId: fixtureCase.id, status: 'passed' }]);
-    const allowed = await api.command('handoff.check', fields, project, 'publisher');
+    const allowed = await api.command('handoff.check', fields, project, 'other-publisher');
     expect(allowed.status).toBe(201);
     await api.readHandoff(designId, 1, 'passed');
     expect(checkHandoff).toHaveBeenCalledTimes(2);
