@@ -163,8 +163,10 @@ export function AnchoredMenu({
         const anchor = getAnchor();
         if (!(target instanceof HTMLIFrameElement) || menuRef.current?.contains(target)
           || anchor?.contains(target) || !shouldCloseOnOutsidePointer(target, anchor) || closing) return;
-        // A hosted page may acquire focus during startup while the pointer is still on the toolbar.
-        if (ignoreAutomaticFrameFocus && !target.matches(':hover')) {
+        // A hosted page can take focus on startup. Touch can also leave :hover on the player,
+        // so only use hover as a fallback on mouse-like devices. Real taps use pointer events.
+        if (ignoreAutomaticFrameFocus
+          && (!window.matchMedia('(hover: hover) and (pointer: fine)').matches || !target.matches(':hover'))) {
           anchor?.focus({ preventScroll: true });
           return;
         }

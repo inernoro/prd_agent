@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 
@@ -831,7 +831,7 @@ for (const theme of ['light', 'dark'] as const) {
   });
 }
 
-test('视频分享可打开历史版本和合集卡片，分享读者没有上传操作', async ({ page }) => {
+async function mockVideoCollectionShare(page: Page) {
   const token = 'video-review';
   const sharePath = `/api/web-pages/shares/view/${token}`;
   const liveUrl = 'https://hosting.example/film/v2/index.html';
@@ -853,6 +853,11 @@ test('视频分享可打开历史版本和合集卡片，分享读者没有上�
     await route.fulfill({ json: { success: true, data, error: null } });
   });
   await page.goto(`/s/wp/${token}?siteId=${film.id}`);
+  return { film, member, oldUrl };
+}
+
+test('视频分享可打开历史版本和合集卡片，分享读者没有上传操作', async ({ page }) => {
+  const { film, member, oldUrl } = await mockVideoCollectionShare(page);
   await expect(page.frameLocator('iframe[title="项目演示视频"]').locator('video')).toBeVisible();
   await page.getByRole('button', { name: '视频版本：V2' }).click();
   await expect(page.locator('iframe[title="V1 网页预览"]')).toHaveAttribute('src', oldUrl);
@@ -863,13 +868,43 @@ test('视频分享可打开历史版本和合集卡片，分享读者没有上�
   const collection = page.getByRole('dialog', { name: '合集', exact: true });
   await expect(collection.locator('.related-document-card')).toHaveCount(1);
   await expect(collection.locator('.related-document-card')).toContainText(member.title);
-  await page.locator('iframe[title="项目演示视频"]').evaluate(frame => {
+  await page.locator(`iframe[title="${film.title}"]`).evaluate(frame => {
     frame.focus();
     window.dispatchEvent(new Event('blur'));
   });
   await expect(collectionToggle).toBeFocused();
   await expect(collectionToggle).toHaveAttribute('aria-expanded', 'true');
   await expect(collection).toBeVisible();
+});
+
+test.describe('触屏视频阅读', () => {
+  test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+
+  test('首点展开合集后，播放器自动聚焦不会收起面板', async ({ page }) => {
+    const { film, member } = await mockVideoCollectionShare(page);
+    const toggle = page.getByRole('button', { name: '合集', exact: true });
+    const collection = page.getByRole('dialog', { name: '合集', exact: true });
+    const frame = page.locator(`iframe[title="${film.title}"]`);
+
+    await toggle.tap();
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    await frame.evaluate(player => {
+      // Reproduce the mobile trace: autofocus with sticky hover and no outside pointer event.
+      const matches = player.matches.bind(player);
+      player.matches = selector => selector === ':hover' || matches(selector);
+      player.focus();
+      window.dispatchEvent(new Event('blur'));
+    });
+    await expect(toggle).toBeFocused();
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    await expect(collection.locator('.related-document-card')).toContainText(member.title);
+
+    await frame.evaluate(player => {
+      window.dispatchEvent(new CustomEvent('map-iframe-pointerdown', { detail: player }));
+    });
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await expect(collection).toHaveCount(0);
+  });
 });
 
 // 从资产库入口验证批量创建、保存、分享和回读，测试数据不写入运行环境。
