@@ -61,6 +61,52 @@ public sealed class OpenDesignServiceArtifactExecutorTests
         Should.Throw<InvalidOperationException>(() => OpenDesignTransportResolver.CodeFilmSlots(config));
     }
 
+    [Theory]
+    [InlineData(null, 2)]
+    [InlineData("10", 10)]
+    [InlineData("30", 30)]
+    public void CodeFilmSlots_UseConfigurableStartupMinimum(string? minimum, int expected)
+    {
+        var config = Config(new() { [OpenDesignTransportResolver.CodeFilmMinimumSlotsKey] = minimum });
+        OpenDesignTransportResolver.CodeFilmMinimumSlots(config).ShouldBe(expected);
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("31")]
+    [InlineData("invalid")]
+    public void CodeFilmSlots_RejectInvalidStartupMinimum(string minimum)
+    {
+        var config = Config(new() { [OpenDesignTransportResolver.CodeFilmMinimumSlotsKey] = minimum });
+        Should.Throw<InvalidOperationException>(() => OpenDesignTransportResolver.CodeFilmMinimumSlots(config));
+    }
+
+    [Fact]
+    public async Task CodeFilmSlots_ExcludeUnavailableServiceAndAdmitItAfterRecovery()
+    {
+        using var service = new FakeDesignService();
+        using var client = new HttpClient(service, disposeHandler: false);
+        var slot = new Uri("http://film-one:8093");
+        service.OnCapabilities(() => Json(HttpStatusCode.OK, new JsonObject
+        {
+            ["protocol"] = "map-design-executor-v1", ["healthy"] = false,
+        }));
+        (await HostedSiteEditRunWorker.ProbeCodeFilmSlotAsync(client, slot, CancellationToken.None)).ShouldBeFalse();
+
+        service.OnCapabilities(() => Json(HttpStatusCode.OK, new JsonObject
+        {
+            ["protocol"] = "other-executor", ["healthy"] = true,
+        }));
+        (await HostedSiteEditRunWorker.ProbeCodeFilmSlotAsync(client, slot, CancellationToken.None)).ShouldBeFalse();
+
+        service.OnCapabilities(() => Json(HttpStatusCode.OK, new JsonObject
+        {
+            ["protocol"] = "map-design-executor-v1", ["healthy"] = true,
+        }));
+        (await HostedSiteEditRunWorker.ProbeCodeFilmSlotAsync(client, slot, CancellationToken.None)).ShouldBeTrue();
+        service.CapabilityAuthorization.ShouldBeNull();
+    }
+
     [Fact]
     public void CodeFilmQueue_IsIsolatedFromWebDesign()
     {

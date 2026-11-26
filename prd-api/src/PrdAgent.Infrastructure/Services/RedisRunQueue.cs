@@ -67,7 +67,22 @@ public sealed class RedisRunQueue : IRunQueue, IDisposable
     {
         var id = (runId ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(id)) return;
-        await _db.ListRightPushAsync(Key(kind), id);
+        var key = Key(kind);
+        if (string.Equals(kind?.Trim(), RunKinds.CodeFilm, StringComparison.Ordinal))
+        {
+            // Mongo 周期补投时，已经等待的任务保留原 FIFO 位置。弹出后仍可补投，
+            // 由 Mongo 的原子认领防止重复执行，覆盖弹出后到认领前的进程中断。
+            await _db.ScriptEvaluateAsync(
+                """
+                if not redis.call('LPOS', KEYS[1], ARGV[1]) then
+                    redis.call('RPUSH', KEYS[1], ARGV[1])
+                end
+                return 0
+                """,
+                [key], [id]);
+            return;
+        }
+        await _db.ListRightPushAsync(key, id);
     }
 
     public async Task<string?> DequeueAsync(string kind, TimeSpan timeout, CancellationToken ct = default)

@@ -66,6 +66,23 @@ public sealed class RedisRunQueueIsolationTests : IAsyncLifetime
         Assert.Null(await consumer.DequeueAsync(RunKinds.DesignArtifact, TimeSpan.Zero));
     }
 
+    [DesignQueueRedisFact]
+    public async Task CodeFilmRecovery_PreservesOriginalQueueOrderAndAllowsRequeueAfterPop()
+    {
+        using var producer = Queue("project-a::video::revision::current");
+        using var recovery = Queue("project-a::video::revision::current");
+        await producer.EnqueueAsync(RunKinds.CodeFilm, "first");
+        await producer.EnqueueAsync(RunKinds.CodeFilm, "second");
+        await Task.WhenAll(Enumerable.Range(0, 10)
+            .Select(_ => recovery.EnqueueAsync(RunKinds.CodeFilm, "first")));
+
+        Assert.Equal("first", await producer.DequeueAsync(RunKinds.CodeFilm, TimeSpan.Zero));
+        await recovery.EnqueueAsync(RunKinds.CodeFilm, "first");
+        Assert.Equal("second", await producer.DequeueAsync(RunKinds.CodeFilm, TimeSpan.Zero));
+        Assert.Equal("first", await producer.DequeueAsync(RunKinds.CodeFilm, TimeSpan.Zero));
+        Assert.Null(await producer.DequeueAsync(RunKinds.CodeFilm, TimeSpan.Zero));
+    }
+
     [DesignQueueRedisTheory]
     [InlineData("project-a::branch-a::revision::revision-a")]
     [InlineData(null)]
