@@ -38,7 +38,8 @@ const SRCDOC_WAIT_MS = 1500;
 interface Props {
   site: HostedSite;
   onClose: () => void;
-  onNavigateRelated?: (id: string) => void;
+  onNavigateRelated?: (id: string, contextId?: string) => void;
+  initialCollectionContextId?: string;
   onSiteVersionChanged?: (site: HostedSite) => void;
   /** 评论开关变更后回传给父组件，避免关闭再打开时从 stale site.commentsEnabled 重新初始化 */
   onCommentsEnabledChange?: (siteId: string, enabled: boolean) => void;
@@ -62,6 +63,7 @@ export default function SitePreviewModal({
   site: originalSite,
   onClose,
   onNavigateRelated,
+  initialCollectionContextId,
   onCommentsEnabledChange,
   onAskEnabledChange,
   canToggleComments = true,
@@ -294,8 +296,10 @@ export default function SitePreviewModal({
           {hasVersionHistory && <ReviewVersionBar review={review} canUpload={canToggleComments} video={video} readerToolbar readerStage={iframeRef} />}
           <div className="review-reader-actions">
             {!isMobile && historyHint && !review.historical && <ReviewHistoryHint value={historyHint} onOpen={id => review.setVersionPreview({ id })} />}
-            <RelatedDocumentsBar siteId={originalSite.id} variant="toolbar" reviewReader collectionNavigation
-              onNavigate={onNavigateRelated ? item => onNavigateRelated(item.id) : undefined} />
+            <RelatedDocumentsBar siteId={originalSite.id} variant="toolbar" reviewReader collectionNavigation initialContextId={initialCollectionContextId}
+              onReference={reference => annotations.openThread(reference.threadId ?? reference.commentId)}
+              onBodyReference={annotations.ready && !review.historical ? annotations.focusBodyReference : undefined}
+              onNavigate={onNavigateRelated ? item => onNavigateRelated(item.id, item.collectionContextId) : undefined} />
             {!isMobile && <ReviewToolbarControls review={review} canUpload={canToggleComments} onOpen={() => setShowComments(value => !value)}
               expanded={showComments} count={commentCount} showVersions={false} showBubbleToggle={!originalSite.wrappedAssetType} readerLayout />}
             <ShareMoreMenu adaptive>

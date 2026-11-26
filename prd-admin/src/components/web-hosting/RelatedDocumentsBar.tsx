@@ -8,7 +8,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { useResolvedThemeMode } from '@/stores/mobileThemeStore';
 import { useIsMobile } from '@/hooks/useBreakpoint';
 import { HOSTED_SITE_PERMISSIONS_CHANGED, getRelatedCandidates, getRelatedDocuments, previewRelatedPermissions, saveRelatedDocuments, syncRelatedPermissions,
-  type RelatedSummary, type RelatedDocument, type RelatedDocuments, type RelatedDocumentSource, type RelatedPermissionPreview, type RelatedSyncResult } from '@/services/real/relatedDocuments';
+  type BodyReference, type DiscussionReference, type RelatedSummary, type RelatedDocument, type RelatedDocuments, type RelatedDocumentSource, type RelatedPermissionPreview, type RelatedSyncResult } from '@/services/real/relatedDocuments';
 import { updateSite } from '@/services/real/webPages';
 import { previewCollectionPermissions, syncCollectionPermissions, type CollectionMember } from '@/services/real/hostedCollections';
 import { RelatedDocumentContent } from './RelatedDocumentContent';
@@ -17,10 +17,12 @@ import './RelatedDocumentsBar.css';
 
 const CollectionEditor = lazy(async () => ({ default: (await import('./HostedCollectionManager')).HostedCollectionEditor }));
 
-export default function RelatedDocumentsBar({ siteId, source, onNavigate, variant = 'bar', summary, collectionNavigation = false, membersOnly = false, siteTitle, reviewReader = false, menuAnchor, onMenuClose }: {
+export default function RelatedDocumentsBar({ siteId, source, onNavigate, onReference, onBodyReference, initialContextId, contextTitle, variant = 'bar', summary, collectionNavigation = false, membersOnly = false, siteTitle, reviewReader = false, menuAnchor, onMenuClose }: {
   siteId: string; collectionNavigation?: boolean; siteTitle?: string; variant?: 'bar' | 'toolbar' | 'badge';
   summary?: RelatedSummary; source?: RelatedDocumentSource; onNavigate?: (item: RelatedDocument) => void; reviewReader?: boolean; membersOnly?: boolean;
   menuAnchor?: HTMLElement | null; onMenuClose?: () => void;
+  initialContextId?: string; contextTitle?: string; onReference?: (reference: DiscussionReference) => void;
+  onBodyReference?: (reference: BodyReference) => void;
 }) {
   const authToken = useAuthStore(state => state.token);
   const theme = useResolvedThemeMode();
@@ -35,6 +37,7 @@ export default function RelatedDocumentsBar({ siteId, source, onNavigate, varian
   const [permissions, setPermissions] = useState(false);
   const [collectionEditor, setCollectionEditor] = useState<{ collectionId?: string; initialSites?: CollectionMember[] } | null>(null);
   const [split, setSplit] = useState(false);
+  const [selectedScope, setSelectedScope] = useState<{ siteId: string; contextId: string }>();
   const [maxHeight, setMaxHeight] = useState(() => typeof window === 'undefined' ? 600 : window.innerHeight - 40);
   const anchor = useRef<HTMLButtonElement>(null);
   const panel = useRef<HTMLDivElement>(null);
@@ -136,13 +139,14 @@ export default function RelatedDocumentsBar({ siteId, source, onNavigate, varian
         ...(reviewReader ? { background: 'var(--review-b-popover)', boxShadow: '0 12px 24px #0003, 0 2px 5px #0002' } : {}) }}>
       <div id={menuId} ref={panel} tabIndex={-1} role="dialog" aria-label={surfaceName} onPointerDown={event => { event.stopPropagation(); setPinned(true); }} onPointerEnter={keepOpen} onPointerLeave={leave}
         onFocusCapture={keepOpen} onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget)) leave(); }}>
-        {collectionsEnabled ? <CollectionContextPanel key={siteId + authToken} siteId={siteId} maxHeight={maxHeight - 2} onSplitChange={setSplit} onClose={close} onNavigate={onNavigate}
+        {collectionsEnabled ? <CollectionContextPanel key={siteId + authToken} siteId={siteId} initialContextId={selectedScope?.siteId === siteId ? selectedScope.contextId : initialContextId}
+          onSelectContext={contextId => setSelectedScope({ siteId, contextId })} maxHeight={maxHeight - 2} onSplitChange={setSplit} onClose={close} onNavigate={onNavigate} onReference={onReference} onBodyReference={onBodyReference}
           onEditCollection={draft => { close(); setCollectionEditor(draft); }} cardsOnly={reviewReader}
           onManage={next => openManager(next)} onPermissions={next => openPermissions(next)} onTagEdit={item => { close(); setTagTarget(item); }} />
-          : <RelatedDocumentContent key={siteId + token} siteId={siteId} maxHeight={maxHeight - 2} source={source} data={data} error={error} loading={loading} compact={compact} cardsOnly={reviewReader} membersOnly={membersOnly} heading={membersOnly ? '合集成员' : surfaceName}
+          : <RelatedDocumentContent key={siteId + token} siteId={siteId} maxHeight={maxHeight - 2} source={source} data={data} error={error} loading={loading} compact={compact} cardsOnly={reviewReader} membersOnly={membersOnly} includeCurrent={!!contextTitle} heading={contextTitle ?? (membersOnly ? '合集成员' : surfaceName)}
             emptyMessage={collectionNavigation ? '没有其他可查看的合集成员。' : undefined}
             onReload={() => { setLoading(true); void refresh(); }} onManage={() => openManager()} onPermissions={() => openPermissions()}
-            onTagEdit={item => { close(); setTagTarget(item); }} onNavigate={onNavigate} onClose={close} />}
+            onTagEdit={item => { close(); setTagTarget(item); }} onNavigate={onNavigate} onReference={onReference} onBodyReference={onBodyReference} onClose={close} />}
       </div>
     </AnchoredMenu>
     {collectionEditor && <Suspense fallback={<MapSpinner size={16} />}><CollectionEditor {...collectionEditor}

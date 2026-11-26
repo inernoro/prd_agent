@@ -697,6 +697,12 @@ for (const width of [390, 1440]) for (const theme of ['light', 'dark'] as const)
     const trigger = page.locator('[data-hosted-site-id="context-source"] .related-trigger');
     await expect(trigger).toHaveCount(1); await trigger.click();
     const dialog = page.getByRole('dialog', { name: '合集', exact: true });
+    const sidebar = dialog.getByRole('complementary', { name: '所属合集' });
+    if (multiple) {
+      await expect(sidebar.locator('.collection-context-select')).toHaveCount(20);
+      await expect(dialog.locator('.related-document-card')).toHaveCount(0);
+      await sidebar.locator('.collection-context-select').first().click();
+    }
     await expect(dialog.locator('.related-document-card')).toHaveCount(multiple ? 9 : 2);
     const footer = dialog.getByRole('region', { name: '合集链接操作', exact: true });
     await expect(footer.getByLabel('合集完整地址', { exact: true })).toHaveValue(new URL('/s/wp/original-0-0', page.url()).href);
@@ -704,7 +710,6 @@ for (const width of [390, 1440]) for (const theme of ['light', 'dark'] as const)
     await expect(dialog.locator('[aria-label="文档关系类型"]')).toHaveCount(0);
     await expect(footer.getByRole('link', { name: '打开合集', exact: true })).toHaveAttribute('href', new URL('/s/wp/original-0-0', page.url()).href);
     await expect(footer.getByRole('link', { name: '打开合集', exact: true })).toHaveAttribute('target', '_blank');
-    const sidebar = dialog.getByRole('complementary', { name: '所属合集' });
     if (multiple) {
       await expect(sidebar).toBeVisible(); await expect(sidebar.locator('.collection-context-select')).toHaveCount(20);
       await sidebar.locator('.collection-context-select').nth(1).click();
@@ -718,12 +723,14 @@ for (const width of [390, 1440]) for (const theme of ['light', 'dark'] as const)
       await expect(footer.getByRole('link', { name: '打开合集', exact: true })).toHaveAttribute('href', new URL('/s/wp/original-1-2', page.url()).href);
       await sidebar.getByLabel('搜索所属合集', { exact: true }).fill('44');
       await expect(sidebar.locator('.collection-context-select')).toHaveCount(1);
+      await expect(footer.getByLabel('合集完整地址', { exact: true })).toHaveValue(new URL('/s/wp/original-1-2', page.url()).href);
+      await sidebar.locator('.collection-context-select').first().click();
       await expect(dialog.locator('.related-document-card').filter({ hasText: '关联目标 44' })).toBeVisible();
       await sidebar.getByRole('button', { name: '清除合集搜索' }).click();
       await expect(sidebar.locator('.collection-context-select')).toHaveCount(20);
       await sidebar.getByRole('navigation', { name: '合集分页', exact: true }).getByRole('button', { name: '下一页' }).click();
-      await expect(sidebar.locator('.collection-context-select').first()).toHaveText('发布资料 20');
-      await expect(footer.getByLabel('合集完整地址', { exact: true })).toHaveValue(new URL('/s/wp/original-20-0', page.url()).href);
+      await expect(sidebar.locator('.collection-context-select').first().locator('strong')).toHaveText('发布资料 20');
+      await expect(footer.getByLabel('合集完整地址', { exact: true })).toHaveValue(new URL('/s/wp/original-44-0', page.url()).href);
       const left = await sidebar.boundingBox(), right = await dialog.locator('.collection-context-documents').boundingBox();
       expect(left!.x + left!.width).toBeLessThanOrEqual(right!.x + 1);
     } else {

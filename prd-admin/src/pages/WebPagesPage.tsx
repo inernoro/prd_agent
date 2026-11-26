@@ -500,11 +500,11 @@ export default function WebPagesPage() {
   const [replaceTarget, setReplaceTarget] = useState<{ site: HostedSite; file: File } | null>(null);
   const [replacing, setReplacing] = useState(false);
   const [viewersTarget, setViewersTarget] = useState<{ siteId: string; siteTitle: string } | null>(null);
-  const [sitePreview, setSitePreview] = useState<{ site: HostedSite; openComments: boolean } | null>(null);
+  const [sitePreview, setSitePreview] = useState<{ site: HostedSite; openComments: boolean; contextId?: string } | null>(null);
   const commentSite = sitePreview?.site;
   const relatedOpenId = new URLSearchParams(location.search).get('openSite');
   const [relatedOpenError, setRelatedOpenError] = useState('');
-  const showSitePreview = useCallback((site: HostedSite) => setSitePreview({ site, openComments: false }), []);
+  const showSitePreview = useCallback((site: HostedSite, contextId?: string) => setSitePreview({ site, openComments: false, contextId }), []);
   const { open: openRelatedSite, cancel: cancelRelatedSite } = useRelatedSiteOpener(showSitePreview, setRelatedOpenError);
   useEffect(() => {
     if (!relatedOpenId) return;
@@ -512,9 +512,9 @@ export default function WebPagesPage() {
     return cancelRelatedSite;
   }, [relatedOpenId, openRelatedSite, cancelRelatedSite]);
 
-  const openSiteComments = (site: HostedSite) => {
+  const openSiteComments = (site: HostedSite, contextId?: string) => {
     cancelRelatedSite();
-    setSitePreview({ site, openComments: true });
+    setSitePreview({ site, openComments: true, contextId });
   };
 
   // 「帮我修改」进生成工作台：对话里就是每一轮修改，右边在线上版与草稿之间切换，版本记录也在那里。
@@ -1276,7 +1276,7 @@ export default function WebPagesPage() {
   }, [moveSiteIntoPersonalFolder, moveSiteIntoTeamGroup]);
 
   // 单组内的卡片/列表渲染，按 viewMode 复用
-  const renderGroupItems = (items: HostedSite[], inCollection = false) =>
+  const renderGroupItems = (items: HostedSite[], inCollection = false, collectionId?: string) =>
     inCollection || viewMode === 'grid' ? (
       <div
         className="grid"
@@ -1306,7 +1306,7 @@ export default function WebPagesPage() {
               activity={siteActivity[site.id]}
               relatedSummary={relatedSummaries[site.id]}
               onNavigateRelated={openRelatedSite}
-              onVisit={() => handleVisitSite(site)}
+              onVisit={() => collectionId ? showSitePreview(site, `collection:${collectionId}`) : handleVisitSite(site)}
               onSelect={() => {
                 if (!inCollection) { toggleSelect(site.id); return; }
                 setWorkspaceTab('library');
@@ -1321,7 +1321,7 @@ export default function WebPagesPage() {
               onReplaceFile={(file) => setReplaceTarget({ site, file })}
               onViewers={() => setViewersTarget({ siteId: site.id, siteTitle: site.title })}
               onMove={() => setMovingSite(site)}
-              onComments={() => openSiteComments(site)}
+              onComments={() => openSiteComments(site, collectionId ? `collection:${collectionId}` : undefined)}
               onAskConfig={siteCaps(site).canEdit ? () => setAskConfigSite(site) : undefined}
               onAiEdit={() => openSiteEditor(site)}
             />
@@ -2032,7 +2032,7 @@ export default function WebPagesPage() {
       {!isMobile && desktopTopBar}
       {workspaceTab === 'collections' && <HostedCollectionLibrary onBack={() => setWorkspaceTab('library')}
         recentId={recentCollection && recentCollection.key === recentCollectionKey ? recentCollection.id : null}
-        onArrival={finishCollectionArrival} renderCards={items => renderGroupItems(items, true)} />}
+        onArrival={finishCollectionArrival} renderCards={(items, collectionId) => renderGroupItems(items, true, collectionId)} />}
       {workspaceTab === 'library' && <nav className="workspace-facets px-3 pt-2" aria-label="网页可见范围筛选">
         <span>当前范围</span>{([{key:'all',label:'全部网页',count:scopedSites.length},{key:'public',label:'已公开',count:scopedSites.filter(site=>site.visibility==='public').length},{key:'restricted',label:'未公开',count:scopedSites.filter(site=>site.visibility!=='public').length}] as const).map(filter=><button type="button" key={filter.key} aria-pressed={visibilityFilter===filter.key} onClick={()=>setVisibilityFilter(filter.key)}>{filter.label} {loading ? '—' : filter.count}</button>)}<span>已载入范围 · 保留原分享权限</span>
       </nav>}
@@ -2418,6 +2418,7 @@ export default function WebPagesPage() {
           key={commentSite.id}
           site={commentSite}
           initialCommentsOpen={sitePreview.openComments}
+          initialCollectionContextId={sitePreview.contextId}
           onNavigateRelated={openRelatedSite}
           onSiteVersionChanged={(updated) => {
             setSitePreview(prev => prev?.site.id === updated.id ? { ...prev, site: updated } : prev);

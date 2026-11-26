@@ -39,7 +39,8 @@ const preview: RelatedPermissionPreview = {
   ],
 };
 const clickText = async (text: string) => {
-  const button = [...document.querySelectorAll<HTMLButtonElement>('button')].find(item => (item.getAttribute('aria-label') || item.textContent) === text);
+  const button = [...document.querySelectorAll<HTMLButtonElement>('button')].find(item =>
+    (item.getAttribute('aria-label') || item.textContent) === text || item.querySelector('.collection-context-select > strong')?.textContent === text);
   expect(button, text).toBeDefined();
   await act(async () => button!.click());
 };
@@ -155,6 +156,9 @@ describe('顶部关联文档', () => {
     await openFromMenu();
     expect(document.querySelector('[data-collection-layout="split"]')).not.toBeNull();
     expect(document.querySelector('[aria-label="所属合集"] a')).toBeNull();
+    expect(document.querySelector('[aria-label="合集完整地址"]')).toBeNull();
+    expect(getCollectionContextDocuments).not.toHaveBeenCalled();
+    await clickText('合集 one');
     expect(document.querySelector<HTMLInputElement>('[aria-label="合集完整地址"]')?.value).toBe(window.location.origin + '/s/wp/one');
     await clickText('合集 two');
     expect(getCollectionContextDocuments).toHaveBeenLastCalledWith('a', 'collection:two');
@@ -172,6 +176,7 @@ describe('顶部关联文档', () => {
     vi.mocked(getCollectionContexts).mockResolvedValue({ success: true, data: { items: [named, manual], total: 2, totalContexts: 2, page: 1, pageSize: 20 }, error: null });
     vi.mocked(getCollectionContextDocuments).mockImplementation(async (_site, contextId) => ({ success: true, data: { ...data, canManage: contextId === manual.id }, error: null }));
     await openFromMenu();
+    await clickText('合集 one');
     expect(getCollectionContextDocuments).toHaveBeenCalledWith('a', named.id);
     expect(document.querySelector('.collection-context-select[aria-label="关联文档"]')).toBeNull();
     await clickText('总体方案合集');
@@ -223,6 +228,7 @@ describe('顶部关联文档', () => {
     let resolve!: (value: Awaited<ReturnType<typeof getCollectionContextLinks>>) => void;
     vi.mocked(getCollectionContextLinks).mockReturnValue(new Promise(done => { resolve = done; }));
     await openFromMenu();
+    await clickText('合集 one');
     await clickText('查看全部 2 条链接');
     await clickText('合集 two');
     await act(async () => resolve({ success: true, data: { items: [contexts[0].primaryLink!], total: 1, page: 1, pageSize: 20 }, error: null }));
@@ -267,6 +273,34 @@ describe('顶部关联文档', () => {
     expect(document.querySelector('[aria-label="所属合集"]')).not.toBeNull();
     await act(async () => document.querySelector<HTMLButtonElement>('[aria-label="清除合集搜索"]')!.click());
     expect(getCollectionContexts).toHaveBeenLastCalledWith('a', 1, '');
+  });
+  it('从合集进入时锁定原合集，搜索隐藏当前项仍可跳回出处并复制当前链接', async () => {
+    const active = { ...makeContext('one', 1), isMain: true };
+    const other = makeContext('two', 1);
+    const discussion = { commentId: 'reply', threadId: 'thread', authorName: '作者', sourceSiteId: 'a', sourceTitle: '总体方案', label: '原讨论' };
+    const onReference = vi.fn();
+    vi.mocked(getCollectionContexts).mockImplementation(async (_site, page = 1, keyword = '') => ({
+      success: true, data: { items: keyword ? [other] : [other, active], selected: active, total: keyword ? 1 : 2, totalContexts: 2, page, pageSize: 20 }, error: null,
+    }));
+    vi.mocked(getCollectionContextDocuments).mockResolvedValue({ success: true, error: null, data: {
+      ...data, canManage: false, items: [...data.items, { id: 'external', title: '合集外文档', isManual: false, mentions: [discussion] }],
+    } });
+    await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="toolbar" collectionNavigation initialContextId={active.id} onReference={onReference} />));
+    await open();
+    expect(getCollectionContextDocuments).toHaveBeenCalledWith('a', active.id);
+    expect(document.querySelector('.collection-context-select[aria-pressed="true"]')?.textContent).toContain('主文档');
+    expect(document.querySelector('.related-outside-heading')?.textContent).toBe('合集外引用');
+    const input = document.querySelector<HTMLInputElement>('[aria-label="搜索所属合集"]')!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'two');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 300)); });
+    expect(getCollectionContexts).toHaveBeenLastCalledWith('a', 1, 'two', active.id);
+    expect(document.querySelector<HTMLInputElement>('[aria-label="合集完整地址"]')?.value).toBe(window.location.origin + '/s/wp/one');
+    expect(getCollectionContextDocuments).not.toHaveBeenCalledWith('a', other.id);
+    await clickText('讨论引用：合集外文档 · 原讨论');
+    expect(onReference).toHaveBeenCalledWith(discussion);
   });
   it('读取失败显示重试，不误判成没有合集，也不读取无关文档', async () => {
     vi.mocked(getCollectionContexts).mockResolvedValueOnce({ success: false, data: null as never, error: { code: 'FAILED', message: '合集暂时无法读取' } });

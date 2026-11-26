@@ -9,7 +9,7 @@ public partial class WebPagesController
     private sealed record CollectionContextLink(string Id, string Title, string ShareUrl, DateTime CreatedAt,
         DateTime? ExpiresAt, string AccessLevel, int MemberCount, bool IsActive, string StatusLabel);
     private sealed record CollectionContext(string Id, string Title, int MemberCount, DateTime UpdatedAt,
-        string? CollectionId, string? LegacyShareId, int ShareCount, CollectionContextLink? PrimaryLink);
+        string? CollectionId, string? LegacyShareId, int ShareCount, CollectionContextLink? PrimaryLink, bool IsMain);
 
     private static CollectionContextLink ContextLink(WebPageShareLink share, HostedCollection? collection, HostedDocumentCollection? documentCollection = null)
     {
@@ -49,7 +49,8 @@ public partial class WebPagesController
 
     // 当前归属读取合集实体；历史未命名实体的合集沿用原分享身份，绝不按成员相同猜测合并。
     [HttpGet("{siteId}/collection-contexts")]
-    public async Task<IActionResult> CollectionContexts(string siteId, [FromQuery] int page = 1, [FromQuery] string? keyword = null)
+    public async Task<IActionResult> CollectionContexts(string siteId, [FromQuery] int page = 1, [FromQuery] string? keyword = null,
+        [FromQuery] string? selectedContextId = null)
     {
         Response.Headers.CacheControl = "no-store";
         var site = await _siteService.GetByIdAsync(siteId, GetUserId(), CancellationToken.None);
@@ -60,9 +61,9 @@ public partial class WebPagesController
         var documentCollections = await Collections.Find(x => x.OwnerUserId == GetUserId() && x.DissolvedAt == null && x.SiteIds.Contains(siteId)).ToListAsync();
         var documentsById = documentCollections.ToDictionary(x => x.Id);
         var contexts = collections.ToDictionary(x => "collection:" + x.Id, x => new CollectionContext("collection:" + x.Id,
-            x.Title, x.SiteIds.Count, x.UpdatedAt, x.Id, null, 0, null));
+            x.Title, x.SiteIds.Count, x.UpdatedAt, x.Id, null, 0, null, x.MainSiteId == siteId));
         foreach (var item in documentCollections)
-            contexts["document-collection:" + item.Id] = new("document-collection:" + item.Id, item.Name, item.SiteIds.Count, item.UpdatedAt, item.Id, null, 0, null);
+            contexts["document-collection:" + item.Id] = new("document-collection:" + item.Id, item.Name, item.SiteIds.Count, item.UpdatedAt, item.Id, null, 0, null, item.MainSiteId == siteId);
         var manual = await ManualCollectionAsync(siteId);
         if (manual != null && manual.SiteIds.Count > 1)
         {
@@ -70,7 +71,7 @@ public partial class WebPagesController
             var title = string.IsNullOrWhiteSpace(main?.Title) ? site.Title : main.Title;
             var id = "manual:" + manual.Id;
             contexts[id] = new(id, title.EndsWith("合集", StringComparison.Ordinal) ? title : title + "合集",
-                manual.SiteIds.Count, manual.UpdatedAt, null, null, 0, null);
+                manual.SiteIds.Count, manual.UpdatedAt, null, null, 0, null, manual.MainSiteId == siteId);
         }
         var matched = new HashSet<string>();
         var query = keyword?.Trim();
@@ -89,7 +90,7 @@ public partial class WebPagesController
                 var link = ContextLink(share, share.CollectionId == null ? null : linkDirectories.GetValueOrDefault(share.CollectionId),
                     documentCollectionId == null ? null : linkDocuments.GetValueOrDefault(documentCollectionId));
                 if (!contexts.TryGetValue(id, out var context))
-                    context = new(id, link.Title, link.MemberCount, share.CreatedAt, null, share.Id, 0, null);
+                    context = new(id, link.Title, link.MemberCount, share.CreatedAt, null, share.Id, 0, null, share.MainSiteId == siteId);
                 var best = context.PrimaryLink;
                 if (best == null || (link.IsActive && !best.IsActive) || (link.IsActive == best.IsActive
                     && (link.CreatedAt > best.CreatedAt || (link.CreatedAt == best.CreatedAt && string.CompareOrdinal(link.Id, best.Id) > 0)))) best = link;
@@ -103,7 +104,8 @@ public partial class WebPagesController
         page = Math.Max(1, page);
         var skip = (long)(page - 1) * 20;
         var items = skip > int.MaxValue ? new List<CollectionContext>() : ordered.Skip((int)skip).Take(20).ToList();
-        return Ok(ApiResponse<object>.Ok(new { items, total = ordered.Count, totalContexts = contexts.Count, page, pageSize = 20 }));
+        var selected = selectedContextId != null ? contexts.GetValueOrDefault(selectedContextId) : null;
+        return Ok(ApiResponse<object>.Ok(new { items, selected, total = ordered.Count, totalContexts = contexts.Count, page, pageSize = 20 }));
     }
 
     private async Task<(HostedSite? Site, HostedCollection? Collection, WebPageShareLink? Legacy, HostedDocumentCollection? DocumentCollection)> ResolveCollectionContextAsync(string siteId, string contextId)

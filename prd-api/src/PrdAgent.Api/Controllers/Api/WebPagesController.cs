@@ -1274,7 +1274,9 @@ public partial class WebPagesController : ControllerBase
     private static readonly HashSet<string> SrcDocReadableWrappers =
         new(StringComparer.OrdinalIgnoreCase) { "markdown" };
 
-    private async Task<IActionResult> FetchSiteHtmlResultAsync(HostedSite site)
+    private sealed record SiteHtmlContent(string SiteId, string Title, string ContentType, string SiteUrl, string Html);
+
+    private async Task<IActionResult> FetchSiteHtmlResultAsync(HostedSite site, CancellationToken cancellationToken = default)
     {
         // 只拒「壳子里没有正文」的那几类：PDF / 视频壳本身只是一个指向同目录资产的容器，
         // 取回它的 HTML 没有意义，而且它必须以托管域名为文档源才能加载那份资产。
@@ -1289,7 +1291,8 @@ public partial class WebPagesController : ControllerBase
 
         try
         {
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            cts.CancelAfter(TimeSpan.FromSeconds(20));
             if (site.SiteUrl.StartsWith("/local-assets/", StringComparison.Ordinal))
             {
                 // LocalAssetStorage 的地址是站内相对路径。按已授权站点清单中的 key 读取，
@@ -1373,8 +1376,7 @@ public partial class WebPagesController : ControllerBase
             var length = (int)buffered.Length;
             var bom = length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF ? 3 : 0;
             var html = Encoding.UTF8.GetString(bytes, bom, length - bom);
-            return Ok(ApiResponse<object>.Ok(new { siteId = site.Id, title = site.Title,
-                contentType = "text/html", siteUrl = site.SiteUrl, html }));
+            return Ok(ApiResponse<SiteHtmlContent>.Ok(new(site.Id, site.Title, "text/html", site.SiteUrl, html)));
         }
         finally
         {

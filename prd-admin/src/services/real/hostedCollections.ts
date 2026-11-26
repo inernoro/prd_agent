@@ -63,11 +63,12 @@ export interface CollectionHistoryItem {
 export const getCollectionHistory = (siteId: string, page = 1, keyword = '') => apiRequest<{ items: CollectionHistoryItem[]; total: number; page: number; pageSize: number }>(`${legacyRoot}/history?${new URLSearchParams({ siteId, page: String(page), keyword })}`);
 export interface CollectionContext {
   id: string; title: string; memberCount: number; updatedAt: string;
-  collectionId: string | null; legacyShareId: string | null; shareCount: number; primaryLink: CollectionHistoryItem | null;
+  collectionId: string | null; legacyShareId: string | null; shareCount: number; primaryLink: CollectionHistoryItem | null; isMain?: boolean;
 }
-export interface CollectionContextPage { items: CollectionContext[]; total: number; totalContexts: number; page: number; pageSize: number }
+export interface CollectionContextPage { items: CollectionContext[]; selected?: CollectionContext | null; total: number; totalContexts: number; page: number; pageSize: number }
 const contextPath = (siteId: string, contextId?: string) => `/api/web-pages/${encodeURIComponent(siteId)}/collection-contexts${contextId ? '/' + encodeURIComponent(contextId) : ''}`;
-export const getCollectionContexts = (siteId: string, page = 1, keyword = '') => apiRequest<CollectionContextPage>(`${contextPath(siteId)}?${new URLSearchParams({ page: String(page), keyword })}`);
+export const getCollectionContexts = (siteId: string, page = 1, keyword = '', selectedContextId?: string) =>
+  apiRequest<CollectionContextPage>(`${contextPath(siteId)}?${new URLSearchParams({ page: String(page), keyword, ...(selectedContextId ? { selectedContextId } : {}) })}`);
 export const getCollectionContextDocuments = (siteId: string, contextId: string) => apiRequest<RelatedDocuments>(`${contextPath(siteId, contextId)}/documents`);
 export const getCollectionContextLinks = (siteId: string, contextId: string, page = 1) => apiRequest<{ items: CollectionHistoryItem[]; total: number; page: number; pageSize: number }>(`${contextPath(siteId, contextId)}/links?${new URLSearchParams({ page: String(page) })}`);
 export const listCollections = (keyword = '', page = 1, recentId?: string) => apiRequest<{

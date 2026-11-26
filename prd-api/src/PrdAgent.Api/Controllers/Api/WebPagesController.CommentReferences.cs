@@ -1,3 +1,5 @@
+using AngleSharp.Html.Parser;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
 using MongoDB.Driver;
 using PrdAgent.Core.Models;
@@ -8,7 +10,46 @@ namespace PrdAgent.Api.Controllers.Api;
 
 public partial class WebPagesController
 {
-    private sealed record RelatedMention(string CommentId, string AuthorName, string SourceSiteId, string SourceTitle, string Label);
+    private sealed record RelatedMention(string CommentId, string ThreadId, string AuthorName, string SourceSiteId, string SourceTitle, string Label);
+    private sealed record BodyReference(int LinkIndex, string Label);
+
+    private async Task<Dictionary<string, List<BodyReference>>> RelatedBodyReferencesAsync(HostedSite source, List<HostedSite> visible,
+        string? userId, HashSet<string> sharedIds)
+    {
+        var references = new Dictionary<string, List<BodyReference>>();
+        if (!string.IsNullOrEmpty(source.WrappedAssetType) && !SrcDocReadableWrappers.Contains(source.WrappedAssetType))
+            return references;
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(HttpContext.RequestAborted);
+        budget.CancelAfter(TimeSpan.FromSeconds(2));
+        if (await FetchSiteHtmlResultAsync(source, budget.Token) is not OkObjectResult { Value: ApiResponse<SiteHtmlContent> { Data: { } content } })
+            return references;
+
+        var origins = await RelatedOriginsAsync();
+        var document = new HtmlParser().ParseDocument(content.Html);
+        var sourceLinks = document.Body?.QuerySelectorAll("a[href]").Take(500)
+            .Select((element, index) => new {
+                Index = index, Title = element.TextContent.Trim(),
+                Link = HostedDocumentLinkParser.Extract(element.GetAttribute("href"), origins).FirstOrDefault(),
+            }).Where(item => item.Link != null).Take(50).ToArray();
+        if (sourceLinks is not { Length: > 0 }) return references;
+        var resolved = await ResolveRelatedLinksAsync(sourceLinks.Select(item => item.Link!));
+        var checkedIds = visible.Select(item => item.Id).ToHashSet(StringComparer.Ordinal);
+        foreach (var entry in sourceLinks)
+        {
+            if (resolved.GetValueOrDefault(entry.Link!) is not { Count: 1 } target || target[0] == source.Id) continue;
+            var id = target[0];
+            if (checkedIds.Add(id))
+            {
+                var site = sharedIds.Contains(id) ? await _db.HostedSites.Find(x => x.Id == id).FirstOrDefaultAsync()
+                    : userId == null ? null : await _siteService.GetByIdAsync(id, userId, CancellationToken.None);
+                if (site != null) visible.Add(site);
+            }
+            if (visible.All(site => site.Id != id)) continue;
+            if (!references.TryGetValue(id, out var entries)) references[id] = entries = new();
+            entries.Add(new(entry.Index, string.IsNullOrWhiteSpace(entry.Title) ? "正文链接" : entry.Title[..Math.Min(100, entry.Title.Length)]));
+        }
+        return references;
+    }
 
     private async Task<Dictionary<HostedDocumentLink, List<string>>> ResolveRelatedLinksAsync(IEnumerable<HostedDocumentLink> inputs)
     {
@@ -58,7 +99,7 @@ public partial class WebPagesController
     }
 
     private async Task<Dictionary<string, List<RelatedMention>>> RelatedCommentMentionsAsync(
-        HostedSite current, List<HostedSite> visible, string? userId, HashSet<string> sharedIds)
+        HostedSite current, List<HostedSite> visible, string? userId, HashSet<string> sharedIds, bool currentOnly = false)
     {
         var origins = await RelatedOriginsAsync();
         var sites = visible.ToDictionary(x => x.Id);
@@ -80,10 +121,10 @@ public partial class WebPagesController
                 history[site.Id] = canViewHistory = userId != null && await _siteService.CanEditSiteAsync(site, userId, CancellationToken.None);
             return HostedSiteCommentRules.CanViewReviewVersion(HostedSiteCommentRules.StoredVersion(comment), HostedSiteService.EffectiveContentVersion(site), canViewHistory);
         }
-        var seedIds = visible.Select(x => x.Id).ToList();
+        var seedIds = currentOnly ? new List<string> { current.Id } : visible.Select(x => x.Id).ToList();
         var comments = await _db.HostedSiteComments.Find(x => seedIds.Contains(x.SiteId) && !x.IsDeleted)
             .SortByDescending(x => x.CreatedAt).ThenByDescending(x => x.Id).Limit(500).Project(HostedSiteService.CommentMetadata).ToListAsync();
-        var incoming = await _db.HostedSiteComments.Find(x => x.ReferencedSiteIds.Contains(current.Id) && !x.IsDeleted && !seedIds.Contains(x.SiteId))
+        var incoming = currentOnly ? new List<HostedSiteComment>() : await _db.HostedSiteComments.Find(x => x.ReferencedSiteIds.Contains(current.Id) && !x.IsDeleted && !seedIds.Contains(x.SiteId))
             .SortByDescending(x => x.CreatedAt).ThenByDescending(x => x.Id).Limit(100).Project(HostedSiteService.CommentMetadata).ToListAsync();
         var allowed = new List<HostedSiteComment>();
         foreach (var comment in comments.Concat(incoming))
@@ -98,7 +139,7 @@ public partial class WebPagesController
         void Add(string target, HostedSiteComment comment, HostedSite source)
         {
             if (!mentions.TryGetValue(target, out var list)) mentions[target] = list = new();
-            if (list.All(x => x.CommentId != comment.Id)) list.Add(new(comment.Id, comment.AuthorName, source.Id, source.Title, $"评论区{comment.AuthorName}提到"));
+            if (list.All(x => x.CommentId != comment.Id)) list.Add(new(comment.Id, comment.ParentId ?? comment.Id, comment.AuthorName, source.Id, source.Title, $"评论区{comment.AuthorName}提到"));
         }
         foreach (var comment in allowed.OrderByDescending(x => x.CreatedAt).ThenByDescending(x => x.Id))
         {

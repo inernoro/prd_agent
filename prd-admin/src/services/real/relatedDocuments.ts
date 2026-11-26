@@ -4,6 +4,10 @@ import type { ApiResponse } from '@/types/api';
 
 export const HOSTED_SITE_PERMISSIONS_CHANGED = 'hosted-site-permissions-changed';
 
+export interface DiscussionReference {
+  commentId: string; threadId?: string; authorName: string; sourceSiteId: string; sourceTitle: string; label: string;
+}
+export interface BodyReference { linkIndex: number; label: string }
 export interface RelatedDocument {
   id: string;
   title: string;
@@ -12,9 +16,11 @@ export interface RelatedDocument {
   isMain?: boolean;
   href?: string;
   isManual?: boolean;
+  collectionContextId?: string;
   canEditTags?: boolean;
   tags?: string[];
-  mentions?: Array<{ commentId: string; authorName: string; sourceSiteId: string; sourceTitle: string; label: string }>;
+  mentions?: DiscussionReference[];
+  bodyReferences?: BodyReference[];
   preview?: { id: string; siteUrl: string; entryFile: string; wrappedAssetType?: string; contentShape?: 'self-contained-html' | 'multi-file'; requiresPreviewBridge?: boolean; useShareAccess: boolean };
 }
 export interface RelatedDocuments {

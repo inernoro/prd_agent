@@ -31,7 +31,7 @@ export function HostedCollectionLibrary({ onBack, recentId, onArrival, renderCar
   onBack: () => void;
   recentId: string | null;
   onArrival: (arrival: CollectionArrival) => void;
-  renderCards: (items: HostedSite[]) => ReactNode;
+  renderCards: (items: HostedSite[], collectionId: string) => ReactNode;
 }) {
   const [items, setItems] = useState<HostedCollection[]>([]);
   const [members, setMembers] = useState<Record<string, HostedSite>>({});
@@ -98,7 +98,7 @@ export function HostedCollectionLibrary({ onBack, recentId, onArrival, renderCar
               {item.id === recentId && <span className="collection-recent-label">刚收入</span>}
               <Button size="xs" variant="ghost" aria-label={`管理合集：${item.title}`} onClick={() => setSelected(item.id)}>管理</Button>
             </div>
-            {renderCards(cards)}
+            {renderCards(cards, item.id)}
             {hidden > 0 && <p>{hidden} 份文档当前不可查看，可在管理中调整。</p>}
           </section>;
         })}

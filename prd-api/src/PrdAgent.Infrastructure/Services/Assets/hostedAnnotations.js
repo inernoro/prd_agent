@@ -633,6 +633,14 @@
     if (data.type === 'map-annotation-dismiss-selection' && context.suggestSelection) {
       clearSelectionCandidate(); window.getSelection()?.removeAllRanges(); return;
     }
+    if (data.type === 'map-annotation-focus-body-reference') {
+      if (!Number.isInteger(data.linkIndex) || data.linkIndex < 0 || data.linkIndex >= 500) return;
+      var link = document.body?.querySelectorAll('a[href]')[data.linkIndex];
+      if (!link || (link.textContent.trim().slice(0, 100) || '正文链接') !== data.label) return;
+      link.focus({ preventScroll: true });
+      link.scrollIntoView({ block: 'center' });
+      return;
+    }
     if (data.type === 'map-annotation-focus') {
       var thread = (context.threads || []).find(function (item) { return item.id === data.id; });
       var found = thread && resolve(thread.anchor);

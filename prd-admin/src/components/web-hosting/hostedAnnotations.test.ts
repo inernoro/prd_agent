@@ -28,6 +28,20 @@ async function setup() {
 }
 
 describe('hosted page annotation runtime', () => {
+  it('定位正文引用时只聚焦经校验的原始链接', async () => {
+    const t = await setup();
+    t.win.document.querySelector('main')!.insertAdjacentHTML('beforeend',
+      '<a href="/web-pages?openSite=target">阅读依据</a><a href="/help">帮助</a>');
+    const link = t.win.document.querySelector('a')!;
+    const scroll = vi.fn();
+    link.scrollIntoView = scroll;
+    t.init();
+    t.send({ type: 'map-annotation-focus-body-reference', linkIndex: 0, label: '帮助' });
+    expect(scroll).not.toHaveBeenCalled();
+    t.send({ type: 'map-annotation-focus-body-reference', linkIndex: 0, label: '阅读依据' });
+    expect(t.win.document.activeElement).toBe(link);
+    expect(scroll).toHaveBeenCalledOnce();
+  });
   it('双栏以原文段序分组，只弱化隐藏后的底色，保留逐条编号', async () => {
     const t = await setup();
     const paragraph = t.win.document.getElementById('intro')!;

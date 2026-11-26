@@ -270,6 +270,9 @@ export function useHostedAnnotations(frameRef: RefObject<HTMLIFrameElement>, sit
     frameRef.current?.contentWindow?.postMessage({ type: 'map-annotation-previews-show', siteId, nonce }, '*');
   }, [frameRef, siteId, nonce]);
   const openThread = useCallback((id: string) => { setActiveId(id); setEnabled(false); openRef.current(); }, []);
+  const focusBodyReference = useCallback(({ linkIndex, label }: { linkIndex: number; label: string }) => {
+    frameRef.current?.contentWindow?.postMessage({ type: 'map-annotation-focus-body-reference', siteId, nonce, linkIndex, label }, '*');
+  }, [frameRef, siteId, nonce]);
   const bindDiscussionActions = useCallback((actions: HostedDiscussionActions) => {
     setDiscussionActions(actions);
     return () => setDiscussionActions(current => current === actions ? null : current);
@@ -284,12 +287,12 @@ export function useHostedAnnotations(frameRef: RefObject<HTMLIFrameElement>, sit
     setSelectionCandidate(null);
     frameRef.current?.contentWindow?.postMessage({ type: 'map-annotation-dismiss-selection', siteId, nonce }, '*');
   }, [frameRef, siteId, nonce]);
-  return { enabled, ready, connectionChecked, displayMode, setDisplayMode, preview, previews, allPreviewsHidden, hasHiddenPreviews: allPreviewsHidden || dismissedPreviewIds.size > 0, hideAllPreviews, showAllPreviews, dismissPreview, openThread, draftAnchor, activeId, missingIds, threads,
+  return { enabled, ready, connectionChecked, displayMode, setDisplayMode, preview, previews, allPreviewsHidden, hasHiddenPreviews: allPreviewsHidden || dismissedPreviewIds.size > 0, hideAllPreviews, showAllPreviews, dismissPreview, openThread, focusBodyReference, draftAnchor, activeId, missingIds, threads,
     select, clearDraft, focus, notifyFrame, setThreads, setEnabled, setActiveId, dualColumn, anchorLocations, readingId, column, headerTints, penHues,
     bindDiscussionActions, discussionActions, selectionCandidate, acceptSelection, dismissSelection, documentScrollTop, documentTopInset, getDocumentScroll, scrollDocument, subscribeDocumentScroll };
 }
 
 type Annotations = ReturnType<typeof useHostedAnnotations>;
 type ReaderExtras = 'dualColumn' | 'anchorLocations' | 'readingId' | 'column' | 'headerTints' | 'penHues' | 'bindDiscussionActions' | 'discussionActions'
-  | 'selectionCandidate' | 'acceptSelection' | 'dismissSelection' | 'documentScrollTop' | 'documentTopInset' | 'getDocumentScroll' | 'scrollDocument' | 'subscribeDocumentScroll';
+  | 'selectionCandidate' | 'acceptSelection' | 'dismissSelection' | 'documentScrollTop' | 'documentTopInset' | 'getDocumentScroll' | 'scrollDocument' | 'subscribeDocumentScroll' | 'focusBodyReference';
 export type HostedAnnotations = Omit<Annotations, ReaderExtras> & Partial<Pick<Annotations, ReaderExtras>>;

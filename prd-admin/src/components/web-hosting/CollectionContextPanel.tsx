@@ -5,24 +5,29 @@ import { copyWithFeedback } from '@/lib/clipboard';
 import { getCollectionContexts, getCollectionContextDocuments, getCollectionContextLinks,
   type CollectionContext, type CollectionContextPage, type CollectionHistoryItem } from '@/services/real/hostedCollections';
 import type { CollectionMember } from '@/services/real/hostedCollections';
-import { getRelatedDocuments, type RelatedDocument, type RelatedDocuments } from '@/services/real/relatedDocuments';
+import { getRelatedDocuments, type BodyReference, type DiscussionReference, type RelatedDocument, type RelatedDocuments } from '@/services/real/relatedDocuments';
 import { RelatedDocumentContent } from './RelatedDocumentContent';
 
 type DocumentActions = {
   onClose: () => void; onNavigate?: (item: RelatedDocument) => void; onTagEdit: (item: RelatedDocument) => void;
+  onReference?: (reference: DiscussionReference) => void;
+  onBodyReference?: (reference: BodyReference) => void;
   onManage: (data: RelatedDocuments) => void; onPermissions: (data: RelatedDocuments) => void;
   onEditCollection: (draft: { collectionId?: string; initialSites?: CollectionMember[] }) => void;
   cardsOnly?: boolean;
 };
 
 /** 合集是选择上下文，右侧始终是该上下文的文档；只有一组时省去选择栏。 */
-export function CollectionContextPanel({ siteId, maxHeight, onSplitChange, ...actions }: DocumentActions & { siteId: string; maxHeight: number; onSplitChange: (split: boolean) => void }) {
+export function CollectionContextPanel({ siteId, initialContextId, maxHeight, onSplitChange, onSelectContext, ...actions }: DocumentActions & { siteId: string; initialContextId?: string; maxHeight: number; onSplitChange: (split: boolean) => void; onSelectContext?: (id: string) => void }) {
+  const initialScope = useRef(initialContextId);
   const [search, setSearch] = useState('');
   const [keyword, setKeyword] = useState('');
   const [page, setPage] = useState(1);
   const [reload, setReload] = useState(0);
   const [result, setResult] = useState<CollectionContextPage | null>(null);
-  const [selectedId, setSelectedId] = useState('');
+  const [selected, setSelected] = useState<CollectionContext | null>(null);
+  const selection = useRef<CollectionContext | null>(null);
+  const select = (context: CollectionContext | null) => { selection.current = context; setSelected(context); };
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const footer = useRef<HTMLDivElement>(null);
@@ -36,7 +41,7 @@ export function CollectionContextPanel({ siteId, maxHeight, onSplitChange, ...ac
     if (typeof ResizeObserver === 'undefined') return;
     const observer = new ResizeObserver(measure); observer.observe(element);
     return () => observer.disconnect();
-  }, [ready, selectedId]);
+  }, [ready, selected?.id]);
   useEffect(() => {
     if (search.trim() === keyword) return;
     const timer = setTimeout(() => { setKeyword(search.trim()); setPage(1); }, 250);
@@ -44,11 +49,18 @@ export function CollectionContextPanel({ siteId, maxHeight, onSplitChange, ...ac
   }, [search, keyword]);
   useEffect(() => {
     let alive = true; setLoading(true); setError('');
-    void getCollectionContexts(siteId, page, keyword).then(response => {
+    const requestedId = selection.current?.id ?? initialScope.current;
+    const request = requestedId ? getCollectionContexts(siteId, page, keyword, requestedId) : getCollectionContexts(siteId, page, keyword);
+    void request.then(response => {
       if (!alive) return;
       if (response.success) {
-        setResult(response.data);
-        setSelectedId(current => response.data.items.some(item => item.id === current) ? current : response.data.items[0]?.id ?? '');
+        const next = response.data;
+        setResult(next);
+        const id = selection.current?.id ?? initialScope.current;
+        const match = next.items.find(item => item.id === id) ?? (next.selected?.id === id ? next.selected : undefined);
+        if (match) select(match);
+        else if (!keyword && next.totalContexts === 1) select(next.items[0] ?? null);
+        else if (requestedId === id && next.selected === null) select(null);
       } else setError(response.error?.message || '合集暂时无法读取，请重试。');
     }).catch(() => { if (alive) setError('合集暂时无法读取，请检查网络后重试。'); })
       .finally(() => { if (alive) setLoading(false); });
@@ -62,7 +74,6 @@ export function CollectionContextPanel({ siteId, maxHeight, onSplitChange, ...ac
     document.addEventListener('visibilitychange', refresh);
     return () => { window.removeEventListener('hosted-comments-changed', refresh); document.removeEventListener('visibilitychange', refresh); };
   }, []);
-  const selected = result?.items.find(item => item.id === selectedId);
   const split = (result?.totalContexts ?? 0) > 1;
   useEffect(() => { onSplitChange(split); }, [split, onSplitChange]);
   const pending = loading || search.trim() !== keyword;
@@ -80,9 +91,11 @@ export function CollectionContextPanel({ siteId, maxHeight, onSplitChange, ...ac
       </label>
       <nav className="collection-context-list" aria-label="选择合集" style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
         {pending ? <div className="related-empty" role="status"><MapSpinner size={16} />正在查找…</div>
-          : result.items.map(context => <section className={`collection-context-entry ${context.id === selectedId ? 'is-selected' : ''}`} key={context.id}>
-            <button type="button" className="collection-context-select" aria-pressed={context.id === selectedId} onClick={() => setSelectedId(context.id)}>
+          : result.items.map(context => <section className={`collection-context-entry ${context.id === selected?.id ? 'is-selected' : ''}`} key={context.id}>
+            <button type="button" className="collection-context-select" aria-pressed={context.id === selected?.id} onClick={() => { select(context); onSelectContext?.(context.id); }}>
               <strong title={context.title}>{context.title}</strong>
+              <span>{context.memberCount} 份文档 · {context.isMain ? '主文档' : '成员'}{result.items.some(item => item.id !== context.id && item.title === context.title)
+                && ` · ${new Date(context.updatedAt).toLocaleDateString('zh-CN')}`}</span>
             </button>
           </section>)}
         {!pending && !result.items.length && <div className="collection-context-empty">没有找到匹配合集。<button type="button" onClick={clear}>查看全部合集</button></div>}
@@ -93,12 +106,11 @@ export function CollectionContextPanel({ siteId, maxHeight, onSplitChange, ...ac
         </nav></footer>}
     </aside>}
     <div className="collection-context-documents" style={{ minWidth: 0, minHeight: 0, overflow: 'hidden' }}>
-      {pending ? <div className="related-empty" role="status"><MapSpinner size={20} />正在读取合集…</div>
-        : selected || result.totalContexts === 0 ? <ContextDocuments key={`${siteId}:${selected?.id ?? 'related'}:${reload}`} siteId={siteId} maxHeight={contentHeight} context={selected} {...actions} />
+      {selected || result.totalContexts === 0 ? <ContextDocuments key={`${siteId}:${selected?.id ?? 'related'}:${reload}`} siteId={siteId} maxHeight={contentHeight} context={selected ?? undefined} {...actions} />
           : <div className="related-empty">选择左侧合集查看文档。</div>}
     </div></div>
     {selected && !selected.id.startsWith('manual:') && <div ref={footer} className="collection-context-link-footer" role="region" aria-label="合集链接操作">
-      <CollectionLinks key={`${pending ? 'pending' : selected?.id ?? 'none'}:${reload}`} siteId={siteId} context={pending ? undefined : selected} pending={pending} maxListHeight={Math.min(120, Math.floor(maxHeight / 3))} />
+      <CollectionLinks key={`${selected.id}:${reload}`} siteId={siteId} context={selected} maxListHeight={Math.min(120, Math.floor(maxHeight / 3))} />
     </div>}
   </div>;
 }
@@ -129,13 +141,15 @@ function ContextDocuments({ siteId, context, maxHeight, ...actions }: DocumentAc
       : manual && data?.canManage ? { label: '管理合集', onClick: () => actions.onManage(data) }
       : !context && current && data?.canManage ? { label: '创建合集', onClick: () => actions.onEditCollection({ initialSites: [current] }) }
       : undefined;
-  return <RelatedDocumentContent includeCurrent={!!context} siteId={siteId} maxHeight={maxHeight} data={data} loading={loading} error={error} heading={context?.title ?? '合集'} cardsOnly={actions.cardsOnly} membersOnly={!!context && !manual}
+  return <RelatedDocumentContent includeCurrent={!!context} siteId={siteId} maxHeight={maxHeight} data={data} loading={loading} error={error} heading={context?.title ?? '合集'} cardsOnly={actions.cardsOnly} collectionScope={!!context && !manual}
     manageAction={manageAction ?? null} emptyMessage={context ? '没有其他合集成员。' : '这份文档尚未加入合集。'}
     onReload={() => setReload(value => value + 1)} onManage={() => { if (data) actions.onManage(data); }} onPermissions={() => { if (data) actions.onPermissions(data); }}
-    onTagEdit={actions.onTagEdit} onClose={actions.onClose} onNavigate={actions.onNavigate} />;
+    onTagEdit={actions.onTagEdit} onClose={actions.onClose} onNavigate={actions.onNavigate && (item => actions.onNavigate?.({
+      ...item, collectionContextId: item.isManual !== false ? contextId : undefined,
+    }))} onReference={actions.onReference} onBodyReference={actions.onBodyReference} />;
 }
 
-function CollectionLinks({ siteId, context, pending, maxListHeight }: { siteId: string; context?: CollectionContext; pending: boolean; maxListHeight: number }) {
+function CollectionLinks({ siteId, context, maxListHeight }: { siteId: string; context: CollectionContext; maxListHeight: number }) {
   const [expanded, setExpanded] = useState(false);
   const [page, setPage] = useState(1);
   const [result, setResult] = useState<{ items: CollectionHistoryItem[]; total: number; pageSize: number } | null>(null);
@@ -167,13 +181,14 @@ function CollectionLinks({ siteId, context, pending, maxListHeight }: { siteId: 
         <button type="button" disabled={loading || page * result.pageSize >= result.total} onClick={() => setPage(value => value + 1)}>下一页</button>
       </nav>}
     </div>}
+    <div className="collection-context-link-label"><span title={context.title}>{context.title}</span></div>
     <div className="collection-context-address-row">
       <input aria-label="合集完整地址" value={address} readOnly title={address} onFocus={event => event.currentTarget.select()}
-        placeholder={pending ? '正在读取合集链接…' : context ? '该合集暂无包含此文档的分享链接' : '当前文档暂无合集分享链接'} />
+        placeholder="该合集暂无包含此文档的分享链接" />
       {link && !link.isActive && <small className="collection-context-link-status" role="status">{link.statusLabel}</small>}
       <div className="collection-context-link-actions">
-        <button type="button" disabled={!address || pending} onClick={() => void copy()}><Copy size={14} aria-hidden />复制合集链接</button>
-        {link?.isActive && !pending ? <a href={address} target="_blank" rel="noopener noreferrer"><ExternalLink size={14} aria-hidden />打开合集</a>
+        <button type="button" disabled={!address} onClick={() => void copy()}><Copy size={14} aria-hidden />复制合集链接</button>
+        {link?.isActive ? <a href={address} target="_blank" rel="noopener noreferrer"><ExternalLink size={14} aria-hidden />打开合集</a>
           : <button type="button" disabled title={link ? link.statusLabel : '暂无合集分享链接'}><ExternalLink size={14} aria-hidden />打开合集</button>}
         {context && context.shareCount > 1 && <button type="button" className="collection-context-more" aria-expanded={expanded} onClick={() => setExpanded(value => !value)}>{expanded ? '收起链接' : `查看全部 ${context.shareCount} 条链接`}</button>}
       </div>

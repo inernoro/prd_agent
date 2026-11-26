@@ -1,10 +1,10 @@
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import { ChevronLeft, ChevronRight, ExternalLink, FolderPlus, Grid2X2, List, ShieldAlert, ShieldCheck, Star, Tags } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { SitePreview } from '@/components/SitePreview';
 import { useHostedSiteWindow } from './useHostedSiteWindow';
-import type { RelatedDocument, RelatedDocuments, RelatedDocumentSource } from '@/services/real/relatedDocuments';
+import type { BodyReference, DiscussionReference, RelatedDocument, RelatedDocuments, RelatedDocumentSource } from '@/services/real/relatedDocuments';
 
 function useRelatedNavigation(onNavigate: ((item: RelatedDocument) => void) | undefined, onClose: () => void) {
   const siteWindow = useHostedSiteWindow();
@@ -18,10 +18,12 @@ function useRelatedNavigation(onNavigate: ((item: RelatedDocument) => void) | un
   return { navigate, siteWindow };
 }
 
-export function RelatedDocumentContent({ siteId, data, error = '', loading, source, compact = true, maxHeight, includeCurrent = false, cardsOnly = false, membersOnly = false, onReload, onManage, onPermissions, onTagEdit, onNavigate, onClose, heading = '关联文档', manageAction, emptyMessage }: {
+export function RelatedDocumentContent({ siteId, data, error = '', loading, source, compact = true, maxHeight, includeCurrent = false, cardsOnly = false, membersOnly = false, collectionScope = false, onReload, onManage, onPermissions, onTagEdit, onNavigate, onReference, onBodyReference, onClose, heading = '关联文档', manageAction, emptyMessage }: {
   siteId: string; data: RelatedDocuments | null; error?: string; loading: boolean; source?: RelatedDocumentSource; compact?: boolean; maxHeight?: number; includeCurrent?: boolean; cardsOnly?: boolean; membersOnly?: boolean;
   onReload: () => void; onManage: () => void; onPermissions: () => void; onTagEdit: (item: RelatedDocument) => void;
   onNavigate?: (item: RelatedDocument) => void; onClose: () => void; heading?: string;
+  collectionScope?: boolean; onReference?: (reference: DiscussionReference) => void;
+  onBodyReference?: (reference: BodyReference) => void;
   manageAction?: { label: string } & ({ href: string } | { onClick: () => void }) | null;
   emptyMessage?: string;
 }) {
@@ -42,7 +44,7 @@ export function RelatedDocumentContent({ siteId, data, error = '', loading, sour
   const setTagTarget = onTagEdit;
   const refresh = onReload;
   const displayed = data?.items.filter(item => includeCurrent || item.id !== siteId)
-    .filter(item => membersOnly ? item.isManual !== false : referenceScope === 'all' || (referenceScope === 'members' ? item.isManual !== false : item.isManual === false)) ?? [];
+    .filter(item => membersOnly ? item.isManual !== false : collectionScope || referenceScope === 'all' || (referenceScope === 'members' ? item.isManual !== false : item.isManual === false)) ?? [];
   const pages = Math.max(1, Math.ceil(displayed.length / 9));
   const currentPage = Math.min(page, pages - 1);
   return <section className="related-document-content" aria-label={heading} style={{ minHeight: 0, maxHeight: maxHeight ?? 'calc(100dvh - 44px)' }}>
@@ -54,7 +56,7 @@ export function RelatedDocumentContent({ siteId, data, error = '', loading, sour
       {action && ('href' in action ? <a className="related-text-button" href={action.href}><ExternalLink size={14} />{action.label}</a>
         : <button className="related-text-button" type="button" onClick={action.onClick}><FolderPlus size={14} />{action.label}</button>)}</div>
     </div>
-        {!membersOnly && data?.items.some(item => item.isManual === false) && <div className="related-tag-filters" aria-label="按关联来源筛选">
+        {!membersOnly && !collectionScope && data?.items.some(item => item.isManual === false) && <div className="related-tag-filters" aria-label="按关联来源筛选">
           <button type="button" aria-pressed={referenceScope === 'all'} onClick={() => { setReferenceScope('all'); setPage(0); }}>全部</button>
           <button type="button" aria-pressed={referenceScope === 'members'} onClick={() => { setReferenceScope('members'); setPage(0); }}>{data.contextLabel || '手动关联'}</button>
           <button type="button" aria-pressed={referenceScope === 'references'} onClick={() => { setReferenceScope('references'); setPage(0); }}>评论引用</button>
@@ -63,7 +65,13 @@ export function RelatedDocumentContent({ siteId, data, error = '', loading, sour
           {error ? <div className="related-empty" role="alert">{error}<Button size="sm" onClick={() => { refresh(); }}>重新加载</Button></div>
             : loading ? <div className="related-empty"><MapSpinner size={20} />正在加载关联文档…</div>
               : <div className={`related-document-grid ${!cardsOnly && view === 'list' ? 'is-list' : ''}`}>
-                {displayed.slice(currentPage * 9, currentPage * 9 + 9).map((item, index) => { const Card = item.href?.startsWith('/s/') ? 'a' : 'button'; return <div key={item.id} className={`related-item${item.canEditTags ? ' can-edit-tags' : ''}`}>
+                {displayed.slice(currentPage * 9, currentPage * 9 + 9).map((item, index) => {
+                  const Card = item.href?.startsWith('/s/') ? 'a' : 'button';
+                  const outside = collectionScope && item.isManual === false;
+                  const position = currentPage * 9 + index;
+                  return <Fragment key={item.id}>
+                  {outside && (!index || displayed[position - 1].isManual !== false) && <h3 className="related-outside-heading">合集外引用</h3>}
+                  <div className={`related-item${item.canEditTags ? ' can-edit-tags' : ''}`}>
                   <Card href={Card === 'a' ? item.href : undefined} type={Card === 'button' ? 'button' : undefined} className={`related-document-card ${item.id === siteId ? 'is-current' : ''}`} aria-current={item.id === siteId ? 'page' : undefined}
                     onClick={event => {
                       if (item.id === siteId) { event.preventDefault(); close(); return; }
@@ -73,16 +81,27 @@ export function RelatedDocumentContent({ siteId, data, error = '', loading, sour
                       {item.preview ? <SitePreview decorative url={item.preview.siteUrl} site={{ ...item.preview,
                         shareAccess: item.preview.useShareAccess && token ? { token, password } : undefined }} className="related-live-preview" />
                         : <span className="related-no-preview">暂无预览</span>}
-                      <span className="related-preview-index">{String(currentPage * 9 + index + 1).padStart(2, '0')}</span>
+                      {!outside && <span className="related-preview-index">{String(position + 1).padStart(2, '0')}</span>}
                       {item.isMain && <span className="related-main-badge"><Star size={10} />主文档</span>}
                     </div>
                     <div className="related-card-content"><strong title={item.title}>{item.title}</strong>{item.description && <p>{item.description}</p>}
-                      {!!item.mentions?.length && <div className="related-tag-list">
+                      {!onReference && !!item.mentions?.length && <div className="related-tag-list">
                         {item.mentions?.slice(0, 2).map(mention => <span key={mention.commentId} className="related-mention-tag" title={`${mention.sourceTitle} · ${mention.label}`}>{mention.label}</span>)}
                       </div>}
                       {item.id === siteId && <span className="related-card-status"><span className="related-current-dot" />当前文档</span>}
                     </div>
                   </Card>
+                  {((onReference && !!item.mentions?.length) || !!item.bodyReferences?.length) && <div className="related-reference-actions">
+                    {item.bodyReferences?.map(reference => onBodyReference
+                      ? <button key={reference.linkIndex} type="button" className="related-mention-tag" title={reference.label}
+                        aria-label={`正文引用：${item.title} · ${reference.label}`} onClick={() => { close(); onBodyReference(reference); }}>正文引用</button>
+                      : <span key={reference.linkIndex} title={reference.label} className="related-mention-tag">正文引用</span>)}
+                    {onReference && item.mentions?.map(mention => mention.sourceSiteId === siteId
+                      ? <button key={mention.commentId} type="button" className="related-mention-tag"
+                        title={mention.label} aria-label={`讨论引用：${item.title} · ${mention.label}`}
+                        onClick={() => { close(); onReference(mention); }}>讨论引用</button>
+                      : <span key={mention.commentId} className="related-mention-tag" title={mention.sourceTitle}>{mention.label}</span>)}
+                  </div>}
                   {item.href?.startsWith('/s/') ? <a className="related-open-new-tab" href={item.href} target="_blank" rel="noopener noreferrer" data-no-drag
                     aria-label={`在新标签页打开：${item.title}`} title="在新标签页打开" onClick={event => event.stopPropagation()}><ExternalLink size={12} /></a>
                     : <button type="button" className="related-open-new-tab" data-no-drag disabled={siteWindow.opening}
@@ -90,7 +109,7 @@ export function RelatedDocumentContent({ siteId, data, error = '', loading, sour
                       {siteWindow.opening ? <MapSpinner size={12} /> : <ExternalLink size={12} />}</button>}
                   {item.canEditTags && <button type="button" className="related-tag-edit" aria-label={`编辑标签：${item.title}`} title="编辑文档标签"
                     onClick={() => { close(); setTagTarget(item); }}><Tags size={13} /></button>}
-                </div>; })}
+                </div></Fragment>; })}
                 {!displayed.length && <p className="related-small-note">{referenceScope === 'all' ? emptyMessage ?? '暂无关联文档。' : '没有符合条件的关联文档。'}</p>}
               </div>}
 

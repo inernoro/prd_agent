@@ -984,6 +984,9 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
               {collectionManagerOpen && <HostedCollectionEditor shareToken={token} initialSharing={collectionShareFirst} onClose={() => { setCollectionManagerOpen(false); void fetchShare(password || undefined); }} />}
               <RelatedDocumentsBar siteId={liveSite.id} variant="toolbar" reviewReader collectionNavigation membersOnly={data.shareType === 'collection'}
                 source={data.shareType === 'collection' || !liveSite.viewerIsOwner ? { token, password: password || undefined } : undefined}
+                contextTitle={data.shareType === 'collection' ? data.title : undefined}
+                onReference={reference => { annotations.openThread(reference.threadId ?? reference.commentId); setShowComments(true); }}
+                onBodyReference={annotations.ready && !review.historical ? annotations.focusBodyReference : undefined}
                 onNavigate={openRelatedDocument} />
               {relatedAccountSite && <SitePreviewModal key={relatedAccountSite.id} site={relatedAccountSite}
                 canToggleComments={relatedAccountSite.ownerUserId === currentUserId}

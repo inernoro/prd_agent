@@ -62,7 +62,9 @@ public partial class WebPagesController
         var manualSites = visible.ToList();
         var mainSiteId = (contextGroup != null || collectionShare != null || manualSites.Count > 1)
             && manualSites.Any(x => x.Id == group?.MainSiteId) ? group?.MainSiteId : null;
-        var mentions = await RelatedCommentMentionsAsync(current, visible, userId, sharedIds);
+        var collectionScope = contextGroup != null || collectionShare != null;
+        var mentions = await RelatedCommentMentionsAsync(current, visible, userId, sharedIds, currentOnly: collectionScope);
+        var bodyReferences = collectionScope ? await RelatedBodyReferencesAsync(current, visible, userId, sharedIds) : null;
         // 手动成员沿用作者保存的顺序；评论自动发现的文档由上一步附加在末尾。
         var ordered = visible;
         return Ok(ApiResponse<object>.Ok(new
@@ -78,6 +80,7 @@ public partial class WebPagesController
                 isManual = ids.Contains(x.Id),
                 canEditTags = userId != null && x.OwnerUserId == userId,
                 mentions = mentions.GetValueOrDefault(x.Id) ?? new(),
+                bodyReferences = bodyReferences?.GetValueOrDefault(x.Id) ?? new(),
                 preview = new { x.Id, x.SiteUrl, x.EntryFile, x.WrappedAssetType,
                     contentShape = HostedSiteContentShapeRules.Resolve(x), x.RequiresPreviewBridge,
                     useShareAccess = shareToken != null && sharedIds.Contains(x.Id) },
