@@ -109,6 +109,19 @@ describe('engineering planning HTTP contracts', () => {
     return created.body.result;
   }
 
+  it('serves timeline dates only on request and within the readable project', async () => {
+    const debt = await createDebt();
+    await createDebt({ project: projectB });
+    expect((await call('')).body.timeline).toBeUndefined();
+    expect((await call('?timeline=1', undefined, { actor: 'anonymous' })).status).toBe(404);
+    const response = await call('?timeline=1', undefined, { actor: 'reader' });
+    expect(response.status).toBe(200);
+    expect(response.body.timeline.debts).toEqual([expect.objectContaining({ id: debt.id, title: debt.title, createdAt: debt.createdAt })]);
+    expect(response.body.timeline.debts[0]).not.toHaveProperty('whyDebt');
+    expect(response.body.timeline.debts[0]).not.toHaveProperty('source');
+    expect(response.body.timeline.debtEvents).toEqual([expect.objectContaining({ entityId: debt.id, type: 'created' })]);
+  });
+
   async function write(command: object) {
     const response = await call('/commands', command);
     expect([200, 201], JSON.stringify(response.body)).toContain(response.status);

@@ -4,7 +4,7 @@ import { apiRequest } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Section, ErrorBlock, LoadingBlock } from '../components';
 
-type User = { id: string; name: string; status: string; projectIds: string[] };
+type User = { id: string; name: string; status: string; isAdministrator?: boolean; projectIds: string[] };
 type Project = { id: string; name: string; repository?: string };
 type Connection = { id: string; agentName: string; repository: string; status: string; projectId?: string; userId?: string; candidates: Project[] };
 type Legacy = { id: string; projectId: string; projectName: string; label?: string; scope: string; createdAt: string };
@@ -15,7 +15,7 @@ const STATUS: Record<string, string> = { pending: '待核对', approved: '已批
 export function IdentityRecoveryPanel({ onToast }: { onToast: (s: string) => void }): JSX.Element {
   const [data, setData] = useState<Data | null>(null);
   const [error, setError] = useState(''); const [busy, setBusy] = useState('');
-  const [choices, setChoices] = useState<Record<string, { userId?: string; projectId?: string }>>({});
+  const [choices, setChoices] = useState<Record<string, { userId?: string; projectId?: string; accountProposals?: boolean }>>({});
   const [claim, setClaim] = useState(''); const [claimUser, setClaimUser] = useState('');
   const [legacySearch, setLegacySearch] = useState('');
   const query = legacySearch.trim().toLocaleLowerCase();
@@ -61,10 +61,20 @@ export function IdentityRecoveryPanel({ onToast }: { onToast: (s: string) => voi
                 <option value="">核对账号后选择</option>{users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
               </select></label>
             </div>
+            {users.some(user => user.id === userId && user.isAdministrator) ? (
+              <label className="mt-3 flex items-start gap-2 text-sm">
+                <input type="checkbox" className="mt-1" checked={choices[r.id]?.accountProposals === true}
+                  onChange={event => setChoices(value => ({ ...value, [r.id]: { projectId, userId, accountProposals: event.target.checked } }))}
+                  disabled={Boolean(busy)} />
+                允许该设备为本项目成员提交账号操作提案，执行仍由系统所有者逐次确认。
+              </label>
+            ) : null}
             {!r.candidates.length ? <p className="mt-2 text-sm text-muted-foreground">没有匹配仓库的原项目，不会自动新建。请核对Agent所在仓库。</p> : null}
             {projectId && !users.length ? <p className="mt-2 text-sm text-muted-foreground">尚无正常账号获此项目授权。先在用户管理开通账号或恢复其原项目授权，再刷新。</p> : null}
             <div className="mt-3 flex gap-2"><Button size="sm" disabled={!projectId || !users.some(u => u.id === userId) || Boolean(busy)}
-              onClick={() => void perform(`/api/identity/connections/${r.id}/approve`, { projectId, userId }, '已核对原账号与原项目，Agent将自动保存并验证连接', r.id)}>
+              onClick={() => void perform(`/api/identity/connections/${r.id}/approve`, {
+                projectId, userId, ...(choices[r.id]?.accountProposals ? { allowAccountProposals: true } : {}),
+              }, '已核对原账号与原项目，Agent将自动保存并验证连接', r.id)}>
               {busy === r.id ? '正在保存' : '批准原项目接入'}</Button>
               <Button size="sm" variant="outline" disabled={Boolean(busy)} onClick={() => void perform(`/api/identity/connections/${r.id}/reject`, {}, '已拒绝这条设备接入申请', r.id)}>拒绝</Button></div>
           </> : <p className="text-xs text-muted-foreground">账号：{data.users.find(u => u.id === r.userId)?.name || '已核对'} · 原项目：{r.candidates.find(p => p.id === r.projectId)?.name || '已核对'}</p>}

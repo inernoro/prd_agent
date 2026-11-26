@@ -1,318 +1,394 @@
-import { useContext, useEffect, useRef, useState } from 'react';
-import { ConsoleAuthContext } from '@/lib/consoleAuthContext';
-import { useSettingsSessionState } from '../useSettingsSessionState';
-import { consoleAccountIdentity } from '@/lib/consoleIdentity';
-import { ShieldCheck, UserPlus, Users } from 'lucide-react';
+import { type FormEvent, useContext, useEffect, useState } from 'react';
+import { ArrowRight, CircleUser, Search, UserPlus } from 'lucide-react';
 
+import { Button } from '@/components/ui/button';
 import { ConfirmAction } from '@/components/ui/confirm-action';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Button } from '@/components/ui/button';
+import { ConsoleAuthContext } from '@/lib/consoleAuthContext';
+import { consoleAccountIdentity } from '@/lib/consoleIdentity';
+import { apiRequest, createLocalUser, inviteLocalUser, listUsers, updateUser, type CdsPublicUser } from '@/lib/api';
 import {
-  apiRequest,
-  ApiError,
-  listUsers,
-  createLocalUser,
-  updateUser,
-  type CdsPublicUser,
-} from '@/lib/api';
-import { Section, Field, LoadingBlock, ErrorBlock, EmptyBlock } from '../components';
+  accountLoginMethods, accountViews, actionLabels, actionStateLabels, hasAccountLogin, listAccountActions,
+  type AccountAction, type AccountActionEntry, type AccountView, type AvailableAccountLogins,
+} from '../accountAccess';
+import { EmptyBlock, ErrorBlock, Field, LoadingBlock, MetricTile, Section } from '../components';
+import { AccountActionDialog, accountInputClass } from '../components/AccountActionDialog';
+import { AccountPermissionMatrix, accountPermissionDescription } from '../components/AccountPermissionMatrix';
 import { IdentityRecoveryPanel } from '../components/IdentityRecoveryPanel';
+import { RecoveryRequestsPanel } from '../components/RecoveryRequestsPanel';
 import { UserProjectAccessDialog } from '../components/UserProjectAccessDialog';
+import { SystemPasswordDialog, SystemPasswordPanel } from '../components/SystemPasswordPanel';
+import { KeyNotifications, type AccessRequestNotice } from '../components/KeyNotifications';
+import { accountRoleLabel } from './MyAccountTab';
 
-interface MeUser {
-  id: string;
-  username: string | null;
-  authProvider?: 'github' | 'local' | 'legacy' | 'sso';
-  isSystemOwner: boolean;
-  name: string;
+interface Props {
+  onToast: (message: string) => void;
+  durableUsers: boolean;
+  availableLogins: AvailableAccountLogins;
+  view: AccountView;
+  changeView: (view: AccountView, selectedId?: string) => void;
+  selectionId?: string;
 }
 
-const touchActionClass = 'min-h-[3.25rem] text-base [&_svg]:size-[1.875rem] lg:min-h-0 lg:text-xs lg:[&_svg]:size-4';
-const inputCls =
-  'min-h-[3.25rem] text-base lg:min-h-0 lg:text-sm w-full rounded-md border border-border bg-input px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring';
+function accountName(user: CdsPublicUser): string {
+  return user.username || user.githubLogin || user.name;
+}
 
-export function UsersTab(props: { onToast: (msg: string) => void; durableUsers: boolean }): JSX.Element {
+function accountSource(user: CdsPublicUser, availableLogins: AvailableAccountLogins): string {
+  if (user.invitationPending) return '等待激活';
+  if (user.authProvider === 'legacy') return '系统账号';
+  return accountLoginMethods.filter(([method]) => availableLogins[method] && hasAccountLogin(user, method))
+    .map(([, label]) => label).join(' · ');
+}
+
+const memberStateLabels = { active: '正常', disabled: '已停用', invited: '等待激活', unavailable: '无可用登录方式' } as const;
+
+function memberState(user: CdsPublicUser, signIn: string): keyof typeof memberStateLabels {
+  if (user.status === 'disabled') return 'disabled';
+  if (user.invitationPending) return 'invited';
+  return signIn ? 'active' : 'unavailable';
+}
+
+export function UsersTab(props: Props): JSX.Element {
   const { status, retry } = useContext(ConsoleAuthContext);
   const identity = consoleAccountIdentity(status);
-  if (!identity) return <div className="space-y-3"><ErrorBlock message="当前账号身份未确认，无法承接账号管理操作。" /><Button onClick={retry}>重新读取当前身份</Button></div>;
-  return <UsersTabForAccount key={identity} {...props} />;
+  if (!identity || !status?.user?.id) {
+    return <div className="space-y-3"><ErrorBlock message="当前登录身份尚未确认" /><Button onClick={retry}>重新读取当前身份</Button></div>;
+  }
+  return <AccountManagement key={identity} viewerId={status.user.id}
+    owner={status.user.isSystemOwner === true} {...props} />;
 }
 
-function UsersTabForAccount({ onToast, durableUsers }: { onToast: (msg: string) => void; durableUsers: boolean }): JSX.Element {
-  const alive = useRef(true);
-  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
-  const [me, setMe] = useState<MeUser | null>(null);
-  const [meLoaded, setMeLoaded] = useState(false);
-  const [meError, setMeError] = useState('');
-  const [meAttempt, setMeAttempt] = useState(0);
-  const [createOpen, setCreateOpen] = useState(false);
-  const [query, setQuery] = useState('');
-  const [busyUser, setBusyUser] = useSettingsSessionState<string>('users:busyUser', '', Boolean);
-  const [resetUser, setResetUser] = useSettingsSessionState<CdsPublicUser | null>('users:resetUser', null);
-  const [resetValue, setResetValue] = useSettingsSessionState<string>('users:resetValue', '');
-  const [resetError, setResetError] = useSettingsSessionState<string>('users:resetError', '');
-  const [resetUnknown, setResetUnknown] = useSettingsSessionState<boolean>('users:resetUnknown', false);
-  const [unconfirmedResets, setUnconfirmedResets] = useSettingsSessionState<Record<string, { value: string; requestedAt: string; expired?: boolean }>>('users:unconfirmed-resets', {}, value => Object.keys(value).length > 0, { expireTo: value => Object.fromEntries(Object.entries(value).map(([id, pending]) => [id, { ...pending, value: '', expired: true }])) });
-
-  useEffect(() => {
-    if (Object.keys(unconfirmedResets).length === 0 && !busyUser) return;
-    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
-    window.addEventListener('beforeunload', warn); return () => window.removeEventListener('beforeunload', warn);
-  }, [unconfirmedResets, busyUser]);
-
-  // ── User list (owner) ──
+function AccountManagement({ owner, viewerId, onToast, durableUsers, availableLogins, view, changeView, selectionId }: Props & {
+  owner: boolean; viewerId: string;
+}): JSX.Element {
   const [users, setUsers] = useState<CdsPublicUser[] | null>(null);
-  const [usersError, setUsersError] = useState('');
-  const [newUsername, setNewUsername] = useState('');
-  const [newName, setNewName] = useState('');
-  const [newPassword, setNewPassword] = useState('');
-  const [createBusy, setCreateBusy] = useState(false);
-  const [createError, setCreateError] = useState('');
+  const [requests, setRequests] = useState<AccountActionEntry[] | null>(null);
+  const [readError, setReadError] = useState('');
+  const [attempt, setAttempt] = useState(0);
+  const [query, setQuery] = useState('');
+  const [roleFilter, setRoleFilter] = useState('');
+  const [stateFilter, setStateFilter] = useState('');
+  const [systemSessions, setSystemSessions] = useState<number | null>(null);
+  const [keyHandoffs, setKeyHandoffs] = useState<number | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [selected, setSelected] = useState<CdsPublicUser | null>(null);
   const [grantUser, setGrantUser] = useState<CdsPublicUser | null>(null);
+  const [subject, setSubject] = useState<React.ComponentProps<typeof AccountActionDialog>['subject'] | null>(null);
+  const [editError, setEditError] = useState('');
 
+  const refresh = () => setAttempt(value => value + 1);
+  useEffect(() => { setSubject(null); setSelected(null); setEditError(''); }, [view]);
   useEffect(() => {
-    const ctrl = new AbortController();
-    setMeLoaded(false); setMeError('');
-    apiRequest<{ user: MeUser }>('/api/me', { signal: ctrl.signal })
-      .then((data) => { if (!data.user) throw new Error('未能确认当前用户身份'); setMe(data.user); })
-      .catch((err: unknown) => { if (!ctrl.signal.aborted) setMeError(err instanceof Error ? err.message : String(err)); })
-      .finally(() => { if (!ctrl.signal.aborted) setMeLoaded(true); });
-    return () => ctrl.abort();
-  }, [meAttempt]);
-
-  const isOwner = me?.isSystemOwner === true;
-  const isLegacy = me?.authProvider === 'legacy';
-
-  const refreshUsers = async (): Promise<void> => {
-    setUsersError('');
-    try {
-      setUsers(await listUsers());
-    } catch (err) {
-      setUsersError(err instanceof ApiError ? err.message : String(err));
+    if (view === 'members' && users) setSelected(selectionId ? users.find(user => user.id === selectionId) ?? null : null);
+    if (view === 'approvals' && requests) {
+      const entry = requests.find(item => item.id === selectionId);
+      setSubject(entry ? { entry } : null);
     }
-  };
-
+  }, [view, selectionId, users, requests]);
   useEffect(() => {
-    if (isOwner) void refreshUsers();
-  }, [isOwner]);
-
-  const submitCreate = async (event: React.FormEvent): Promise<void> => {
-    event.preventDefault();
-    setCreateError('');
-    setCreateBusy(true);
-    try {
-      await createLocalUser({ username: newUsername, password: newPassword, name: newName || undefined });
-      if (!alive.current) return;
-      onToast(`已创建本地账号 ${newUsername}`);
-      setNewUsername('');
-      setNewName('');
-      setNewPassword('');
-      setCreateOpen(false);
-      await refreshUsers();
-    } catch (err) {
-      setCreateError(err instanceof ApiError ? err.message : String(err));
-    } finally {
-      setCreateBusy(false);
+    const controller = new AbortController();
+    const onError = (error: unknown) => {
+      if (!controller.signal.aborted) setReadError(error instanceof Error ? error.message : String(error));
+    };
+    setReadError('');
+    if (view === 'members') {
+      listUsers(controller.signal).then(result => { if (!controller.signal.aborted) setUsers(result); }).catch(onError);
+      listAccountActions(controller.signal).then(result => { if (!controller.signal.aborted) setRequests(result); }).catch(() => {});
+      if (owner) {
+        apiRequest<{ sessions: unknown[] }>('/api/auth/system-password', { signal: controller.signal })
+          .then(result => { if (!controller.signal.aborted) setSystemSessions(result.sessions.length); }).catch(() => {});
+        apiRequest<{ requests: AccessRequestNotice[] }>('/api/access-requests?queue=all', { signal: controller.signal })
+          .then(result => { if (!controller.signal.aborted) setKeyHandoffs(result.requests.filter(item => item.status === 'pending' && item.notificationAccountId === null).length); }).catch(() => {});
+      }
     }
-  };
+    if (view === 'approvals') {
+      listAccountActions(controller.signal).then(result => { if (!controller.signal.aborted) setRequests(result); }).catch(onError);
+    }
+    return () => controller.abort();
+  }, [attempt, view, owner]);
 
-  const toggleStatus = async (user: CdsPublicUser): Promise<void> => {
-    const next = user.status === 'active' ? 'disabled' : 'active';
-    setBusyUser(user.id);
+  async function update(user: CdsPublicUser, patch: Parameters<typeof updateUser>[1]): Promise<void> {
+    setEditError('');
     try {
-      await updateUser(user.id, { status: next });
-      if (!alive.current) return;
-      onToast(`已${next === 'disabled' ? '禁用' : '启用'} ${user.username || user.githubLogin}`);
-      await refreshUsers();
-    } catch (err) { if (alive.current) onToast(err instanceof ApiError ? err.message : String(err)); }
-    finally { setBusyUser(''); }
-  };
-
-  const resetPassword = async (event: React.FormEvent): Promise<void> => {
-    event.preventDefault();
-    if (!resetUser || resetUnknown) return;
-    if (resetValue.length < 8) { setResetError('新密码长度至少 8 位'); return; }
-    setBusyUser(resetUser.id); setResetError('');
-    try {
-      await updateUser(resetUser.id, { newPassword: resetValue });
-      if (alive.current) onToast(`已重置 ${resetUser.username || resetUser.githubLogin} 的密码`);
-      setUnconfirmedResets(current => { const next = { ...current }; delete next[resetUser.id]; return next; });
-      setResetValue(''); setResetUser(null);
-    } catch (err) {
-      const unknown = !(err instanceof ApiError && err.status >= 400 && err.status < 500 && err.status !== 408);
-      setResetUnknown(unknown);
-      if (unknown) setUnconfirmedResets(current => ({ ...current, [resetUser.id]: { value: resetValue, requestedAt: new Date().toISOString() } }));
-      setResetError(unknown ? '密码重置结果未确认，请先让该成员验证新密码，勿重复提交。' : err instanceof Error ? err.message : String(err));
-    } finally { setBusyUser(''); }
-  };
-  const needle = query.trim().toLocaleLowerCase();
-  const visibleUsers = users?.filter(user => !needle || [user.username, user.githubLogin, user.name, user.id].some(value => value?.toLocaleLowerCase().includes(needle))) || [];
-  function userActions(user: CdsPublicUser): JSX.Element {
-    return <div className="flex flex-wrap gap-2">
-      {!user.isSystemOwner ? <Button type="button" variant="outline" size="sm" className={touchActionClass} disabled={busyUser === user.id} onClick={() => setGrantUser(user)}>项目授权</Button> : null}
-      {user.authProvider === 'local' ? <Button type="button" variant="outline" size="sm" className={touchActionClass} disabled={busyUser === user.id} onClick={() => { const pending = unconfirmedResets[user.id]; setResetUser(user); setResetValue(pending?.value || ''); setResetError(pending ? `该账号上次密码重置结果未确认（${new Date(pending.requestedAt).toLocaleString()}），请让成员验证新密码。关闭弹窗不代表请求未执行。` : ''); setResetUnknown(Boolean(pending)); }}>重置密码</Button> : null}
-      {user.id !== me?.id ? <ConfirmAction scopeKey={user.id} title={`${user.status === 'active' ? '禁用' : '启用'}账号：${user.username || user.githubLogin}`} description={`账号编号：${user.id}。${user.status === 'active' ? '禁用后不能继续访问 CDS，账号和项目授权记录保留。' : '启用后按已有项目授权访问，不会新增项目权限。'}`} confirmLabel={user.status === 'active' ? '禁用账号' : '启用账号'} onConfirm={() => toggleStatus(user)} pending={busyUser === user.id} trigger={<Button type="button" variant="outline" size="sm" className={touchActionClass} disabled={busyUser === user.id}>{busyUser === user.id ? '正在更新' : user.status === 'active' ? '禁用' : '启用'}</Button>} /> : null}
-    </div>;
+      const current = await updateUser(user.id, patch);
+      if (current) setSelected(current);
+      onToast(patch.role ? '已授予管理员' : patch.externalLoginAllowed !== undefined ? '绑定资格已更新' : '账号已启用');
+      refresh();
+    } catch (error) {
+      setEditError(error instanceof Error ? error.message : String(error));
+    }
   }
 
-  if (!meLoaded) return <LoadingBlock label="加载用户信息" />;
-  if (meError) return <Section title="用户管理"><ErrorBlock message={`当前身份读取失败：${meError}`} /><Button className="mt-3" variant="outline" onClick={() => setMeAttempt(value => value + 1)}>重试读取身份</Button></Section>;
+  const needle = query.trim().toLocaleLowerCase();
+  const visibleUsers = users?.map(user => {
+    const signIn = accountSource(user, availableLogins);
+    return { user, signIn, state: memberState(user, signIn) };
+  }).filter(({ user, state }) =>
+    (!roleFilter || user.role === roleFilter) &&
+    (!stateFilter || state === stateFilter) &&
+    (!needle || [user.username, user.githubLogin, user.name, user.id].some(value => value?.toLocaleLowerCase().includes(needle)))) ?? [];
+  const isTarget = selected && selected.id !== viewerId && !selected.isSystemOwner;
+  const canChange = isTarget && selected.status === 'active';
+  const selectedSource = selected ? accountSource(selected, availableLogins) : '';
+  const approvals = requests?.filter(entry => entry.status !== 'completed' || entry.requestedVia === 'agent' ||
+    entry.requestedByAccountId !== entry.approvedByAccountId || entry.approvedByAccountId === undefined);
+  const title = accountViews.find(([value]) => value === view)?.[1];
 
   return (
-    <div className="space-y-8">
-      {!durableUsers ? (
-        <div className="rounded-md border border-border bg-[hsl(var(--surface-sunken))] px-4 py-3 text-sm leading-6 text-muted-foreground">
-          当前认证存储为内存模式，新建账号会在 CDS 重启后丢失。生产环境请配置持久化认证存储后再创建用户。
-        </div>
+    <div className="min-w-0 space-y-5">
+      <div className="account-access-view-select">
+        <label className="sr-only" htmlFor="account-view">账号与登录视图</label>
+        <select id="account-view" className={accountInputClass} value={view} onChange={event => changeView(event.target.value as AccountView)}>
+          {accountViews.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+        </select>
+      </div>
+      {readError ? (
+        <Section title={title ?? '账号与登录'}>
+          <ErrorBlock message={readError} /><Button className="mt-3" variant="outline" onClick={refresh}>重新读取</Button>
+        </Section>
       ) : null}
-
-
-      {isOwner ? (
-        <>
-
-
-          <Section
-            title="用户列表"
-            actions={<Button type="button" className={touchActionClass} onClick={() => setCreateOpen(true)}><UserPlus />创建账号</Button>}
-            description={
-              isLegacy
-                ? '持久化用户库中的账号。当前原始管理员由环境变量管理，因此不重复出现在本列表中。'
-                : '系统内所有持久化账号，可管理项目授权、禁用 / 启用账号或重置本地账号密码。'
-            }
-          >
-            {users && (users.length > 5 || query) ? <label className="mb-3 block sm:max-w-sm"><span className="sr-only">搜索用户</span><input aria-label="搜索用户" value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索账号、姓名或编号" className={inputCls} /></label> : null}
-            {usersError ? (
-              <div className="space-y-2"><ErrorBlock message={usersError} /><Button variant="outline" onClick={() => void refreshUsers()}>重新读取用户</Button></div>
-            ) : users === null ? (
-              <LoadingBlock label="加载用户列表" />
-            ) : users.length === 0 ? (
-              <EmptyBlock title="还没有用户" description="创建第一个本地账号，或邀请成员通过 GitHub 登录。" />
-            ) : (
-              <div className="hidden overflow-x-auto rounded-md border border-border lg:block">
-                <table className="w-full min-w-[42rem] text-sm">
-                  <thead className="bg-muted/40 text-left text-xs uppercase tracking-normal text-muted-foreground">
-                    <tr>
-                      <th className="px-3 py-2 font-semibold">账号</th>
-                      <th className="px-3 py-2 font-semibold">来源</th>
-                      <th className="px-3 py-2 font-semibold">状态</th>
-                      <th className="px-3 py-2 font-semibold">最近登录</th>
-                      <th className="px-3 py-2 text-right font-semibold">操作</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {visibleUsers.map((u) => (
-                      <tr key={u.id} className="border-t border-border">
-                        <td className="px-3 py-2">
-                          <div className="flex items-center gap-2 font-medium text-foreground">
-                            {u.username || u.githubLogin}
-                            {u.isSystemOwner ? (
-                              <span className="inline-flex items-center gap-1 rounded bg-primary/10 px-1.5 py-0.5 text-[0.6875rem] font-semibold text-primary">
-                                <ShieldCheck className="h-3 w-3" />
-                                所有者
-                              </span>
-                            ) : null}
-                          </div>
-                          {u.name && u.name !== (u.username || u.githubLogin) ? (
-                            <div className="text-xs text-muted-foreground">{u.name}</div>
-                          ) : null}
-                        </td>
-                        <td className="px-3 py-2 text-muted-foreground">
-                          {u.authProvider === 'local'
-                            ? '本地账号'
-                            : u.authProvider === 'legacy'
-                              ? '原始账号'
-                              : u.authProvider === 'sso'
-                                ? 'SSO'
-                                : 'GitHub'}
-                        </td>
-                        <td className="px-3 py-2">
-                          <span
-                            className={
-                              u.status === 'active'
-                                ? 'inline-flex rounded bg-ok-soft px-1.5 py-0.5 text-[0.6875rem] font-semibold text-ok'
-                                : 'inline-flex rounded bg-warn-soft px-1.5 py-0.5 text-[0.6875rem] font-semibold text-warn'
-                            }
-                          >
-                            {u.status === 'active' ? '正常' : '已禁用'}
-                          </span>
-                        </td>
-                        <td className="px-3 py-2 text-xs text-muted-foreground">
-                          {u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleString() : '从未登录'}
-                        </td>
-                        <td className="px-3 py-2">
-                          <div className="flex justify-end">{userActions(u)}</div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+      {view === 'members' && !selected && !readError ? (
+        <Section title="账号与登录" description="每人一个 CDS 账号，登录方式、项目权限、会话、审计和 Key 通知归到同一个身份。"
+          actions={<Button onClick={() => setCreateOpen(true)}><UserPlus />邀请成员</Button>}>
+          {users ? (
+            <>
+              <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
+                <MetricTile label="个人账号" value={users.length} detail={`${users.filter(user => user.role === 'admin' || user.role === 'owner').length} 位管理者`} />
+                <MetricTile label="待批申请" value={requests ? requests.filter(item => item.status === 'pending').length : '—'} />
+                <MetricTile label="待激活" value={users.filter(user => user.invitationPending).length} />
+                <MetricTile label="共用系统账号" value={owner && systemSessions !== null ? `${systemSessions} 个会话` : '—'} />
+                <MetricTile label="待交接 Key 通知" value={keyHandoffs ?? '—'} />
               </div>
-            )}
-            {users && !usersError && users.length > 0 && visibleUsers.length === 0 ? <p className="py-4 text-sm text-muted-foreground">没有匹配的账号，请调整搜索条件。</p> : null}
-            {users && !usersError ? <ul className="grid gap-3 sm:grid-cols-2 lg:hidden">{visibleUsers.map(user => <li key={user.id} data-user-card={user.id} className="min-w-0 space-y-3 rounded-md border border-border p-3 text-sm">
-              <div className="flex items-start justify-between gap-3"><div className="min-w-0"><h3 className="break-words font-semibold">{user.username || user.githubLogin || user.name || user.id}</h3>{user.name && user.name !== (user.username || user.githubLogin) ? <p className="mt-1 break-words text-muted-foreground">{user.name}</p> : null}{user.isSystemOwner ? <p className="mt-1 text-xs text-primary">系统所有者</p> : null}</div><span className={user.status === 'active' ? 'shrink-0 text-ok' : 'shrink-0 text-warn'}>{user.status === 'active' ? '正常' : '已禁用'}</span></div>
-              <p className="text-xs text-muted-foreground">{user.authProvider === 'local' ? '本地账号' : user.authProvider === 'github' ? 'GitHub' : user.authProvider === 'sso' ? 'SSO' : '原始账号'} · {user.lastLoginAt ? `最近登录 ${new Date(user.lastLoginAt).toLocaleString()}` : '从未登录'}</p>
-              {userActions(user)}
-            </li>)}</ul> : null}
-          </Section>
+              <div className="rounded-lg border border-border bg-card p-3 sm:p-4">
+                <div className="account-member-filter mb-3 flex flex-wrap items-center gap-2">
+                  <label className="relative block w-full sm:w-64">
+                    <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+                    <input aria-label="搜索成员" className={`${accountInputClass} pl-9`} placeholder="搜索账号、姓名或编号"
+                      value={query} onChange={event => setQuery(event.target.value)} />
+                  </label>
+                  <select aria-label="角色筛选" className={`${accountInputClass} w-auto`} value={roleFilter} onChange={event => setRoleFilter(event.target.value)}>
+                    <option value="">全部角色</option><option value="owner">系统所有者</option><option value="admin">管理员</option><option value="member">成员</option>
+                  </select>
+                  <select aria-label="状态筛选" className={`${accountInputClass} w-auto`} value={stateFilter} onChange={event => setStateFilter(event.target.value)}>
+                    <option value="">全部状态</option>
+                    {Object.entries(memberStateLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                  </select>
+                  <span className="ml-auto text-xs text-muted-foreground">{visibleUsers.length} / {users.length} 个账号</span>
+                </div>
+                {visibleUsers.length ? (
+                <div className="overflow-hidden rounded-lg border border-border">
+                  <div className="account-members-grid account-members-head bg-muted/45 px-3 py-2 text-xs text-muted-foreground" aria-hidden="true">
+                    <span>账号</span><span>角色</span><span>登录方式</span><span>状态</span><span>最近登录</span><span />
+                  </div>
+                  <ul className="divide-y divide-border">
+                  {visibleUsers.map(({ user, signIn, state }) => (
+                    <li key={user.id}>
+                      <button type="button" data-user-card={user.id}
+                        className="account-members-grid w-full items-center px-3 py-3 text-left text-sm hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                        aria-label={`查看 ${accountName(user)} 的账号详情`}
+                        onClick={() => { setSelected(user); setEditError(''); changeView('members', user.id); }}>
+                        <span className="flex min-w-0 items-center gap-3">
+                          <CircleUser className="size-5 shrink-0 text-muted-foreground" aria-hidden="true" />
+                          <span className="min-w-0"><strong className="block break-words">{user.name || accountName(user)}</strong>
+                            <small className="block break-all text-muted-foreground">{accountName(user)}<span className="account-member-mobile"> · {accountRoleLabel(user)}</span></small></span>
+                        </span>
+                        <span className="account-member-desktop text-muted-foreground">{accountRoleLabel(user)}</span>
+                        <span className="account-member-desktop min-w-0 break-words text-muted-foreground">{signIn || '—'}</span>
+                        <span className={state === 'active' ? 'text-ok-ink' : 'text-warn-ink'}>
+                          {memberStateLabels[state]}
+                        </span>
+                        <span className="account-member-desktop text-xs text-muted-foreground">{user.lastLoginAt ? new Date(user.lastLoginAt).toLocaleString() : '尚未登录'}</span>
+                        <ArrowRight size={15} className="account-member-desktop text-muted-foreground" aria-hidden="true" />
+                      </button>
+                    </li>
+                  ))}
+                  </ul>
+                </div>
+              ) : <EmptyBlock title={users.length ? '没有匹配成员' : '还没有成员'} description={users.length ? '调整搜索和筛选条件。' : '邀请成员自行激活一个独立账号。'} />}
+              </div>
+            </>
+          ) : <LoadingBlock label="读取成员" />}
+        </Section>
+      ) : null}
+      {view === 'approvals' && !subject && !readError ? (
+        <Section title="待批申请" description={owner ? '逐项核对账号、实际影响及变更原因。执行结果留在原申请。' : '查看你提交的申请及其处理结果。'}
+          actions={<Button variant="outline" onClick={refresh}>刷新申请</Button>}>
+          {!approvals ? <LoadingBlock label="读取申请" /> : !approvals.length ? (
+            <EmptyBlock title="没有账号操作申请" description="管理员和智能体提交的申请会出现在这里。所有者本人确认的结果可在账号审计查看。" />
+          ) : (
+            <ul className="divide-y divide-border rounded-lg border border-border">
+              {approvals.map(entry => (
+                <li key={entry.id}>
+                  <button type="button" className="flex w-full flex-wrap items-center justify-between gap-2 px-4 py-3 text-left text-sm hover:bg-muted/50"
+                    onClick={() => { setSubject({ entry }); changeView('approvals', entry.id); }}>
+                    <span className="break-words"><strong>{actionLabels[entry.action]}</strong> · {entry.targetName}</span>
+                    <span className={entry.status === 'pending' ? 'text-warn-ink' : 'text-muted-foreground'}>{actionStateLabels[entry.status]}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Section>
+      ) : null}
+      {view === 'recovery' ? (
+        <>
+          <RecoveryRequestsPanel owner={owner} viewerId={viewerId} selectionId={selectionId} onSelect={id => changeView('recovery', id)} />
+          {owner ? <details className="text-sm"><summary className="cursor-pointer text-muted-foreground">设备接入与项目凭据恢复</summary>
+            <IdentityRecoveryPanel onToast={onToast} /></details> : null}
         </>
-      ) : (
-        <Section title="用户管理" description="仅系统所有者可创建账号、禁用账号或重置密码。">
-          <div className="flex items-start gap-3 rounded-md border border-border bg-card px-4 py-4 text-sm leading-6 text-muted-foreground">
-            <Users className="mt-0.5 h-4 w-4 shrink-0" />
-            <div>你当前不是系统所有者，无法管理其他用户。如需账号变更请联系系统所有者。</div>
+      ) : null}
+      {view === 'system' ? <SystemPasswordPanel owner={owner} /> : null}
+      {view === 'keys' ? <KeyNotifications owner={owner} /> : null}
+      {view === 'matrix' ? <Section title="权限矩阵" description={accountPermissionDescription}><AccountPermissionMatrix /></Section> : null}
+
+      {createOpen ? (
+        <CreateMemberDialog owner={owner} durable={durableUsers} onClose={() => setCreateOpen(false)} onCreated={user => {
+          onToast(`已创建 ${accountName(user)}`);
+          refresh();
+        }} />
+      ) : null}
+      {view === 'members' && selected ? (
+        <Section title={selected.name || accountName(selected)}
+          description={`${accountName(selected)} · ${accountRoleLabel(selected)} · ${memberStateLabels[memberState(selected, selectedSource)]}`}
+          actions={<Button variant="outline" onClick={() => changeView('members')}>返回成员</Button>}>
+          <div className="grid gap-4 lg:grid-cols-2">
+            <dl className="grid gap-3 rounded-lg border border-border p-4 text-sm">
+              <div><dt className="text-muted-foreground">账号编号</dt><dd className="break-all font-mono">{selected.id}</dd></div>
+              <div><dt className="text-muted-foreground">可用登录方式</dt><dd>{selectedSource || '无可用登录方式'}</dd></div>
+              <div><dt className="text-muted-foreground">新增身份绑定资格</dt><dd>{selected.externalLoginAllowed ? '已开通' : '未开通'}</dd></div>
+              <div><dt className="text-muted-foreground">最近登录</dt><dd>{selected.lastLoginAt ? new Date(selected.lastLoginAt).toLocaleString() : '尚未登录'}</dd></div>
+            </dl>
+            <section className="space-y-3 rounded-lg border border-border p-4">
+            <h3 className="font-semibold">账号操作</h3>
+            {!selectedSource && selected.status === 'active' ? (
+              <p className="text-sm text-muted-foreground">这个成员需要申请身份恢复。<Button variant="link" onClick={() => changeView('recovery')}>查看身份恢复</Button></p>
+            ) : null}
+            {editError ? <ErrorBlock message={editError} /> : null}
+            <div className="flex flex-wrap gap-2">
+              {canChange ? <Button variant="outline"
+                onClick={() => void update(selected, { externalLoginAllowed: !selected.externalLoginAllowed })}>
+                {selected.externalLoginAllowed ? '暂停新增绑定' : '开通绑定资格'}
+              </Button> : null}
+              {(owner || selected.canManageAccount) && isTarget ? <Button variant="outline" onClick={() => setGrantUser(selected)}>项目授权</Button> : null}
+              {owner && canChange && selected.role === 'member' ? (
+                <ConfirmAction scopeKey={selected.id} title="授予管理员"
+                  description={`${accountName(selected)} 可管理普通成员和提交账号操作申请。`}
+                  confirmLabel="授予管理员" onConfirm={() => update(selected, { role: 'admin' })}
+                  trigger={<Button variant="outline">授予管理员</Button>} />
+              ) : null}
+              {(owner || selected.canManageAccount) && isTarget && selected.status === 'disabled' ? (
+                <ConfirmAction scopeKey={selected.id} title="启用账号" description={`恢复 ${accountName(selected)} 的原项目权限。`}
+                  confirmLabel="启用账号" onConfirm={() => update(selected, { status: 'active' })}
+                  trigger={<Button variant="outline">启用账号</Button>} />
+              ) : null}
+              {canChange ? ([
+                ...(selected.authProvider === 'local' && selected.hasPassword !== false ? ['reset-password'] : []),
+                'revoke-sessions', 'disable-user',
+                ...(selected.linkedLogins?.github ? ['unlink-github'] : []),
+                ...(selected.linkedLogins?.google ? ['unlink-google'] : []),
+                ...(owner && selected.role === 'admin' ? ['revoke-admin'] : []),
+              ] as AccountAction[]).map(action => (
+                <Button key={action} variant="outline" onClick={() => setSubject({ user: selected, action })}>{actionLabels[action]}</Button>
+              )) : null}
+            </div>
+            </section>
           </div>
         </Section>
-      )}
-      {isOwner ? <Dialog open={createOpen} onOpenChange={open => { if (!createBusy) setCreateOpen(open); }}><DialogContent className="[&>button]:min-h-[3.25rem] [&>button]:min-w-[3.25rem] [&>button>svg]:size-[1.875rem]"><DialogHeader className="pr-10"><DialogTitle>创建本地账号</DialogTitle><DialogDescription>新账号默认为普通成员，与 GitHub OAuth 用户共存。{!durableUsers ? '当前认证为内存模式，账号会在 CDS 重启后丢失。' : ''}</DialogDescription></DialogHeader>            <form onSubmit={submitCreate} className="grid gap-3">
-              <Field label="用户名">
-                <input
-                  aria-label="用户名"
-                  disabled={createBusy}
-                  value={newUsername}
-                  onChange={(e) => setNewUsername(e.target.value)}
-                  required
-                  className={inputCls}
-                  placeholder="如 alice"
-                  autoComplete="off"
-                />
-              </Field>
-              <Field label="显示名（可选）">
-                <input
-                  aria-label="显示名（可选）"
-                  disabled={createBusy}
-                  value={newName}
-                  onChange={(e) => setNewName(e.target.value)}
-                  className={inputCls}
-                  placeholder="如 Alice"
-                  autoComplete="off"
-                />
-              </Field>
-              <Field label="初始密码（至少 8 位）">
-                <input
-                  type="password"
-                  aria-label="初始密码（至少8位）"
-                  disabled={createBusy}
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                  required
-                  minLength={8}
-                  className={inputCls}
-                  placeholder="初始密码"
-                  autoComplete="new-password"
-                />
-              </Field>
-              <div className="space-y-2">
-                {createError ? <p role="alert" className="text-sm text-destructive">{createError}</p> : null}
-                <Button type="submit" disabled={createBusy} className={`mt-1 ${touchActionClass}`}>
-                  <UserPlus />
-                  {createBusy ? '创建中' : '创建账号'}
-                </Button>
-              </div>
-            </form></DialogContent></Dialog> : null}
-      <Dialog open={Boolean(resetUser)} onOpenChange={open => { if (!open && !busyUser) { setResetUser(null); setResetValue(''); } }}><DialogContent className="[&>button]:min-h-[3.25rem] [&>button]:min-w-[3.25rem] [&>button>svg]:size-[1.875rem]"><DialogHeader className="pr-10"><DialogTitle>重置账号密码</DialogTitle><DialogDescription>账号：{resetUser?.username || resetUser?.githubLogin}（{resetUser?.id}）。保存后成员需使用新密码登录，账号的项目授权保持不变。</DialogDescription></DialogHeader><form onSubmit={resetPassword} className="space-y-3"><label className="block space-y-2 text-sm">新密码（至少 8 位）<input aria-label="重置后的新密码" type="password" autoComplete="new-password" required minLength={8} className={inputCls} value={resetValue} disabled={Boolean(busyUser)} onChange={event => setResetValue(event.target.value)} /></label>{resetError ? <p role="alert" className="text-sm text-destructive">{resetError}</p> : null}{resetUnknown ? <Button type="button" className={touchActionClass} variant="outline" onClick={() => { if (!resetUser) return; setUnconfirmedResets(current => { const next = { ...current }; delete next[resetUser.id]; return next; }); setResetUnknown(false); setResetValue(''); setResetError('原请求的结果仍未确认。你已选择在成员核对后准备新的密码重置；请输入新密码并主动提交。'); }}>已由成员核对，准备新的重置</Button> : null}<Button type="submit" className={touchActionClass} disabled={Boolean(busyUser) || resetUnknown}>{busyUser ? '正在重置' : '保存新密码'}</Button></form></DialogContent></Dialog>
-      {isOwner ? <IdentityRecoveryPanel onToast={onToast} /> : null}
+      ) : null}
+      {subject && 'entry' in subject && subject.entry.action === 'rotate-system-password' ? (
+        <SystemPasswordDialog key={subject.entry.id} accountName={subject.entry.targetName} initial={subject.entry}
+          onClose={() => { setSubject(null); changeView('approvals'); }} onChange={refresh} />
+      ) : subject ? <AccountActionDialog key={'entry' in subject ? subject.entry.id : subject.user.id + subject.action}
+        subject={subject} owner={owner} viewerId={viewerId}
+        inline={view === 'approvals' && 'entry' in subject}
+        onClose={() => { setSubject(null); if (view === 'approvals' || !selected) changeView(view); }}
+        onChange={entry => {
+          if (entry.status === 'completed') {
+            onToast('已执行，回执已保存');
+          } else if (!owner) onToast('已登记，可在待批申请中回读');
+          refresh();
+        }} /> : null}
       <UserProjectAccessDialog user={grantUser} onClose={() => setGrantUser(null)} onToast={onToast} />
     </div>
+  );
+}
+
+function CreateMemberDialog({ owner, durable, onClose, onCreated }: {
+  owner: boolean; durable: boolean; onClose: () => void; onCreated: (user: CdsPublicUser) => void;
+}): JSX.Element {
+  const [username, setUsername] = useState('');
+  const [name, setName] = useState('');
+  const [password, setPassword] = useState('');
+  const [role, setRole] = useState<'admin' | 'member'>('member');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [method, setMethod] = useState<'invite' | 'password'>('invite');
+  const [invitation, setInvitation] = useState<{ url: string; expiresAt: string } | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  async function submit(event: FormEvent): Promise<void> {
+    event.preventDefault();
+    setBusy(true);
+    setError('');
+    const input = { username, name: name || undefined, role, externalLoginAllowed: true };
+    try {
+      if (method === 'invite') {
+        const { user, invitation: issued } = await inviteLocalUser(input);
+        setInvitation({ url: new URL(issued.path, window.location.origin).href, expiresAt: issued.expiresAt });
+        onCreated(user);
+      } else {
+        onCreated(await createLocalUser({ ...input, password, temporaryPassword: true }));
+        onClose();
+      }
+    } catch (error) {
+      setError(error instanceof Error ? error.message : String(error));
+    } finally { setBusy(false); }
+  }
+
+  return (
+    <Dialog open onOpenChange={open => { if (!open && !busy) onClose(); }}>
+      <DialogContent className="max-h-[90dvh] overflow-auto">
+        <DialogHeader><DialogTitle>{invitation ? '账号已创建' : '创建账号'}</DialogTitle>
+          <DialogDescription>{durable ? '成员可以自行选择可用的登录方式。' : '当前实例使用内存存储，重启后新账号会丢失。'}</DialogDescription>
+        </DialogHeader>
+        {invitation ? (
+          <div className="grid gap-3">
+            <Field label="一次性激活链接">
+              <input aria-label="一次性激活链接" className={accountInputClass} readOnly value={invitation.url}
+                onFocus={event => event.target.select()} />
+            </Field>
+            <p className="text-sm text-muted-foreground">仅发给此成员。链接有效至 {new Date(invitation.expiresAt).toLocaleString()}。</p>
+            <div className="flex flex-wrap gap-2">
+              <Button onClick={() => { void navigator.clipboard.writeText(invitation.url).then(() => setCopied(true)).catch(() => setError('请选中链接并手动复制')); }}>
+                {copied ? '已复制' : '复制激活链接'}
+              </Button>
+              <Button variant="outline" onClick={onClose}>完成</Button>
+            </div>
+            {error ? <ErrorBlock message={error} /> : null}
+          </div>
+        ) : <form onSubmit={submit} className="grid gap-3">
+          <Field label="用户名"><input aria-label="用户名" className={accountInputClass} required minLength={3} maxLength={32}
+            value={username} onChange={event => setUsername(event.target.value)} disabled={busy} autoComplete="off" /></Field>
+          <Field label="显示名"><input aria-label="显示名" className={accountInputClass} maxLength={100}
+            value={name} onChange={event => setName(event.target.value)} disabled={busy} autoComplete="off" /></Field>
+          {owner ? <Field label="角色"><select aria-label="角色" className={accountInputClass} value={role} disabled={busy}
+            onChange={event => setRole(event.target.value === 'admin' ? 'admin' : 'member')}>
+            <option value="member">成员</option><option value="admin">管理员</option>
+          </select></Field> : null}
+          <Field label="首次登录">
+            <select aria-label="首次登录" className={accountInputClass} value={method} disabled={busy}
+              onChange={event => setMethod(event.target.value === 'password' ? 'password' : 'invite')}>
+              <option value="invite">一次性邀请，成员自行激活</option>
+              <option value="password">初始口令，首次登录时更换</option>
+            </select>
+          </Field>
+          {method === 'password' ? <Field label="初始口令（至少 8 位）"><input aria-label="初始口令" className={accountInputClass} type="password" required minLength={8} maxLength={512}
+            value={password} onChange={event => setPassword(event.target.value)} disabled={busy} autoComplete="new-password" /></Field> : null}
+          {error ? <ErrorBlock message={error} /> : null}
+          <Button type="submit" className="justify-self-start" disabled={busy}>{busy ? '正在创建' : '创建账号'}</Button>
+        </form>}
+      </DialogContent>
+    </Dialog>
   );
 }

@@ -84,7 +84,7 @@ describe('Agent public bootstrap through the real auth gate', () => {
     expect(command).toMatch(/--design-access (?:publish|'publish'|"publish")(?=\s|$)/);
     expect(guide).toContain('右下角');
     expect(guide).toContain('批准');
-    expect(guide).toContain('0.26.22');
+    expect(guide).toContain('0.26.23');
     expect(guide).toContain(`${origin}/api/skills/cds-pack/download`);
     expect(guide).toContain('用本机工具解压');
     expect(guide).toMatch(/Windows[^\n]*0\.26\.10[^\n]*CRLF/);
@@ -95,8 +95,8 @@ describe('Agent public bootstrap through the real auth gate', () => {
     expect(manifest.status).toBe(200);
     const body = await manifest.json();
     expect(body).toMatchObject({ target: { kind: 'existing', projectId: 'proj-a' }, mission: 'design-publish',
-      minCliVersion: '0.26.22', cliVersion: shippedCliVersion, authentication: 'existing-page-approval' });
-    expect(body.skills).toEqual(['cds', 'cds-design']);
+      minCliVersion: '0.26.23', cliVersion: shippedCliVersion, authentication: 'existing-page-approval' });
+    expect(body.skills).toEqual(['cds-design']);
     expect(body).not.toHaveProperty('authorizationKey');
 
     const task = await fetch(`${origin}/api/agent/setup.md?${query}&stage=task`);
@@ -107,6 +107,8 @@ describe('Agent public bootstrap through the real auth gate', () => {
     expect(instructions).toContain('只在本地提交');
     expect(instructions).toContain('sourceMode=private');
     expect(instructions).toContain('cdscli design publish --private');
+    expect(instructions).toContain('cdscli framework publish');
+    expect(instructions).toContain('cds_design_framework_publish');
     expect(instructions).not.toMatch(/git push|推送[^。]*稿件/);
   });
 
@@ -381,6 +383,6 @@ describe('setup version follows the actual distributed skill bundle', () => {
     expect(await general.json()).toMatchObject({ minCliVersion: '0.17.5', cliVersion: '0.26.21' });
     const scoped = await fetch(`${entry}&mission=design-publish`);
     expect(scoped.status).toBe(503);
-    expect(await scoped.json()).toMatchObject({ error: 'skill_bundle_incompatible', minCliVersion: '0.26.22', cliVersion: '0.26.21' });
+    expect(await scoped.json()).toMatchObject({ error: 'skill_bundle_incompatible', minCliVersion: '0.26.23', cliVersion: '0.26.21' });
   });
 });

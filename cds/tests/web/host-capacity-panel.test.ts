@@ -12,11 +12,17 @@ it('冷启动与读取失败明确未知，不能显示安全或零增长', () =
 });
 it('页面呈现可核对来源、负变化及安全余量预测，不累加共享占用', () => {
   const text = renderToStaticMarkup(createElement(HostCapacityView, { observation: { status: 'warning', sampledAt: '2026-11-16T08:00:00Z', report: {
-    version: 1, host: 'isolated-host', at: 1794816000, status: 'warning', alerts: [{ code: 'inodes-critical', severity: 'critical', device: '1' }],
-    sources: { cache: { path: '/isolated/cache', device: '1', bytes: 21474836480, deltaBytes: -1073741824, bytesPerDay: 10737418240, windowSeconds: 86400 } },
+    version: 1, host: 'isolated-host', at: 1794816000, status: 'warning', alerts: [
+      { code: 'inodes-critical', severity: 'critical', device: '1' },
+      { code: 'deployment-freeze-forecast', severity: 'warning', device: '1' },
+      { code: 'source-growth:containerd-image-content', severity: 'warning', device: '1' },
+      { code: 'source-growth:cds-backups-2', severity: 'warning', device: '1' },
+    ],
+    sources: { 'containerd-image-content': { path: '/isolated/images', device: '1', bytes: 21474836480, deltaBytes: -1073741824, bytesPerDay: 10737418240, windowSeconds: 86400 } },
     filesystems: { '1': { totalBytes: 107374182400, usedBytes: 64424509440, availableBytes: 42949672960, totalInodes: 1000, availableInodes: 900,
-      usedPercent: 60, inodeUsedPercent: 10, deltaBytes: 10737418240, bytesPerDay: 10737418240, windowSeconds: 86400, daysToFull: 4, daysToReserve: 3.4 } },
+      usedPercent: 60, inodeUsedPercent: 10, deltaBytes: 10737418240, bytesPerDay: 10737418240, windowSeconds: 86400, daysToFull: 4, daysToReserve: 3.4, daysToDeploymentFreeze: 2.95 } },
     policy: { warningPercent: 75, criticalPercent: 90, reserveBytes: 6442450944, horizonDays: 7, maxSamples: 192 },
   } } }));
   for (const expected of ['20.00 GiB', '-1.00 GiB', '10.00 GiB / 天', '60.0', '3.4 天', '6.00 GiB', '不能相加', '文件节点占用', '文件节点严重不足']) expect(text).toContain(expected);
+  for (const warning of ['Docker 镜像内容的增长速度过快', 'CDS 备份目录 2的增长速度过快', '将在预警窗口内触发部署保护', '预计触发部署保护：3.0 天']) expect(text).toContain(warning);
 });

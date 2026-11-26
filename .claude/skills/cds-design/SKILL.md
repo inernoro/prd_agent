@@ -1,6 +1,6 @@
 ---
 name: cds-design
-description: CDS 设计（精准技能）。用户说「/cds-design」、「帮我设计一个页面」、「为 xx 提出设计」、「改/修复 xx 页面的设计」、「出一版新设计」、「帮我实现 DSN-xxx」，或在 /cds 里说了设计相关的话时使用。这一轮的结果是发布到 CDS 的私有稿件和稿件地址；实现方按稿件的交接清单实现。不用于在稿件发布前直接改正式代码。
+description: CDS 设计（精准技能）。用户说「/cds-design」、「发布框架」、「帮我设计一个页面」、「为 xx 提出设计」、「改/修复 xx 页面的设计」、「出一版新设计」、「帮我实现 DSN-xxx」，或在 /cds 里说了设计相关的话时使用。这一轮的结果是发布到 CDS 的私有稿件和稿件地址；实现方按稿件的交接清单实现。不用于在稿件发布前直接改正式代码。
 ---
 
 # CDS 设计（`/cds-design`）
@@ -29,6 +29,12 @@ description: CDS 设计（精准技能）。用户说「/cds-design」、「帮�
   - `spec/rules.md` 里的每条框架规则（R-xx）都要有通过的自检项，不能登记为例外。
 - 用户同时要求实现时，先发布稿件，再按这份稿件的 `交接清单.md` 实现（见第四节）。
 
+## 发布框架
+
+1. 回读接入清单，确认项目中的框架编号和最新版。首发的 `expectedVersion` 为 0，续版沿用原框架编号。
+2. 用现有设计发布授权调用 `cdscli framework publish` 或 MCP `cds_design_framework_publish`。回读框架版本、材料和来源。
+3. 试用时在稿件中指定框架版本。项目默认版本按[框架采用流程](../cds/reference/design-intake.md#发布框架)切换。
+
 ## 三、设计（设计方）
 
 按 `cds/reference/design-loop.md` 第一到第五节做，顺序固定：
@@ -40,17 +46,18 @@ description: CDS 设计（精准技能）。用户说「/cds-design」、「帮�
    - `design.json` 写 `goals`（每个目标写「怎么算做到」和它的验收项）、验收项（带 `slots`）、画面清单（真实页面的 `impl` 地址）、演示数据（`demoData`）；
    - 源码差异要能在正式基线上直接编译。
 4. **门禁**：`node <技能根>/cds/scripts/design/release.mjs check --dir design/<目录>`。
-   - 跑门禁 G-01 到 G-09，同时生成 `交接清单.md`；
+   - 跑门禁 G-01 到 G-10，同时生成 `交接清单.md`；
    - 被驳回就按规则编号修，不跳过。
 5. **私有发布**：`cdscli design publish --private`，回读核对版本和来源提交。
 6. **登记**：`release.mjs register --dir design/<目录> --commit <来源提交>`。它会打印稿件地址。
-7. **交接**：在实施反馈线程回复，指向 `交接清单.md`，请实现方按验收项编号逐条回复。交接只走 CDS，不让用户转述。
+7. **程序交接检查**：`cdscli design handoff <稿件编号> --version <版号>`。记录固定版本回执，失败的入口和关键交互在同稿修正后重验。设计库封面由 CDS 从原型生成，交付包省略封面截图。
+8. **交接**：在实施反馈线程回复，指向 `交接清单.md`，请实现方按验收项编号逐条回复。交接只走 CDS，不让用户转述。
 
 ## 四、实现（实现方：`/cds-design 实现 DSN-xxx`）
 
 按 `cds/reference/design-loop.md` 第六节做：
 
-1. 先按 `交接清单.md` 第五节逐条回复验收项编号；
+1. 先核对固定版本的交接通过回执，按 `交接清单.md` 第五节逐条回复验收项编号；
 2. 定实施基线，整份应用源码差异；
 3. 用稿件的演示数据取证；
 4. 跑验收（`/cds 跑 DSN-xxx 的验收`）；

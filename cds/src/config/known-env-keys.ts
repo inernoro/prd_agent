@@ -45,6 +45,11 @@ export const KNOWN_CDS_ENV_KEYS: CdsEnvKeyDef[] = [
   { key: 'CDS_SSO_CLIENT_SECRET', description: 'SSO 客户端密钥', isSecret: true, group: 'auth' },
   { key: 'CDS_SSO_DEFAULT_REDIRECT', description: 'SSO 登录成功后的 CDS 内部页面', isSecret: false, group: 'auth' },
   { key: 'CDS_AUTH_BACKEND', description: '认证后端（memory / mongo）', isSecret: false, group: 'auth' },
+  { key: 'CDS_BASIC_SESSION_GENERATION', description: '系统账号会话代次，由逐次审批更新', isSecret: true, group: 'auth' },
+  { key: 'CDS_ACCOUNT_GITHUB_CLIENT_ID', description: '个人账号的 GitHub OAuth 应用标识', isSecret: false, group: 'auth' },
+  { key: 'CDS_ACCOUNT_GITHUB_CLIENT_SECRET', description: '个人账号的 GitHub OAuth 应用密钥', isSecret: true, group: 'auth' },
+  { key: 'CDS_GOOGLE_CLIENT_ID', description: '个人账号的 Google OAuth 应用标识', isSecret: false, group: 'auth' },
+  { key: 'CDS_GOOGLE_CLIENT_SECRET', description: '个人账号的 Google OAuth 应用密钥', isSecret: true, group: 'auth' },
   { key: 'CDS_AUTH_MONGO_DB', description: 'Auth MongoDB 库名', isSecret: false, group: 'auth' },
   {
     key: 'CDS_JWT_SECRET',

@@ -162,6 +162,16 @@ class CapacityTests(unittest.TestCase):
         self.assertEqual(report["sources"]["cache"]["bytesPerDay"], 10 * GIB)
         self.assertIn("reserve-exhaustion-forecast", [a["code"] for a in report["alerts"]])
 
+    def test_predicts_the_rounded_deploy_cutoff_and_attributes_image_and_backup_growth(self):
+        first, current = sample(0, 70), sample(24, 80)
+        for name in ("containerd-image-content", "cds-backups-1"):
+            first["sources"][name] = {"path": "/" + name, "device": "1", "bytes": 10 * GIB}
+            current["sources"][name] = {"path": "/" + name, "device": "1", "bytes": 12 * GIB}
+        report = cap.analyze(current, [first])
+        self.assertAlmostEqual(report["filesystems"]["1"]["daysToDeploymentFreeze"], .95)
+        self.assertTrue({"deployment-freeze-forecast", "source-growth:containerd-image-content",
+                         "source-growth:cds-backups-1"} <= {entry["code"] for entry in report["alerts"]})
+
     def test_recent_acceleration_is_not_hidden_by_week_average(self):
         history = [sample(0, 40), sample(24 * 7, 41)]
         report = cap.analyze(sample(24 * 7 + 1, 42), history)

@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto';
-import type { Browser, CDPSession } from 'playwright';
+import { accessSync, constants } from 'node:fs';
+import type { Browser, CDPSession, Page } from 'playwright';
+import previewContract from '../shared/design-preview-contract.json' with { type: 'json' };
 import { designViewports, type DesignFrameworkMeasurement, type DesignNestedScroll, type DesignScreen, type DesignTheme } from '../shared/design-workspace.js';
 import type { DesignFrameworkProbe } from './design-framework-check.js';
 import { decorateDesignPrototype, designPrototypeCsp } from './design-prototype.js';
@@ -83,17 +85,22 @@ async function measureNestedScroll(session: CDPSession): Promise<DesignNestedScr
   }
 }
 
-async function measure(browser: Browser, html: string, screen: DesignScreen, theme: DesignTheme,
-  checkNestedScroll: boolean): Promise<DesignFrameworkMeasurement | undefined> {
+export async function readPrototypeScreen<T>(browser: Browser, html: string, screen: DesignScreen, theme: DesignTheme,
+  read: (page: Page) => Promise<T>, date?: Date, onFailure?: (message: string) => void): Promise<T | undefined> {
   const entry = new URL('/prototype', prototypeOrigin);
   entry.searchParams.set('theme', theme);
   const target = new URL(entry);
   target.hash = screen.route;
   const context = await browser.newContext({
-    viewport: designViewports.phone, hasTouch: true, colorScheme: theme, offline: true, serviceWorkers: 'block',
+    viewport: designViewports[screen.viewport], hasTouch: screen.viewport === 'phone', colorScheme: theme,
+    ...(date ? { locale: 'zh-CN', timezoneId: 'Asia/Shanghai', reducedMotion: 'reduce' } : {}),
+    deviceScaleFactor: 1, offline: true, serviceWorkers: 'block',
   });
+  let problem = '无法打开发布原型。';
+  const unavailable = () => { onFailure?.(problem); return undefined; };
   try {
     const page = await context.newPage();
+    if (date) await page.clock.setFixedTime(date);
     let served = false;
     await context.route('**/*', async route => {
       const request = route.request();
@@ -104,48 +111,72 @@ async function measure(browser: Browser, html: string, screen: DesignScreen, the
         headers: { 'Content-Security-Policy': designPrototypeCsp, 'X-Content-Type-Options': 'nosniff' } });
     });
     await page.goto(target.href, { timeout: pageTimeout, waitUntil: 'load' });
-    for (const selector of screen.entryActions ?? []) {
+    const deadline = Date.now() + (screen.entryTimeoutMs ?? previewContract.entryTimeoutMs);
+    const remaining = () => deadline - Date.now();
+    for (const [index, selector] of (screen.entryActions ?? []).entries()) {
       const control = page.locator(`css=${selector}`);
-      const canClick = await control.evaluate(node => node.matches('button:not([type=submit]),a[href^="#"],[role=tab],[role=button]')
+      problem = `第 ${index + 1} 步的控件不可点击。请核对进入状态和遮挡。`;
+      await control.first().waitFor({ state: 'attached', timeout: Math.max(1, remaining()) });
+      const matches = await control.count();
+      if (matches !== 1) {
+        problem = `第 ${index + 1} 步匹配 ${matches} 个控件。请声明一个可点击的控件。`;
+        return unavailable();
+      }
+      const canClick = await control.evaluate(node => node.matches('button:not([type=submit]),a[href^="#"],[role=tab],[role=button],details > summary:first-of-type')
         && (!node.matches('a') || node.getAttribute('href')?.startsWith('#'))
-        && !node.matches('[aria-disabled=true],:disabled'), undefined, { timeout: pageTimeout });
-      if (!canClick) return undefined;
-      const active = await control.evaluate(node => ['aria-pressed', 'aria-current', 'aria-selected']
-        .some(attribute => node.getAttribute(attribute) === 'true'), undefined, { timeout: pageTimeout });
-      if (!active) await control.click({ timeout: pageTimeout });
+        && !node.matches('[aria-disabled=true],:disabled'), undefined, { timeout: Math.max(1, remaining()) });
+      if (!canClick) return unavailable();
+      const active = await control.evaluate(node => (node.matches('details > summary:first-of-type') && node.parentElement?.hasAttribute('open'))
+        || ['aria-pressed', 'aria-current', 'aria-selected']
+        .some(attribute => node.getAttribute(attribute) === 'true'), undefined, { timeout: Math.max(1, remaining()) });
+      if (!active) await control.click({ timeout: Math.max(1, remaining()) });
     }
+    problem = '发布原型未显示声明的就绪状态。';
     const ready = screen.entryReadySelector ?? screen.readySelector;
     if (ready) {
       const locator = page.locator(`css=${ready}`);
-      await (screen.entryReadySelector ? locator : locator.first()).waitFor({ state: 'visible', timeout: pageTimeout });
+      await (screen.entryReadySelector ? locator : locator.first()).waitFor({ state: 'visible', timeout: Math.max(1, remaining()) });
     }
     const expectedDocument = () => screen.entryReadySelector ? page.url().split('#')[0] === entry.href : page.url() === target.href;
     await page.waitForFunction(() => document.body && document.fonts.status === 'loaded'
       && ![...document.querySelectorAll('[data-content-loading], [aria-busy="true"]')].some(element =>
         element.getClientRects().length > 0 && getComputedStyle(element).visibility !== 'hidden'), undefined, { timeout: pageTimeout });
-    if (!served || !expectedDocument()) return undefined;
-    const session = await context.newCDPSession(page);
-    const geometry = await session.send('Page.getLayoutMetrics');
-    const width = geometry.cssLayoutViewport.clientWidth;
-    const contentWidth = Math.max(width, Math.ceil(geometry.cssContentSize.width));
-    const nestedScroll = checkNestedScroll && width === designViewports.phone.width && contentWidth === width
-      ? await measureNestedScroll(session) : undefined;
-    if (!expectedDocument()) return undefined;
-    return { screenId: screen.id, slot: `phone-${theme}`, width, contentWidth, ...(nestedScroll ? { nestedScroll } : {}) };
+    problem = '发布原型离开声明的入口。';
+    if (!served || !expectedDocument()) return unavailable();
+    problem = '发布原型已就绪，读取图证或演示数据失败。';
+    const result = await read(page);
+    return expectedDocument() ? result : unavailable();
   } catch {
-    return undefined;
+    return unavailable();
   } finally {
     await context.close();
   }
 }
 
+async function measure(browser: Browser, html: string, screen: DesignScreen, theme: DesignTheme,
+  checkNestedScroll: boolean): Promise<DesignFrameworkMeasurement | undefined> {
+  return readPrototypeScreen<DesignFrameworkMeasurement>(browser, html, screen, theme, async page => {
+    const session = await page.context().newCDPSession(page);
+    const geometry = await session.send('Page.getLayoutMetrics');
+    const width = geometry.cssLayoutViewport.clientWidth;
+    const contentWidth = Math.max(width, Math.ceil(geometry.cssContentSize.width));
+    const nestedScroll = checkNestedScroll && width === designViewports.phone.width && contentWidth === width
+      ? await measureNestedScroll(session) : undefined;
+    return { screenId: screen.id, slot: `phone-${theme}`, width, contentWidth, ...(nestedScroll ? { nestedScroll } : {}) };
+  });
+}
+
+export async function launchDesignBrowser(browserPath: string, renderArgs: string[] = []) {
+  const { chromium } = await import('playwright');
+  return chromium.launch({ executablePath: browserPath, chromiumSandbox: true, timeout: 5000,
+    env: { PATH: '/usr/bin:/bin', LANG: 'C.UTF-8' },
+    args: ['--disable-background-networking', '--no-proxy-server', ...renderArgs] });
+}
+
 async function measurePrototype(browserPath: string, prototype: Buffer, screens: DesignScreen[], checkNestedScroll: boolean) {
   let browser: Browser | undefined;
   try {
-    const { chromium } = await import('playwright');
-    browser = await chromium.launch({ executablePath: browserPath, chromiumSandbox: true, timeout: 5000,
-      env: { PATH: '/usr/bin:/bin', LANG: 'C.UTF-8' },
-      args: ['--disable-background-networking', '--no-proxy-server'] });
+    browser = await launchDesignBrowser(browserPath);
     const html = decorateDesignPrototype(prototype.toString('utf8'));
     const deadline = Date.now() + 25_000;
     const measurements: DesignFrameworkMeasurement[] = [];
@@ -162,6 +193,36 @@ async function measurePrototype(browserPath: string, prototype: Buffer, screens:
   } finally {
     await browser?.close().catch(() => {});
   }
+}
+
+export type DesignReferenceTarget = { screen: DesignScreen; theme: DesignTheme };
+export type DesignCoverCapture = (prototype: Buffer, target: DesignReferenceTarget) => Promise<Buffer | undefined>;
+export type DesignReferenceCapture = (prototype: Buffer, targets: readonly DesignReferenceTarget[]) => AsyncIterable<DesignReferenceTarget & { bytes: Buffer }>;
+
+export function designBrowserPath(executablePath?: string) {
+  return executablePath?.trim() || ['/usr/bin/chromium', '/usr/bin/chromium-browser', '/usr/bin/google-chrome'].find(path => {
+    try { accessSync(path, constants.X_OK); return true; } catch { return false; }
+  });
+}
+
+export function createDesignReferenceBrowser(executablePath?: string): DesignReferenceCapture | undefined {
+  const browserPath = designBrowserPath(executablePath);
+  if (!browserPath) return undefined;
+  return async function* (prototype, targets) {
+    const browser = await launchDesignBrowser(browserPath);
+    try {
+      const html = decorateDesignPrototype(prototype.toString('utf8'));
+      const deadline = Date.now() + 180_000;
+      for (const target of targets) {
+        if (Date.now() >= deadline) break;
+        const bytes = await readPrototypeScreen(browser, html, target.screen, target.theme, page =>
+          page.screenshot({ animations: 'disabled', caret: 'hide', timeout: pageTimeout }));
+        if (bytes) yield { ...target, bytes };
+      }
+    } finally {
+      await browser.close().catch(() => {});
+    }
+  };
 }
 
 export function createDesignFrameworkBrowser(executablePath?: string): DesignFrameworkProbe | undefined {

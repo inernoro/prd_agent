@@ -54,6 +54,7 @@ import {
   type BackupHealthRecord,
 } from '../services/backup-panel.js';
 import { backupHealthFindings } from '../services/platform-daily-health.js';
+import { readSupplementalBackupHealth, supplementalBackupFindings } from '../services/supplemental-backup-health.js';
 import {
   buildSecureMongoDockerInvocation,
   invocationShellCommand,
@@ -385,11 +386,12 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
         // 而这个端点还是项目迁移的数据来源——「以为备了、其实是旧的」比没有备份更危险。
         // 与周期备份同一条送法：脚本走 stdin（`sh -s`），CDS 存的那份口令随之进去，
         // 宿主命令行上不留明文。
+        const variables = stateService.getCustomEnv(svc.projectId);
         const probe = await shell.exec(
           `docker exec -i ${shq(svc.containerName)} sh -s`,
           {
             timeout: 120_000,
-            stdin: redisProbeStdin(buildRedisBackupProbeScript(), redisAuthFromServiceDefinition(svc), redisUsernameFromServiceDefinition(svc, stateService.getCustomEnv(svc.projectId))),
+            stdin: redisProbeStdin(buildRedisBackupProbeScript(), redisAuthFromServiceDefinition(svc, variables), redisUsernameFromServiceDefinition(svc, variables)),
           },
         );
         if (probe.exitCode !== 0) {
@@ -626,10 +628,11 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
         // 写死 /data/dump.rdb 的话，改过 dir/dbfilename 的实例会把上传的快照写到
         // 一个 redis 根本不读的位置，重启后加载的还是**旧数据**，而接口回的是
         // 「已恢复」——恢复场景里这种谎话的代价是数据真的回不来了。
-        const auth = redisAuthFromServiceDefinition(svc);
+        const variables = stateService.getCustomEnv(svc.projectId);
+        const auth = redisAuthFromServiceDefinition(svc, variables);
         const pathProbe = await shell.exec(
           `docker exec -i ${shq(svc.containerName)} sh -s`,
-          { timeout: 30_000, stdin: redisProbeStdin(buildRedisRdbPathScript(), auth, redisUsernameFromServiceDefinition(svc, stateService.getCustomEnv(svc.projectId))) },
+          { timeout: 30_000, stdin: redisProbeStdin(buildRedisRdbPathScript(), auth, redisUsernameFromServiceDefinition(svc, variables)) },
         );
         const rdbTarget = (pathProbe.stdout || '').trim().split('\n').pop()?.trim() || '';
         if (pathProbe.exitCode !== 0 || !rdbTarget.startsWith('/')) {
@@ -957,7 +960,9 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
         id: s.id, dockerImage: s.dockerImage, containerName: s.containerName,
         running: s.status === 'running',
       }));
-    const view = buildBackupPanel({ projectId: canonicalId, health, files, now, infra });
+    const supplemental = readSupplementalBackupHealth(health, now)
+      .filter((fact) => fact.projectId === canonicalId && infra.some((target) => target.id === fact.id && target.running));
+    const view = buildBackupPanel({ projectId: canonicalId, health, files, now, infra, supplemental });
     // 页脚那一行「每日体检怎么说」。喂进去的是**这个项目的**失败与缺口，
     // 时间戳与恢复演练是全平台的——面板不该替某个项目编一份自己的演练记录。
     //
@@ -965,7 +970,7 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
     // 没有备份可言，「读不到上一轮结果」与「从来没做过恢复演练」都无从谈起，
     // 而它们会以 critical 出现在一个头条写着「没有需要周期备份的服务」的页面上。
     // 结论由判定那一侧算好挂在 `view.nothingToBackUp` 上，这里只读，不另判一遍（形状 3）。
-    const findings = view.nothingToBackUp ? [] : backupHealthFindings({
+    const findings = view.nothingToBackUp ? [] : [...supplementalBackupFindings(supplemental), ...backupHealthFindings({
       now,
       backup: {
         lastCompletedAt: view.lastRoundAt,
@@ -983,7 +988,7 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
       // 恢复演练目前没有任何地方记录，恒为 null——体检会如实报「从来没演练过」。
       // 这不是占位符：在补上记录之前，「能不能真的恢复」的答案就是「不知道」。
       lastRestoreDrillAt: null,
-    });
+    })];
 
     res.json({
       ...view,

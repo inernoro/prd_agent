@@ -162,6 +162,10 @@ def analyze(sample, history, warning=75, critical=90, reserve_bytes=6 * 1024**3,
         rate = trend["bytesPerDay"]
         days = fs["availableBytes"] / rate if rate is not None and rate > 0 else None
         reserve_days = max(0, fs["availableBytes"] - reserve_bytes) / rate if rate is not None and rate > 0 else None
+        # The deployment guard rounds to the nearest whole percent before
+        # freezing. Forecast that cutoff independently of the OS reserve.
+        freeze_headroom = max(0, fs["availableBytes"] - fs["totalBytes"] * (1 - (critical - .5) / 100))
+        freeze_days = freeze_headroom / rate if rate is not None and rate > 0 else None
         for code, severity, condition in (
             ("bytes-critical", "critical", percent >= critical),
             ("bytes-warning", "warning", warning <= percent < critical),
@@ -169,6 +173,7 @@ def analyze(sample, history, warning=75, critical=90, reserve_bytes=6 * 1024**3,
             ("inodes-critical", "critical", inode_percent is not None and inode_percent >= critical),
             ("inodes-warning", "warning", inode_percent is not None and warning <= inode_percent < critical),
             ("reserve-exhaustion-forecast", "warning", reserve_days is not None and reserve_days <= horizon_days),
+            ("deployment-freeze-forecast", "warning", freeze_days is not None and freeze_days <= horizon_days),
         ):
             if condition:
                 alerts.append({"code": code, "severity": severity, "device": device})
@@ -176,7 +181,13 @@ def analyze(sample, history, warning=75, critical=90, reserve_bytes=6 * 1024**3,
             alerts.append({"code": "growth-baseline-missing", "severity": "unknown", "device": device})
         filesystems[device] = {**fs, **trend, "usedPercent": percent,
                                "inodeUsedPercent": inode_percent, "daysToFull": days,
-                               "daysToReserve": reserve_days}
+                               "daysToReserve": reserve_days, "daysToDeploymentFreeze": freeze_days}
+        for name, source in sources.items():
+            source_rate = source["bytesPerDay"]
+            monitored = name == "containerd-image-content" or name.startswith("cds-backups-")
+            if (monitored and source["device"] == device and source_rate is not None
+                    and source_rate > 0 and freeze_headroom / source_rate <= horizon_days):
+                alerts.append({"code": f"source-growth:{name}", "severity": "warning", "device": device})
     # Do not sum Docker's shared image layers, volumes, and du roots. Sources
     # explain where bytes live; filesystem available space governs risk.
     severity = "critical" if any(a["severity"] == "critical" for a in alerts) else (

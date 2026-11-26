@@ -21,6 +21,11 @@
  * this field existed read as `undefined`, which callers treat as `github`.
  */
 export type CdsAuthProvider = 'github' | 'local' | 'legacy' | 'sso';
+export type CdsAccountRole = 'owner' | 'admin' | 'member';
+export type AccountIdentityProvider = 'github' | 'google';
+export type AccountIdentityLinkResult = 'linked' | 'identity_taken' | 'provider_already_linked' | 'account_changed';
+export type AccountInvitationProof = { passwordHash: string; passwordSalt: string }
+  | { provider: AccountIdentityProvider; subject: string; label: string };
 
 /** A CDS user. Sourced from GitHub OAuth, or provisioned as a local account. */
 export interface CdsUser {
@@ -46,10 +51,20 @@ export interface CdsUser {
    * users. Lowercased on write for case-insensitive lookup.
    */
   username?: string;
+  externalLoginAllowed?: boolean;
+  linkedGithubLogin?: string;
+  /** Previously detached identities cannot create accounts through legacy GitHub sign-in. */
+  detachedGithubIds?: number[];
+  googleSubject?: string;
+  linkedGoogleLabel?: string;
+  invitationHash?: string;
+  invitationExpiresAt?: string;
+  invitationForRecovery?: boolean;
   /** scrypt-derived password hash (hex). Server-side only — never returned. */
   passwordHash?: string;
   /** Per-user random salt (hex) paired with passwordHash. Server-side only. */
   passwordSalt?: string;
+  temporaryPassword?: boolean;
   /** Primary email from GitHub, may be null if user hides it. */
   email: string | null;
   /** Display name (GitHub profile name), fallback to githubLogin. */
@@ -69,6 +84,22 @@ export interface CdsUser {
    * workspace and the legacy project is transferred to them.
    */
   isSystemOwner: boolean;
+  isAdministrator?: boolean;
+  createdByAccountId?: string;
+  /** Changes atomically with operations that revoke existing login sessions. */
+  sessionRevision?: string;
+  lastAccountAction?: {
+    id: string;
+    action: import('./account-actions.js').AccountAction;
+    at: string;
+  };
+  sessionRevocationNotices?: Array<{
+    previousRevision: string | null;
+    receiptId?: string;
+    browserProofDigests?: string[];
+    action: import('./account-actions.js').AccountAction;
+    at: string;
+  }>;
   /** User account status. */
   status: 'active' | 'disabled';
   /** ISO timestamp of most recent successful login. */
@@ -85,6 +116,7 @@ export interface CdsSession {
   token: string;
   /** The owning user's CDS id (see CdsUser.id). */
   userId: string;
+  sessionRevision?: string;
   /** ISO timestamp when the session was created. */
   createdAt: string;
   /** True when the session started with verified WebAuthn user verification. */
@@ -154,15 +186,21 @@ export interface CreateLocalUserInput {
   /** Unique local login handle. Lowercased on persist. */
   username: string;
   /** Hex scrypt hash (already computed by auth-service). */
-  passwordHash: string;
+  passwordHash?: string;
   /** Hex salt paired with passwordHash. */
-  passwordSalt: string;
+  passwordSalt?: string;
+  temporaryPassword?: boolean;
   /** Display name; falls back to username when omitted. */
   name?: string;
   /** Optional email. */
   email?: string | null;
   /** When true the new account is flagged as the system owner. */
   isSystemOwner?: boolean;
+  isAdministrator?: boolean;
+  createdByAccountId?: string;
+  externalLoginAllowed?: boolean;
+  invitationHash?: string;
+  invitationExpiresAt?: string;
 }
 
 /**
@@ -178,6 +216,11 @@ export interface PublicCdsUser {
   avatarUrl: string | null;
   authProvider: CdsAuthProvider;
   isSystemOwner: boolean;
+  role?: CdsAccountRole;
+  externalLoginAllowed?: boolean;
+  linkedLogins?: Partial<Record<AccountIdentityProvider, string>>;
+  hasPassword?: boolean;
+  invitationPending?: boolean;
   status: CdsUser['status'];
   lastLoginAt: string | null;
   createdAt: string;
@@ -194,10 +237,39 @@ export function toPublicUser(user: CdsUser): PublicCdsUser {
     avatarUrl: user.avatarUrl,
     authProvider: user.authProvider ?? 'github',
     isSystemOwner: user.isSystemOwner,
+    role: accountRole(user),
+    externalLoginAllowed: user.externalLoginAllowed === true,
+    hasPassword: Boolean(user.passwordHash && user.passwordSalt),
+    invitationPending: Boolean(user.invitationHash),
+    linkedLogins: {
+      ...(user.githubId > 0 ? { github: user.linkedGithubLogin || user.githubLogin } : {}),
+      ...(user.googleSubject ? { google: user.linkedGoogleLabel || 'Google' } : {}),
+    },
     status: user.status,
     lastLoginAt: user.lastLoginAt,
     createdAt: user.createdAt,
   };
+}
+
+export function accountRole(user: Pick<CdsUser, 'isSystemOwner' | 'isAdministrator'>): CdsAccountRole {
+  if (user.isSystemOwner) return 'owner';
+  return user.isAdministrator ? 'admin' : 'member';
+}
+
+export function canDetachAccountIdentity(
+  user: CdsUser,
+  provider: AccountIdentityProvider,
+  enabled: Partial<Record<AccountIdentityProvider, boolean>>,
+): boolean {
+  const password = user.authProvider === 'local' && Boolean(user.username && user.passwordHash && user.passwordSalt);
+  return provider === 'github' ? user.githubId > 0 && (password || Boolean(user.googleSubject && enabled.google))
+    : Boolean(user.googleSubject) && (password || (user.githubId > 0 && enabled.github === true));
+}
+
+export class GithubIdentityDetachedError extends Error {
+  constructor() {
+    super('This GitHub identity must be bound before it can sign in again');
+  }
 }
 
 /**

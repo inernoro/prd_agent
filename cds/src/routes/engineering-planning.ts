@@ -47,7 +47,7 @@ export function createEngineeringPlanningRouter(deps: {
       } catch (error) { failure(error, res); }
     };
   }
-  router.get(route, handler(async (_req, res, projectId, actor) => res.json(await deps.service.board(projectId, actor))));
+  router.get(route, handler(async (req, res, projectId, actor) => res.json(await deps.service.board(projectId, actor, req.query.timeline === '1'))));
   router.get(`${route}/capabilities`, handler((_req, res, projectId, actor) => res.json(deps.service.capabilities(projectId, actor))));
   router.get(`${route}/decisions`, handler(async (req, res, projectId) => res.json(await deps.service.decisions(projectId, req.query))));
   if (deps.resolveChanges) router.get(`${route}/changes`, handler(async (req, res, projectId) => {

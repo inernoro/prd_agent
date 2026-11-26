@@ -60,7 +60,7 @@ for (const s of screens) {
   if (!['desktop', 'phone'].includes(s.viewport)) reject('G-02', `${s.id} 的视口只能是 desktop 或 phone`);
   if (!Array.isArray(s.themes) || !s.themes.length || s.themes.some(t => !['light', 'dark'].includes(t))) reject('G-02', `${s.id} 的主题只能是 light、dark`);
   if (s.entryActions !== undefined && (!Array.isArray(s.entryActions) || s.entryActions.length > 6 || s.entryActions.some(a => typeof a !== 'string' || !a.trim() || a.length > 300))) reject('G-02', `${s.id} 的 entryActions 必须是不超过 6 个、每个不超过 300 字的选择器`);
-  /* CDS 服务端要求每个画面都有就绪选择器（2026-11-25 DSN-2A3B7293 首发被拒），不只是有交互入口的画面 */
+  /* CDS 服务端要求每个画面都有就绪选择器，不只是有交互入口的画面 */
   if (typeof s.entryReadySelector !== 'string' || !s.entryReadySelector.trim()) reject('G-02', `${s.id} 要写 entryReadySelector（每个画面都要，CDS 用它判断画面已就绪）`);
 }
 
@@ -70,7 +70,7 @@ const acceptance = Array.isArray(d?.acceptance) ? d.acceptance : [];
 if (acceptance.length > 60) reject('G-03', `验收项 ${acceptance.length} 条，超过 CDS 上限 60`);
 const ruleIds = new Set();
 for (const a of acceptance) {
-  /* 和 CDS 服务端一致：编号是 A-xx；每条都要引用画面、写预期和适用视口（2026-11-25 DSN-2A3B7293 首发被拒） */
+  /* 和 CDS 服务端一致：编号是 A-xx；每条都要引用画面、写预期和适用视口 */
   if (!/^A-\d{2,3}$/.test(a.id ?? '')) reject('G-03', `验收项编号要写成 A-01 这样：${a.id}`);
   if (ruleIds.has(a.id)) reject('G-03', `验收项编号重复：${a.id}`); ruleIds.add(a.id);
   if (!a.screenId) reject('G-03', `${a.id} 要引用一个画面（screenId）`);
@@ -141,12 +141,12 @@ else {
 /* G-08 隐私：稿件包只放虚构数据。不出现真实站点、邮箱、密钥样式的字符串 */
 const textExt = /\.(md|json|ts|tsx|jsx|mjs|js|css|html|diff|txt|ya?ml|svg)$/;
 /* 私钥只认「头 + 正文」：只有 PEM 头、没有 base64 正文的是输入框占位提示（正式 CDS 设置页就有），不是密钥
- * （2026-11-25 DSN-2A3B7293 V2 用正式前端构建后被误拦）。正文在字符串里可能写成 \n 转义，也算换行 */
+ * 。正文在字符串里可能写成 \n 转义，也算换行 */
 const secret = /(cdsk_[A-Za-z0-9]{8,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----(?:\s|\\n|\\r)+[A-Za-z0-9+/=]{40,})/;
 /* 写成赋值的凭据（Bearer 头、apiKey/secret/token/password/projectKey = "…"），不区分大小写；和上面分开，免得把上面的规则也变成不区分大小写 */
 const assigned = /(Bearer\s+[A-Za-z0-9._~+/-]{24,}|(?:api[_-]?key|secret|token|password|projectKey)["']?\s*[:=]\s*["'][A-Za-z0-9._~+/-]{16,}["'])/i;
 const email = /[A-Za-z0-9._%+-]+@(?!example\.)[A-Za-z0-9.-]+\.[a-z]{2,}/g;
-/* 真实站点：除了环境变量和例外登记，默认禁止本机授权里的 CDS 地址（2026-11-25 DSN-2A3B7293 把带正式站点地址的框架资料
+/* 真实站点：除了环境变量和例外登记，默认禁止本机授权里的 CDS 地址（把带正式站点地址的框架资料
  * 原样拷进了包，本地没拦住，CDS 拒绝）。只读 host 一项，不读密钥。 */
 const cdsHosts = process.env.CDS_HOST ? [process.env.CDS_HOST] : [];
 for (let at = root; ; at = path.dirname(at)) {
@@ -169,8 +169,8 @@ for (const rel of files.filter(f => textExt.test(f) && !/\.min\.js$/.test(f) && 
 const zipped = files.reduce((sum, rel) => sum + deflateRawSync(readFileSync(path.join(root, rel)), { level: 9 }).length + 100 + Buffer.byteLength(rel) * 2, 22);
 if (zipped > 4 * 1024 * 1024 * 0.95) reject('G-09', `压缩后约 ${(zipped / 1048576).toFixed(2)} MiB，超过 3.8 MiB`);
 
-/* G-10 应用框架（硬性条件）。2026-11-25 DSN-2A3B7293 的原型是手写 HTML、自己抄了一份令牌，框架规则 R-01、R-03、R-11 还被登记成了例外，
- * 门禁全部放行。现在由程序判定「应用了框架」：
+/* G-10 应用框架（硬性条件）。使用手写页面、抄录令牌或登记框架规则例外会导致交付偏差。
+ * 程序判定「应用了框架」：
  *   1 原型由正式前端构建（prototype-build.mjs 写的构建指纹，带基线提交）；
  *   2 原型里有框架的正式壳体（FW-CDS-UI：AppShell 的 cds-main）；
  *   3 spec/rules.md 里的每条框架规则都有通过的自检项，框架规则不能登记为例外。 */

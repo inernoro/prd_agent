@@ -70,4 +70,6 @@ jobs:
                   if file.is_file():
                       actual[file.relative_to(root).as_posix()] = hashlib.sha256(file.read_bytes()).hexdigest()
           assert manifest['files'] == actual, 'Run the skill receipt refresh script'
+          design_tools = ['release', 'gate', 'changes-index', 'version-diff', 'handoff', 'prototype-build']
+          assert all(f'cds/scripts/design/{name}.mjs' in actual for name in design_tools), 'Design publication workflow is incomplete'
           PYCODE

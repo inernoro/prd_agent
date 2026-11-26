@@ -83,6 +83,24 @@ describe('完整预构建产物准入', () => {
     expect(prepare).toHaveBeenLastCalledWith(image, expect.any(Function), true, false, false);
   });
 
+  it('全量部署已预检的固定镜像使用只读通道复核内容，不会在并发启动时再抢账本', async () => {
+    const shell = fixture();
+    const exec = vi.spyOn(shell, 'exec');
+    const cache = new ImageCacheGovernance({ shell, catalog: '/unused', instanceId: 'prepared-runtime',
+      budgetBytes: 1, protectedReferences: () => [] });
+    const prepare = vi.spyOn(cache, 'prepare').mockRejectedValue(new Error('catalog-busy'));
+    configureImageCacheGovernance(cache);
+    const local = { ...profile('api'), dockerImage: digest, localArtifact: true };
+    expect(await inspectDeploymentArtifacts(shell, [local], target, () => {}, { inspectLocalArtifacts: true, localStorageImageId: id }))
+      .toMatchObject({ state: 'ready', artifacts: [{ image: digest, revision: target, platform: 'linux/amd64' }] });
+    expect(prepare).not.toHaveBeenCalled();
+    expect(exec.mock.calls.map(([, options]) => options?.executionLane)).toEqual(['observation', 'observation']);
+    expect(await inspectDeploymentArtifacts(shell, [local], target, () => {}, {
+      inspectLocalArtifacts: true, localStorageImageId: `sha256:${'d'.repeat(64)}`,
+    })).toMatchObject({ state: 'waiting', reason: 'verification-unavailable', artifacts: [] });
+    expect(prepare).not.toHaveBeenCalled();
+  });
+
   it('共用镜像的四个逻辑角色只核验一次，并以固定内容启动而不保留源码回退', async () => {
     const shell = fixture(); const roles = ['generation', 'code-return', 'product-batch', 'common'];
     const result = await inspectDeploymentArtifacts(shell, roles.map(profile), target);

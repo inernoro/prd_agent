@@ -22,7 +22,10 @@ export function executeShellCommand(command: string, options?: ExecOptions, owne
     }, (error, stdout, stderr) => {
       resolve({ stdout: stdout ?? '', stderr: stderr ?? '', exitCode: error ? (error.code ?? 1) : 0 });
     });
-    if (options?.stdin !== undefined) cp.stdin?.end(options.stdin);
+    if (options?.stdin !== undefined) {
+      cp.stdin?.on('error', () => { /* The command result reports a child that closed stdin early. */ });
+      cp.stdin?.end(options.stdin);
+    }
     if (options?.onData) {
       cp.stdout?.on('data', (d: Buffer) => options.onData!(d.toString(), 'stdout'));
       cp.stderr?.on('data', (d: Buffer) => options.onData!(d.toString(), 'stderr'));

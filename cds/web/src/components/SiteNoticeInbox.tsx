@@ -121,7 +121,7 @@ export function NoticeRecordTimes({ createdAt, updatedAt }: Pick<SiteNotice, 'cr
 }
 
 export function SiteNoticeInbox({
-  canReadAccessRequests = false, operatorPendingCount = 0, onOpenOperatorRequests, includeOperations = true, previewAccessIdentity, designReviewIdentity,
+  canReadAccessRequests = false, operatorPendingCount = 0, onOpenOperatorRequests, includeOperations = true, previewAccessIdentity, designReviewIdentity, accountApprovalIdentity,
 }: {
   canReadAccessRequests?: boolean;
   operatorPendingCount?: number;
@@ -129,12 +129,14 @@ export function SiteNoticeInbox({
   includeOperations?: boolean;
   previewAccessIdentity?: string;
   designReviewIdentity?: string;
+  accountApprovalIdentity?: string;
 } = {}): JSX.Element {
   const host = useOverlayDock('#cds-information-center-host');
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const [notices, setNotices] = useState<SiteNotice[]>([]);
   const [previewSnapshot, setPreviewSnapshot] = useState<{ identity: string; data: PreviewAccessNotices }>();
+  const [accountSnapshot, setAccountSnapshot] = useState<{ identity: string; pending: number }>();
   const [designSnapshot, setDesignSnapshot] = useState<{ identity: string; notices: DesignReviewNotice[] }>();
   const [outbound, setOutbound] = useState<{ configured: boolean; reason?: string }>({ configured: true });
   const [open, setOpen] = useState(false);
@@ -208,7 +210,7 @@ export function SiteNoticeInbox({
   useEffect(() => { void refresh(); }, [refresh]);
 
   useEffect(() => {
-    if (!previewAccessIdentity && !designReviewIdentity) return;
+    if (!previewAccessIdentity && !designReviewIdentity && !accountApprovalIdentity) return;
     const lifetime = new AbortController();
     let refreshing = false;
     const refreshPrivate = async () => {
@@ -216,9 +218,10 @@ export function SiteNoticeInbox({
       refreshing = true;
       const options = { signal: lifetime.signal };
       try {
-        const [preview, design] = await Promise.allSettled([
+        const [preview, design, accounts] = await Promise.allSettled([
           previewAccessIdentity ? apiRequest<PreviewAccessNotices>('/api/auth/preview/notices', options) : undefined,
           designReviewIdentity ? apiRequest<{ notices: DesignReviewNotice[] }>('/api/auth/design/notices', options) : undefined,
+          accountApprovalIdentity ? apiRequest<{ pending: number }>('/api/auth/account-actions/pending', options) : undefined,
         ]);
         if (lifetime.signal.aborted) return;
         const data = preview.status === 'fulfilled' ? preview.value : undefined;
@@ -226,6 +229,9 @@ export function SiteNoticeInbox({
         setPreviewSnapshot(previewAccessIdentity && Array.isArray(data?.approved) && Number.isSafeInteger(data.pending) && data.pending >= 0
           ? { identity: previewAccessIdentity, data } : undefined);
         setDesignSnapshot(designReviewIdentity && Array.isArray(reviews) ? { identity: designReviewIdentity, notices: reviews } : undefined);
+        const pending = accounts.status === 'fulfilled' ? accounts.value?.pending : undefined;
+        setAccountSnapshot(accountApprovalIdentity && pending !== undefined && Number.isSafeInteger(pending) && pending >= 0
+          ? { identity: accountApprovalIdentity, pending } : undefined);
       } finally { refreshing = false; }
     };
     void refreshPrivate();
@@ -239,7 +245,7 @@ export function SiteNoticeInbox({
       document.removeEventListener('visibilitychange', show);
       window.removeEventListener('focus', show);
     };
-  }, [previewAccessIdentity, designReviewIdentity, open]);
+  }, [previewAccessIdentity, designReviewIdentity, accountApprovalIdentity, open]);
 
   // 服务端记了新通知 → 实时增量刷新（不轮询）。
   useEffect(() => {
@@ -305,6 +311,7 @@ export function SiteNoticeInbox({
   const activeNotices = useMemo(() => includeOperations ? notices.filter((item) => !item.dismissedAt) : [], [includeOperations, notices]);
   const previewAccess = previewSnapshot && previewSnapshot.identity === previewAccessIdentity ? previewSnapshot.data : emptyPreviewAccess;
   const designReviews = designSnapshot?.identity === designReviewIdentity ? designSnapshot?.notices ?? [] : [];
+  const accountPending = accountSnapshot?.identity === accountApprovalIdentity ? accountSnapshot?.pending ?? 0 : 0;
   const unreadCount = activeNotices.filter((item) => !item.readAt).length;
   const informationCount = unreadCount
     + sourceCounts.access
@@ -314,6 +321,7 @@ export function SiteNoticeInbox({
     + previewAccess.pending
     + previewAccess.approved.length
     + designReviews.length
+    + accountPending
     + operatorPendingCount;
 
   const dismissNotice = useCallback((id: string): void => {
@@ -373,7 +381,7 @@ export function SiteNoticeInbox({
       .catch(() => { setNotices(before); });
   };
 
-  if (!host || (!includeOperations && previewAccess.pending + previewAccess.approved.length + designReviews.length === 0)) return <></>;
+  if (!host || (!includeOperations && previewAccess.pending + previewAccess.approved.length + designReviews.length + accountPending === 0)) return <></>;
 
   return createPortal((
     <>
@@ -440,6 +448,11 @@ export function SiteNoticeInbox({
               <GlobalUpdateBadge onCountChange={handleUpdateCount} />
               <CommitInbox onCountChange={handleCommitCount} />
             </>}
+            {accountPending > 0 && <Link to="/cds-settings?accountView=approvals#users" onClick={() => setOpen(false)}
+              className="block rounded-md border border-warn/35 bg-warn-soft p-3 text-sm">
+              <strong className="block font-medium">账号操作申请</strong>
+              <span className="text-xs text-muted-foreground">{accountPending} 项待审批</span>
+            </Link>}
             {previewAccess.pending > 0 && (
               <Link to="/preview-access" onClick={() => setOpen(false)}
                 className="block rounded-md border border-warn/35 bg-warn-soft p-3 text-sm">

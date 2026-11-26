@@ -244,6 +244,7 @@ const EXACT = {
   },
   '/api/mirror': { configured: false },
   '/api/tab-title': { title: 'CDS' },
+  // Exercise an older basic instance whose capability payload has no loginMethods.
   '/api/auth/public-status': { enabled: true, mode: 'basic',
     capabilities: { userManagement: true, userActivity: true, durableUsers: false } },
   /*

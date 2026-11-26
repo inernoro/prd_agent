@@ -19,6 +19,35 @@ import { detectInfraKind, type InfraKindHints } from './infra-exposure-audit.js'
 import { maskSecrets } from './secret-masker.js';
 import { resolveEnvTemplates } from './compose-parser.js';
 
+/** Bind the control-plane login to the registered container before using it for a dump. */
+export function controlPlaneMongoBackupConfig(uri: string, database: string, bindings: unknown): string {
+  const invalid = () => new Error('状态库备份连接未确认，请检查控制面的 MongoDB 地址和登记容器端口。');
+  let endpoint: URL;
+  try { endpoint = new URL(uri); } catch { throw invalid(); }
+  if (endpoint.protocol !== 'mongodb:' || !endpoint.username || !endpoint.password
+    || !['127.0.0.1', '[::1]', 'localhost'].includes(endpoint.hostname)
+    || !database || /[\u0000-\u0020/\\."$*<>:|?]/u.test(database)
+    || Buffer.byteLength(database) >= 64) throw invalid();
+  const host = endpoint.hostname === '[::1]' ? '::1' : endpoint.hostname;
+  const port = endpoint.port || '27017';
+  if (!Array.isArray(bindings) || !bindings.some(binding =>
+    binding && binding.HostPort === port
+    && (binding.HostIp === host || (host === 'localhost' && ['127.0.0.1', '::1'].includes(binding.HostIp))))) throw invalid();
+  const hasAuthSource = [...endpoint.searchParams.keys()].some(key => key.toLowerCase() === 'authsource');
+  if (!hasAuthSource) {
+    try { endpoint.searchParams.set('authSource', decodeURIComponent(endpoint.pathname.slice(1)) || 'admin'); }
+    catch { throw invalid(); }
+  }
+  endpoint.hostname = '127.0.0.1';
+  endpoint.port = '27017';
+  endpoint.pathname = '/' + encodeURIComponent(database);
+  for (const key of [...endpoint.searchParams.keys()]) {
+    if (key.toLowerCase() === 'directconnection') endpoint.searchParams.delete(key);
+  }
+  endpoint.searchParams.set('directConnection', 'true');
+  return `uri: ${JSON.stringify(endpoint.href)}\n`;
+}
+
 /**
  * 每一轮周期备份的结果文件，落在备份目录里。
  *
@@ -793,22 +822,26 @@ export const REDIS_CONNECT_LINES: readonly string[] = [
 export function redisAuthFromServiceDefinition(svc: {
   env?: Record<string, string> | null;
   command?: string[] | string | null;
-}): string {
-  const env = svc.env || {};
+}, variables: Record<string, string> = {}): string {
+  const env = resolveEnvTemplates(svc.env || {}, variables);
   // 注意：这里取到的**可能是错的**（env 里放过期口令的情况线上就有一台）。
   // 所以它只是个候选，最终由容器里那次真实的 PING 说了算。
   const fromEnv = env.REDIS_PASSWORD || env.REDIS_PASS || '';
   if (fromEnv) return fromEnv;
-  const parts = Array.isArray(svc.command)
-    ? svc.command
-    : String(svc.command || '').split(/\s+/).filter(Boolean);
+  const parts = Array.isArray(svc.command) ? svc.command : [svc.command || ''];
+  const expandProject = (value: string) => resolveEnvTemplates({ value }, variables).value;
+  const password = (value: string) => {
+    const reference = /^\$(?:\{([a-zA-Z_][a-zA-Z0-9_]*)\}|([a-zA-Z_][a-zA-Z0-9_]*))$/.exec(value);
+    if (!reference) return expandProject(value);
+    return env[reference[1] || reference[2]] || (reference[1] ? expandProject(value) : '');
+  };
   for (let i = 0; i < parts.length; i += 1) {
     const p = parts[i];
-    if (p.startsWith('--requirepass=')) return p.slice('--requirepass='.length);
-    if (p === '--requirepass' && i + 1 < parts.length) return parts[i + 1];
+    if (p === '--requirepass' && i + 1 < parts.length) return password(parts[i + 1]);
+    if (Array.isArray(svc.command) && p.startsWith('--requirepass=')) return password(p.slice('--requirepass='.length));
     // compose 常把整条命令塞进一个 `sh -c '...'` 元素里，参数没被拆开。
-    const inline = /--requirepass[= ]+("([^"]*)"|'([^']*)'|(\S+))/.exec(p);
-    if (inline) return inline[2] ?? inline[3] ?? inline[4] ?? '';
+    const inline = /(?:^|\s)--requirepass[=\s]+(?:"([^"]*)"|'([^']*)'|(\S+))/.exec(p);
+    if (inline) return inline[2] === undefined ? password(inline[1] ?? inline[3] ?? '') : expandProject(inline[2]);
   }
   return '';
 }

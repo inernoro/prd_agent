@@ -73,8 +73,17 @@ describe('human project access UI wiring', () => {
       expect(settingsTabForViewer(requested, true)).toBe(requested);
     }
     const page = read('pages/CdsSettingsPage.tsx');
-    expect(page).toContain('settingsTabForViewer(requestedTab, canManageSettings)');
     expect(page).toContain('canManageSystemSettings(viewerStatus)');
+  });
+  it('lets account administrators reach account settings without enabling system settings', () => {
+    expect(settingsTabForViewer('users', false, true)).toBe('users');
+    expect(settingsTabForViewer('auth', false, true)).toBe('auth');
+    expect(settingsTabForViewer('maintenance', false, true)).toBe('users');
+    expect(settingsTabForViewer('my-account', false)).toBe('my-account');
+    expect(canManageSystemSettings({
+      enabled: true,
+      user: { isSystemOwner: false, role: 'admin' },
+    })).toBe(false);
   });
   it('uses one owner capability for route mounting, search hints, shortcuts and version reads', () => {
     const shell = read('components/layout/AppShell.tsx');

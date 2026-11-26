@@ -1,13 +1,13 @@
 ---
 name: cds
 metadata:
-  version: 0.26.22
+  version: 0.26.26
 description: CDS (Cloud Dev Space) 的唯一入口：用户说「/cds <一句话>」，按 CDS 左侧菜单路由到对应任务，例如 /cds 建项目、/cds 部署这个分支、/cds 发布到 xx 环境、/cds 回滚、/cds 添加一个任务调度、/cds 加一个 xx 的监控、/cds 审查这次改动、/cds 记下这个决策、/cds 记一笔债、/cds 改 xx 模块的设计、/cds 领一个验收任务、/cds 给智能体授权、/cds 更新 CDS。也用于 CDS 授权接入、cdscli 命令、预览地址、部署记录和版本回滚。页面验收和验收报告的取证仍用 create-visual-test-to-kb；报告上传只是传输，不等于验收执行。
 ---
 
 # CDS — 核心技能：安全接入 / cdscli / 托管交付 / self-update / 分诊器
 
-> **版本**：v0.26.22 | **状态**：已落地 | **触发**：`/cds <一句话>`（按菜单路由，见下表）、`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"预览地址"、"工程规划"、"CDS 设计接入"
+> **版本**：v0.26.26 | **状态**：已落地 | **触发**：`/cds <一句话>`（按菜单路由，见下表）、`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"预览地址"、"工程规划"、"CDS 设计接入"
 
 > **冷热分离**：
 > - 接入新项目、生成 compose、上传 YAML → **`cds-project-scan`**（冷路径）
@@ -45,6 +45,12 @@ description: CDS (Cloud Dev Space) 的唯一入口：用户说「/cds <一句话
 完整路由、每个任务要读的技能、命令和步骤见 [按菜单的路由表](reference/menu.md)。
 <!-- cds-menu:end -->
 
+发布框架、出稿或修订时，读取同一技能根下的 [cds-design](../cds-design/SKILL.md)。
+
+按 CDS 左侧入口识别任务。「规划」处理决策、计划和债务，「设计」处理需求交接、稿件、框架、反馈和稿件验收。「设计」下说到实现截图或设计方复验时，先读[逐画面对照](reference/design-intake.md#逐画面对照)，从运行回执取得实际提交和目标画面。
+
+用户说 `/cds` 加一句话时，按[路由表](reference/menu-intents.json)找到对应任务。明确的实现或续版请求读[设计闭环](reference/design-loop.md)，验收请求读[测试闭环](reference/test-loop.md)。如果语句指定了稿件和版本，先回读该版本与当前任务的锁定目标。需求、实现反馈和复验结果在同一 CDS 线程流转。
+
 ## 本技能处理 / 不处理
 
 | 处理 | 不处理（去对应技能） |
@@ -78,6 +84,17 @@ description: CDS (Cloud Dev Space) 的唯一入口：用户说「/cds <一句话
 新项目先在主 CDS 创建并建立成员项目绑定，成员不独立创建或签发项目授权。原授权被撤销或主体被停用后，两侧均须拒绝后续请求；不得用旧本地凭据、自助补发或匿名审批绕过。
 
 ## cdscli — 唯一 CLI 入口（其他两个技能也走它）
+
+### 账号操作提案
+
+用户明确要求对已知成员账号进行重置口令、停用或结束会话时，先核对用户给的 CDS 账号编号、当前项目范围和变更原因。使用已经获「账号提案」授权的设备，不接收口令或粘贴密钥。若缺权，由系统所有者在「系统设置 › 账号与登录 › 身份恢复 › 设备接入」批准原项目及管理员设备的提案资格。
+
+```bash
+cdscli account propose revoke-sessions --target <CDS账号编号> --reason "<变更原因>"
+cdscli account receipt <服务端申请编号>
+```
+
+MCP 的 `--accounts` 服务提供 `cds_account_propose` 和 `cds_account_receipt`。CLI、MCP 与 HTTP 走同一服务端校验。收到 `pending` 时把原编号和下一步交还给用户，系统所有者可在「待批申请」核对目标、影响及原因。回读 `completed` 后再报告实际执行结果。
 
 ```bash
 CLI="python3 $(git rev-parse --show-toplevel)/.claude/skills/cds/cli/cdscli.py"
@@ -277,8 +294,9 @@ python3 <当前项目技能根>/cds/cli/cdscli.py monitor add \
 
 ## 完整技能包与版本协作
 
-CDS 对外技能包固定包含五个目录：
+CDS 对外技能包固定包含六个目录：
 
+- `cds-design`：设计接入、框架发布、稿件交付。
 - `cds`
 - `cds-project-scan`
 - `cds-deploy-pipeline`
@@ -424,13 +442,20 @@ $CLI debt stats
 
 自检通过不代表稿件可用，问题要在用户发现之前由设计方找出。
 
+发布前必须按 [出稿与发布前自查](reference/design-intake.md#出稿与发布前自查) 执行，结果写进交付说明：
+- 逐画面对照实施基线，首稿或尚无基线时记录已确认需求、采用框架及对应正式页面；
+- 用 `cdscli design preview` 在 CDS 预览容器里自检，核对嵌套画面和全部控制台记录；
+- 按角色和任务亲自走查。
+
+自检通过不代表稿件可用，问题要在用户发现之前由设计方找出。
+
 从 CDS「设计」页的「接入 Agent」复制设计发布口令。新工作区先用 `cdscli setup-check --host <CDS 地址> --project <项目 ID> --design-access publish` 验证设计接入清单。缺少权限时，由智能体用 `cdscli connect --host <CDS 地址> --project <项目 ID> --design-access publish --agent <智能体名称>` 发起申请。系统所有者在「项目」页右下角「授权申请」核对项目和智能体，点击「批准设计发布」。智能体领取凭据并在当前工作区重新自检。等待超时用同一命令继续领取。实施反馈和只读任务可分别申请 `feedback` 与 `read`。
 
 从已接入目录启动 `node <CDS 源码>/cds/mcp/src/server.mjs --design`，也可直接使用 CLI。不同 Agent 在稿件的「交付」标签和专用 MCP 上交换资料、实施反馈与修订回执。定稿、签收和固定版本分享由获授权成员处理。
 
 脚手架把框架版本、规则类别和自检待办写进稿件。从本地提交的稿件子目录用 `design publish --private --dir <目录>` 或 MCP 的 `sourceMode: "private"` 私有归档。项目内已同步的授权材料可沿用 Git 核验。稿件可在 `screens/<画面编号>.<light|dark>.png` 附浏览器截图，桌面为 1280×800，手机为 375×812。
 
-新版到达后，用 `design diff <稿件编号> <旧版> <新版>` 固定两个版本及提交。输出包括画面清单、框架和规则变化、包及 HTML 摘要变化，并按画面及主题比对已有实拍。缺实拍的主题显示 `unverified`。同尺寸实拍可在设计「对比」查看像素差异。先复现变化区域，再调整受影响的页面。
+开始升级时由有权成员锁定本轮实施目标，再用 `design diff <稿件编号> --from <实现起点> --to <目标版>` 读取 CDS 计算的画面、验收项和文件净变化。回退时调换起点和终点。按目标稿件完成验收并签收，CDS 会写回已实现版本。版本锁定、历史定稿理由和角色权限见 [实施版本与升降级](reference/design-intake.md#实施版本与升降级)。同尺寸实拍可在设计「对比」查看像素差异。
 
 通过 CLI 修改评审人或验收证据时，每次主动更新使用新的请求编号。响应丢失时，从输出读取 `retry.requestId`，以 `--request-id` 和本次原参数重试。使用 `--human` 时，直接从错误提示读取编号。
 
@@ -447,7 +472,10 @@ $CLI design request-review <稿件编号> --reviewer <成员ID>
 $CLI design publish <稿件编号> --private --intent revise --expected-version <最新版本> --dir design/<目录> --resolves "<评论编号>=如何处理"
 $CLI design list
 $CLI design comments <稿件编号> --open
-$CLI design diff <稿件编号> 1 2
+$CLI design feedback <稿件编号>
+$CLI design feedback-reply <稿件编号> --feedback-id <反馈编号> --body "核对结果"
+$CLI design preview --dir design/<目录> --screen <画面编号>
+$CLI design diff <稿件编号> --from 1 --to 2
 $CLI design accept <稿件编号> --pr <PR编号> --commit <完整提交>
 $CLI design record <稿件编号> --run <运行编号> --commit <完整提交> --file <证据.json>
 $CLI design result <稿件编号> --run <运行编号>

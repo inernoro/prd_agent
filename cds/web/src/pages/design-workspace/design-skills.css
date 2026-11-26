@@ -1,0 +1,78 @@
+.dw-skills > .dw-skill-guide { position: absolute; right: 0; top: calc(100% + 6px); z-index: 40; width: min(940px, calc(100vw - 200px)); max-height: min(78vh, 720px); overflow: auto; padding: 18px; border: 1px solid var(--dw-line); border-radius: 14px; background: var(--dw-pane); box-shadow: 0 18px 48px rgb(0 0 0 / .18); text-align: left; }
+.dw-skill-guide { display: grid; gap: 14px; }
+.dw-skill-guide > header { display: grid; gap: 2px; }
+.dw-skill-guide > header strong { font-size: 16px; }
+.dw-skill-guide > header small, .dw-skill-guide > footer small { color: var(--dw-muted); font-size: 12.5px; }
+.dw-skill-guide > footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 10px; border-top: 1px solid var(--dw-line); }
+.dw-sg-flow { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); position: relative; }
+.dw-sg-flow > li { position: relative; display: grid; justify-items: center; }
+.dw-sg-flow > li:not(:last-child)::after { content: ''; position: absolute; top: 21px; left: calc(50% + 24px); right: calc(-50% + 24px); height: 2px; background: var(--dw-line); }
+.dw-sg-flow > li[data-state=past]:not(:last-child)::after { background: hsl(var(--primary) / .55); }
+.dw-sg-flow button { display: grid; justify-items: center; gap: 4px; padding: 0; border: 0; background: none; cursor: pointer; color: inherit; }
+.dw-sg-node { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%; border: 2px solid var(--dw-line); background: var(--dw-bg); color: var(--dw-muted); transition: transform .2s, background .2s, border-color .2s; }
+.dw-sg-node svg { width: 20px; height: 20px; }
+.dw-sg-flow li[data-state=past] .dw-sg-node { border-color: hsl(var(--primary) / .55); color: hsl(var(--primary)); }
+.dw-sg-flow li[data-state=current] .dw-sg-node { border-color: hsl(var(--primary)); background: hsl(var(--primary)); color: hsl(var(--primary-foreground, 0 0% 100%)); transform: scale(1.08); box-shadow: 0 0 0 6px hsl(var(--primary) / .14); }
+.dw-sg-flow strong { font-size: 13.5px; }
+.dw-sg-flow small { font-size: 11.5px; color: var(--dw-muted); text-align: center; line-height: 1.3; }
+.dw-sg-timer { position: absolute; bottom: -8px; left: 25%; right: 25%; height: 2px; border-radius: 1px; background: hsl(var(--primary)); transform-origin: left; animation: dw-sg-timer 4s linear forwards; }
+@keyframes dw-sg-timer { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+.dw-sg-card { display: grid; grid-template-columns: minmax(0, 1fr) 28px minmax(0, 1fr); gap: 14px; align-items: start; padding: 16px; border-radius: 12px; background: var(--dw-sunken); animation: dw-sg-in .28s ease-out; }
+@keyframes dw-sg-in { from { opacity: 0; transform: translateY(6px); } }
+.dw-sg-card h5 { display: flex; align-items: center; gap: 6px; margin: 0 0 6px; font-size: 12px; font-weight: 600; color: var(--dw-muted); letter-spacing: .02em; }
+.dw-sg-card h5 svg { width: 15px; height: 15px; color: hsl(var(--primary)); }
+.dw-sg-card h5 + * + h5, .dw-sg-get h5:not(:first-child) { margin-top: 14px; }
+.dw-sg-bubble { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 10px 10px 14px; border-radius: 14px 14px 14px 4px; background: var(--dw-ink); color: var(--dw-bg); }
+.dw-sg-bubble code { font-size: 15px; font-weight: 600; background: none; color: inherit; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dw-sg-bubble .ep-button { background: rgb(255 255 255 / .12); border-color: transparent; color: inherit; }
+.dw-sg-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.dw-sg-steps li { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 8px; align-items: center; font-size: 13.5px; animation: dw-sg-in .3s ease-out both; }
+.dw-sg-steps b { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--dw-pane); border: 1px solid var(--dw-line); font-size: 11.5px; }
+.dw-sg-arrow { align-self: center; width: 22px; height: 22px; color: var(--dw-muted); }
+.dw-sg-result { display: grid; gap: 4px; padding: 12px 14px; border: 1px solid var(--dw-line); border-left: 3px solid hsl(var(--primary)); border-radius: 10px; background: var(--dw-pane); }
+.dw-sg-result header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.dw-sg-result header strong { font-size: 14px; }
+.dw-sg-result header span { padding: 1px 8px; border-radius: 10px; font-size: 11.5px; font-weight: 600; color: var(--dw-ok); background: color-mix(in srgb, var(--dw-ok) 14%, transparent); white-space: nowrap; }
+.dw-sg-result p { margin: 0; font-size: 13px; }
+.dw-sg-result small { font-size: 11.5px; color: var(--dw-muted); }
+.dw-sg-done { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.dw-sg-done li { display: flex; gap: 6px; align-items: center; font-size: 13px; }
+.dw-sg-done svg { flex: none; width: 15px; height: 15px; color: var(--dw-ok); }
+.dw-sg-ifnot { display: flex; gap: 6px; align-items: center; margin: 10px 0 0; padding: 6px 10px; border-radius: 8px; font-size: 12.5px; color: var(--dw-warn); background: color-mix(in srgb, var(--dw-warn) 12%, transparent); }
+.dw-sg-ifnot svg { flex: none; width: 15px; height: 15px; }
+.dw-sg-mini { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.dw-sg-mini > li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 8px 10px; border: 1px solid var(--dw-line); border-radius: 8px; }
+.dw-sg-mini > li > div { display: grid; gap: 2px; min-width: 0; }
+.dw-sg-mini code { font-size: 12.5px; overflow-wrap: anywhere; white-space: normal; }
+.dw-sg-mini small { font-size: 11.5px; color: var(--dw-muted); }
+.dw-sg-tag { padding: 1px 7px; border-radius: 9px; font-size: 11.5px; font-weight: 600; background: hsl(var(--primary) / .12); color: hsl(var(--primary-ink, var(--primary))); }
+.dw-skill-guide[data-compact] { padding-top: 10px; border-top: 1px solid var(--dw-line); gap: 8px; }
+.dw-skill-guide[data-compact] > header strong { font-size: 13.5px; }
+@media (prefers-reduced-motion: reduce) { .dw-sg-card, .dw-sg-steps li, .dw-sg-timer { animation: none; } }
+@media (max-width: 640px) {
+  .dw-skills > .dw-skill-guide { position: fixed; left: 8px; right: 8px; top: 64px; width: auto; max-height: calc(100dvh - 80px); }
+  .dw-sg-flow { grid-template-columns: repeat(6, 56px); overflow-x: auto; justify-content: start; padding-bottom: 10px; }
+  .dw-sg-flow small { display: none; }
+  .dw-sg-card { grid-template-columns: 1fr; }
+  .dw-sg-arrow { transform: rotate(90deg); justify-self: center; }
+}
+.dw-skills { position: relative; }
+/* 下拉菜单的通用样式会把按钮拉成整行、把子元素排成一行；在教程里还原 */
+.dw-skills .dw-skill-guide button { width: auto; min-width: 0; flex: none; justify-content: center; text-align: center; }
+.dw-skills .dw-sg-flow > li > button { display: grid; justify-items: center; gap: 4px; height: auto; padding: 0; border: 0; background: none; box-shadow: none; }
+.dw-skills .dw-sg-flow > li > button > strong, .dw-skills .dw-sg-flow > li > button > small { display: block; }
+.dw-skills .dw-sg-bubble code { white-space: normal; overflow: visible; text-overflow: clip; word-break: break-all; }
+.dw-skills .dw-sg-bubble .ep-icon-button { width: 32px; height: 32px; padding: 0; }
+.dw-skills .dw-skill-guide > footer .ep-button { padding-inline: 14px; }
+.dw-skill-guide .dw-sg-copy-status { color: var(--dw-ok); font-size: .75rem; }
+.dw-skill-guide .dw-sg-copy-status[data-result=failed] { color: var(--dw-danger); }
+@media (min-width: 641px) {
+  .dw-draft-actions .dw-info-panel:has(.dw-sg-mini) {
+    width: min(286px, calc(100vw - 34px));
+    max-height: calc(100dvh - 126px);
+    gap: 7px;
+    font-size: .75rem;
+  }
+  .dw-info-panel:has(.dw-sg-mini) dl { gap: 5px 9px; }
+  .dw-info-panel .dw-sg-mini > li { padding: 6px 8px; }
+}

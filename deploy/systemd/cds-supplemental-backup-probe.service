@@ -1,0 +1,13 @@
+[Unit]
+Description=Check live coverage of CDS Kafka and runtime data
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+UMask=0077
+Nice=10
+TimeoutStartSec=3min
+StateDirectory=cds-supplemental-backup
+StateDirectoryMode=0700
+ExecStart=/usr/bin/python3 /usr/local/lib/cds-supplemental-backup/backup.py --config /etc/cds-supplemental-backup.json --probe

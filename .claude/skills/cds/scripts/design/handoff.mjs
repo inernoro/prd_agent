@@ -15,7 +15,7 @@ import path from 'node:path';
 
 const argv = process.argv.slice(2); const opt = k => { const i = argv.indexOf(`--${k}`); return i >= 0 ? argv[i + 1] : undefined; };
 const dir = path.resolve(opt('dir') ?? '.'); const to = Number(opt('to')); const from = Number(opt('from') ?? 0);
-/* --from 0：首版，还没有实施基线，所有验收项都算新增（2026-11-25 DSN-2A3B7293 V1 没有生成清单） */
+/* --from 0：首版，还没有实施基线，所有验收项都算新增 */
 if (!to || !Number.isInteger(from) || from < 0 || from >= to) { console.error('用法：node handoff.mjs --dir <稿件目录> --to <这一版> [--from <实施基线，首版为 0>]'); process.exit(2); }
 const design = JSON.parse(readFileSync(path.join(dir, 'design.json'), 'utf8'));
 const goals = design.goals ?? [];

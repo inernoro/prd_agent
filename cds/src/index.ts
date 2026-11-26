@@ -35,7 +35,7 @@ import { confirmMaintenanceBoot } from './services/self-maintenance-retention.js
 import { ContainerLogStreamHub } from './services/container-log-stream-hub.js';
 import { ObservationStreamExecutor } from './services/observation-stream-executor.js';
 import { StateService } from './services/state.js';
-import { DeploymentRunService } from './services/deployment-run.js';
+import { DEPLOYMENT_RUN_TERMINAL_STATUSES, DeploymentRunService } from './services/deployment-run.js';
 import { isAutoWakeEligible } from './services/branch-wake-eligibility.js';
 import { branchUsesPrebuiltMode } from './services/deploy-runtime.js';
 import { runEntrypointSelfCheck, resolveSelfCheckBaseUrl } from './services/entrypoint-reachability.js';
@@ -57,12 +57,15 @@ import {
   type InfraExemptionFact,
   platformStoreFacts,
 } from './services/platform-daily-health.js';
+import type { BackupHealthRecord } from './services/backup-panel.js';
+import { readSupplementalBackupHealth, supplementalBackupFindings } from './services/supplemental-backup-health.js';
 import { evaluateInfraAuthentication } from './services/infra-auth-policy.js';
 import {
   backupDirCandidates, buildMysqlDumpScript, buildNacosDumpScript, buildPostgresDumpScript,
   buildRabbitmqDumpScript, extractBackupScopeNote, extractBackupGapNote, backupScopeGaps,
   buildRedisBackupProbeScript,
   buildRedisSnapshotCopyArgv,
+  controlPlaneMongoBackupConfig,
   redisAuthFromServiceDefinition,
   redisUsernameFromServiceDefinition,
   redisProbeStdin, buildSizeCappedCommand, parseDfAvailableBytes, planInfraBackups,
@@ -815,7 +818,16 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
           details: error instanceof BackupRetentionOperationError ? error.diagnostic : { stage: 'target-lease' },
         }), operation: async () => {
         try {
-          const backupSourceFingerprint = await backupRetentionService.captureSource(t.projectId, t.id);
+          const stateMongoUri = t.kind === 'mongo' && t.projectId === '__system__' && t.id === 'cds-state-mongo'
+            ? process.env.CDS_MONGO_URI : undefined;
+          const stateMongoDatabase = stateMongoUri ? process.env.CDS_MONGO_DB || 'cds_state_db' : undefined;
+          const captureSource = async () => {
+            const physical = await backupRetentionService.captureSource(t.projectId, t.id);
+            return physical && stateMongoDatabase
+              ? createHash('sha256').update(JSON.stringify([physical, 'control-plane-mongo', stateMongoDatabase])).digest('hex')
+              : physical;
+          };
+          const backupSourceFingerprint = await captureSource();
           await backupRetentionService.beginOutput(out, t.projectId, t.id, backupSourceFingerprint);
           if (t.kind === 'mongo' || t.kind === 'redis') {
             try {
@@ -841,15 +853,23 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
             // 后所有自动备份都会失败。口令不进入宿主或容器 argv。
             const current = stateService.getInfraServiceForProjectAndId(t.projectId, t.id);
             if (!current) throw new Error('轮换后的 Mongo 权威服务记录不存在');
-            const resolved = resolveEnvTemplates(current.env || {}, stateService.getCustomEnv(current.projectId));
-            const user = resolved.MONGO_INITDB_ROOT_USERNAME || resolved.MONGO_USERNAME || resolved.MONGODB_USERNAME || '';
-            const password = resolved.MONGO_INITDB_ROOT_PASSWORD || resolved.MONGO_PASSWORD || resolved.MONGODB_PASSWORD || '';
-            if (user) {
-              if (!password) throw new Error('Mongo 权威账号存在但口令为空');
-              cmd = `docker exec -i ${shq(t.containerName)} mongodump --archive --gzip --username=${shq(user)} --authenticationDatabase=admin --config=/dev/stdin > ${shq(out)}`;
-              commandStdin = `password: ${JSON.stringify(password)}\n`;
+            if (stateMongoUri && stateMongoDatabase) {
+              const ports = await shell.exec(`docker inspect --type container --format '{{json .NetworkSettings.Ports}}' ${shq(t.containerName)}`,
+                { executionLane: 'observation', timeout: 10_000 });
+              if (ports.exitCode !== 0) throw new Error('状态库容器端口未确认，请检查容器登记。');
+              commandStdin = controlPlaneMongoBackupConfig(stateMongoUri, stateMongoDatabase, JSON.parse(ports.stdout)?.['27017/tcp']);
+              cmd = `docker exec -i ${shq(t.containerName)} mongodump --archive --gzip --db ${shq(stateMongoDatabase)} --config=/dev/stdin > ${shq(out)}`;
             } else {
-              cmd = `docker exec ${shq(t.containerName)} mongodump --archive --gzip > ${shq(out)}`;
+              const resolved = resolveEnvTemplates(current.env || {}, stateService.getCustomEnv(current.projectId));
+              const user = resolved.MONGO_INITDB_ROOT_USERNAME || resolved.MONGO_USERNAME || resolved.MONGODB_USERNAME || '';
+              const password = resolved.MONGO_INITDB_ROOT_PASSWORD || resolved.MONGO_PASSWORD || resolved.MONGODB_PASSWORD || '';
+              if (user) {
+                if (!password) throw new Error('Mongo 权威账号存在但口令为空');
+                cmd = `docker exec -i ${shq(t.containerName)} mongodump --archive --gzip --username=${shq(user)} --authenticationDatabase=admin --config=/dev/stdin > ${shq(out)}`;
+                commandStdin = `password: ${JSON.stringify(password)}\n`;
+              } else {
+                cmd = `docker exec ${shq(t.containerName)} mongodump --archive --gzip > ${shq(out)}`;
+              }
             }
           } else if (t.kind === 'mysql') {
             // 密码在容器内展开；用 MYSQL_PWD 而不是 -p，避免它出现在容器自己的
@@ -903,11 +923,14 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
             // 脚本走 stdin（`sh -s`）而不是 `sh -c <脚本>`：这样 CDS 自己存的那份
             // 口令能一起送进去，而宿主命令行上只剩 `sh -s`，`ps` 看不到任何明文。
             const redisScript = buildRedisBackupProbeScript();
+            const redisService = stateService.getInfraServiceForProjectAndId(t.projectId, t.id);
+            if (!redisService) throw new Error('Redis 服务配置未找到，请检查备份目标。');
+            const variables = stateService.getCustomEnv(t.projectId);
             const redisProbe = await shell.exec(
               `docker exec -i ${shq(t.containerName)} sh -s`,
               {
                 timeout: 120_000,
-                stdin: redisProbeStdin(redisScript, redisAuthFromServiceDefinition(t), redisUsernameFromServiceDefinition(t, stateService.getCustomEnv(t.projectId))),
+                stdin: redisProbeStdin(redisScript, redisAuthFromServiceDefinition(redisService, variables), redisUsernameFromServiceDefinition(redisService, variables)),
               },
             );
             if (redisProbe.exitCode !== 0) {
@@ -944,6 +967,7 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
           }
           const r = await shell.exec(capped.command, { timeout: INFRA_BACKUP_TIMEOUT_MS, stdin: commandStdin });
           if (r.exitCode !== 0) {
+            if (stateMongoDatabase) throw new Error('状态库备份导出失败，请检查控制面 MongoDB 的连接、权限及可用空间。');
             const capGiB = (capped.capBytes / 1024 / 1024 / 1024).toFixed(1);
             // 撞上限和别的失败要能分开：前者是「这个库太大」，后者才是「备份坏了」。
             throw new Error(`${combinedOutput(r).slice(0, 400)}（本次写入上限 ${capGiB} GiB，超限会被内核中断）`);
@@ -952,7 +976,7 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
           // 成功路径上的 stderr 也要读。导出脚本用它报「这份备份覆盖到哪」——
           // 只在失败时看 stderr 的话，一次成功但只覆盖了一个库的备份，
           // 会以「成功 1 个」的形态被读成全量。
-          const scopeNote = extractBackupScopeNote(r.stderr || '');
+          const scopeNote = stateMongoDatabase ? `控制面状态库：${stateMongoDatabase}` : extractBackupScopeNote(r.stderr || '');
           // 「机制本来就不含」与「这轮真的少备了」分两个字段接：混成一个的话，
           // rabbitmq / nacos 每轮无条件报的那行说明会把健康位永远钉死（Codex review P1）。
           const gapNote = extractBackupGapNote(r.stderr || '');
@@ -1010,7 +1034,7 @@ function startInfraAutoBackup(store: ServerEventLogSink | null): NodeJS.Timeout 
           maintenanceCompleted = true;
 
           // Completed outputs enter the shared catalog; the independent reconciler owns retirement.
-          const finalSourceFingerprint = await backupRetentionService.captureSource(t.projectId, t.id);
+          const finalSourceFingerprint = await captureSource();
           await backupRetentionService.register(finalOut, t.projectId, t.id, 'automatic', {
             sourceFingerprint: backupSourceFingerprint,
             sourceComplete: Boolean(backupSourceFingerprint && backupSourceFingerprint === finalSourceFingerprint && !gapNote),
@@ -1335,6 +1359,54 @@ function readBackupHealth(): { localVerifiedAt?: Date | null; remoteVerifiedAt?:
  *
  * 判定全在 platform-daily-health（纯函数、可回归），这里只负责取事实和落事件。
  */
+function readPlatformBackupRecord(): BackupHealthRecord | null {
+  for (const dir of backupDirCandidates({ slug: stateService.projectSlug, repoRoot: config.repoRoot })) {
+    try {
+      const value = JSON.parse(fs.readFileSync(`${dir}/${INFRA_BACKUP_HEALTH_FILE}`, 'utf8'));
+      if (value && typeof value === 'object' && !Array.isArray(value)) return value as BackupHealthRecord;
+    } catch { /* Try the next backup directory. */ }
+  }
+  return null;
+}
+
+function activeSupplementalBackupHealth(health: BackupHealthRecord | null, now: Date) {
+  const running = new Set((stateService.getInfraServices() || []).filter((row) => row.status === 'running')
+    .map((row) => JSON.stringify([row.projectId, row.id])));
+  return readSupplementalBackupHealth(health, now)
+    .filter((fact) => running.has(JSON.stringify([fact.projectId, fact.id])));
+}
+
+function startSupplementalBackupAlerts(store: ServerEventLogSink | null): NodeJS.Timeout | null {
+  if (!store || config.mode === 'executor' || isPreviewInstance()) return null;
+  let previous = new Map<string, string>();
+  const run = () => {
+    const facts = activeSupplementalBackupHealth(readPlatformBackupRecord(), new Date());
+    const current = new Map<string, string>();
+    for (const fact of facts) {
+      const key = JSON.stringify([fact.projectId, fact.id]);
+      const code = fact.code;
+      if (fact.status === 'alert' && code) {
+        current.set(key, code);
+        if (previous.get(key) === code) continue;
+        store.record({
+          category: 'system', severity: 'warn', source: 'supplemental-backup',
+          action: 'backup.supplemental.alert', projectId: fact.projectId, serviceId: fact.id,
+          message: fact.message, status: 'warn', details: { code, verifiedAt: fact.verifiedAt },
+        });
+      } else if (previous.has(key)) {
+        store.record({
+          category: 'system', severity: 'info', source: 'supplemental-backup',
+          action: 'backup.supplemental.recovered', projectId: fact.projectId, serviceId: fact.id,
+          message: fact.message, status: 'success', details: { verifiedAt: fact.verifiedAt },
+        });
+      }
+    }
+    previous = current;
+  };
+  setTimeout(run, 60_000).unref();
+  return setInterval(run, 5 * 60_000).unref();
+}
+
 function startPlatformDailyHealthCheck(store: ServerEventLogSink | null): NodeJS.Timeout | null {
   if (config.mode === 'executor' || isPreviewInstance()) return null;
 
@@ -1433,35 +1505,31 @@ function startPlatformDailyHealthCheck(store: ServerEventLogSink | null): NodeJS
       let coverageGaps: string[] = [];
       let failedTargets: BackupTargetRef[] = [];
       let offsiteOnlyTargets: BackupTargetRef[] = [];
-      for (const dir of backupDirCandidates({ slug: stateService.projectSlug, repoRoot: config.repoRoot })) {
-        try {
-          const value = JSON.parse(fs.readFileSync(`${dir}/${INFRA_BACKUP_HEALTH_FILE}`, 'utf8')) as {
-            completedAt?: string | null;
-            coverageGaps?: Array<{ id?: string }>;
-            failedTargets?: Array<{ id?: string; projectId?: string | null }>;
-            offsiteOnlyTargets?: Array<{ id?: string; projectId?: string | null }>;
-          };
+      const value = readPlatformBackupRecord();
+      const now = new Date();
+      const supplemental = activeSupplementalBackupHealth(value, now);
+      const managed = new Set(supplemental.map((fact) => JSON.stringify([fact.projectId, fact.id])));
+      if (value) {
           // completedAt **只**回答「跑没跑」。不要在这里按 coverageComplete 再抹一次空——
           // 那正是这条链路上被抄了两份、又各自漂移的那个判据（见落盘处与 readBackupHealth
           // 的注释）。备没备全走 coverageGaps，谁没备成走 failedTargets。
           lastCompletedAt = value.completedAt ?? null;
-          coverageGaps = (value.coverageGaps || []).map((g) => String(g?.id || '')).filter(Boolean);
+          coverageGaps = (value.coverageGaps || []).filter((gap) => !managed.has(JSON.stringify([gap?.projectId, gap?.id])))
+            .map((g) => String(g?.id || '')).filter(Boolean);
           // 两类各自读。**不许合并**：它们要的运维动作不同，合起来那条告警就没法照做。
-          failedTargets = toBackupTargetRefs(value.failedTargets);
-          offsiteOnlyTargets = toBackupTargetRefs(value.offsiteOnlyTargets);
-          break;
-        } catch { /* 换下一个候选目录 */ }
+          failedTargets = toBackupTargetRefs(value.failedTargets ?? undefined);
+          offsiteOnlyTargets = toBackupTargetRefs(value.offsiteOnlyTargets ?? undefined);
       }
 
       // 事实四：恢复演练。**目前没有任何地方记录它**，所以恒为 null——
       // 体检会如实报「从来没演练过」。这不是占位符：在补上记录之前，
       // 「能不能真的恢复」的答案就是「不知道」，报成不知道才是对的。
       const verdict = evaluateDailyHealth({
-        now: new Date(),
+        now,
         infra,
         infraExemptions: exemptions,
         platformStores,
-        backup: { lastCompletedAt, coverageGaps, failedTargets, offsiteOnlyTargets },
+        backup: { lastCompletedAt, coverageGaps, failedTargets, offsiteOnlyTargets, supplementalFindings: supplementalBackupFindings(supplemental) },
         lastRestoreDrillAt: null,
       });
 
@@ -2123,7 +2191,6 @@ async function initStateService(): Promise<void> {
 
 await initStateService();
 config.storageInstanceId = await stateService.ensureStorageInstanceId(config.storageInstanceId);
-const backupRetentionService = new BackupRetentionService({ shell, state: stateService, repoRoot: config.repoRoot, instanceId: config.storageInstanceId });
 const acceptanceResourceRoot = path.resolve(process.env.CDS_RESOURCE_ROOT || '/var/lib/cds-resource-lifecycle');
 const ownedResourceLifecycle = new OwnedResourceLifecycle({ shell, instanceId: config.storageInstanceId,
   journal: stateService.resourceRetirementJournal(config.storageInstanceId, 'tasks'),
@@ -2181,6 +2248,11 @@ const offHostAuditConfig = offHostAuditConfigFromEnv();
 const activeServerEventLogStore: ServerEventLogSink | null = offHostAuditConfig
   ? new OffHostAuditLogSink({ primary: localServerEventLogStore, ...offHostAuditConfig })
   : localServerEventLogStore;
+const backupRetentionService = new BackupRetentionService({
+  shell, state: stateService, repoRoot: config.repoRoot, instanceId: config.storageInstanceId,
+  audit: activeServerEventLogStore,
+  historicalCopies: process.env.CDS_RETIRE_OFFSITE_BACKUP_COPIES === '1' ? r2BackupConfigFromEnv() : null,
+});
 // 总保险丝：后台小事失败不许弄死整台 CDS（2026-08-18 事故，见 process-fuse.ts）。
 // 装在事件汇建好之后、任何后台任务启动之前——晚一步就兜不住启动期的失败，
 // 而今天崩的恰恰就是启动期。
@@ -2197,26 +2269,30 @@ const infraExposureAudit = startInfraExposureAudit(activeServerEventLogStore);
 // 因为把根盘写满会同时打死所有预览、构建和 CDS 自己，那比没有备份更糟。
 const infraAutoBackup = startInfraAutoBackup(activeServerEventLogStore);
 // Independent of backup creation/success; restart resumes the same durable catalog.
-const reconcileBackups = async () => {
-  try {
+const scheduleHostRetention = config.mode !== 'executor' && !isPreviewInstance();
+const stopBackupRetention = scheduleHostRetention ? startReclaimSchedule({
+  intervalMs: 60 * 60_000, firstDelayMs: 3 * 60_000,
+  run: async () => {
     const report = await backupRetentionService.inspect(false);
     activeServerEventLogStore?.record({ category: 'system', severity: 'scanStatus' in report && report.scanStatus === 'complete' ? 'info' : 'warn', source: 'backup-retention', action: 'backup.retention.reconciled', message: '全局备份保留对账（最多15天，冲突与未知保持保护）', details: { report } });
-  } catch (error) {
+    return report;
+  },
+  onError: () => {
     activeServerEventLogStore?.record({ category: 'system', severity: 'error', source: 'backup-retention', action: 'backup.retention.failed', message: '备份保留对账未完成，未确认的对象已保留。' });
-  }
-};
-const backupRetentionTimer = config.mode !== 'executor' && !isPreviewInstance() ? setInterval(() => void reconcileBackups(), 60 * 60_000) : null;
-const backupRetentionStartup = backupRetentionTimer ? setTimeout(() => void reconcileBackups(), 60_000) : null;
-backupRetentionTimer?.unref(); backupRetentionStartup?.unref();
+  },
+}) : null;
 // Independent host keeper: a crashed producer is not responsible for its own retirement.
-const reconcileAcceptanceResources = async () => {
-  try {
+const stopAcceptanceRetention = scheduleHostRetention ? startReclaimSchedule({
+  intervalMs: 60_000,
+  run: async () => {
     const report = await ownedResourceLifecycle.inspect(false);
     activeServerEventLogStore?.record({ category: 'system', severity: report.scanStatus === 'complete' ? 'info' : 'warn', source: 'acceptance-retention', action: 'acceptance.retention.reconciled', message: '验收资源租约与退役对账', details: { report } });
-  } catch { activeServerEventLogStore?.record({ category: 'system', severity: 'warn', source: 'acceptance-retention', action: 'acceptance.retention.failed', message: '验收资源身份或引用未确认，未确认对象已保留。' }); }
-};
-const acceptanceRetentionTimer = config.mode !== 'executor' && !isPreviewInstance() ? setInterval(() => void reconcileAcceptanceResources(), 60_000) : null;
-acceptanceRetentionTimer?.unref();
+    return report;
+  },
+  onError: () => {
+    activeServerEventLogStore?.record({ category: 'system', severity: 'warn', source: 'acceptance-retention', action: 'acceptance.retention.failed', message: '验收资源身份或引用未确认，未确认对象已保留。' });
+  },
+}) : null;
 const rotationRecoveryCleanup = startRotationRecoveryArtifactCleanup({
   recoveryDir: path.join(path.dirname(stateService.getCacheBase()), 'credential-rotation-recovery'),
   onError: (error) => console.warn(`[credential-rotation] recovery artifact cleanup failed: ${error.message}`),
@@ -2226,6 +2302,7 @@ const infrastructureHealthWatchdog = startInfrastructureHealthWatchdog(activeSer
 // 每日安全体检：把公网端口、无口令的库、备份新鲜度、恢复演练合成一句结论。
 // 这些事实各自都有人算，但此前没有任何一处把它们合起来——于是要等人想起来查才发现。
 const platformDailyHealthCheck = startPlatformDailyHealthCheck(activeServerEventLogStore);
+startSupplementalBackupAlerts(activeServerEventLogStore);
 const staleDeployDispatchReconciler = startStaleDeployDispatchReconciler(stateService, activeServerEventLogStore);
 
 // 存量系统互联连接补 report:read —— **默认不做**，要管理员显式开开关。
@@ -3620,7 +3697,7 @@ const imageCacheGovernance = new ImageCacheGovernance({ shell, catalog: path.joi
 if (configuredImageCacheBudgetGiB > 0) configureImageCacheGovernance(imageCacheGovernance);
 // The hourly general Janitor cannot drain a two-image batch at deployment speed.
 // Share its global reclaim lock and native cross-process catalog lock.
-const stopImageCacheRetention = configuredImageCacheBudgetGiB > 0 && config.mode !== 'executor' && !isPreviewInstance()
+const stopImageCacheRetention = configuredImageCacheBudgetGiB > 0 && scheduleHostRetention
   ? startReclaimSchedule({
     intervalMs: 60_000,
     run: async () => {
@@ -4828,16 +4905,31 @@ janitorService.setRemoveFn(async id => {
           state: stateService,
           eventLog: activeServerEventLogStore,
           instanceId: computeCdsInstanceId(config.repoRoot),
+          mayRetireApp: isPreviewInstance() ? undefined : (app) => {
+            const deletion = stateService.findRemovedBranchByIdentifier(app.branchId);
+            if (deletion?.branchId !== app.branchId || deletion.projectId !== app.projectId
+              || !(Date.parse(app.createdAt) < Date.parse(deletion.removedAt)) || stateService.getBranch(app.branchId)) return false;
+            if (stateService.getAllBranches().some(branch => Object.values(branch.services || {}).some(service => service.containerName === app.name)
+              || Object.values(branch.replicaSets || {}).some(set => set.members.some(member => member.containerName === app.name)))) return false;
+            if (stateService.getDeploymentRuns({ branchId: app.branchId }).some(run => !DEPLOYMENT_RUN_TERMINAL_STATUSES.has(run.status))
+              || stateService.getDeploymentIntents().some(intent => intent.request.branchId === app.branchId)
+              || stateService.getReleaseBatches().some(batch => batch.branchId === app.branchId)) return false;
+            const references = new Set(app.imageReferences);
+            return !stateService.getDeploymentVersions().some(version =>
+              Object.values(version.profiles || {}).some(profile => !!profile.artifactImage && references.has(profile.artifactImage)));
+          },
         }).then((result) => {
           if (result.skippedReason) {
             console.log(`[orphan-reaper] 本轮跳过: ${result.skippedReason}`);
             return;
           }
           const stopped = result.actions.filter((a) => a.action === 'stopped');
+          const retired = result.actions.filter((a) => a.action === 'retired');
           const failed = result.actions.filter((a) => a.action === 'stop-failed');
-          if (stopped.length || failed.length) {
+          if (stopped.length || retired.length || failed.length) {
             console.warn(
               `[orphan-reaper] 孤儿容器处置: 已停止 ${stopped.length} 个` +
+              (retired.length ? `, 已退役 ${retired.length} 个` : '') +
               (failed.length ? `, 失败 ${failed.length} 个` : '') +
               ` (共发现 ${result.actions.length} 个孤儿)`,
             );
@@ -4913,9 +5005,8 @@ async function shutdown(signal: string): Promise<void> {
   if (staleDeployDispatchReconciler) clearInterval(staleDeployDispatchReconciler);
   if (infraExposureAudit) clearInterval(infraExposureAudit);
   if (infraAutoBackup) clearInterval(infraAutoBackup);
-  if (backupRetentionTimer) clearInterval(backupRetentionTimer);
-  if (backupRetentionStartup) clearTimeout(backupRetentionStartup);
-  if (acceptanceRetentionTimer) clearInterval(acceptanceRetentionTimer);
+  stopBackupRetention?.();
+  stopAcceptanceRetention?.();
   stopImageCacheRetention?.();
   clearInterval(deploymentMemoryReconciler);
   clearInterval(rotationRecoveryCleanup);

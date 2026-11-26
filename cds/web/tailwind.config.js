@@ -101,6 +101,8 @@ export default {
           DEFAULT: 'hsl(var(--primary-ink) / <alpha-value>)',
           foreground: 'hsl(var(--primary-foreground) / <alpha-value>)',
         },
+        'ok-ink': 'hsl(var(--ok-ink) / <alpha-value>)',
+        'warn-ink': 'hsl(var(--warn-ink) / <alpha-value>)',
       },
       borderRadius: {
         lg: 'var(--radius)',

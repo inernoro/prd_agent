@@ -137,6 +137,7 @@ export interface DailyHealthInput {
      * 混进「没有新副本」里，会把运维支去找一份其实存在的备份（Codex review P2）。
      */
     offsiteOnlyTargets?: readonly BackupTargetRef[];
+    supplementalFindings?: readonly HealthFinding[];
   };
   /** 最近一次「把备份真的灌回去读通了」的时间；null = 从来没演练过。 */
   lastRestoreDrillAt: string | null;
@@ -267,7 +268,7 @@ export function backupHealthFindings(input: {
   backup: DailyHealthInput['backup'];
   lastRestoreDrillAt: string | null;
 }): HealthFinding[] {
-  const findings: HealthFinding[] = [];
+  const findings: HealthFinding[] = [...(input.backup.supplementalFindings ?? [])];
   // ---- 5. 备份新鲜度 ----
   const backupAge = ageMs(input.now, input.backup.lastCompletedAt);
   if (backupAge === null) {

@@ -22,6 +22,7 @@ import { Router } from 'express';
 import crypto from 'node:crypto';
 import type { StateService } from '../services/state.js';
 import type { AuthService } from '../services/auth-service.js';
+import { verifiedHumanAccountId } from '../services/human-auth.js';
 import { assertNotMachineAgentKey } from './projects.js';
 import { isHumanProjectGrantUpdatePending, beginHumanProjectGrantUpdate, type FinishHumanAccessUpdate } from '../services/human-project-access.js';
 import type { AgentKey, Principal, ProjectGrant, UserCredential } from '../types.js';
@@ -57,6 +58,9 @@ export function userCredentialRouteAllowed(method: string, path: string): boolea
   if (m === 'POST' && path === '/api/identity/project-credentials') return true;
   // 我是谁 / 我有哪些授权
   if (m === 'GET' && path === '/api/identity/whoami') return true;
+  // The route requires a separately approved, project-bound proposal grant.
+  if (m === 'POST' && path === '/api/auth/account-proposals') return true;
+  if (m === 'GET' && /^\/api\/auth\/account-proposals\/[a-f0-9]{64}$/.test(path)) return true;
   // 能列项目、能建项目 —— 这两件事本来就是用户级凭证存在的理由
   if (m === 'GET' && path === '/api/projects') return true;
   if (m === 'POST' && path === '/api/projects') return true;
@@ -181,6 +185,7 @@ export function createIdentityRouter(deps: IdentityRouterDeps): Router {
       ...(body.label ? { label: String(body.label).slice(0, 100) } : {}),
       createdAt: new Date().toISOString(),
       ...(actor ? { createdBy: actor } : {}),
+      issuedByAccountId: verifiedHumanAccountId(req) ?? null,
       expiresAt: daysFromNow(USER_CREDENTIAL_TTL_DAYS),
     };
     stateService.addUserCredential(entry);
@@ -220,7 +225,8 @@ export function createIdentityRouter(deps: IdentityRouterDeps): Router {
       res.status(404).json({ error: 'project_not_found', message: `项目 ${projectId} 不存在` });
       return;
     }
-    const allowedProjects = stateService.getUserCredentials().find(c => c.id === principalId.credentialId)?.projectIds;
+    const sourceCredential = stateService.getUserCredentials().find(c => c.id === principalId.credentialId);
+    const allowedProjects = sourceCredential?.projectIds;
     if (allowedProjects && !allowedProjects.includes(projectId)) {
       res.status(403).json({ error: 'recovery_credential_project_only', message: '此恢复凭据只能补回原项目权限。' }); return;
     }
@@ -248,6 +254,7 @@ export function createIdentityRouter(deps: IdentityRouterDeps): Router {
       issuer: 'agent',
       principalId: principalId.principalId,
       issuedByCredentialId: principalId.credentialId,
+      issuedByAccountId: sourceCredential?.issuedByAccountId ?? null,
       expiresAt: daysFromNow(PROJECT_CREDENTIAL_TTL_DAYS),
     };
     stateService.addAgentKey(project.id, key);

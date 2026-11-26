@@ -42,18 +42,37 @@ import type { AuthStore } from './memory-store.js';
 import type {
   CdsUser, CdsSession, CdsWorkspace, CdsWorkspaceMember, CdsWorkspaceInvite, UpsertUserInput,
   CreateLocalUserInput, UserActivityRecord,
+  AccountIdentityLinkResult, AccountIdentityProvider,
+  AccountInvitationProof,
 } from '../../domain/auth.js';
+import { GithubIdentityDetachedError } from '../../domain/auth.js';
 import { ACTIVITY_RING_CAPACITY, localPlaceholderGithubId } from './memory-store.js';
 import type { IAuthMongoHandle } from './mongo-handle.js';
 import type { CdsPasskeyStore } from '../../domain/passkey.js';
 import type { Collection } from 'mongodb';
 import type { OidcArtifact } from './oidc-store.js';
+import type { AccountActionStore, AccountSecurityChange } from '../../domain/account-actions.js';
 
 export { IAuthMongoHandle };
 
 export class MongoAuthStore implements AuthStore {
   readonly passkeys?: CdsPasskeyStore;
   get oidcArtifacts(): Collection<OidcArtifact> | undefined { return this.handle.oidcCollection?.(); }
+  get accountActions(): AccountActionStore | undefined {
+    const actions = this.handle.accountActionsCollection?.();
+    const update = actions?.updateOneMatched;
+    if (!actions || !update) return undefined;
+    return {
+      insert: item => actions.insertOne(item),
+      get: id => actions.findOne({ id }),
+      list: ({ from, until, targetIds, ...filter }, limit) => actions.find({
+        ...filter,
+        ...(targetIds ? { targetId: { $in: targetIds } } : {}),
+        ...(from || until ? { createdAt: { ...(from ? { $gte: from } : {}), ...(until ? { $lte: until } : {}) } } : {}),
+      }, { sort: { createdAt: -1 }, limit }),
+      transition: (item, from) => update({ id: item.id, status: from }, { $set: item }),
+    };
+  }
 
   constructor(private readonly handle: IAuthMongoHandle) {
     const keys = handle.passkeysCollection?.bind(handle);
@@ -85,20 +104,22 @@ export class MongoAuthStore implements AuthStore {
     const existing = await users.findOne({ githubId: input.githubId });
 
     if (existing) {
-      const updated: CdsUser = {
-        ...existing,
-        githubLogin: input.githubLogin,
-        email: input.email,
-        name: input.name,
-        avatarUrl: input.avatarUrl,
+      const updated = {
+        ...(existing.authProvider === 'local'
+          ? { linkedGithubLogin: input.githubLogin }
+          : { githubLogin: input.githubLogin, email: input.email, name: input.name, avatarUrl: input.avatarUrl }),
         orgs: [...input.orgs],
         orgsCheckedAt: now.toISOString(),
         updatedAt: now.toISOString(),
       };
-      await users.replaceOne({ githubId: input.githubId }, updated);
-      return updated;
+      const binding = { id: existing.id, githubId: input.githubId };
+      await users.updateOne(binding, { $set: updated });
+      const current = await users.findOne(binding);
+      if (!current) throw new GithubIdentityDetachedError();
+      return current;
     }
 
+    if (await users.findOne({ detachedGithubIds: input.githubId })) throw new GithubIdentityDetachedError();
     const newUser: CdsUser = {
       id: randomUUID().replace(/-/g, ''),
       githubId: input.githubId,
@@ -128,11 +149,114 @@ export class MongoAuthStore implements AuthStore {
 
   async setUserStatus(id: string, status: CdsUser['status']): Promise<CdsUser | null> {
     const users = this.handle.usersCollection();
-    const user = await users.findOne({ id });
-    if (!user) return null;
-    const updated: CdsUser = { ...user, status, updatedAt: new Date().toISOString() };
-    await users.replaceOne({ id }, updated);
-    return updated;
+    await users.updateOne({ id }, { $set: { status, updatedAt: new Date().toISOString() } });
+    return users.findOne({ id });
+  }
+
+  async setUserAdministrator(id: string, isAdministrator: boolean): Promise<CdsUser | null> {
+    const users = this.handle.usersCollection();
+    await users.updateOne({ id, isSystemOwner: { $ne: true } }, { $set: {
+      isAdministrator, updatedAt: new Date().toISOString(),
+    } });
+    const current = await users.findOne({ id });
+    return current?.isSystemOwner ? null : current;
+  }
+
+  async setExternalLoginAllowed(expected: CdsUser, allowed: boolean): Promise<CdsUser | null> {
+    const users = this.handle.usersCollection();
+    const changed = await users.updateOneMatched?.({
+      id: expected.id, status: 'active', isSystemOwner: expected.isSystemOwner,
+      isAdministrator: expected.isAdministrator === true ? true : { $ne: true },
+    }, { $set: { externalLoginAllowed: allowed, updatedAt: new Date().toISOString() } });
+    return changed ? users.findOne({ id: expected.id }) : null;
+  }
+
+  async findUserByGoogleSubject(subject: string): Promise<CdsUser | null> {
+    return this.handle.usersCollection().findOne({ googleSubject: subject });
+  }
+
+  async linkIdentity(expected: CdsUser, provider: AccountIdentityProvider, subject: string, label: string): Promise<AccountIdentityLinkResult> {
+    if (!this.handle.ensureExternalIdentityIndexes) return 'account_changed';
+    await this.handle.ensureExternalIdentityIndexes();
+    const users = this.handle.usersCollection();
+    const found = provider === 'github' ? await users.findOne({ githubId: Number(subject) })
+      : await users.findOne({ googleSubject: subject });
+    if (found && found.id !== expected.id) return 'identity_taken';
+    const other = provider === 'github' ? expected.githubId > 0 && expected.githubId !== Number(subject)
+      : expected.googleSubject && expected.googleSubject !== subject;
+    if (other) return 'provider_already_linked';
+    const filter = provider === 'github' ? { githubId: expected.githubId } : { googleSubject: expected.googleSubject ?? { $exists: false } };
+    const binding = provider === 'github' ? { githubId: Number(subject), linkedGithubLogin: label }
+      : { googleSubject: subject, linkedGoogleLabel: label };
+    try {
+      const matched = await users.updateOneMatched?.({
+        ...filter, id: expected.id, status: 'active', externalLoginAllowed: true,
+        sessionRevision: expected.sessionRevision ?? { $exists: false },
+      }, { $set: { ...binding, updatedAt: new Date().toISOString() } });
+      return matched ? 'linked' : 'account_changed';
+    } catch (error) {
+      if ((error as { code?: number })?.code === 11000) return 'identity_taken';
+      throw error;
+    }
+  }
+
+  async findAccountInvitation(hash: string, now: Date): Promise<CdsUser | null> {
+    return this.handle.usersCollection().findOne({ status: 'active', invitationHash: hash, invitationExpiresAt: { $gt: now.toISOString() } });
+  }
+
+  async detachIdentity(user: CdsUser, provider: AccountIdentityProvider, change: AccountSecurityChange, now: Date): Promise<boolean> {
+    const users = this.handle.usersCollection();
+    if (!users.updateOneMatched) return false;
+    const github = provider === 'github';
+    return users.updateOneMatched({
+      id: user.id, status: 'active', githubId: user.githubId,
+      googleSubject: user.googleSubject ?? { $exists: false },
+      passwordHash: user.passwordHash ?? { $exists: false },
+      sessionRevision: user.sessionRevision ?? { $exists: false },
+    }, {
+      $set: { ...change, updatedAt: now.toISOString(), ...(github ? { githubId: localPlaceholderGithubId() } : {}) },
+      $unset: github ? { linkedGithubLogin: '' } : { googleSubject: '', linkedGoogleLabel: '' },
+      ...(github ? { $addToSet: { detachedGithubIds: user.githubId } } : {}),
+    });
+  }
+
+  async consumeAccountInvitation(user: CdsUser, proof: AccountInvitationProof, now: Date, security?: AccountSecurityChange): Promise<CdsUser | null> {
+    if (!user.invitationHash) return null;
+    const users = this.handle.usersCollection();
+    const external = 'provider' in proof;
+    if (external) {
+      if (!this.handle.ensureExternalIdentityIndexes) return null;
+      await this.handle.ensureExternalIdentityIndexes();
+    }
+    const change = !external ? { ...proof, ...(user.temporaryPassword ? { temporaryPassword: false } : {}) } : proof.provider === 'github'
+      ? { githubId: Number(proof.subject), linkedGithubLogin: proof.label }
+      : { googleSubject: proof.subject, linkedGoogleLabel: proof.label };
+    try {
+      const matched = await users.updateOneMatched?.({
+        id: user.id, status: 'active', invitationHash: user.invitationHash, invitationExpiresAt: { $gt: now.toISOString() },
+        sessionRevision: user.sessionRevision ?? { $exists: false },
+        ...(external ? { externalLoginAllowed: true } : {}),
+      }, { $set: { ...change, ...security, updatedAt: now.toISOString() },
+        $unset: { invitationHash: '', invitationExpiresAt: '', invitationForRecovery: '' } });
+      return matched ? users.findOne({ id: user.id }) : null;
+    } catch (error) {
+      if ((error as { code?: number })?.code === 11000) return null;
+      throw error;
+    }
+  }
+
+  async applyAccountSecurityChange(user: CdsUser, change: AccountSecurityChange, now: Date): Promise<boolean> {
+    const users = this.handle.usersCollection();
+    if (!users.updateOneMatched) throw new Error('Account security updates are unavailable');
+    return users.updateOneMatched({
+      id: user.id,
+      status: user.status,
+      lastLoginAt: user.lastLoginAt,
+      isSystemOwner: user.isSystemOwner,
+      isAdministrator: user.isAdministrator === true ? true : { $ne: true },
+      passwordHash: user.passwordHash ?? { $exists: false },
+      sessionRevision: user.sessionRevision ?? { $exists: false },
+    }, { $set: { ...change, updatedAt: now.toISOString() } });
   }
 
   async touchUserLastLogin(id: string, now = new Date()): Promise<void> {
@@ -179,14 +303,18 @@ export class MongoAuthStore implements AuthStore {
       githubLogin: username,
       authProvider: 'local',
       username,
-      passwordHash: input.passwordHash,
-      passwordSalt: input.passwordSalt,
+      ...(input.passwordHash && input.passwordSalt ? { passwordHash: input.passwordHash, passwordSalt: input.passwordSalt } : {}),
+      ...(input.temporaryPassword ? { temporaryPassword: true } : {}),
+      ...(input.invitationHash ? { invitationHash: input.invitationHash, invitationExpiresAt: input.invitationExpiresAt } : {}),
       email: input.email ?? null,
       name: input.name?.trim() || input.username,
       avatarUrl: null,
       orgs: [],
       orgsCheckedAt: now.toISOString(),
       isSystemOwner: input.isSystemOwner ?? false,
+      ...(input.isAdministrator ? { isAdministrator: true } : {}),
+      ...(input.createdByAccountId ? { createdByAccountId: input.createdByAccountId } : {}),
+      ...(input.externalLoginAllowed ? { externalLoginAllowed: true } : {}),
       status: 'active',
       lastLoginAt: null,
       createdAt: now.toISOString(),
@@ -213,16 +341,8 @@ export class MongoAuthStore implements AuthStore {
 
   async updateUserPassword(id: string, passwordHash: string, passwordSalt: string, now = new Date()): Promise<CdsUser | null> {
     const users = this.handle.usersCollection();
-    const user = await users.findOne({ id });
-    if (!user) return null;
-    const updated: CdsUser = {
-      ...user,
-      passwordHash,
-      passwordSalt,
-      updatedAt: now.toISOString(),
-    };
-    await users.replaceOne({ id }, updated);
-    return updated;
+    await users.updateOne({ id }, { $set: { passwordHash, passwordSalt, updatedAt: now.toISOString() } });
+    return users.findOne({ id });
   }
 
   // ── User activity / trace log ────────────────────────────────────────────
@@ -277,6 +397,7 @@ export class MongoAuthStore implements AuthStore {
   async createSession(
     input: {
       userId: string;
+      sessionRevision?: string;
       ttlMs: number;
       passkeyAuthenticated?: true;
       userAgent: string | null;
@@ -288,6 +409,7 @@ export class MongoAuthStore implements AuthStore {
     const session: CdsSession = {
       token,
       userId: input.userId,
+      ...(input.sessionRevision ? { sessionRevision: input.sessionRevision } : {}),
       createdAt: now.toISOString(),
       ...(input.passkeyAuthenticated ? { passkeyAuthenticated: true } : {}),
       expiresAt: new Date(now.getTime() + input.ttlMs).toISOString(),
@@ -362,6 +484,22 @@ export class MongoAuthStore implements AuthStore {
 
   async deleteSessionsForUser(userId: string): Promise<number> {
     return this.handle.sessionsCollection().deleteMany({ userId });
+  }
+
+  async countAccountSessions(user: CdsUser, now: Date): Promise<number> {
+    return this.handle.sessionsCollection().countDocuments({
+      userId: user.id,
+      sessionRevision: user.sessionRevision ?? { $exists: false },
+      expiresAt: { $gt: now.toISOString() },
+    });
+  }
+
+  async listAccountSessions(userId: string, revision: string | undefined, now: Date): Promise<CdsSession[]> {
+    return this.handle.sessionsCollection().find({
+      userId,
+      sessionRevision: revision ?? { $exists: false },
+      expiresAt: { $gt: now.toISOString() },
+    }, { sort: { lastSeenAt: -1 } });
   }
 
   // ── Workspaces ────────────────────────────────────────────────────────────
