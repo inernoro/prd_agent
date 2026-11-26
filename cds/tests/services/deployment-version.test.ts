@@ -60,13 +60,15 @@ describe('DeploymentVersionService', () => {
     const service = new DeploymentVersionService(stateService);
     const baseline = profile({ env: { DATABASE_NAME: 'shared', TOKEN: '${TOKEN}' },
       deployModes: { express: { label: '极速版', prebuilt: true, env: { RUNTIME: 'production' } } } });
-    branch.profileOverrides = { web: { activeDeployMode: 'express',
+    const resources = { enforceRuntime: true, cpus: 1.5, memoryMB: 6144 };
+    branch.profileOverrides = { web: { activeDeployMode: 'express', resources,
       env: { DATABASE_NAME: 'owned-isolated', TOKEN: 'owned-runtime-secret' } } };
     const effective = resolveEffectiveProfile(baseline, branch);
     const version = service.create({ projectId: 'p1', branchId: 'b1', commitSha: '1234567',
       configHash: service.computeConfigHash([effective], {}), profiles: [effective], branch, createdByRunId: 'owned-run' });
     const materialized = service.materializeProfiles(version, [baseline], branch)[0];
     expect(materialized.env).toEqual({ DATABASE_NAME: 'owned-isolated', TOKEN: 'owned-runtime-secret', RUNTIME: 'production' });
+    expect(materialized.resources).toEqual(resources);
     expect(materialized.dockerImage).toBe(version.profiles[0].artifactImage);
     expect(materialized.deployModes).toBeUndefined();
     expect(JSON.stringify(version)).not.toContain('owned-runtime-secret');

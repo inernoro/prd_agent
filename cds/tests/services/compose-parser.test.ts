@@ -44,6 +44,13 @@ describe('parseResourceLimits', () => {
       const entry: any = { 'x-cds-resources': { memoryMB: 511.9 } };
       expect(parseResourceLimits(entry)).toEqual({ memoryMB: 511 });
     });
+
+    it('requires explicit opt-in and complete bounds for runtime enforcement', () => {
+      const resources = { memoryMB: 6144, cpus: 1.5, enforceRuntime: true };
+      expect(parseResourceLimits({ 'x-cds-resources': resources })).toEqual(resources);
+      expect(() => parseResourceLimits({ 'x-cds-resources': { enforceRuntime: true, cpus: 1.5 } }))
+        .toThrow('运行时限额需要');
+    });
   });
 
   describe('deploy.resources.limits (standard compose)', () => {

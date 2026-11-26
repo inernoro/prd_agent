@@ -185,13 +185,7 @@ export interface BuildProfile {
    * Currently active deploy mode. null/undefined = use profile defaults (first mode or raw command).
    */
   activeDeployMode?: string;
-  /**
-   * Per-container cgroup limits (Phase 2 of resilience plan).
-   * When set, `docker run` gets `--memory <N>m` and/or `--cpus <N>` flags.
-   * Unset = no limit (legacy behavior).
-   *
-   * Derived from compose `deploy.resources.limits` or `x-cds-resources`.
-   */
+  /** Scheduling estimates. An explicit enforceRuntime setting also caps the running service. */
   resources?: ResourceLimits;
   /**
    * 2026-04-22 新增 —— 热更新（Hot Reload）配置。
@@ -615,26 +609,14 @@ export interface StorageBinding {
   mountKey: string;
 }
 
-/**
- * Per-container resource limits enforced via Docker cgroup flags.
- *
- * Phase 2 of the CDS resilience plan: prevent a single runaway container
- * from draining the whole host. Configured via compose
- * `deploy.resources.limits` (standard) or `x-cds-resources` (our extension).
- *
- * See `doc/design.cds.resilience.md` Phase 2.
- */
+/** CPU and memory estimates used for scheduling and optional runtime limits. */
 export interface ResourceLimits {
-  /**
-   * Max memory in MB.
-   *
-   * 2026-05-06 起仅作 capacity 调度规划提示(见 capacityMessage),
-   * **不再**下发为 --memory / --memory-swap docker 运行时硬限制。
-   * 用户明确"每个容器都不限制内存,尽情释放"。
-   */
+  /** Memory in MiB. */
   memoryMB?: number;
-  /** Max CPU cores (fractional allowed, e.g. 1.5). Docker flag: --cpus <N> */
+  /** CPU cores, including fractional cores. */
   cpus?: number;
+  /** Explicitly apply both values as hard limits to this service's runtime container. */
+  enforceRuntime?: boolean;
 }
 
 /**
