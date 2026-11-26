@@ -1,0 +1,1904 @@
+diff --git a/src/added/pages/quick-creation-agent/AttachmentTray.tsx b/src/added/pages/quick-creation-agent/AttachmentTray.tsx
+--- a/src/added/pages/quick-creation-agent/AttachmentTray.tsx
++++ b/src/added/pages/quick-creation-agent/AttachmentTray.tsx
+@@ -1,47 +1,75 @@
+ /**
+- * 附件托盘。附件再多，输入框里也只占一行：
+- * - 一行最多两个胶囊（文件名要读得出来），其余收成「+N」；
+- * - 上方一行摘要：数量、可用字数、失败数；失败用错误色并可直接展开；
+- * - 展开后是限高列表（超出滚动），按类型分组，失败排最前，逐项重试或移除。
+- * 发送后，消息里用 SentAttachmentSummary 收成一行，点开在右栏回看。
++ * 资料（附件）。三处出现，同一套「资料卡」：
++ * - 输入框顶部的托盘：一行摘要 + 最多两张资料卡 + 「+N」，附件再多也只占这一块；
++ * - 右栏的资料面板：点托盘的「管理」打开，按读取失败 / 稿件 / 知识库文档 / 图片分组，逐项重试或移除，右侧看正文；
++ * - 已发送消息里：两张资料卡 + 「全部 N 份」，点开在右栏回看（同一个面板的只读形态）。
++ * 管理放到右栏：左栏装不下一张像样的列表，输入框也不该被它撑高。
+  */
+-import { useMemo, useState } from 'react';
+-import { AlertTriangle, BookOpen, Check, ChevronDown, FileText, Image as ImageIcon, RotateCcw, X } from 'lucide-react';
++import { useMemo } from 'react';
++import { AlertTriangle, BookOpen, ChevronRight, FileText, Image as ImageIcon, RotateCcw, X } from 'lucide-react';
+ import { cn } from '@/lib/cn';
+ import { MapSpinner } from '@/components/ui/VideoLoader';
+ import { Button } from '@/components/design/Button';
+ import type { AttachmentKind, QcAttachment } from './types';
+ import { CHAR_BUDGET, KIND_LABEL, MAX_ATTACHMENTS, formatChars, sortAttachments, summarizeAttachments } from './format';
+ 
++const KIND_TINT: Record<AttachmentKind, { bg: string; fg: string }> = {
++  doc: { bg: 'var(--semantic-neutral-soft)', fg: 'var(--text-secondary)' },
++  kb: { bg: 'var(--semantic-info-soft)', fg: 'var(--accent-fg-info)' },
++  image: { bg: 'var(--semantic-purple-soft)', fg: 'var(--accent-fg-violet)' },
++};
++
+ export function KindIcon({ kind, size = 14 }: { kind: AttachmentKind; size?: number }) {
+-  if (kind === 'kb') return <BookOpen size={size} className="text-[color:var(--accent-fg-info)]" aria-hidden />;
+-  if (kind === 'image') return <ImageIcon size={size} className="text-[color:var(--accent-fg-violet)]" aria-hidden />;
+-  return <FileText size={size} className="text-token-secondary" aria-hidden />;
++  if (kind === 'kb') return <BookOpen size={size} aria-hidden />;
++  if (kind === 'image') return <ImageIcon size={size} aria-hidden />;
++  return <FileText size={size} aria-hidden />;
+ }
+ 
+-function StatusMark({ item }: { item: QcAttachment }) {
+-  if (item.status === 'reading') return <MapSpinner size={12} />;
+-  if (item.status === 'failed') return <AlertTriangle size={13} className="text-[color:var(--accent-fg-error)]" aria-label="读取失败" />;
+-  return <Check size={13} className="text-[color:var(--accent-fg-success)]" aria-label="已读取" />;
++/** 资料卡左侧的类型方块：失败换成错误色，读取中换成转圈 */
++function KindSquare({ item, size = 28 }: { item: QcAttachment; size?: number }) {
++  const failed = item.status === 'failed';
++  const tint = KIND_TINT[item.kind];
++  return (
++    <span className="inline-flex shrink-0 items-center justify-center rounded-lg" style={{
++      width: size, height: size,
++      background: failed ? 'var(--semantic-danger-soft)' : tint.bg,
++      color: failed ? 'var(--accent-fg-error)' : tint.fg,
++    }}>
++      {item.status === 'reading' ? <MapSpinner size={13} /> : failed ? <AlertTriangle size={14} aria-label="读取失败" /> : <KindIcon kind={item.kind} />}
++    </span>
++  );
+ }
+ 
+-function Chip({ item, onRemove }: { item: QcAttachment; onRemove?: () => void }) {
++function shortStatus(item: QcAttachment): { text: string; tone: 'muted' | 'error' } {
++  if (item.status === 'reading') return { text: `读取中 ${item.progress ?? 0}%`, tone: 'muted' };
++  if (item.status === 'failed') return { text: '读取失败', tone: 'error' };
++  if (item.kind === 'image') return { text: '画面参考', tone: 'muted' };
++  return { text: `${formatChars(item.chars ?? 0)} 字`, tone: 'muted' };
++}
++
++/** 一张资料卡：类型方块 + 名称 + 一句状态 */
++function Tile({ item, onRemove, onOpen }: { item: QcAttachment; onRemove?: () => void; onOpen?: () => void }) {
++  const st = shortStatus(item);
++  const body = (
++    <>
++      <KindSquare item={item} />
++      <span className="min-w-0 flex-1 text-left">
++        <span className="block truncate text-[12px] font-medium leading-4 text-token-primary">{item.name}</span>
++        <span className="block truncate text-[11px] leading-4" style={{ color: st.tone === 'error' ? 'var(--accent-fg-error)' : 'var(--text-muted)' }}>{st.text}</span>
++      </span>
++    </>
++  );
+   return (
+-    <span
+-      className={cn(
+-        'inline-flex h-8 max-md:h-11 min-w-0 max-w-[176px] flex-1 items-center gap-1.5 rounded-[var(--radius-control)] border pl-2 pr-1 text-[12px]',
+-        item.status === 'failed'
+-          ? 'border-[color:var(--accent-fg-error)]/45 bg-[color:var(--accent-fg-error)]/[0.08]'
+-          : 'border-token-subtle bg-token-nested',
++    <span title={`${item.name} · ${item.meta}`} data-att-tile={item.status}
++      className="relative flex h-11 min-w-0 flex-1 basis-0 items-center rounded-[10px] border border-token-subtle bg-[var(--bg-card)] max-w-[220px] max-md:h-auto">
++      {onOpen ? (
++        <button type="button" onClick={onOpen} className="flex h-full min-w-0 flex-1 items-center gap-2 rounded-[10px] pl-1.5 pr-2 hover-bg-soft max-md:min-h-11">{body}</button>
++      ) : (
++        <span className="flex h-full min-w-0 flex-1 items-center gap-2 pl-1.5 pr-1 max-md:min-h-11">{body}</span>
+       )}
+-      title={`${item.name} · ${item.meta}`}
+-    >
+-      <KindIcon kind={item.kind} size={13} />
+-      <span className="min-w-0 flex-1 truncate text-token-primary">{item.name}</span>
+-      <StatusMark item={item} />
+       {onRemove && (
+         <button type="button" aria-label={`移除 ${item.name}`} onClick={onRemove}
+-          className="inline-flex h-6 w-6 max-md:h-11 max-md:w-9 shrink-0 items-center justify-center rounded-md text-token-muted hover-bg-soft hover:text-token-primary">
++          className="mr-1 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-token-muted hover-bg-soft hover:text-token-primary max-md:hidden">
+           <X size={12} />
+         </button>
+       )}
+@@ -49,6 +77,45 @@ function Chip({ item, onRemove }: { item: QcAttachment; onRemove?: () => void })
+   );
+ }
+ 
++/** 输入框顶部的资料托盘（只有收起形态；管理在右栏） */
++export function AttachmentTray({ items, onRemove, onManage, managing }: {
++  items: QcAttachment[];
++  onRemove: (id: string) => void;
++  onManage: () => void;
++  managing: boolean;
++}) {
++  const sum = useMemo(() => summarizeAttachments(items), [items]);
++  const ordered = useMemo(() => sortAttachments(items), [items]);
++  if (!items.length) return null;
++  /* 两张资料卡保证名称读得出来，其余收进「+N」 */
++  const visible = ordered.slice(0, 2);
++  const hidden = ordered.length - visible.length;
++
++  return (
++    <div className="px-2.5 pt-2" data-qc="attachment-tray" data-count={sum.total} data-failed-count={sum.failed} data-reading-count={sum.reading}>
++      <button type="button" data-qc="tray-toggle" onClick={onManage} aria-expanded={managing}
++        className="flex h-6 w-full items-center gap-2 whitespace-nowrap rounded-md px-1 text-left text-[12px] hover-bg-soft max-md:h-11">
++        <span className="min-w-0 truncate">
++          <span className="font-medium text-token-primary">{sum.total} 份资料</span>
++          <span className="text-token-muted"> · {formatChars(sum.chars)} 字</span>
++        </span>
++        {sum.reading > 0 && <span className="shrink-0 rounded-full bg-[var(--bg-tertiary)] px-1.5 text-[11px] leading-[18px] text-token-secondary">{sum.reading} 读取中</span>}
++        {sum.failed > 0 && <span className="shrink-0 rounded-full px-1.5 text-[11px] font-medium leading-[18px]" style={{ background: 'var(--semantic-danger-soft)', color: 'var(--accent-fg-error)' }}>{sum.failed} 失败</span>}
++        <span className="ml-auto inline-flex shrink-0 items-center gap-0.5 text-token-secondary">{managing ? '管理中' : '管理'}<ChevronRight size={13} /></span>
++      </button>
++      <div className="flex items-center gap-1.5 pb-2 pt-1">
++        {visible.map(a => <Tile key={a.id} item={a} onRemove={() => onRemove(a.id)} />)}
++        {hidden > 0 && (
++          <button type="button" onClick={onManage} aria-label={`查看另外 ${hidden} 份资料`}
++            className="inline-flex h-11 shrink-0 flex-col items-center justify-center rounded-[10px] border border-dashed border-[var(--border-default)] px-3 text-[12px] font-medium leading-4 text-token-primary hover-bg-soft">
++            +{hidden}<span className="text-[10.5px] font-normal text-token-muted">更多</span>
++          </button>
++        )}
++      </div>
++    </div>
++  );
++}
++
+ function rowMeta(item: QcAttachment): string {
+   if (item.status === 'reading') return `${item.meta} · 正在读取 ${item.progress ?? 0}%`;
+   if (item.status === 'failed') return item.meta;
+@@ -56,61 +123,70 @@ function rowMeta(item: QcAttachment): string {
+   return `${item.meta} · 已读取 ${formatChars(item.chars ?? 0)} 字`;
+ }
+ 
+-function Row({ item, onRemove, onRetry, onOpen }: { item: QcAttachment; onRemove?: () => void; onRetry?: () => void; onOpen?: () => void }) {
++function Row({ item, active, onRemove, onRetry, onOpen }: { item: QcAttachment; active?: boolean; onRemove?: () => void; onRetry?: () => void; onOpen?: () => void }) {
+   const failed = item.status === 'failed';
+   return (
+-    <li className={cn('flex items-start gap-2.5 rounded-[var(--radius-field)] px-2.5 py-2', failed && 'bg-[color:var(--accent-fg-error)]/[0.06]')}>
+-      <span className="mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-token-nested"><KindIcon kind={item.kind} /></span>
++    <li data-att-id={item.id} data-att-status={item.status}
++      className={cn('rounded-[10px] px-2.5 py-2 transition-colors', active && 'bg-[var(--selection-bg)]', !active && onOpen && 'hover-bg-soft')}>
++      <div className="flex items-start gap-2.5">
++      <KindSquare item={item} size={32} />
+       <div className="min-w-0 flex-1">
+-        <div className="flex items-center gap-1.5">
+-          {onOpen ? (
+-            <button type="button" onClick={onOpen} className="min-w-0 truncate text-left text-[13px] font-medium text-token-primary hover:underline">{item.name}</button>
+-          ) : (
+-            <span className="min-w-0 truncate text-[13px] font-medium text-token-primary">{item.name}</span>
+-          )}
+-          <StatusMark item={item} />
+-        </div>
++        {onOpen ? (
++          <button type="button" onClick={onOpen} className="block w-full min-w-0 truncate text-left text-[13px] font-medium text-token-primary max-md:min-h-11">{item.name}</button>
++        ) : (
++          <div className="truncate text-[13px] font-medium text-token-primary">{item.name}</div>
++        )}
+         <div className="truncate text-[11.5px] text-token-muted">{rowMeta(item)}</div>
+-        {failed && item.error && <div className="mt-1 text-[12px] leading-5 text-[color:var(--accent-fg-error)]">{item.error}</div>}
++        {item.status === 'reading' && (
++          <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-[var(--bg-tertiary)]"><div className="qc-bar-live h-full rounded-full" style={{ width: `${item.progress ?? 0}%` }} /></div>
++        )}
+       </div>
+       <div className="flex shrink-0 items-center gap-1">
+-        {failed && onRetry && <Button size="xs" variant="secondary" className="max-md:min-h-11" onClick={onRetry}><RotateCcw size={12} />重试</Button>}
++        {failed && onRetry && <Button size="xs" variant="secondary" className="max-md:min-h-11" data-qc="att-retry" onClick={onRetry}><RotateCcw size={12} />重试</Button>}
+         {onRemove && (
+-          <button type="button" aria-label={`移除 ${item.name}`} onClick={onRemove}
++          <button type="button" data-qc="att-remove" aria-label={`移除 ${item.name}`} onClick={onRemove}
+             className="inline-flex h-7 w-7 max-md:h-11 max-md:w-11 items-center justify-center rounded-md text-token-muted hover-bg-soft hover:text-token-primary">
+             <X size={14} />
+           </button>
+         )}
+       </div>
++      </div>
++      {failed && item.error && <div className="mt-1 pl-[42px] text-[12px] leading-5" style={{ color: 'var(--accent-fg-error)' }}>{item.error}</div>}
+     </li>
+   );
+ }
+ 
+ const GROUPS: AttachmentKind[] = ['doc', 'kb', 'image'];
+ 
+-function GroupedList({ items, onRemove, onRetry, onOpen }: {
++function GroupedList({ items, activeId, onRemove, onRetry, onOpen }: {
+   items: QcAttachment[];
++  activeId?: string;
+   onRemove?: (id: string) => void;
+   onRetry?: (id: string) => void;
+   onOpen?: (id: string) => void;
+ }) {
+   const failed = items.filter(a => a.status === 'failed');
+   const rest = sortAttachments(items.filter(a => a.status !== 'failed'));
++  const head = (label: string, n: number, danger?: boolean) => (
++    <div className="flex items-center gap-1.5 px-2.5 pb-1 pt-1 text-[11.5px] font-medium" style={{ color: danger ? 'var(--accent-fg-error)' : 'var(--text-muted)' }}>
++      {label}<span className="tabular-nums">{n}</span>{danger && <span className="font-normal text-token-muted">· 不会用于生成</span>}
++    </div>
++  );
+   return (
+     <div className="space-y-2">
+       {failed.length > 0 && (
+-        <section aria-label="读取失败">
+-          <div className="px-2.5 pb-1 text-[11px] font-medium text-[color:var(--accent-fg-error)]">读取失败 · {failed.length}（不会用于生成）</div>
+-          <ul className="space-y-0.5">{failed.map(a => <Row key={a.id} item={a} onRemove={onRemove && (() => onRemove(a.id))} onRetry={onRetry && (() => onRetry(a.id))} onOpen={onOpen && (() => onOpen(a.id))} />)}</ul>
++        <section aria-label="读取失败" className="rounded-[12px] p-1" style={{ background: 'var(--semantic-danger-soft)' }}>
++          {head('读取失败', failed.length, true)}
++          <ul className="space-y-0.5">{failed.map(a => <Row key={a.id} item={a} active={a.id === activeId} onRemove={onRemove && (() => onRemove(a.id))} onRetry={onRetry && (() => onRetry(a.id))} />)}</ul>
+         </section>
+       )}
+       {GROUPS.map(kind => {
+         const list = rest.filter(a => a.kind === kind);
+         if (!list.length) return null;
+         return (
+-          <section key={kind} aria-label={KIND_LABEL[kind]}>
+-            <div className="px-2.5 pb-1 text-[11px] text-token-muted">{KIND_LABEL[kind]} · {list.length}</div>
+-            <ul className="space-y-0.5">{list.map(a => <Row key={a.id} item={a} onRemove={onRemove && (() => onRemove(a.id))} onOpen={onOpen && (() => onOpen(a.id))} />)}</ul>
++          <section key={kind} aria-label={KIND_LABEL[kind]} className="p-1">
++            {head(KIND_LABEL[kind], list.length)}
++            <ul className="space-y-0.5">{list.map(a => <Row key={a.id} item={a} active={a.id === activeId} onRemove={onRemove && (() => onRemove(a.id))} onOpen={onOpen && (() => onOpen(a.id))} />)}</ul>
+           </section>
+         );
+       })}
+@@ -118,105 +194,78 @@ function GroupedList({ items, onRemove, onRetry, onOpen }: {
+   );
+ }
+ 
+-/** 输入框里的附件托盘 */
+-export function AttachmentTray({ items, onRemove, onRetry, onClearFailed, defaultExpanded = false }: {
++function Excerpt({ item }: { item?: QcAttachment }) {
++  if (!item) return <div className="flex h-full items-center justify-center p-6 text-[13px] text-token-muted">选一份资料查看正文</div>;
++  return (
++    <div className="flex h-full min-h-0 flex-col">
++      <div className="flex items-center gap-2.5 border-b border-token-subtle px-5 py-3">
++        <KindSquare item={item} />
++        <div className="min-w-0">
++          <div className="truncate text-[14px] font-semibold text-token-primary">{item.name}</div>
++          <div className="truncate text-[11.5px] text-token-muted">{rowMeta(item)}</div>
++        </div>
++      </div>
++      <div className="min-h-0 flex-1 overflow-y-auto whitespace-pre-wrap px-5 py-4 text-[13.5px] leading-7 text-token-secondary" style={{ overscrollBehavior: 'contain' }}>
++        {item.status === 'reading' ? '正在读取，读完后这里显示正文。'
++          : item.status === 'failed' ? '这份资料没有读出正文，不会用于生成。可以重试，或移除后换一个文件。'
++            : item.kind === 'image' ? '这张图作为画面参考使用，不读入旁白。' : item.excerpt ?? '（正文较短，已全部读入）'}
++      </div>
++    </div>
++  );
++}
++
++/**
++ * 右栏的资料面板。manage：发送前管理（重试、移除、预算）；review：发送后只读回看。
++ * 列表在左、正文在右；窄屏上下排。
++ */
++export function MaterialsPanel({ mode, items, activeId, onSelect, onRemove, onRetry, onClearFailed }: {
++  mode: 'manage' | 'review';
+   items: QcAttachment[];
+-  onRemove: (id: string) => void;
+-  onRetry: (id: string) => void;
+-  onClearFailed: () => void;
+-  defaultExpanded?: boolean;
++  activeId?: string;
++  onSelect: (id: string) => void;
++  onRemove?: (id: string) => void;
++  onRetry?: (id: string) => void;
++  onClearFailed?: () => void;
+ }) {
+-  const [expanded, setExpanded] = useState(defaultExpanded);
+-  const sum = useMemo(() => summarizeAttachments(items), [items]);
+-  const ordered = useMemo(() => sortAttachments(items), [items]);
+-  if (!items.length) return null;
+-  /* 收起时只放两个胶囊，保证文件名读得出来；其余收进「+N」 */
+-  const visible = ordered.slice(0, 2);
+-  const hidden = ordered.length - visible.length;
++  const list = mode === 'review' ? items.filter(a => a.status === 'ready') : items;
++  const sum = summarizeAttachments(list);
++  const active = list.find(a => a.id === activeId) ?? sortAttachments(list).find(a => a.status === 'ready') ?? list[0];
+   const overBudget = sum.chars > CHAR_BUDGET;
+-
+   return (
+-    <div className="rounded-[var(--radius-field)] border border-token-subtle bg-token-nested" data-qc="attachment-tray">
+-      <button type="button" data-qc="tray-toggle" onClick={() => setExpanded(v => !v)} aria-expanded={expanded}
+-        className="flex w-full items-center gap-2 whitespace-nowrap px-2.5 pt-2 text-left text-[12px] max-md:min-h-11 max-md:pt-0">
+-        <span className="min-w-0 truncate">
+-          <span className="font-medium text-token-primary">{sum.total} 个附件</span>
+-          <span className="text-token-muted"> · {formatChars(sum.chars)} 字</span>
+-          {sum.reading > 0 && <span className="text-token-muted"> · {sum.reading} 个读取中</span>}
+-          {sum.failed > 0 && <span className="font-medium text-[color:var(--accent-fg-error)]"> · {sum.failed} 个失败</span>}
+-        </span>
+-        <span className="ml-auto inline-flex shrink-0 items-center gap-0.5 text-token-muted">{expanded ? '收起' : '管理'}<ChevronDown size={13} className={cn('transition-transform', expanded && 'rotate-180')} /></span>
+-      </button>
+-      {!expanded ? (
+-        <div className="flex items-center gap-1.5 overflow-hidden px-2 pb-2 pt-1.5">
+-          {visible.map(a => <Chip key={a.id} item={a} onRemove={() => onRemove(a.id)} />)}
+-          {hidden > 0 && (
+-            <button type="button" onClick={() => setExpanded(true)}
+-              className="inline-flex h-8 max-md:h-11 shrink-0 items-center rounded-[var(--radius-control)] border border-token-subtle px-2.5 text-[12px] text-token-secondary hover-bg-soft">
+-              +{hidden}
+-            </button>
++    <div className="flex h-full min-h-0 flex-col md:flex-row" data-qc={mode === 'review' ? 'attachment-review' : 'materials-panel'}>
++      <div className="flex min-h-0 shrink-0 flex-col border-token-subtle max-md:max-h-[50%] max-md:border-b md:w-[340px] md:border-r">
++        <div className="min-h-0 flex-1 overflow-y-auto p-2" style={{ overscrollBehavior: 'contain' }} data-qc={mode === 'manage' ? 'attachment-list' : undefined}>
++          {list.length ? (
++            <GroupedList items={list} activeId={active?.id} onOpen={onSelect} onRemove={onRemove} onRetry={onRetry} />
++          ) : (
++            <div className="p-6 text-center text-[13px] text-token-muted">还没有资料。用左边输入框的上传或知识库按钮添加。</div>
+           )}
+         </div>
+-      ) : (
+-        <div className="px-1 pb-1.5 pt-1">
+-          <div className="max-h-[232px] overflow-y-auto pr-1" data-qc="attachment-list">
+-            <GroupedList items={items} onRemove={onRemove} onRetry={onRetry} />
+-          </div>
+-          <div className="flex items-center gap-2 border-t border-token-subtle px-2.5 pt-1.5 text-[11.5px] text-token-muted">
+-            <span className={cn(overBudget && 'text-[color:var(--accent-fg-warning)]')}>
++        {mode === 'manage' && (
++          <div className="flex shrink-0 items-center gap-2 border-t border-token-subtle px-3.5 py-2 text-[11.5px] text-token-muted" data-qc="budget">
++            <span style={overBudget ? { color: 'var(--accent-fg-warning)' } : undefined}>
+               文字 {formatChars(sum.chars)} / {formatChars(CHAR_BUDGET)} · 附件 {sum.total} / {MAX_ATTACHMENTS}
+             </span>
+-            {sum.failed > 0 && <button type="button" onClick={onClearFailed} className="ml-auto rounded px-1.5 py-0.5 hover-bg-soft hover:text-token-primary">移除失败项</button>}
++            {sum.failed > 0 && onClearFailed && <button type="button" onClick={onClearFailed} className="ml-auto rounded px-1.5 py-0.5 hover-bg-soft hover:text-token-primary max-md:min-h-11">移除失败项</button>}
+           </div>
+-        </div>
+-      )}
+-    </div>
+-  );
+-}
+-
+-/** 已发送消息里的附件：一行摘要，点开在右栏回看 */
+-export function SentAttachmentSummary({ items, onOpenAll, onOpen }: { items: QcAttachment[]; onOpenAll: () => void; onOpen: (id: string) => void }) {
+-  const used = items.filter(a => a.status === 'ready');
+-  const first = sortAttachments(used).slice(0, 2);
+-  const rest = used.length - first.length;
+-  return (
+-    <div className="flex max-w-full flex-wrap items-center justify-end gap-1.5" data-qc="sent-attachments">
+-      {first.map(a => (
+-        <button key={a.id} type="button" onClick={() => onOpen(a.id)} title={`回看 ${a.name}`}
+-          className="inline-flex h-8 max-md:h-11 max-w-[180px] items-center gap-1.5 rounded-[var(--radius-control)] border border-token-subtle bg-token-nested px-2 text-[12px] hover-bg-soft">
+-          <KindIcon kind={a.kind} size={13} /><span className="truncate text-token-primary">{a.name}</span>
+-        </button>
+-      ))}
+-      {rest > 0 && (
+-        <button type="button" data-qc="open-all-attachments" onClick={onOpenAll}
+-          className="inline-flex h-8 max-md:h-11 items-center rounded-[var(--radius-control)] border border-token-subtle px-2.5 text-[12px] text-token-secondary hover-bg-soft">
+-          全部 {used.length} 个附件
+-        </button>
+-      )}
++        )}
++      </div>
++      <div className="min-h-0 min-w-0 flex-1"><Excerpt item={active} /></div>
+     </div>
+   );
+ }
+ 
+-/** 右栏的附件回看 */
+-export function AttachmentReview({ items, activeId, onSelect, onBack }: { items: QcAttachment[]; activeId?: string; onSelect: (id: string) => void; onBack: () => void }) {
+-  const used = items.filter(a => a.status === 'ready');
+-  const active = used.find(a => a.id === activeId) ?? used[0];
++/** 已发送消息里的资料：两张资料卡 + 「全部 N 份」，点开在右栏回看 */
++export function SentAttachments({ items, onOpenAll, onOpen }: { items: QcAttachment[]; onOpenAll: () => void; onOpen: (id: string) => void }) {
++  const used = sortAttachments(items.filter(a => a.status === 'ready'));
++  const first = used.slice(0, 2);
+   return (
+-    <div className="flex h-full min-h-0 flex-col gap-3 md:flex-row md:gap-4" data-qc="attachment-review">
+-      <div className="max-h-[200px] shrink-0 overflow-y-auto md:max-h-none md:w-[248px]">
+-        <GroupedList items={used} onOpen={onSelect} />
+-      </div>
+-      <div className="flex min-w-0 flex-1 flex-col rounded-[var(--radius-card)] border border-token-subtle bg-token-nested">
+-        <div className="flex items-center gap-2 border-b border-token-subtle px-4 py-2.5">
+-          {active && <KindIcon kind={active.kind} />}
+-          <span className="min-w-0 truncate text-[14px] font-semibold text-token-primary">{active?.name}</span>
+-          <span className="text-[12px] text-token-muted">{active ? rowMeta(active) : ''}</span>
+-          <Button size="xs" variant="ghost" className="ml-auto max-md:min-h-11" onClick={onBack}>回到预览</Button>
+-        </div>
+-        <div className="min-h-0 flex-1 overflow-y-auto whitespace-pre-wrap px-5 py-4 text-[13.5px] leading-7 text-token-secondary">
+-          {active?.kind === 'image' ? '这张图作为画面参考使用，不读入旁白。' : active?.excerpt ?? ''}
+-        </div>
+-      </div>
++    <div className="flex w-full items-center gap-1.5" data-qc="sent-attachments">
++      {first.map(a => <Tile key={a.id} item={a} onOpen={() => onOpen(a.id)} />)}
++      <button type="button" data-qc="open-all-attachments" onClick={onOpenAll}
++        className="inline-flex h-11 shrink-0 flex-col items-center justify-center rounded-[10px] border border-dashed border-[var(--border-default)] px-2.5 text-[12px] font-medium leading-4 text-token-primary hover-bg-soft">
++        全部<span className="text-[10.5px] font-normal text-token-muted">{used.length} 份</span>
++      </button>
+     </div>
+   );
+ }
+diff --git a/src/added/pages/quick-creation-agent/Conversation.tsx b/src/added/pages/quick-creation-agent/Conversation.tsx
+new file mode 100644
+--- /dev/null
++++ b/src/added/pages/quick-creation-agent/Conversation.tsx
+@@ -0,0 +1,34 @@
++/**
++ * 对话的两种说话人，一眼分得清：
++ * - 你：靠右的主色浅底气泡，资料卡收在气泡里，下方一行写产出与模板；
++ * - 快速创作：靠左，带头像与名字，不套气泡；它的状态（已保存、排队、进度、失败、完成）都是这一轮里的卡片，
++ *   不再和你的消息交错成一列。
++ */
++import type { ReactNode } from 'react';
++import { Sparkles } from 'lucide-react';
++
++export function AgentTurn({ children, status }: { children: ReactNode; status?: ReactNode }) {
++  return (
++    <div className="qc-rise flex gap-2.5" data-turn="agent">
++      <span className="mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-[9px] bg-[color:var(--accent-primary)] text-[color:var(--accent-on-primary)]" aria-hidden>
++        <Sparkles size={14} />
++      </span>
++      <div className="min-w-0 flex-1">
++        <div className="flex h-7 items-center gap-2 text-[12.5px]">
++          <span className="font-semibold text-token-primary">快速创作</span>
++          {status && <span className="min-w-0 truncate text-token-muted">{status}</span>}
++        </div>
++        <div className="mt-1 flex flex-col gap-3">{children}</div>
++      </div>
++    </div>
++  );
++}
++
++export function UserTurn({ children, meta }: { children: ReactNode; meta?: ReactNode }) {
++  return (
++    <div className="qc-rise ml-auto flex w-full max-w-[92%] flex-col items-end gap-1.5" data-turn="user">
++      <div className="flex w-full flex-col gap-2.5 rounded-[16px_16px_4px_16px] bg-[var(--selection-bg)] p-2.5">{children}</div>
++      {meta && <div className="flex items-center gap-1.5 px-1 text-[11.5px] text-token-muted">{meta}</div>}
++    </div>
++  );
++}
+diff --git a/src/added/pages/quick-creation-agent/QuickCreationAgentPage.tsx b/src/added/pages/quick-creation-agent/QuickCreationAgentPage.tsx
+--- a/src/added/pages/quick-creation-agent/QuickCreationAgentPage.tsx
++++ b/src/added/pages/quick-creation-agent/QuickCreationAgentPage.tsx
+@@ -1,29 +1,27 @@
+ /**
+  * 快速创作智能体：一份文档 + 一个模板 → 能播放的视频或能浏览的网页，并发布到网页托管。
+  * - 生成在服务端排队执行，离开页面不取消；地址里的 ?run= 让用户回到同一个任务。
+- * - 左栏：资料、要求与过程；右栏：预览。窄屏用 SplitToTabLayout 切成「创作 / 预览」。
++ * - 版式沿用网页生成工作台（WorkbenchLayout）：左栏一个对话 + 底部一个输入框；右栏是选模板、管理资料和预览。窄屏切成「对话 / 预览」。
+  * - 与「视频创作智能体」的区别：那边用生成式视频模型出镜头，这里用文稿 + 配音 + 可复用的模板画面代码。
+  */
+-import { useCallback, useEffect, useRef, useState } from 'react';
++import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+ import { useNavigate, useSearchParams } from 'react-router-dom';
+-import { BookOpen, Check, ChevronLeft, ExternalLink, Globe, LayoutList, Paperclip, Plus, Send, Video } from 'lucide-react';
+-import { cn } from '@/lib/cn';
++import { BookOpen, Check, ChevronLeft, ChevronRight, CircleCheck, ExternalLink, FileText, Globe, LayoutList, Paperclip, Plus, Send, Upload, Video } from 'lucide-react';
+ import { toast } from '@/lib/toast';
+ import { Button } from '@/components/design/Button';
+ import { Badge } from '@/components/design/Badge';
+-import { SegmentedTabs } from '@/components/design/SegmentedTabs';
+-import { SplitToTabLayout } from '@/components/design/SplitToTabLayout';
+ import { MapSpinner } from '@/components/ui/VideoLoader';
++import { PaneTabs, Segmented, WorkbenchLayout, WorkbenchPreview, fitComposerHeight, type WorkbenchPane } from '@/components/web-hosting/workbench/WorkbenchParts';
+ import {
+   addKnowledgeAttachment, createQuickCreationRun, getQuickCreationRun, listQuickCreationTemplates, listQuickCreationWorks,
+-  publishQuickCreationRun, retryAttachmentRead, retryQuickCreationRun, uploadQuickCreationAttachment,
++  addTextAttachment, publishQuickCreationRun, retryAttachmentRead, retryQuickCreationRun, uploadQuickCreationAttachment,
+ } from '@/services/real/quickCreation';
+-import { AttachmentReview, AttachmentTray, SentAttachmentSummary } from './AttachmentTray';
++import { AttachmentTray, MaterialsPanel, SentAttachments } from './AttachmentTray';
++import { AgentTurn, UserTurn } from './Conversation';
+ import { FailureCard, QueueCard, RunProgress } from './RunProgress';
+-import { ProgressPreview, TemplatePreview, VideoPlayer, WebPreview } from './ResultPanel';
+-import { TemplateFrame } from './TemplateFrames';
++import { ProgressPreview, TemplateGallery, VideoPlayer, WebPreview } from './ResultPanel';
+ import { WorksList } from './WorksList';
+-import { MAX_ATTACHMENTS, formatClock, summarizeAttachments } from './format';
++import { MAX_ATTACHMENTS, formatChars, formatClock, summarizeAttachments } from './format';
+ import type { OutputKind, QcAttachment, QcFailure, QcRun, QcTemplate, QcWork } from './types';
+ import './quickCreation.css';
+ 
+@@ -55,8 +53,12 @@ export function QuickCreationAgentPage() {
+   const [attachments, setAttachments] = useState<QcAttachment[]>([]);
+   const [ask, setAsk] = useState('');
+   const [submitting, setSubmitting] = useState(false);
+-  const [review, setReview] = useState<{ open: boolean; id?: string }>({ open: false });
++  /* 右栏此刻显示什么：资料面板（发送前管理 / 发送后回看）优先，否则按任务状态显示模板、过程或成品 */
++  const [panel, setPanel] = useState<{ mode: 'manage' | 'review'; id?: string } | null>(null);
++  const [pane, setPane] = useState<WorkbenchPane>('chat');
+   const fileInput = useRef<HTMLInputElement>(null);
++  const askRef = useRef<HTMLTextAreaElement>(null);
++  useEffect(() => { if (askRef.current) fitComposerHeight(askRef.current); }, [ask]);
+ 
+   useEffect(() => {
+     void listQuickCreationTemplates().then(res => { if (res.success) setTemplates(res.data.items); });
+@@ -72,26 +74,34 @@ export function QuickCreationAgentPage() {
+     if (!templateId && kindTemplates[0]) setTemplateId(kindTemplates[0].id);
+   }, [kindTemplates, templateId]);
+ 
+-  /* 按任务编号加载并轮询，直到终态；发布中也继续轮询 */
++  /* 按任务编号加载 */
+   useEffect(() => {
+-    setRun(null); setRunError(null); setReview({ open: false });
++    setRun(null); setRunError(null); setPanel(null);
+     if (!runId) return;
+     let stop = false;
+-    let timer: number | undefined;
+-    const tick = async () => {
+-      const res = await getQuickCreationRun(runId);
++    void getQuickCreationRun(runId).then(res => {
+       if (stop) return;
+-      if (!res.success) { setRunError(res.error?.message || '没有找到这个任务'); return; }
+-      setRun(res.data);
+-      const live = res.data.status === 'queued' || res.data.status === 'running' || res.data.publish.status === 'publishing';
+-      if (live) timer = window.setTimeout(tick, 1500);
+-    };
+-    void tick();
+-    return () => { stop = true; window.clearTimeout(timer); };
++      if (res.success) setRun(res.data); else setRunError(res.error?.message || '没有找到这个任务');
++    });
++    return () => { stop = true; };
+   }, [runId]);
+ 
++  /* 进行中的任务每秒查一次：阶段切换和恢复结果能在一秒内出现 */
++  const POLL_MS = 1000;
++  /* 轮询跟着任务状态走：排队、生成、发布中继续查；恢复或重试让任务重新进行时自动接上 */
++  const isLive = !!run && run.id === runId && (run.status === 'queued' || run.status === 'running' || run.publish.status === 'publishing');
++  useEffect(() => {
++    if (!isLive || !runId) return;
++    let stop = false;
++    const timer = window.setTimeout(async () => {
++      const res = await getQuickCreationRun(runId);
++      if (!stop && res.success) setRun(res.data);
++    }, POLL_MS);
++    return () => { stop = true; window.clearTimeout(timer); };
++  }, [isLive, runId, run]);
++
+   const openRun = (id: string) => setParams({ run: id });
+-  const startNew = () => { setParams({}); setAsk(''); setAttachments([]); };
++  const startNew = () => { setParams({}); setAsk(''); setAttachments([]); setPane('chat'); };
+ 
+   /* ---------- 附件 ---------- */
+   const addFile = async (file: File) => {
+@@ -108,7 +118,19 @@ export function QuickCreationAgentPage() {
+   const retryRead = async (id: string) => {
+     setAttachments(list => list.map(a => (a.id === id ? { ...a, status: 'reading', progress: 0, error: undefined } : a)));
+     const res = await retryAttachmentRead(id);
+-    if (res.success) setAttachments(list => list.map(a => (a.id === id ? res.data : a)));
++    /* 重试本身失败时退回「读取失败」并写明原因，不能停在读取中 */
++    setAttachments(list => list.map(a => (a.id !== id ? a : res.success ? res.data
++      : { ...a, status: 'failed', progress: undefined, error: `${res.error?.message || '这次重试也没有成功'}，可以稍后再试或换一个文件` })));
++  };
++  /* 粘贴的长正文（一次增加 300 字以上）转成一份稿件附件，输入框只留给「要求」 */
++  const PASTE_AS_DOC = 300;
++  const onAskChange = async (next: string) => {
++    if (next.length - ask.length < PASTE_AS_DOC) { setAsk(next); return; }
++    const pasted = next.startsWith(ask) ? next.slice(ask.length) : next;
++    const firstLine = pasted.trim().split('\n')[0].replace(/^#+\s*/, '').slice(0, 30) || '粘贴的正文';
++    const res = await addTextAttachment({ name: `${firstLine}.md`, text: pasted });
++    if (res.success) { setAttachments(list => [...list, res.data]); toast.info('已作为稿件附件', `粘贴的 ${pasted.length.toLocaleString('zh-CN')} 字已放进附件，输入框留给要求`); }
++    else { setAsk(next); toast.error('没能转成附件', `${res.error?.message || '请稍后重试'}，正文暂时留在输入框里`); }
+   };
+   const sum = summarizeAttachments(attachments);
+   const hasText = attachments.some(a => a.status === 'ready' && a.kind !== 'image');
+@@ -177,186 +199,231 @@ export function QuickCreationAgentPage() {
+     );
+   }
+ 
+-  /* ---------- 左栏：创作 ---------- */
+-  const composeLeft = (
+-    <div className="flex h-full min-h-0 flex-col">
+-      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4 md:px-5">
+-        <div>
+-          <h1 className="m-0 text-[17px] font-semibold text-token-primary">把一份文档变成能播、能发的成品</h1>
+-          <p className="m-0 mt-1.5 text-[13px] leading-6 text-token-secondary">选产出和模板，放进稿件，点快捷生成。配音、字幕或版式会按稿件自动排好，完成后可发布到网页托管。</p>
+-        </div>
+-        <div className="flex flex-wrap items-center justify-between gap-2">
+-          <span className="text-[12px] font-medium text-token-secondary">产出</span>
+-          {/* 公共组件 SegmentedTabs 沿用正式实现（32px），触控高度差异记为框架债务，不在单页改 */}
+-          <span data-qc-touch-exempt><SegmentedTabs<OutputKind>
+-            ariaLabel="选择产出"
+-            value={kind}
+-            onChange={k => { setKind(k); setTemplateId(templates.find(t => t.kind === k)?.id ?? ''); }}
+-            items={[{ key: 'video', label: '视频' }, { key: 'web', label: '网页' }]}
+-          /></span>
+-        </div>
+-        <div className="flex items-baseline justify-between">
+-          <span className="text-[12px] font-medium text-token-secondary">模板</span>
+-          <span className="text-[11.5px] text-token-muted">缩略图来自真实{kind === 'video' ? '成片' : '页面'}</span>
+-        </div>
+-        <div className="grid grid-cols-2 gap-2.5" role="radiogroup" aria-label="选择模板">
+-          {kindTemplates.map(t => {
+-            const on = t.id === template?.id;
+-            return (
+-              <button key={t.id} type="button" role="radio" aria-checked={on} onClick={() => setTemplateId(t.id)}
+-                className={cn('flex flex-col gap-2 rounded-[var(--radius-card)] border p-2 text-left hover-bg-soft',
+-                  on ? 'border-[color:var(--accent-primary)] shadow-[inset_0_0_0_1px_var(--accent-primary)]' : 'border-token-subtle')}>
+-                <span className="block overflow-hidden rounded-[var(--radius-control)]"><TemplateFrame frame={t.frame} scene={1} /></span>
+-                <span className="flex items-center gap-1.5 px-0.5">
+-                  <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-token-primary">{t.name}</span>
+-                  {on && <Check size={14} className="text-[color:var(--accent-primary)]" aria-hidden />}
+-                </span>
+-              </button>
+-            );
+-          })}
+-        </div>
+-        {!attachments.length && (
+-          <div className="rounded-[var(--radius-card)] border border-dashed border-token-subtle p-3.5 text-[12.5px] leading-6 text-token-secondary">
+-            稿件支持 Markdown、TXT，也可以从知识库选择或直接粘贴正文。项目名默认取稿件标题。
+-            <button type="button" data-qc="sample-doc" className="ml-1 font-medium text-[color:var(--accent-primary)] hover:underline" onClick={() => void addKnowledge(SAMPLE_KB_ENTRY)}>用示例稿件试一下</button>
+-          </div>
+-        )}
++  const openManage = () => { setPanel(p => (p?.mode === 'manage' ? null : { mode: 'manage' })); setPane('preview'); };
++  const openReview = (id?: string) => { setPanel({ mode: 'review', id }); setPane('preview'); };
++  const KindIcon = (kind === 'video' ? Video : Globe);
++
++  /* ---------- 左栏 · 新建：助手的开场 + 输入框 ---------- */
++  const startOptions = (
++    <div className="overflow-hidden rounded-[12px] border border-token-subtle bg-[var(--bg-input)] shadow-[var(--shadow-site-card)]">
++      {[
++        { key: 'sample', icon: FileText, title: '用示例稿件试一下', sub: '需求评审的三个习惯 · Markdown', qc: 'sample-doc', on: () => void addKnowledge(SAMPLE_KB_ENTRY) },
++        { key: 'kb', icon: BookOpen, title: '从知识库选择', sub: '引用个人或团队知识库里的文档', on: () => void addKnowledge('kb-picker') },
++        { key: 'upload', icon: Upload, title: '上传稿件', sub: 'Markdown、TXT；图片作为画面参考', on: () => fileInput.current?.click() },
++      ].map((o, i) => (
++        <button key={o.key} type="button" data-qc={o.qc} onClick={o.on}
++          className={`flex min-h-[52px] w-full items-center gap-3 px-3 py-2 text-left hover-bg-soft ${i ? 'border-t border-token-subtle' : ''}`}>
++          <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-[9px] bg-[var(--selection-bg)] text-[color:var(--accent-primary)]"><o.icon size={15} aria-hidden /></span>
++          <span className="min-w-0 flex-1">
++            <span className="block text-[13px] font-medium text-token-primary">{o.title}</span>
++            <span className="block truncate text-[11.5px] text-token-muted">{o.sub}</span>
++          </span>
++          <ChevronRight size={15} className="shrink-0 text-token-muted" aria-hidden />
++        </button>
++      ))}
++    </div>
++  );
++  const composeConversation = (
++    <AgentTurn>
++      <div>
++        <p className="m-0 text-[15px] font-semibold leading-6 text-token-primary">把一份文档交给我</p>
++        <p className="m-0 mt-1 text-[13px] leading-6 text-token-secondary">在预览区选好产出和模板，我来排好配音、字幕或版式，做成能播放的视频或能浏览的网页，完成后可以直接发布到网页托管。</p>
+       </div>
+-      <div className="shrink-0 border-t border-token-subtle px-3 pb-3 pt-2.5 md:px-5">
+-        <div className="space-y-2 rounded-[var(--radius-card)] border border-[var(--border-default)] bg-[var(--panel-solid)] p-2.5 focus-within:border-[var(--border-focus)]">
+-          <AttachmentTray items={attachments} onRemove={id => setAttachments(l => l.filter(a => a.id !== id))} onRetry={id => void retryRead(id)}
+-            onClearFailed={() => setAttachments(l => l.filter(a => a.status !== 'failed'))} />
+-          <label htmlFor="qc-ask" className="sr-only">补充要求</label>
+-          <textarea id="qc-ask" rows={2} value={ask} onChange={e => setAsk(e.target.value)}
+-            placeholder="可选：加一句要求，例如「稍微快一点，先提醒我三个重点，给新同事看」；也可以直接粘贴正文"
+-            className="block w-full resize-none border-0 bg-transparent px-1 text-[13.5px] leading-6 text-token-primary outline-none placeholder:text-token-muted" />
+-          <div className="flex items-center gap-1">
+-            <input ref={fileInput} type="file" accept=".md,.markdown,.txt,image/*" multiple hidden
+-              onChange={e => { const files = Array.from(e.target.files ?? []); e.target.value = ''; files.forEach(f => void addFile(f)); }} />
+-            <button type="button" aria-label="上传稿件或图片" className="qc-icon-btn" onClick={() => fileInput.current?.click()}><Paperclip size={16} /></button>
+-            <button type="button" aria-label="从知识库选择" data-qc="pick-knowledge" className="qc-icon-btn" onClick={() => void addKnowledge('kb-picker')}><BookOpen size={16} /></button>
+-            <Badge size="sm" icon={kind === 'video' ? <Video size={11} /> : <Globe size={11} />}>{OUTPUT_LABEL[kind]} · {template?.name ?? ''}</Badge>
+-            <Button variant="primary" className="ml-auto" disabled={!!blockReason || submitting} onClick={() => void submit()} data-qc="submit">
+-              {submitting ? <MapSpinner size={13} /> : <Send size={14} />}快捷生成
+-            </Button>
+-          </div>
++      {!attachments.length ? (
++        <>
++          {startOptions}
++          <p className="m-0 text-[12px] leading-5 text-token-muted">也可以把正文直接粘贴进下面的输入框，超过 300 字会自动变成一份稿件。</p>
++        </>
++      ) : (
++        <div className="qc-card px-3.5 py-3 text-[13px] leading-6 text-token-secondary" data-qc="materials-note">
++          收到 <span className="font-medium text-token-primary">{sum.total} 份资料</span>，可用 {formatChars(sum.chars)} 字。
++          {sum.failed > 0 && <>{sum.failed} 份读取失败，不会用于生成，点资料栏的「管理」重试或移除。</>}
++          {sum.reading > 0 ? <>{sum.reading} 份还在读取，读完就能生成。</> : sum.failed === 0 && <>确认模板后点「快捷生成」。</>}
++        </div>
++      )}
++    </AgentTurn>
++  );
++
++  const composer = (
++    <div>
++      <div className="flex flex-col rounded-2xl border border-[var(--border-default)] bg-[var(--bg-input)] shadow-[var(--shadow-input-inset)] transition-[border-color,box-shadow] has-[textarea:focus]:border-[color:var(--accent-primary)] has-[textarea:focus]:shadow-[0_0_0_3px_var(--selection-bg)]">
++        <AttachmentTray items={attachments} managing={panel?.mode === 'manage'} onRemove={id => setAttachments(l => l.filter(a => a.id !== id))} onManage={openManage} />
++        {attachments.length > 0 && <div className="mx-3 h-px bg-[var(--border-subtle)]" />}
++        <label htmlFor="qc-ask" className="sr-only">补充要求</label>
++        <textarea id="qc-ask" ref={askRef} rows={2} value={ask} onChange={e => void onAskChange(e.target.value)}
++          onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void submit(); } }}
++          placeholder="可选：加一句要求，例如「先提醒三个重点，给新同事看」"
++          className="block w-full resize-none overflow-y-auto bg-transparent px-3.5 pb-1 pt-3 text-base leading-relaxed text-token-primary outline-none placeholder:text-token-muted sm:text-[14px]" />
++        <div className="flex items-center gap-1 px-2 pb-2 pt-1">
++          <input ref={fileInput} type="file" accept=".md,.markdown,.txt,image/*" multiple hidden data-qc="file-input"
++            onChange={e => { const files = Array.from(e.target.files ?? []); e.target.value = ''; files.forEach(f => void addFile(f)); }} />
++          <button type="button" aria-label="上传稿件或图片" title="上传稿件或图片" className="qc-icon-btn" onClick={() => fileInput.current?.click()}><Paperclip size={16} /></button>
++          <button type="button" aria-label="从知识库选择" title="从知识库选择" data-qc="pick-knowledge" className="qc-icon-btn" onClick={() => void addKnowledge('kb-picker')}><BookOpen size={16} /></button>
++          <span className="mx-1 h-4 w-px bg-[var(--border-subtle)]" aria-hidden />
++          <button type="button" onClick={() => { setPanel(null); setPane('preview'); }} aria-label={`产出与模板：${OUTPUT_LABEL[kind]} · ${template?.name ?? ''}，点此更换`}
++            className="inline-flex h-8 min-w-0 items-center gap-1.5 rounded-lg px-2 text-[12px] text-token-secondary hover-bg-soft max-md:h-11">
++            <KindIcon size={13} className="shrink-0" aria-hidden />
++            <span className="truncate">{OUTPUT_LABEL[kind]} · {template?.name ?? ''}</span>
++            <ChevronRight size={13} className="shrink-0 text-token-muted lg:hidden" aria-hidden />
++          </button>
++          <Button variant="primary" size="sm" className="ml-auto shrink-0 max-md:min-h-11" disabled={!!blockReason || submitting} onClick={() => void submit()} data-qc="submit">
++            {submitting ? <MapSpinner size={13} /> : <Send size={13} />}快捷生成
++          </Button>
+         </div>
+-        {blockReason && <div className="mt-1.5 px-1 text-[11.5px] text-token-muted" data-qc="block-reason">{blockReason}</div>}
+       </div>
++      {blockReason
++        ? <p className="m-0 px-2 pt-1.5 text-[11.5px] text-token-muted" data-qc="block-reason">{blockReason}</p>
++        : <p className="m-0 hidden px-2 pt-1.5 text-[11.5px] text-token-muted lg:block">Ctrl / ⌘ + Enter 也可以生成 · 生成在后台进行，可以离开</p>}
+     </div>
+   );
+ 
+-  const runLeft = run && (
+-    <div className="flex h-full min-h-0 flex-col">
+-      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-4 md:px-5">
+-        <div className="qc-rise ml-auto flex max-w-[92%] flex-col items-end gap-1.5">
+-          <SentAttachmentSummary items={run.attachments} onOpenAll={() => setReview({ open: true })} onOpen={id => setReview({ open: true, id })} />
+-          {run.ask && <div className="rounded-[12px_12px_4px_12px] bg-[var(--bg-card-hover)] px-3 py-2 text-[13.5px] leading-6 text-token-primary">{run.ask}</div>}
+-          <Badge size="sm" icon={run.kind === 'video' ? <Video size={11} /> : <Globe size={11} />}>{OUTPUT_LABEL[run.kind]} · {template?.name}</Badge>
+-        </div>
+-        <div className="qc-rise flex items-center gap-2 rounded-[var(--radius-field)] border border-token-subtle bg-token-nested px-3 py-2 text-[12.5px] text-token-secondary">
+-          <Check size={14} className="shrink-0 text-[color:var(--accent-fg-success)]" aria-hidden />
+-          稿件和要求已保存。生成在后台进行，离开页面也会继续。
+-        </div>
++  /* ---------- 左栏 · 任务：你的那一条 + 助手这一轮 ---------- */
++  const runTemplate = templates.find(t => t.id === run?.templateId);
++  const agentStatus = !run ? null : run.status === 'queued' ? '已排队 · 后台进行' : run.status === 'running' ? '后台进行中 · 可以离开' : run.status === 'failed' ? '需要你处理' : '已完成';
++  const runConversation = run && (
++    <>
++      <UserTurn meta={<>{run.kind === 'video' ? <Video size={12} aria-hidden /> : <Globe size={12} aria-hidden />}{OUTPUT_LABEL[run.kind]} · {runTemplate?.name}</>}>
++        <p className="m-0 px-1 text-[14px] leading-6 text-token-primary">{run.ask || '没有补充要求，按模板默认节奏生成'}</p>
++        <SentAttachments items={run.attachments} onOpenAll={() => openReview()} onOpen={id => openReview(id)} />
++      </UserTurn>
++      <AgentTurn status={agentStatus}>
++        <p className="m-0 flex items-center gap-1.5 text-[12.5px] text-token-secondary" data-qc="saved-notice">
++          <Check size={14} className="shrink-0 text-[color:var(--accent-fg-success)]" aria-hidden />稿件和要求已保存，生成在后台进行，离开页面也会继续。
++        </p>
+         {run.status === 'queued' && <QueueCard run={run} />}
+-        <RunProgress run={run} />
++        {run.status !== 'queued' && <RunProgress run={run} />}
+         {run.status === 'failed' && run.failure && <FailureCard failure={run.failure} onAction={a => void onRecover(a)} />}
+         {run.status === 'done' && (
+-          <div className="qc-rise space-y-2.5 rounded-[var(--radius-card)] border border-token-subtle bg-[var(--bg-card)] p-3.5" data-qc="done-card">
+-            <div className="flex flex-wrap items-center gap-2">
+-              <span className="text-[14px] font-semibold text-token-primary">{run.kind === 'video' ? '成片已生成' : '网页已生成'}</span>
+-              <Badge size="sm">{run.kind === 'video' ? `${formatClock(run.durationSec ?? 0)} · ${run.scenes?.length ?? 0} 幕 · 1080p` : `${run.sections?.length ?? 0} 节 · 适配手机`}</Badge>
+-            </div>
+-            {run.ask && <div className="text-[12.5px] leading-6 text-token-secondary">按你的要求：{run.ask}</div>}
+-            {run.publish.status === 'none' && (
+-              <Button variant="primary" onClick={() => void onPublish()} data-qc="publish"><Globe size={14} />发布到网页托管</Button>
+-            )}
+-            {run.publish.status === 'publishing' && <div className="flex items-center gap-2 text-[12.5px] text-token-secondary"><MapSpinner size={13} />正在上传到网页托管…</div>}
+-            {run.publish.status === 'failed' && (
+-              <div className="space-y-2 rounded-[var(--radius-field)] border border-[color:var(--accent-fg-error)]/35 bg-[color:var(--accent-fg-error)]/[0.06] p-3" role="alert" data-qc="publish-failed">
+-                <div className="text-[13px] font-medium text-[color:var(--accent-fg-error)]">发布没有完成</div>
+-                <div className="text-[12px] leading-5 text-token-secondary">{run.publish.error}。{run.kind === 'video' ? '成片' : '网页'}已保存在作品里，右侧照常可看；重试只上传，不会重新生成。</div>
+-                <Button size="sm" variant="primary" className="max-md:min-h-11" onClick={() => void onPublish()}>重试发布</Button>
++          <section className="qc-card qc-rise p-4" data-qc="done-card">
++            <div className="flex items-start gap-3">
++              <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-[var(--semantic-success-soft)] text-[color:var(--accent-fg-success)]"><CircleCheck size={17} aria-hidden /></span>
++              <div className="min-w-0 flex-1">
++                <div className="text-[15px] font-semibold text-token-primary">{run.kind === 'video' ? '成片已生成' : '网页已生成'}</div>
++                <div className="mt-0.5 text-[12.5px] leading-5 text-token-secondary">
++                  {run.kind === 'video' ? `${formatClock(run.durationSec ?? 0)} · ${run.scenes?.length ?? 0} 幕 · 1080p` : `${run.sections?.length ?? 0} 节 · 适配手机`}，右边可以直接{run.kind === 'video' ? '播放' : '浏览'}。
++                </div>
+               </div>
+-            )}
+-            {run.publish.status === 'done' && (
+-              <div className="flex flex-wrap items-center gap-2 rounded-[var(--radius-field)] border border-[color:var(--accent-fg-success)]/35 bg-[color:var(--accent-fg-success)]/[0.06] p-3" data-qc="published">
+-                <Check size={15} className="text-[color:var(--accent-fg-success)]" aria-hidden />
+-                <span className="min-w-0 flex-1 text-[12.5px] text-token-primary">已发布到网页托管 · {run.publish.siteTitle}</span>
+-                <Button size="sm" variant="secondary" className="max-md:min-h-11" onClick={() => navigate(`/web-pages?focusSite=${encodeURIComponent(run.publish.siteId ?? '')}`)}>
+-                  <ExternalLink size={13} />在网页托管中查看
+-                </Button>
+-              </div>
+-            )}
+-          </div>
+-        )}
+-      </div>
+-      <div className="flex shrink-0 flex-wrap items-center gap-2 border-t border-token-subtle px-4 py-3 text-[12px] text-token-muted md:px-5">
+-        {run.status === 'queued' || run.status === 'running' ? (
+-          <>
+-            <span className="min-w-0 flex-1">可以离开，完成后会发站内通知，也能在「我的作品」找到它。</span>
+-            <Button size="sm" variant="secondary" className="max-md:min-h-11" onClick={() => setParams({ view: 'works' })}>离开，稍后回来</Button>
+-          </>
+-        ) : run.status === 'failed' ? (
+-          <span className="min-w-0 flex-1">已完成的部分都已保存，可以现在处理，也可以稍后在「我的作品」里继续。</span>
+-        ) : (
+-          <>
+-            <span className="min-w-0 flex-1">想换个模板或产出？用同一份稿件再做一个。</span>
+-            <Button size="sm" variant="secondary" className="max-md:min-h-11" onClick={() => { setAttachments(run.attachments.filter(a => a.status === 'ready')); setAsk(run.ask); setKind(run.kind === 'video' ? 'web' : 'video'); setTemplateId(''); setParams({}); }}>
+-              用这份稿件做{run.kind === 'video' ? '网页' : '视频'}
+-            </Button>
+-          </>
++            </div>
++            <div className="mt-3.5">
++              {run.publish.status === 'none' && (
++                <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
++                  <Button variant="primary" className="max-md:min-h-11" onClick={() => void onPublish()} data-qc="publish"><Globe size={14} />发布到网页托管</Button>
++                  <span className="text-[12px] text-token-muted">发布后得到可分享的链接</span>
++                </div>
++              )}
++              {run.publish.status === 'publishing' && <div className="flex h-9 items-center gap-2 text-[12.5px] text-token-secondary"><MapSpinner size={13} />正在上传到网页托管…</div>}
++              {run.publish.status === 'failed' && (
++                <div className="rounded-[10px] border p-3" style={{ borderColor: 'var(--semantic-danger-border)', background: 'var(--semantic-danger-soft)' }} role="alert" data-qc="publish-failed">
++                  <div className="text-[13px] font-medium" style={{ color: 'var(--accent-fg-error)' }}>发布没有完成</div>
++                  <div className="mt-0.5 text-[12px] leading-5 text-token-secondary">{run.publish.error}。{run.kind === 'video' ? '成片' : '网页'}已保存在作品里，右边照常可看；重试只上传，不会重新生成。</div>
++                  <Button size="sm" variant="primary" className="mt-2.5 max-md:min-h-11" data-qc="publish-retry" onClick={() => void onPublish()}>重试发布</Button>
++                </div>
++              )}
++              {run.publish.status === 'done' && (
++                <div className="rounded-[10px] border p-3" style={{ borderColor: 'var(--semantic-success-border)', background: 'var(--semantic-success-soft)' }} data-qc="published">
++                  <div className="flex items-center gap-2 text-[13px] font-medium text-token-primary">
++                    <Check size={15} className="shrink-0 text-[color:var(--accent-fg-success)]" aria-hidden />已发布到网页托管
++                  </div>
++                  <div className="mt-0.5 truncate pl-[23px] text-[12px] text-token-secondary">{run.publish.siteTitle} · 拿到链接的人都能打开</div>
++                  <Button size="sm" variant="secondary" className="ml-[23px] mt-2.5 max-md:min-h-11" data-qc="open-hosting" onClick={() => navigate(`/web-pages?focusSite=${encodeURIComponent(run.publish.siteId ?? '')}`)}>
++                    <ExternalLink size={13} />在网页托管中查看
++                  </Button>
++                </div>
++              )}
++            </div>
++          </section>
+         )}
+-      </div>
+-    </div>
++      </AgentTurn>
++    </>
+   );
+-
+-  /* ---------- 右栏：预览 ---------- */
+-  const rightTitle = review.open ? '附件回看' : !run ? '模板预览'
+-    : run.status === 'done' ? (run.kind === 'video' ? '成片预览' : '网页预览')
+-      : run.kind === 'video' ? '分镜预览' : '大纲预览';
+-  const right = (
+-    <div className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto px-4 py-4 md:px-6">
+-      <div className="flex flex-wrap items-center gap-2">
+-        <span className="text-[12px] font-medium text-token-secondary">{rightTitle}</span>
+-        {run?.status === 'done' && !review.open && (
+-          <span className="ml-auto flex flex-wrap justify-end gap-1.5">
+-            <button type="button" className="inline-flex items-center max-md:min-h-11" onClick={() => setReview({ open: true })}><Badge size="sm" icon={<Paperclip size={11} />}>原稿 · {run.attachments.filter(a => a.status === 'ready').length} 个附件</Badge></button>
+-            <Badge size="sm">模板 · {template?.name}</Badge>
+-            {run.voice && <Badge size="sm">配音 · {run.voice}</Badge>}
+-          </span>
+-        )}
+-      </div>
+-      {runError && <div className="rounded-[var(--radius-field)] border border-token-subtle p-4 text-[13px] text-token-secondary">{runError}。可以从「我的作品」重新进入，或新建一个。</div>}
+-      {!runError && review.open && run && (
+-        <AttachmentReview items={run.attachments} activeId={review.id} onSelect={id => setReview({ open: true, id })} onBack={() => setReview({ open: false })} />
+-      )}
+-      {!runError && !review.open && template && (
+-        !run ? <TemplatePreview template={template} />
+-          : run.status === 'done' ? (run.kind === 'video' ? <VideoPlayer run={run} template={template} /> : <WebPreview run={run} template={template} />)
+-            : <ProgressPreview run={run} template={template} />
++  const runFooter = run && (
++    <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-secondary)] px-3.5 py-2.5 text-[12px] leading-5 text-token-secondary">
++      {run.status === 'queued' || run.status === 'running' ? (
++        <>
++          <span className="min-w-0 flex-1">可以离开，完成后会发站内通知，也能在「我的作品」找到它。</span>
++          <Button size="sm" variant="secondary" className="max-md:min-h-11" data-qc="leave" onClick={() => setParams({ view: 'works' })}>离开，稍后回来</Button>
++        </>
++      ) : run.status === 'failed' ? (
++        <span className="min-w-0 flex-1">已完成的部分都已保存，可以现在处理，也可以稍后在「我的作品」里继续。</span>
++      ) : (
++        <>
++          <span className="min-w-0 flex-1">想换个模板或产出？用同一份稿件再做一个。</span>
++          <Button size="sm" variant="secondary" className="max-md:min-h-11" data-qc="redo-other" onClick={() => { setAttachments(run.attachments.filter(a => a.status === 'ready')); setAsk(run.ask); setKind(run.kind === 'video' ? 'web' : 'video'); setTemplateId(''); setParams({}); setPane('chat'); }}>
++            用这份稿件做{run.kind === 'video' ? '网页' : '视频'}
++          </Button>
++        </>
+       )}
+     </div>
+   );
+ 
++  /* ---------- 右栏 ---------- */
++  let previewTitle = '选择模板';
++  let previewNote = `${OUTPUT_LABEL[kind]} · ${kindTemplates.length} 个模板，缩略图取自真实${kind === 'video' ? '成片' : '页面'}`;
++  let nextHint = '选好模板后，在左边放进稿件，点「快捷生成」。';
++  let toolbar: ReactNode = !run && !panel ? (
++    /* 公共组件 Segmented 沿用正式实现（28px），触控高度差异记为框架债务，不在单页改 */
++    <span data-qc-touch-exempt>
++      <Segmented<OutputKind> label="选择产出" value={kind} onChange={k => { setKind(k); setTemplateId(templates.find(t => t.kind === k)?.id ?? ''); }}
++        options={[{ value: 'video', label: '视频' }, { value: 'web', label: '网页' }]} />
++    </span>
++  ) : null;
++  let actions: ReactNode = null;
++  let body: ReactNode = null;
++  const liveStage = run?.stages.find(s => s.status === 'running' || s.status === 'failed');
++
++  if (runError) {
++    previewTitle = '没有找到任务'; previewNote = runError; nextHint = '';
++    body = <div className="flex h-full items-center justify-center p-6 text-center text-[13px] text-token-secondary">{runError}。可以从「我的作品」重新进入，或新建一个。</div>;
++  } else if (panel?.mode === 'manage') {
++    previewTitle = `资料 · ${sum.total} 份`;
++    previewNote = '读取失败的资料不会用于生成；重试只重新读取这一份';
++    nextHint = '';
++    actions = <Button size="sm" variant="secondary" className="max-md:min-h-11" onClick={() => { setPanel(null); setPane('chat'); }}>完成</Button>;
++    body = <MaterialsPanel mode="manage" items={attachments} activeId={panel.id} onSelect={id => setPanel({ mode: 'manage', id })}
++      onRemove={id => setAttachments(l => l.filter(a => a.id !== id))} onRetry={id => void retryRead(id)} onClearFailed={() => setAttachments(l => l.filter(a => a.status !== 'failed'))} />;
++  } else if (panel?.mode === 'review' && run) {
++    previewTitle = `原稿 · ${run.attachments.filter(a => a.status === 'ready').length} 份资料`;
++    previewNote = '提交时交给生成的资料，只读';
++    nextHint = '';
++    actions = <Button size="sm" variant="secondary" className="max-md:min-h-11" data-qc="review-back" onClick={() => setPanel(null)}>回到预览</Button>;
++    body = <MaterialsPanel mode="review" items={run.attachments} activeId={panel.id} onSelect={id => setPanel({ mode: 'review', id })} />;
++  } else if (!run && template) {
++    body = <TemplateGallery templates={kindTemplates} selected={template} onSelect={setTemplateId} />;
++  } else if (run && runTemplate) {
++    toolbar = <Badge size="sm">模板 · {runTemplate.name}</Badge>;
++    if (run.status === 'done') {
++      previewTitle = run.kind === 'video' ? '成片' : '网页';
++      previewNote = run.kind === 'video' ? `${formatClock(run.durationSec ?? 0)} · ${run.scenes?.length ?? 0} 幕 · 1080p${run.voice ? ` · 配音 ${run.voice}` : ''}` : `${run.sections?.length ?? 0} 节 · 桌面与手机都能读`;
++      nextHint = run.publish.status === 'done' ? '已发布，网页托管里能找到它；改了稿件可以用同一份资料再做一个。' : '满意的话在左边发布到网页托管；发布只上传，不会重新生成。';
++      body = run.kind === 'video' ? <VideoPlayer run={run} template={runTemplate} /> : <WebPreview run={run} template={runTemplate} />;
++    } else {
++      previewTitle = run.kind === 'video' ? '分镜' : '页面';
++      previewNote = run.status === 'queued' ? '排到后先出分镜，这里会逐幕亮起' : run.status === 'failed' ? `${run.failure?.message ?? '没有完成'} · 已完成的部分保留` : liveStage?.detail ?? '正在生成';
++      nextHint = run.status === 'failed' ? '恢复后只重做没完成的部分，这里会接着亮起。' : run.kind === 'video' ? '每幕配完音就标为已完成，全部完成后自动合成成片。' : '每写好一节就出现在页面里，全部完成后可以发布。';
++      body = <ProgressPreview run={run} template={runTemplate} />;
++    }
++  }
++
++  const preview = (
++    <WorkbenchPreview title={previewTitle} note={previewNote} toolbar={toolbar} actions={actions} nextHint={nextHint}>
++      {body}
++    </WorkbenchPreview>
++  );
++
+   const loading = runId && !run && !runError;
+   const ready = loading ? undefined : run ? `run-${run.status}` : 'compose';
+   return (
+-    <div className="flex h-full min-h-0 flex-col" data-qc-ready={ready}>
++    <div className="flex h-full min-h-0 flex-col" data-qc-ready={ready} data-output={run?.kind ?? kind} data-run-id={run?.id ?? ''}>
+       {header}
++      {/* 窄屏：对话 / 预览切换（公共组件 PaneTabs，32px 触控高度记为框架债务） */}
++      <div className="flex shrink-0 items-center border-b border-token-subtle px-3 py-1.5 lg:hidden" data-qc-touch-exempt>
++        <PaneTabs pane={pane} onChange={setPane} previewBadge={run?.status === 'done' ? (run.kind === 'video' ? '成片' : '网页') : undefined} />
++      </div>
+       <div className="min-h-0 flex-1">
+         {loading ? (
+           <div className="flex h-full items-center justify-center gap-2 text-[13px] text-token-muted"><MapSpinner size={14} />正在打开任务…</div>
+         ) : (
+-          <SplitToTabLayout
+-            gap="gap-0"
+-            className="h-full"
+-            defaultActiveKey="create"
+-            panels={[
+-              { key: 'create', label: '创作', desktopWidth: 'w-[440px] xl:w-[480px] shrink-0 border-r border-token-subtle', content: run ? runLeft : composeLeft },
+-              { key: 'preview', label: run?.status === 'done' ? `预览 · ${run.kind === 'video' ? '成片' : '网页'}` : '预览', desktopWidth: 'flex-1 min-w-0', content: right },
+-            ]}
+-          />
++          <WorkbenchLayout pane={pane} conversation={run ? runConversation : composeConversation} composer={run ? runFooter : composer} preview={preview} />
+         )}
+       </div>
+     </div>
+diff --git a/src/added/pages/quick-creation-agent/ResultPanel.tsx b/src/added/pages/quick-creation-agent/ResultPanel.tsx
+--- a/src/added/pages/quick-creation-agent/ResultPanel.tsx
++++ b/src/added/pages/quick-creation-agent/ResultPanel.tsx
+@@ -1,135 +1,254 @@
+-import { useEffect, useMemo, useRef, useState } from 'react';
+-import { Captions, Maximize, Monitor, Pause, Play, SkipBack, SkipForward, Smartphone, Volume2 } from 'lucide-react';
++import { useMemo, useRef, useState } from 'react';
++import { Captions, Check, Maximize, Monitor, Pause, Play, SkipBack, SkipForward, Smartphone, Volume2, VolumeX } from 'lucide-react';
+ import { cn } from '@/lib/cn';
+ import { Badge } from '@/components/design/Badge';
+ import { TemplateFrame, TemplatePageBody } from './TemplateFrames';
+ import type { QcRun, QcScene, QcTemplate } from './types';
+ import { formatClock } from './format';
+ 
+-export function TemplatePreview({ template }: { template: QcTemplate }) {
++/** 右栏 · 选模板：上方大图是选中模板的真实画面，下方是同一产出的全部模板 */
++export function TemplateGallery({ templates, selected, onSelect }: { templates: QcTemplate[]; selected: QcTemplate; onSelect: (id: string) => void }) {
+   return (
+-    <div className="space-y-3" data-qc="template-preview">
+-      <div className="overflow-hidden rounded-[var(--radius-card)] border border-token-subtle">
+-        <TemplateFrame frame={template.frame} scene={template.kind === 'video' ? 2 : 1} />
+-      </div>
+-      <div className="flex items-start gap-3">
+-        <div className="min-w-0 flex-1">
+-          <div className="text-[14px] font-semibold text-token-primary">{template.name}</div>
+-          <div className="mt-1 text-[12.5px] leading-6 text-token-secondary">{template.tagline}。{template.goodFor}</div>
++    <div className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto p-2.5 sm:p-4 lg:p-5" style={{ overscrollBehavior: 'contain' }} data-qc="template-preview">
++      <div className="mx-auto w-full" style={{ maxWidth: 'min(100%, calc((100dvh - 540px) * 16 / 9))' }}>
++        <div key={selected.id} className="qc-rise overflow-hidden rounded-[12px] border border-token-subtle shadow-[var(--shadow-card-sm)]">
++          <TemplateFrame frame={selected.frame} scene={selected.kind === 'video' ? 2 : 1} />
++        </div>
++        <div className="mt-3 flex items-start gap-3">
++          <div className="min-w-0 flex-1">
++            <div className="text-[15px] font-semibold text-token-primary">{selected.name}</div>
++            <div className="mt-0.5 text-[12.5px] leading-5 text-token-secondary">{selected.tagline}。{selected.goodFor}</div>
++          </div>
++          <Badge size="sm">{selected.kind === 'video' ? '示例帧取自真实成片' : '示例页取自真实发布'}</Badge>
+         </div>
+-        <Badge size="sm">{template.kind === 'video' ? '示例帧来自真实成片' : '示例页来自真实发布'}</Badge>
++      </div>
++      <div role="radiogroup" aria-label="选择模板" className="grid grid-cols-2 gap-3 sm:grid-cols-3">
++        {templates.map(t => {
++          const on = t.id === selected.id;
++          return (
++            <button key={t.id} type="button" role="radio" aria-checked={on} onClick={() => onSelect(t.id)} data-template={t.id}
++              className={cn('group flex flex-col overflow-hidden rounded-[12px] border bg-[var(--bg-input)] text-left transition-[border-color,box-shadow]',
++                on ? 'border-[color:var(--accent-primary)] shadow-[0_0_0_1px_var(--accent-primary)]' : 'border-token-subtle hover:border-[var(--border-default)]')}>
++              <span className="relative block"><TemplateFrame frame={t.frame} scene={1} />
++                {on && <span className="absolute right-1.5 top-1.5 inline-flex h-5 w-5 items-center justify-center rounded-full bg-[color:var(--accent-primary)] text-[color:var(--accent-on-primary)]"><Check size={12} strokeWidth={3} aria-hidden /></span>}
++              </span>
++              <span className="block px-2.5 py-2">
++                <span className="block truncate text-[13px] font-medium text-token-primary">{t.name}</span>
++                <span className="block truncate text-[11.5px] text-token-muted">{t.goodFor}</span>
++              </span>
++            </button>
++          );
++        })}
+       </div>
+     </div>
+   );
+ }
+ 
+-const SCENE_STATUS: Record<QcScene['status'], string> = { ready: '已完成', drawing: '正在画', drawn: '待配音', voicing: '配音中', failed: '没有完成', waiting: '排队后开始' };
++const SCENE_STATUS: Record<QcScene['status'], string> = { ready: '已完成', drawing: '正在画', drawn: '待配音', voicing: '配音中', failed: '没有完成', waiting: '等待中' };
++
++function Wave() {
++  return <span className="qc-wave" aria-hidden><i /><i /><i /><i /><i /></span>;
++}
++
++/** 作品形状的骨架：一帧 16:9 的画面在呼吸 */
++function FrameSkeleton({ big }: { big?: boolean }) {
++  return (
++    <div className="relative flex aspect-video w-full flex-col justify-center gap-[6%] overflow-hidden rounded-[inherit] bg-[var(--bg-secondary)] px-[8%]" aria-hidden>
++      <div className="qc-skel h-[9%] w-[46%]" />
++      <div className="grid grid-cols-3 gap-[4%]">
++        {[0, 1, 2].map(i => <div key={i} className="qc-skel aspect-[4/3]" style={{ animationDelay: `${i * 0.2}s` }} />)}
++      </div>
++      {big && <div className="qc-skel h-[5%] w-[30%]" />}
++    </div>
++  );
++}
+ 
+-/** 生成中：分镜（视频）或页面大纲（网页）逐个亮起 */
++/** 生成中：视频是「当前这一幕的大画面 + 分镜胶片」，网页是「正在写的页面 + 大纲」 */
+ export function ProgressPreview({ run, template }: { run: QcRun; template: QcTemplate }) {
+   if (run.kind === 'web') {
+     const sections = run.sections ?? [];
++    const live = run.stages.find(s => s.status === 'running');
++    const doneCount = run.status === 'queued' || !sections.length ? 0 : Math.max(1, Math.floor(sections.length * ((live?.progress ?? 50) / 100)));
+     return (
+-      <div className="space-y-3" data-qc="outline-preview">
+-        <div className="text-[12.5px] text-token-secondary">{sections.length ? '大纲已出，页面按节生成；先完成的节可以先看。' : '排到后先出大纲，这里会逐节亮起。'}</div>
+-        <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+-          <div className="overflow-hidden rounded-[var(--radius-card)] border border-token-subtle"><TemplateFrame frame={template.frame} /></div>
++      <div className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto p-4 lg:flex-row lg:p-5" data-qc="outline-preview">
++        <div className="min-w-0 flex-1 overflow-hidden rounded-[12px] border border-token-subtle bg-[var(--bg-elevated)]">
++          <div className="flex items-center gap-1.5 border-b border-token-subtle px-3 py-2" aria-hidden>
++            <span className="h-2 w-2 rounded-full bg-[var(--bg-tertiary)]" /><span className="h-2 w-2 rounded-full bg-[var(--bg-tertiary)]" /><span className="h-2 w-2 rounded-full bg-[var(--bg-tertiary)]" />
++            <span className="ml-2 truncate text-[11.5px] text-token-muted">{run.title}</span>
++          </div>
++          {sections.length ? (
++            <div className="bg-white"><TemplateFrame frame={template.frame} /><TemplatePageBody sections={sections} pendingFrom={doneCount} maxHeight="none" /></div>
++          ) : <div className="p-4"><FrameSkeleton big /></div>}
++        </div>
++        <div className="shrink-0 lg:w-[220px]">
++          <div className="mb-2 text-[12px] font-medium text-token-secondary">页面大纲 · {doneCount} / {sections.length || '-'} 节</div>
+           <ol className="space-y-1.5">
+-            {sections.map((s, i) => (
+-              <li key={s.anchor} className="flex items-center gap-2 rounded-[var(--radius-field)] border border-token-subtle bg-token-nested px-3 py-2 text-[12.5px]">
+-                <span className="w-5 text-token-muted">{i + 1}</span>
+-                <span className="min-w-0 flex-1 truncate text-token-primary">{s.title}</span>
+-              </li>
+-            ))}
++            {sections.map((s, i) => {
++              const st = i < doneCount ? 'done' : i === doneCount ? 'live' : 'wait';
++              return (
++                <li key={s.anchor} className={cn('flex items-center gap-2 rounded-[10px] border px-2.5 py-2 text-[12.5px]', st === 'live' ? 'qc-shimmer border-[color:var(--accent-primary)] bg-[var(--selection-bg)]' : 'border-token-subtle bg-[var(--bg-input)]')}>
++                  <span className="w-4 tabular-nums text-token-muted">{i + 1}</span>
++                  <span className={cn('min-w-0 flex-1 truncate', st === 'wait' ? 'text-token-muted' : 'text-token-primary')}>{s.title}</span>
++                  {st === 'done' && <Check size={13} className="text-[color:var(--accent-fg-success)]" aria-label="已写好" />}
++                  {st === 'live' && <span className="text-[11px] font-medium text-[color:var(--accent-primary)]">在写</span>}
++                </li>
++              );
++            })}
+           </ol>
+         </div>
+       </div>
+     );
+   }
+   const scenes = run.scenes ?? [];
++  const focus = scenes.find(s => s.status === 'failed') ?? scenes.find(s => s.status === 'voicing') ?? scenes.find(s => s.status === 'drawing')
++    ?? [...scenes].reverse().find(s => s.status !== 'waiting');
++  const started = scenes.filter(s => s.status !== 'waiting').length;
+   return (
+-    <div className="space-y-3" data-qc="storyboard-preview">
+-      <div className="text-[12.5px] text-token-secondary">{scenes.some(s => s.status !== 'waiting') ? '分镜先出，配音完成的幕会标出时长；全部完成后合成为成片。' : '排到后先出分镜，这里会逐幕亮起。'}</div>
+-      <div className="grid grid-cols-2 gap-3 xl:grid-cols-3">
+-        {scenes.map(s => (
+-          <figure key={s.index} className="m-0 space-y-1.5">
+-            <div className={cn('relative overflow-hidden rounded-[var(--radius-field)] border',
+-              s.status === 'failed' ? 'border-[color:var(--accent-fg-error)]' : s.status === 'voicing' || s.status === 'drawing' ? 'border-[color:var(--accent-primary)]' : 'border-token-subtle')}>
+-              {s.status === 'waiting' ? (
+-                <div className="flex aspect-video items-center justify-center bg-token-nested text-[12px] text-token-muted">{SCENE_STATUS.waiting}</div>
+-              ) : (
+-                <div className={cn((s.status === 'drawing' || s.status === 'drawn') && 'opacity-70')}><TemplateFrame frame={template.frame} scene={s.frameScene} /></div>
++    <div className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto p-2.5 sm:p-4 lg:p-5" style={{ overscrollBehavior: 'contain' }} data-qc="storyboard-preview">
++      <div className="mx-auto w-full" style={{ maxWidth: 'min(100%, calc((100dvh - 430px) * 16 / 9))' }}>
++        <div className="mb-2 flex h-6 items-center gap-2 text-[12.5px]">
++          {focus ? (
++            <>
++              <span className="font-medium text-token-primary">第 {focus.index} 幕 · {focus.title}</span>
++              <span className="inline-flex items-center gap-1.5 rounded-full px-2 leading-[22px]" style={{
++                background: focus.status === 'failed' ? 'var(--semantic-danger-soft)' : focus.status === 'ready' ? 'var(--semantic-success-soft)' : 'var(--selection-bg)',
++                color: focus.status === 'failed' ? 'var(--accent-fg-error)' : focus.status === 'ready' ? 'var(--accent-fg-success)' : 'var(--accent-primary)' }}>
++                {focus.status === 'voicing' && <Wave />}{SCENE_STATUS[focus.status]}
++              </span>
++            </>
++          ) : <span className="text-token-muted">排队中 · 轮到后从第 1 幕开始画</span>}
++        </div>
++        <div className={cn('relative overflow-hidden rounded-[12px] border shadow-[var(--shadow-card-sm)]',
++          focus?.status === 'failed' ? 'border-[color:var(--accent-fg-error)]' : 'border-token-subtle')}>
++          {focus ? (
++            <div key={focus.index} className={cn('qc-rise', focus.status === 'drawing' && 'qc-shimmer')}><TemplateFrame frame={template.frame} scene={focus.frameScene} /></div>
++          ) : <FrameSkeleton big />}
++          {focus && (
++            <>
++              {focus.status !== 'drawing' && (
++                <div className="pointer-events-none absolute bottom-[6%] left-1/2 max-w-[86%] -translate-x-1/2 rounded-md bg-[var(--panel-solid)] px-3 py-1.5 text-center text-[13px] leading-5 text-token-primary shadow-[var(--shadow-card-sm)]">
++                  {focus.caption}
++                </div>
+               )}
+-            </div>
+-            <figcaption className="flex items-center gap-1.5 text-[11.5px]">
+-              <span className="min-w-0 flex-1 truncate text-token-secondary">第 {s.index} 幕 · {s.title}</span>
+-              {s.status !== 'waiting' && <Badge size="sm" variant={s.status === 'ready' ? 'success' : s.status === 'failed' ? 'danger' : 'subtle'}>{SCENE_STATUS[s.status]}</Badge>}
+-            </figcaption>
+-          </figure>
+-        ))}
++            </>
++          )}
++          {!focus && <div className="absolute inset-x-0 bottom-4 text-center text-[12.5px] text-token-secondary">排到后先出分镜，{scenes.length || 6} 幕会逐个出现在这里</div>}
++        </div>
++      </div>
++      <div>
++        <div className="mb-2 flex items-center justify-between text-[12px]">
++          <span className="font-medium text-token-secondary">分镜 · {started} / {scenes.length} 幕已出</span>
++          <span className="text-token-muted">配音完成的幕标为已完成，全部完成后合成成片</span>
++        </div>
++        <div className="grid grid-cols-3 gap-2.5 xl:grid-cols-6">
++          {scenes.map(s => {
++            const on = s.index === focus?.index;
++            return (
++              <figure key={s.index} className="m-0" data-scene={s.index} data-scene-status={s.status}>
++                <div className={cn('overflow-hidden rounded-[8px] border',
++                  s.status === 'failed' ? 'border-[color:var(--accent-fg-error)]' : on ? 'border-[color:var(--accent-primary)] shadow-[0_0_0_1px_var(--accent-primary)]' : 'border-token-subtle',
++                  s.status === 'drawing' && 'qc-shimmer')}>
++                  {s.status === 'waiting' ? <FrameSkeleton /> : <div className={cn(s.status === 'drawn' && 'opacity-80')}><TemplateFrame frame={template.frame} scene={s.frameScene} /></div>}
++                </div>
++                <figcaption className="mt-1.5 px-0.5 text-[11.5px] leading-4">
++                  <span className="block truncate text-token-secondary"><span className="tabular-nums text-token-muted">{s.index}</span> {s.title}</span>
++                  <span className="mt-0.5 flex items-center gap-1" style={{ color: s.status === 'ready' ? 'var(--accent-fg-success)' : s.status === 'failed' ? 'var(--accent-fg-error)' : s.status === 'voicing' || s.status === 'drawing' ? 'var(--accent-primary)' : 'var(--text-muted)' }}>
++                    {s.status === 'voicing' && <Wave />}{SCENE_STATUS[s.status]}
++                  </span>
++                </figcaption>
++              </figure>
++            );
++          })}
++        </div>
+       </div>
+     </div>
+   );
+ }
+ 
+-export function VideoPlayer({ run, template, autoPlay = false }: { run: QcRun; template: QcTemplate; autoPlay?: boolean }) {
+-  const duration = run.durationSec ?? 96;
++/**
++ * 成片播放器：直接播放 run.media（真实的视频文件，含音轨），时间、字幕与重点都跟随 video.currentTime。
++ * 没有媒体文件时（理论上只在合成刚结束、文件尚未就绪的瞬间）显示首帧并说明原因，控件不可用。
++ */
++export function VideoPlayer({ run, template }: { run: QcRun; template: QcTemplate }) {
+   const scenes = useMemo(() => run.scenes ?? [], [run.scenes]);
++  const video = useRef<HTMLVideoElement>(null);
++  const box = useRef<HTMLDivElement>(null);
+   const [t, setT] = useState(0);
+-  const [playing, setPlaying] = useState(autoPlay);
++  const [duration, setDuration] = useState(run.durationSec ?? 0);
++  const [playing, setPlaying] = useState(false);
++  const [muted, setMuted] = useState(false);
+   const [captions, setCaptions] = useState(true);
+-  const box = useRef<HTMLDivElement>(null);
+-  useEffect(() => {
+-    if (!playing) return;
+-    const id = window.setInterval(() => setT(v => (v + 1 >= duration ? (setPlaying(false), duration) : v + 1)), 1000);
+-    return () => window.clearInterval(id);
+-  }, [playing, duration]);
++  const [blocked, setBlocked] = useState<string | null>(null);
++  const media = run.media;
+   const current = useMemo(() => [...scenes].reverse().find(s => t >= s.startSec) ?? scenes[0], [scenes, t]);
+-  const seek = (sec: number) => { setT(Math.max(0, Math.min(duration, sec))); };
++
++  const seek = (sec: number) => {
++    const el = video.current;
++    if (!el) return;
++    el.currentTime = Math.max(0, Math.min(duration || el.duration || 0, sec));
++    setT(el.currentTime);
++  };
++  const play = async () => {
++    const el = video.current;
++    if (!el) return;
++    if (el.ended) el.currentTime = 0;
++    try { await el.play(); setBlocked(null); } catch { setBlocked('浏览器拦下了自动播放，请再点一次播放'); }
++  };
++  const toggle = () => { const el = video.current; if (!el) return; if (el.paused) void play(); else el.pause(); };
+   const sceneJump = (dir: -1 | 1) => {
+     const idx = scenes.findIndex(s => s === current);
+     const next = scenes[Math.max(0, Math.min(scenes.length - 1, idx + dir))];
+     if (next) seek(next.startSec);
+   };
+-  const fullscreen = () => { void box.current?.requestFullscreen?.().catch(() => undefined); };
++  const fullscreen = () => { void box.current?.requestFullscreen?.().catch(() => setBlocked('当前环境不支持页面内全屏，可用浏览器的全屏或大屏入口')); };
+ 
+   return (
+-    <div className="space-y-3" data-qc="video-player">
+-      <div ref={box} className="overflow-hidden rounded-[var(--radius-card)] border border-token-subtle bg-black">
++    <div className="h-full space-y-4 overflow-y-auto p-2.5 sm:p-4 lg:p-5" style={{ overscrollBehavior: 'contain' }} data-qc="video-player" data-scene-index={current?.index ?? 1} data-playing={playing ? 'true' : 'false'}>
++      <div ref={box} className="mx-auto overflow-hidden rounded-[12px] border border-token-subtle bg-[var(--bg-elevated)] shadow-[var(--shadow-card-sm)]" style={{ maxWidth: 'min(100%, calc((100dvh - 400px) * 16 / 9))' }}>
+         <div className="relative">
+-          <TemplateFrame frame={template.frame} scene={current?.frameScene ?? 1} />
+-          {captions && current && (
+-            <div className="absolute bottom-[6%] left-1/2 max-w-[90%] -translate-x-1/2 rounded-md bg-black/75 px-2.5 py-1 text-center text-[12px] leading-5 text-white sm:px-3 sm:py-1.5 sm:text-[15px] sm:leading-6">{current.caption}</div>
++          {media ? (
++            <video ref={video} src={media.url} preload="auto" playsInline muted={muted} data-qc="film"
++              className="block aspect-video w-full bg-black" aria-label={`${run.title} 成片`}
++              onLoadedMetadata={e => setDuration(e.currentTarget.duration || run.durationSec || 0)}
++              onTimeUpdate={e => setT(e.currentTarget.currentTime)}
++              onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onEnded={() => setPlaying(false)} />
++          ) : (
++            <TemplateFrame frame={template.frame} scene={1} />
++          )}
++          {captions && current && media && (
++            <div data-qc="caption" className="pointer-events-none absolute bottom-[6%] left-1/2 max-w-[90%] -translate-x-1/2 rounded-md bg-black/75 px-2.5 py-1 text-center text-[12px] leading-5 text-white sm:px-3 sm:py-1.5 sm:text-[15px] sm:leading-6">{current.caption}</div>
+           )}
+         </div>
+         <div className="flex flex-wrap items-center gap-1 bg-[var(--bg-elevated)] px-2 py-1.5">
+-          <button type="button" aria-label="上一幕" onClick={() => sceneJump(-1)} className="qc-icon-btn"><SkipBack size={16} /></button>
+-          <button type="button" aria-label={playing ? '暂停' : '播放'} onClick={() => { if (t >= duration) setT(0); setPlaying(v => !v); }} className="qc-icon-btn text-token-primary">
++          <button type="button" aria-label="上一幕" disabled={!media} onClick={() => sceneJump(-1)} className="qc-icon-btn hidden sm:inline-flex"><SkipBack size={16} /></button>
++          <button type="button" aria-label={playing ? '暂停' : '播放'} data-qc="play-toggle" disabled={!media} onClick={toggle} className="qc-icon-btn text-token-primary">
+             {playing ? <Pause size={18} /> : <Play size={18} />}
+           </button>
+-          <button type="button" aria-label="下一幕" onClick={() => sceneJump(1)} className="qc-icon-btn"><SkipForward size={16} /></button>
+-          <span className="shrink-0 px-1 text-center font-[var(--font-code)] text-[11.5px] text-token-secondary sm:w-[86px] sm:px-0 sm:text-[12px]">{formatClock(t)} / {formatClock(duration)}</span>
++          <button type="button" aria-label="下一幕" disabled={!media} onClick={() => sceneJump(1)} className="qc-icon-btn hidden sm:inline-flex"><SkipForward size={16} /></button>
++          <span data-qc="clock" className="shrink-0 px-1 text-center font-[var(--font-code)] text-[11.5px] text-token-secondary sm:w-[86px] sm:px-0 sm:text-[12px]">{formatClock(t)} / {formatClock(duration)}</span>
+           {/* 窄屏进度条单独占一行，按钮不挤压它 */}
+           <div className="relative order-first h-6 max-md:h-11 basis-full px-1 sm:order-none sm:mx-2 sm:flex-1 sm:basis-auto sm:px-0">
+-            <input type="range" min={0} max={duration} value={t} onChange={e => seek(Number(e.target.value))} aria-label="播放进度" className="qc-range absolute inset-0 w-full" />
+-            {(run.keyPoints ?? []).map(k => k.atSec != null && (
++            <input type="range" min={0} max={Math.max(1, Math.round(duration))} step={1} value={Math.round(t)} disabled={!media} onChange={e => seek(Number(e.target.value))} aria-label="播放进度" className="qc-range absolute inset-0 w-full" />
++            {duration > 0 && (run.keyPoints ?? []).map(k => k.atSec != null && (
+               <span key={k.text} className="pointer-events-none absolute top-1/2 h-2.5 w-[2px] -translate-y-1/2 rounded bg-[color:var(--text-muted)]" style={{ left: `${(k.atSec / duration) * 100}%` }} />
+             ))}
+           </div>
+           <span className="flex-1 sm:hidden" />
+           {/* 手机用系统音量键，窄屏不占位置 */}
+-          <button type="button" aria-label="音量" className="qc-icon-btn hidden sm:inline-flex"><Volume2 size={16} /></button>
+-          <button type="button" aria-label={captions ? '关闭字幕' : '打开字幕'} aria-pressed={captions} onClick={() => setCaptions(v => !v)} className={cn('qc-icon-btn', captions && 'text-token-primary')}><Captions size={16} /></button>
++          <button type="button" aria-label={muted ? '取消静音' : '静音'} aria-pressed={muted} onClick={() => setMuted(v => !v)} className="qc-icon-btn hidden sm:inline-flex">{muted ? <VolumeX size={16} /> : <Volume2 size={16} />}</button>
++          <button type="button" aria-label={captions ? '关闭字幕' : '打开字幕'} aria-pressed={captions} data-qc="captions-toggle" onClick={() => setCaptions(v => !v)} className={cn('qc-icon-btn', captions && 'text-token-primary')}><Captions size={16} /></button>
+           <button type="button" aria-label="全屏" onClick={fullscreen} className="qc-icon-btn"><Maximize size={16} /></button>
+         </div>
+       </div>
++      {!media && <div className="text-[12px] text-token-muted">成片文件正在写入，几秒后可以播放。</div>}
++      {blocked && <div role="status" className="text-[12px] text-token-muted">{blocked}</div>}
+       {!!run.keyPoints?.length && (
+         <div>
+           <div className="mb-2 text-[12px] text-token-muted">片头预告的 {run.keyPoints.length} 个重点 · 点击跳转</div>
+           <div className="grid gap-2 sm:grid-cols-3">
+-            {run.keyPoints.map(k => (
+-              <button key={k.text} type="button" onClick={() => { seek(k.atSec ?? 0); setPlaying(true); }}
+-                className={cn('flex items-start gap-2.5 rounded-[var(--radius-field)] border bg-token-nested px-3 py-2.5 text-left text-[12.5px] leading-5 hover-bg-soft max-md:min-h-11',
++            {run.keyPoints.map((k, i) => (
++              <button key={k.text} type="button" data-qc={`key-point-${i + 1}`} disabled={!media} onClick={() => { seek(k.atSec ?? 0); void play(); }}
++                className={cn('flex items-start gap-2.5 rounded-[10px] border bg-[var(--bg-input)] px-3 py-2.5 text-left text-[12.5px] leading-5 hover-bg-soft max-md:min-h-11',
+                   current && k.atSec != null && current.startSec === k.atSec ? 'border-[color:var(--accent-primary)]/60' : 'border-token-subtle')}>
+                 <span className="font-[var(--font-code)] text-[color:var(--accent-primary)]">{formatClock(k.atSec ?? 0)}</span>
+                 <span className="text-token-primary">{k.text}</span>
+@@ -147,19 +266,19 @@ export function WebPreview({ run, template }: { run: QcRun; template: QcTemplate
+   const [anchor, setAnchor] = useState<string | undefined>();
+   const sections = run.sections ?? [];
+   return (
+-    <div className="space-y-3" data-qc="web-preview">
+-      <div className="overflow-hidden rounded-[var(--radius-card)] border border-token-subtle bg-[var(--bg-elevated)]">
++    <div className="h-full space-y-4 overflow-y-auto p-2.5 sm:p-4 lg:p-5" style={{ overscrollBehavior: 'contain' }} data-qc="web-preview" data-active-anchor={anchor ?? ''}>
++      <div className="overflow-hidden rounded-[12px] border border-token-subtle bg-[var(--bg-elevated)] shadow-[var(--shadow-card-sm)]">
+         <div className="flex items-center gap-2 border-b border-token-subtle px-3 py-1.5">
+           <span className="min-w-0 flex-1 truncate text-[12px] text-token-muted">{run.title} · {template.name}</span>
+           <div className="hidden rounded-lg border border-token-subtle p-0.5 sm:inline-flex" role="group" aria-label="预览尺寸">
+             <button type="button" aria-pressed={device === 'desktop'} aria-label="桌面" onClick={() => setDevice('desktop')} className={cn('qc-icon-btn h-7 w-7', device === 'desktop' && 'bg-token-nested text-token-primary')}><Monitor size={14} /></button>
+-            <button type="button" aria-pressed={device === 'phone'} aria-label="手机" onClick={() => setDevice('phone')} className={cn('qc-icon-btn h-7 w-7', device === 'phone' && 'bg-token-nested text-token-primary')}><Smartphone size={14} /></button>
++            <button type="button" data-qc="device-phone" aria-pressed={device === 'phone'} aria-label="手机" onClick={() => setDevice('phone')} className={cn('qc-icon-btn h-7 w-7', device === 'phone' && 'bg-token-nested text-token-primary')}><Smartphone size={14} /></button>
+           </div>
+         </div>
+         <div className="flex justify-center bg-token-nested p-3">
+           <div className={cn('overflow-hidden rounded-lg bg-white transition-[width] duration-300', device === 'phone' ? 'w-[300px]' : 'w-full')}>
+             <TemplateFrame frame={template.frame} scene={anchor ? sections.findIndex(s => s.anchor === anchor) + 1 : 1} />
+-            <TemplatePageBody sections={sections} activeAnchor={anchor} />
++            <TemplatePageBody sections={sections} activeAnchor={anchor} maxHeight={300} />
+           </div>
+         </div>
+       </div>
+@@ -168,8 +287,8 @@ export function WebPreview({ run, template }: { run: QcRun; template: QcTemplate
+           <div className="mb-2 text-[12px] text-token-muted">页首导读的 {run.keyPoints.length} 个重点 · 点击定位</div>
+           <div className="grid gap-2 sm:grid-cols-3">
+             {run.keyPoints.map((k, i) => (
+-              <button key={k.text} type="button" onClick={() => setAnchor(k.anchor)}
+-                className={cn('flex items-start gap-2.5 rounded-[var(--radius-field)] border bg-token-nested px-3 py-2.5 text-left text-[12.5px] leading-5 hover-bg-soft max-md:min-h-11', anchor === k.anchor ? 'border-[color:var(--accent-primary)]/60' : 'border-token-subtle')}>
++              <button key={k.text} type="button" data-qc={`web-point-${i + 1}`} onClick={() => setAnchor(k.anchor)}
++                className={cn('flex items-start gap-2.5 rounded-[10px] border bg-[var(--bg-input)] px-3 py-2.5 text-left text-[12.5px] leading-5 hover-bg-soft max-md:min-h-11', anchor === k.anchor ? 'border-[color:var(--accent-primary)]/60' : 'border-token-subtle')}>
+                 <span className="font-[var(--font-code)] text-[color:var(--accent-primary)]">{String(i + 1).padStart(2, '0')}</span>
+                 <span className="text-token-primary">{k.text}</span>
+               </button>
+diff --git a/src/added/pages/quick-creation-agent/RunProgress.tsx b/src/added/pages/quick-creation-agent/RunProgress.tsx
+--- a/src/added/pages/quick-creation-agent/RunProgress.tsx
++++ b/src/added/pages/quick-creation-agent/RunProgress.tsx
+@@ -1,115 +1,165 @@
++/**
++ * 对话里助手一侧的过程卡：排队、生成进度、失败恢复、完成。
++ * 写法对齐网页生成工作台的 RunProgressCard：标题行说「此刻在做什么」，右上角是走动的计时，
++ * 下方是任务清单；进行中的那一步高亮、带流动的进度条，其余步骤一行一项。
++ */
+ import { useState } from 'react';
+-import { AlertTriangle, Check, ChevronDown, Clock, RotateCcw } from 'lucide-react';
++import { AlertTriangle, ChevronDown, Circle, CircleCheck, Clock3, RotateCcw, Users } from 'lucide-react';
+ import { cn } from '@/lib/cn';
+ import { Button } from '@/components/design/Button';
+-import type { QcFailure, QcRun, QcStage } from './types';
++import { MapSpinner } from '@/components/ui/VideoLoader';
++import type { QcFailure, QcRun } from './types';
+ import { formatDuration, formatRemain } from './format';
+ 
+-function StageDot({ stage, index }: { stage: QcStage; index: number }) {
+-  const base = 'inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-[1.5px] text-[11px]';
+-  if (stage.status === 'done') return <span className={cn(base, 'border-[color:var(--accent-fg-success)]/60 bg-[color:var(--accent-fg-success)]/[0.12] text-[color:var(--accent-fg-success)]')}><Check size={12} strokeWidth={3} aria-label="已完成" /></span>;
+-  if (stage.status === 'failed') return <span className={cn(base, 'border-[color:var(--accent-fg-error)]/60 bg-[color:var(--accent-fg-error)]/[0.12] text-[color:var(--accent-fg-error)]')}><AlertTriangle size={12} aria-label="未完成" /></span>;
+-  if (stage.status === 'running') return <span className={cn(base, 'border-[color:var(--accent-primary)] text-[color:var(--accent-primary)]')}><span className="qc-pulse h-2 w-2 rounded-full bg-[color:var(--accent-primary)]" aria-label="进行中" /></span>;
+-  return <span className={cn(base, 'border-token-subtle text-token-muted')}>{index + 1}</span>;
++function clock(sec: number) {
++  const s = Math.max(0, Math.round(sec));
++  return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+ }
+ 
+ export function QueueCard({ run }: { run: QcRun }) {
+   const q = run.queue;
+   if (!q) return null;
+-  const cells = Array.from({ length: q.running + q.ahead + 1 + 2 }, (_, i) => (i < q.running ? 'run' : i < q.running + q.ahead ? 'wait' : i === q.running + q.ahead ? 'me' : 'after'));
++  const slots = Array.from({ length: q.running + q.ahead + 1 }, (_, i) => (i < q.running ? 'run' : i < q.running + q.ahead ? 'wait' : 'me'));
+   return (
+-    <div className="rounded-[var(--radius-card)] border border-token-subtle bg-token-nested p-3.5" data-qc="queue-card">
+-      <div className="flex items-baseline gap-2">
+-        <span className="text-[13px] font-medium text-token-primary">排队中 · 第 {q.position} 位</span>
+-        <span className="text-[12px] text-token-muted">前面 {q.ahead} 个，{formatRemain(q.startInSec)}后开始</span>
++    <section className="qc-card qc-rise p-4" data-qc="queue-card">
++      <div className="flex items-start gap-3">
++        <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-[var(--selection-bg)] text-[color:var(--accent-primary)]"><Users size={17} aria-hidden /></span>
++        <div className="min-w-0 flex-1">
++          <div className="text-[15px] font-semibold text-token-primary">排队中 · 第 {q.position} 位</div>
++          <div className="mt-0.5 text-[12.5px] text-token-secondary">前面还有 {q.ahead} 个，预计 {formatRemain(q.startInSec)}后开始</div>
++        </div>
+       </div>
+-      <div className="mt-2.5 flex gap-1" aria-hidden>
+-        {cells.map((c, i) => (
+-          <span key={i} className={cn('h-1.5 flex-1 rounded-full',
+-            c === 'run' && 'bg-[color:var(--accent-fg-success)]/55',
+-            c === 'wait' && 'bg-[color:var(--accent-fg-info)]/40',
+-            c === 'me' && 'bg-[color:var(--accent-primary)]',
+-            c === 'after' && 'bg-token-nested border border-dashed border-token-subtle')} />
+-        ))}
+-      </div>
+-      <div className="mt-2 text-[12px] leading-5 text-token-secondary">
+-        团队同时最多 {q.capacity} 个在生成，现在 {q.running} 个在跑。排队不是失败，轮到会自动开始；可以离开，完成后会发通知。
++      <div className="mt-3.5 rounded-[10px] bg-[var(--bg-secondary)] p-2.5">
++        <div className="flex gap-1.5" aria-hidden>
++          {slots.map((c, i) => (
++            <span key={i} className={cn('flex h-7 flex-1 items-center justify-center rounded-md text-[11px] font-semibold',
++              c === 'run' && 'qc-shimmer bg-[var(--semantic-success-soft)]',
++              c === 'wait' && 'border border-dashed border-[var(--border-default)]',
++              c === 'me' && 'bg-[color:var(--accent-primary)] text-[color:var(--accent-on-primary)]')}>
++              {c === 'me' ? '你' : ''}
++            </span>
++          ))}
++        </div>
++        <div className="mt-2 flex items-center justify-between text-[11px] text-token-muted">
++          <span className="flex items-center gap-3">
++            <span className="flex items-center gap-1"><i className="inline-block h-2 w-2 rounded-sm bg-[var(--semantic-success-soft)] ring-1 ring-[color:var(--accent-fg-success)]" />生成中 {q.running}</span>
++            <span className="flex items-center gap-1"><i className="inline-block h-2 w-2 rounded-sm border border-dashed border-[var(--border-default)]" />排在前面 {q.ahead}</span>
++          </span>
++          <span>同时最多 {q.capacity} 个</span>
++        </div>
+       </div>
+-    </div>
++      <p className="mt-2.5 text-[12px] leading-5 text-token-secondary">排队不是失败，轮到会自动开始：先出分镜，再逐幕配音，最后合成成片。</p>
++    </section>
+   );
+ }
+ 
++const ACTION_LABEL = (failure: QcFailure) => ({
++  'retry-unit': `重试${failure.unitIndex ? `第 ${failure.unitIndex} ${failure.stageKey === 'voice' ? '幕' : '节'}` : '这一步'}`,
++  'retry-step': '重试这一步',
++  'skip-unit': '跳过这一幕的旁白，继续合成',
++  requeue: '重新排队，从这里继续',
++}) as const;
++
+ export function FailureCard({ failure, onAction }: { failure: QcFailure; onAction: (a: QcFailure['actions'][number]) => void }) {
+-  const label = {
+-    'retry-unit': `重试${failure.unitIndex ? `第 ${failure.unitIndex} ${failure.stageKey === 'voice' ? '幕' : '节'}` : '这一步'}`,
+-    'retry-step': '重试这一步',
+-    'skip-unit': '跳过这一幕的旁白，继续合成',
+-    requeue: '重新排队，从这里继续',
+-  } as const;
++  const label = ACTION_LABEL(failure);
+   const [primary, ...others] = failure.actions;
+   return (
+-    <div className="rounded-[var(--radius-field)] border border-[color:var(--accent-fg-error)]/35 bg-[color:var(--accent-fg-error)]/[0.06] p-3" data-qc="failure-card" role="alert">
+-      <div className="flex items-center gap-2 text-[13px] font-medium text-[color:var(--accent-fg-error)]"><AlertTriangle size={14} />{failure.message}</div>
+-      <div className="mt-1.5 text-[12px] leading-5 text-token-secondary">已保存：{failure.saved.join('、')}。重试只会重做没完成的部分。</div>
+-      <div className="mt-2.5 flex flex-wrap gap-2">
+-        {primary && <Button size="sm" variant="primary" className="max-md:min-h-11" onClick={() => onAction(primary)}><RotateCcw size={13} />{label[primary]}</Button>}
+-        {others.map(a => <Button key={a} size="sm" variant="ghost" className="max-md:min-h-11" onClick={() => onAction(a)}>{label[a]}</Button>)}
++    <section className="qc-rise rounded-[14px] border p-4" style={{ borderColor: 'var(--semantic-danger-border)', background: 'var(--semantic-danger-soft)' }} data-qc="failure-card" role="alert">
++      <div className="flex items-start gap-3">
++        <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-[var(--bg-input)]" style={{ color: 'var(--accent-fg-error)' }}><AlertTriangle size={17} aria-hidden /></span>
++        <div className="min-w-0 flex-1">
++          <div className="text-[14px] font-semibold text-token-primary">{failure.message}</div>
++          <div className="mt-1 text-[12.5px] leading-5 text-token-secondary">已保存：{failure.saved.join('、')}。重试只会重做没完成的部分。</div>
++        </div>
+       </div>
+-    </div>
++      <div className="mt-3 flex flex-wrap gap-2 pl-12">
++        {primary && <Button size="sm" variant="primary" className="max-md:min-h-11" data-qc="recover-primary" onClick={() => onAction(primary)}><RotateCcw size={13} />{label[primary]}</Button>}
++        {others.map(a => <Button key={a} size="sm" variant="secondary" className="max-md:min-h-11" data-qc={`recover-${a}`} onClick={() => onAction(a)}>{label[a]}</Button>)}
++      </div>
++    </section>
+   );
+ }
+ 
+ export function RunProgress({ run }: { run: QcRun }) {
+   const finished = run.status === 'done';
++  const failed = run.status === 'failed';
+   const [showSteps, setShowSteps] = useState(false);
++  const steps = run.stages;
++  const doneCount = steps.filter(s => s.status === 'done').length;
++  const current = steps.find(s => s.status === 'running') ?? steps.find(s => s.status === 'failed');
++
+   /* 完成后过程收成一行，把注意力让给成品与发布；需要时展开回看 */
+   if (finished && !showSteps) {
+     return (
+       <button type="button" onClick={() => setShowSteps(true)} data-qc="run-progress"
+-        className="flex w-full items-center gap-2 rounded-[var(--radius-field)] border border-token-subtle bg-token-nested px-3 py-2 text-left text-[12.5px] hover-bg-soft max-md:min-h-11">
+-        <Check size={14} className="text-[color:var(--accent-fg-success)]" aria-hidden />
+-        <span className="text-token-primary">{run.stages.slice(0, -1).map(s => s.label).join(' → ')} 全部完成</span>
+-        <span className="text-token-muted">· 用时 {formatDuration(run.elapsedSec)}</span>
+-        <span className="ml-auto inline-flex items-center gap-0.5 text-token-muted">查看过程<ChevronDown size={13} /></span>
++        className="flex w-full items-center gap-2 rounded-[10px] px-1 py-1.5 text-left text-[12.5px] hover-bg-soft max-md:min-h-11">
++        <CircleCheck size={15} className="shrink-0 text-[color:var(--accent-fg-success)]" aria-hidden />
++        <span className="min-w-0 truncate text-token-secondary">{steps.slice(0, -1).map(s => s.label).join(' · ')} 全部完成，用时 {formatDuration(run.elapsedSec)}</span>
++        <span className="ml-auto inline-flex shrink-0 items-center gap-0.5 text-token-muted">过程<ChevronDown size={13} /></span>
+       </button>
+     );
+   }
++
++  const title = finished ? '全部完成' : failed ? `停在「${current?.label ?? ''}」` : current?.status === 'running' ? `正在${current.label}` : '正在准备';
+   return (
+-    <div className="rounded-[var(--radius-card)] border border-token-subtle bg-[var(--bg-card)] px-3.5 pb-1.5 pt-3" data-qc="run-progress">
+-      <div className="mb-3 flex items-center gap-2">
+-        <span className="text-[12px] font-medium text-token-secondary">生成进度</span>
+-        {finished && <button type="button" onClick={() => setShowSteps(false)} className="text-[11.5px] text-token-muted hover:text-token-primary">收起</button>}
+-        <span className="ml-auto inline-flex items-center gap-1 text-[11.5px] text-token-muted">
+-          <Clock size={12} aria-hidden />
+-          {finished ? `用时 ${formatDuration(run.elapsedSec)}` : run.status === 'failed' ? `运行 ${formatDuration(run.elapsedSec)} 后停下` : (
+-            <>已用 {formatDuration(run.elapsedSec)}{run.remainSec != null ? ` · 预计还需 ${formatRemain(run.remainSec)}` : ' · 正在估算剩余时间'}</>
+-          )}
+-        </span>
++    <section className="qc-card qc-rise overflow-hidden" data-qc="run-progress">
++      <div className="flex items-start justify-between gap-3 px-4 pb-3 pt-3.5">
++        <div className="min-w-0">
++          <div className="flex items-center gap-2 text-[15px] font-semibold text-token-primary">
++            {!finished && !failed && <MapSpinner size={14} />}
++            {failed && <AlertTriangle size={15} style={{ color: 'var(--accent-fg-error)' }} aria-hidden />}
++            {finished && <CircleCheck size={15} className="text-[color:var(--accent-fg-success)]" aria-hidden />}
++            {title}
++          </div>
++          {current?.detail && !finished && !failed && <div className="mt-1 text-[12.5px] leading-5 text-token-secondary">{current.detail}</div>}
++        </div>
++        <div className="shrink-0 text-right">
++          <div className="font-[var(--font-code)] text-[18px] font-semibold tabular-nums leading-6 text-token-primary">{clock(run.elapsedSec)}</div>
++          <div className="text-[11px] text-token-muted">
++            {finished ? '总用时' : failed ? '运行后停下' : run.remainSec != null ? `还需${formatRemain(run.remainSec)}` : '正在估算'}
++          </div>
++        </div>
++      </div>
++      {/* 分段总进度：每段一个阶段，进行中那段流动 */}
++      <div className="flex gap-1 px-4" aria-hidden>
++        {steps.map(s => (
++          <span key={s.key} className="h-1.5 flex-1 overflow-hidden rounded-full bg-[var(--bg-tertiary)]">
++            {s.status === 'done' && <span className="block h-full w-full rounded-full bg-[color:var(--accent-fg-success)] opacity-70" />}
++            {s.status === 'running' && <span className="qc-bar-live block h-full rounded-full transition-[width] duration-700" style={{ width: `${Math.max(8, s.progress ?? 30)}%` }} />}
++            {s.status === 'failed' && <span className="block h-full w-full rounded-full" style={{ background: 'var(--accent-fg-error)' }} />}
++          </span>
++        ))}
+       </div>
+-      <ol>
+-        {run.stages.map((s, i) => {
+-          const last = i === run.stages.length - 1;
+-          const active = s.status === 'running' || s.status === 'failed';
+-          return (
+-            <li key={s.key} className="flex gap-3">
+-              <div className="flex flex-col items-center">
+-                <StageDot stage={s} index={i} />
+-                {!last && <span className={cn('min-h-3 w-[1.5px] flex-1', s.status === 'done' ? 'bg-[color:var(--accent-fg-success)]/45' : 'bg-[var(--border-subtle)]')} />}
+-              </div>
+-              <div className="min-w-0 flex-1 pb-3">
+-                <div className={cn('text-[13px]', s.status === 'pending' ? 'text-token-muted' : 'font-medium text-token-primary', s.status === 'failed' && 'text-[color:var(--accent-fg-error)]')}>{s.label}</div>
+-                {s.detail && (active || s.status === 'done') && <div className={cn('mt-0.5 text-[12px] leading-5', active ? 'text-token-secondary' : 'text-token-muted')}>{s.detail}</div>}
+-                {s.status === 'running' && s.progress != null && (
+-                  <div className="mt-2 h-1 overflow-hidden rounded-full bg-[var(--border-subtle)]">
+-                    <div className="h-full rounded-full bg-[color:var(--accent-primary)] transition-[width] duration-700" style={{ width: `${s.progress}%` }} />
+-                  </div>
+-                )}
+-              </div>
+-            </li>
+-          );
+-        })}
+-      </ol>
+-      {run.estimateBasis && !finished && run.status !== 'failed' && <div className="pb-2 text-[11px] text-token-muted">预计依据：{run.estimateBasis}</div>}
+-    </div>
++      <div className="mx-4 mb-3 mt-3 rounded-[10px] bg-[var(--bg-secondary)] px-3 py-1.5">
++        <div className="flex items-center justify-between border-b border-token-subtle pb-1.5 pt-0.5 text-[11.5px]">
++          <span className="font-medium text-token-secondary">任务清单</span>
++          <span className="flex items-center gap-2 tabular-nums text-token-muted">
++            {doneCount} / {steps.length}
++            {finished && <button type="button" onClick={() => setShowSteps(false)} className="rounded px-1 hover:text-token-primary">收起</button>}
++          </span>
++        </div>
++        <ol aria-label="生成步骤">
++          {steps.map(s => {
++            const live = s.status === 'running';
++            return (
++              <li key={s.key} data-stage={s.key} data-stage-status={s.status} aria-current={live ? 'step' : undefined}
++                className="flex min-h-8 items-center gap-2 text-[12.5px]">
++                <span className="flex h-4 w-4 shrink-0 items-center justify-center" style={{ color: s.status === 'done' ? 'var(--accent-fg-success)' : live ? 'var(--accent-primary)' : s.status === 'failed' ? 'var(--accent-fg-error)' : 'var(--text-muted)' }}>
++                  {s.status === 'done' ? <CircleCheck size={14} /> : live ? <Clock3 size={14} /> : s.status === 'failed' ? <AlertTriangle size={13} /> : <Circle size={14} />}
++                </span>
++                <span className={cn('min-w-0 flex-1 truncate', s.status === 'pending' ? 'text-token-muted' : 'text-token-primary', live && 'font-medium')}>
++                  {s.label}
++                  {s.status === 'done' && s.detail && <span className="text-token-muted"> · {s.detail}</span>}
++                </span>
++                {live && <span className="shrink-0 text-[11px] font-semibold tabular-nums text-[color:var(--accent-primary)]">{s.progress != null ? `${s.progress}%` : '进行中'}</span>}
++                {s.status === 'failed' && <span className="shrink-0 text-[11px] font-semibold" style={{ color: 'var(--accent-fg-error)' }}>未完成</span>}
++              </li>
++            );
++          })}
++        </ol>
++      </div>
++      {run.estimateBasis && !finished && !failed && <div className="px-4 pb-3 text-[11px] text-token-muted">预计依据：{run.estimateBasis}</div>}
++    </section>
+   );
+ }
++
+diff --git a/src/added/pages/quick-creation-agent/TemplateFrames.tsx b/src/added/pages/quick-creation-agent/TemplateFrames.tsx
+--- a/src/added/pages/quick-creation-agent/TemplateFrames.tsx
++++ b/src/added/pages/quick-creation-agent/TemplateFrames.tsx
+@@ -160,16 +160,25 @@ export function TemplateFrame({ frame, scene = 1 }: { frame: FrameKey; scene?: n
+   return <VisualNote scene={scene} />;
+ }
+ 
+-/** 网页成品的正文（作品配色）。activeAnchor 用于从重点定位到对应一节。 */
+-export function TemplatePageBody({ sections, activeAnchor }: { sections: QcWebSection[]; activeAnchor?: string }) {
++/**
++ * 网页成品的正文（作品配色）。activeAnchor 用于从重点定位到对应一节；
++ * pendingFrom 用于生成中：从这一节起还没写完，画成作品纸面上的占位行。
++ */
++export function TemplatePageBody({ sections, activeAnchor, pendingFrom, maxHeight = 220 }: { sections: QcWebSection[]; activeAnchor?: string; pendingFrom?: number; maxHeight?: number | 'none' }) {
++  const line = (w: string): CSSProperties => ({ height: 9, width: w, borderRadius: 4, background: '#ECE6DA' });
+   return (
+-    <div style={{ maxHeight: 220, overflowY: 'auto', padding: '16px 20px', color: '#1C1B19', fontFamily: sans, display: 'flex', flexDirection: 'column', gap: 12 }}>
+-      {sections.map(s => (
++    <div style={{ maxHeight, overflowY: 'auto', padding: '16px 20px', color: '#1C1B19', fontFamily: sans, display: 'flex', flexDirection: 'column', gap: 12 }}>
++      {sections.map((s, i) => (pendingFrom != null && i >= pendingFrom ? (
++        <section key={s.anchor} aria-label={`${s.title}（生成中）`} className="qc-shimmer" style={{ borderRadius: 6, padding: 8, display: 'flex', flexDirection: 'column', gap: 7 }}>
++          <div style={{ fontSize: 14, fontWeight: 600, color: i === pendingFrom ? '#1C1B19' : '#A39C8E' }}>{s.title}</div>
++          <div style={line('92%')} /><div style={line('78%')} />{i === pendingFrom && <div style={line('54%')} />}
++        </section>
++      ) : (
+         <section key={s.anchor} id={`qc-${s.anchor}`} style={{ borderRadius: 6, padding: 8, outline: activeAnchor === s.anchor ? '2px solid #B4532A' : 'none', outlineOffset: 2 }}>
+           <h3 style={{ margin: 0, fontSize: 14, fontWeight: 600 }}>{s.title}</h3>
+           <p style={{ margin: '4px 0 0', fontSize: 12.5, lineHeight: 1.8, color: '#4A463F' }}>{s.body}</p>
+         </section>
+-      ))}
++      )))}
+     </div>
+   );
+ }
+diff --git a/src/added/pages/quick-creation-agent/WorksList.tsx b/src/added/pages/quick-creation-agent/WorksList.tsx
+--- a/src/added/pages/quick-creation-agent/WorksList.tsx
++++ b/src/added/pages/quick-creation-agent/WorksList.tsx
+@@ -64,7 +64,7 @@ export function WorksList({ works, templates, onOpen, onCreate }: {
+           const st = workStatus(w);
+           return (
+             <li key={w.runId}>
+-              <button type="button" onClick={() => onOpen(w.runId)} className="flex min-h-[64px] w-full items-center gap-3 px-3 py-2.5 text-left hover-bg-soft md:px-4">
++              <button type="button" data-run-id={w.runId} onClick={() => onOpen(w.runId)} className="flex min-h-[64px] w-full items-center gap-3 px-3 py-2.5 text-left hover-bg-soft md:px-4">
+                 <span className="w-[88px] shrink-0 overflow-hidden rounded-md border border-token-subtle md:w-[104px]">
+                   {t ? <TemplateFrame frame={t.frame} scene={1} /> : <span className="block aspect-video bg-token-nested" />}
+                 </span>
+diff --git a/src/added/pages/quick-creation-agent/quickCreation.css b/src/added/pages/quick-creation-agent/quickCreation.css
+--- a/src/added/pages/quick-creation-agent/quickCreation.css
++++ b/src/added/pages/quick-creation-agent/quickCreation.css
+@@ -9,13 +9,23 @@
+   height: 32px;
+   flex: none;
+   border: 0;
+-  border-radius: var(--radius-control);
++  border-radius: 9px;
+   background: transparent;
+-  color: var(--text-muted);
++  color: var(--text-secondary);
+   cursor: pointer;
++  transition: background-color .15s, color .15s;
+ }
+-.qc-icon-btn:hover { background: var(--bg-card-hover); color: var(--text-primary); }
++.qc-icon-btn:hover { background: var(--bg-tertiary); color: var(--text-primary); }
+ .qc-icon-btn:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 1px; }
++.qc-icon-btn:disabled { opacity: .4; cursor: not-allowed; }
++
++/* 卡片：左栏对话里的过程卡、右栏的面板。浅色主题带一层很轻的投影，深色主题靠边框 */
++.qc-card {
++  border: 1px solid var(--border-subtle);
++  border-radius: 14px;
++  background: var(--bg-input);
++  box-shadow: var(--shadow-site-card);
++}
+ 
+ .qc-range { appearance: none; background: transparent; cursor: pointer; margin: 0; }
+ .qc-range::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: var(--border-default); }
+@@ -27,7 +37,44 @@
+ .qc-pulse { animation: qc-pulse 1.4s ease-in-out infinite; }
+ @keyframes qc-rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+ .qc-rise { animation: qc-rise .32s ease-out both; }
+-@media (prefers-reduced-motion: reduce) { .qc-pulse, .qc-rise { animation: none; } }
++
++/* 生成中的扫光：正在画 / 正在写的那一块有一道光扫过，表示「此刻在这里干活」 */
++@keyframes qc-sweep { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
++.qc-shimmer { position: relative; overflow: hidden; }
++.qc-shimmer::after {
++  content: '';
++  position: absolute;
++  inset: 0;
++  background: linear-gradient(100deg, transparent 20%, color-mix(in srgb, var(--accent-primary) 16%, transparent) 50%, transparent 80%);
++  animation: qc-sweep 1.8s ease-in-out infinite;
++  pointer-events: none;
++}
++
++/* 进行中阶段的进度条：主色 + 缓慢流动的斜纹 */
++@keyframes qc-stripes { from { background-position: 0 0; } to { background-position: 24px 0; } }
++.qc-bar-live {
++  background-color: var(--accent-primary);
++  background-image: linear-gradient(135deg, color-mix(in srgb, var(--accent-on-primary) 22%, transparent) 25%, transparent 25%, transparent 50%, color-mix(in srgb, var(--accent-on-primary) 22%, transparent) 50%, color-mix(in srgb, var(--accent-on-primary) 22%, transparent) 75%, transparent 75%);
++  background-size: 24px 24px;
++  animation: qc-stripes 1s linear infinite;
++}
++
++/* 配音中的声波：几根竖条高低起伏 */
++@keyframes qc-wave { 0%, 100% { transform: scaleY(.3); } 50% { transform: scaleY(1); } }
++.qc-wave { display: inline-flex; align-items: center; gap: 2px; height: 14px; }
++.qc-wave > i { display: block; width: 2.5px; height: 100%; border-radius: 2px; background: currentColor; transform-origin: center; animation: qc-wave 1s ease-in-out infinite; }
++.qc-wave > i:nth-child(2) { animation-delay: -.8s; }
++.qc-wave > i:nth-child(3) { animation-delay: -.6s; }
++.qc-wave > i:nth-child(4) { animation-delay: -.4s; }
++.qc-wave > i:nth-child(5) { animation-delay: -.2s; }
++
++/* 骨架：作品形状的占位在呼吸 */
++@keyframes qc-breathe { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
++.qc-skel { background: var(--skeleton-base); border-radius: 6px; animation: qc-breathe 1.6s ease-in-out infinite; }
++
++@media (prefers-reduced-motion: reduce) {
++  .qc-pulse, .qc-rise, .qc-shimmer::after, .qc-bar-live, .qc-wave > i, .qc-skel { animation: none; }
++}
+ 
+ @media (max-width: 767px) {
+   .qc-icon-btn { width: 44px; height: 44px; }
+diff --git a/src/added/pages/quick-creation-agent/types.ts b/src/added/pages/quick-creation-agent/types.ts
+--- a/src/added/pages/quick-creation-agent/types.ts
++++ b/src/added/pages/quick-creation-agent/types.ts
+@@ -129,6 +129,8 @@ export interface QcRun {
+   durationSec?: number;
+   keyPoints?: QcKeyPoint[];
+   voice?: string;
++  /** 成片媒体（视频产出完成后才有）：播放器直接播放它，字幕与重点随 currentTime 切换 */
++  media?: { url: string; mime: string };
+   publish: QcPublish;
+   createdAt: string;
+   updatedAt: string;
+diff --git a/src/added/services/real/quickCreation.ts b/src/added/services/real/quickCreation.ts
+--- a/src/added/services/real/quickCreation.ts
++++ b/src/added/services/real/quickCreation.ts
+@@ -43,6 +43,11 @@ export function retryAttachmentRead(attachmentId: string) {
+   return apiRequest<QcAttachment>(`${base}/attachments/${encodeURIComponent(attachmentId)}/read`, { method: 'POST', body: {} });
+ }
+ 
++/** 粘贴的长正文作为一份稿件附件保存，输入框只留给「要求」 */
++export function addTextAttachment(input: { name: string; text: string }) {
++  return apiRequest<QcAttachment>(`${base}/attachments/text`, { method: 'POST', body: input });
++}
++
+ export async function uploadQuickCreationAttachment(file: File): Promise<ApiResponse<QcAttachment>> {
+   const token = useAuthStore.getState().token;
+   const fd = new FormData();
+diff --git a/src/assets/demo-film.webm b/src/assets/demo-film.webm
+new file mode 100644
+--- /dev/null
++++ b/src/assets/demo-film.webm
+Binary files /dev/null and b/src/assets/demo-film.webm differ
+diff --git a/src/env.ts b/src/env.ts
+--- a/src/env.ts
++++ b/src/env.ts
+@@ -1,7 +1,9 @@
+ /* 原型运行环境（只用于原型，不进源码差异）。
+  * CDS 预览容器是不透明源：访问 localStorage / sessionStorage 会抛错、不能发网络请求。
+  * 这里先装内存存储，再把 fetch 换成演示数据路由，然后才加载正式代码。 */
+-import type { QcAttachment, QcRun } from '@/pages/quick-creation-agent/types';
++import type { QcAttachment, QcRun, QcScene } from '@/pages/quick-creation-agent/types';
++/* 演示成片：由 tools/make-demo-film.mjs 用模板画面渲染、带示意音轨的 WebM，构建时内嵌为 data: 地址 */
++import filmUrl from './assets/demo-film.webm';
+ import { attachmentQueue, fixedRuns, sampleDoc, scenes, stagesAt, templates, webKeyPoints, webSections, works } from './fixtures';
+ 
+ class MemStorage {
+@@ -25,6 +27,10 @@ const fail = (message: string, code = 'UPSTREAM_UNAVAILABLE') => json({ success:
+ type Live = { kind: 'video' | 'web'; startedAt: number; title: string; templateId: string; ask: string; attachments: QcAttachment[]; fromStage?: number };
+ const live = new Map<string, Live>();
+ const publishTries = new Map<string, number>();
++/* 恢复：只重做没完成的部分。keep 是保留下来的幕（索引 → 状态），重做的幕按时间推进 */
++type Recovery = { kind: 'scene' | 'requeue' | 'step'; startedAt: number; base: QcRun; keep: Map<number, QcScene['status']>; redo: number[] };
++const recovering = new Map<string, Recovery>();
++const createdAttachments = new Map<string, QcAttachment>();
+ const publishedAt = new Map<string, string>();
+ 
+ /* 视频：排队 0–8 秒 → 分镜 8–16 → 配音 16–26 → 合成 26–31 → 已生成 */
+@@ -59,10 +65,42 @@ function liveRun(id: string, l: Live): QcRun {
+ 
+ function withPublish(run: QcRun): QcRun {
+   const at = publishedAt.get(run.id);
+-  return at ? { ...run, publish: { status: 'done', siteId: `site-${run.id}`, siteTitle: run.title, at } } : run;
++  const withMedia = run.kind === 'video' && run.status === 'done' ? { ...run, media: { url: filmUrl, mime: 'video/webm' } } : run;
++  return at ? { ...withMedia, publish: { status: 'done', siteId: `site-${run.id}`, siteTitle: run.title, at } } : withMedia;
++}
++
++/* 恢复中的任务（演示时间压缩）：单幕重做约 1.6 秒；超时后重新排队约 2 秒，再从未画完的幕继续 */
++function recoveryRun(rec: Recovery): QcRun {
++  const t = (Date.now() - rec.startedAt) / 1000;
++  const { base, keep, redo } = rec;
++  const sceneOf = (status: (i: number) => QcScene['status']) => (base.scenes ?? []).map((sc, i) => ({ ...sc, status: keep.has(i) ? keep.get(i)! : status(i) }));
++  const common = { failure: undefined, elapsedSec: base.elapsedSec + Math.round(t * 6), estimateBasis: '只重做没完成的部分', publish: base.publish };
++  if (rec.kind === 'scene') {
++    if (t < 0.8) return { ...base, ...common, status: 'running', stages: stagesAt('video', 2, { progress: Math.round((t / 0.8) * 100) }), remainSec: Math.round((1.6 - t) * 6), scenes: sceneOf(() => 'voicing') };
++    if (t < 1.6) return { ...base, ...common, status: 'running', stages: stagesAt('video', 3, { progress: Math.round(((t - 0.8) / 0.8) * 100) }), remainSec: Math.round((1.6 - t) * 6), scenes: sceneOf(() => 'ready').map(sc => ({ ...sc, status: 'ready' })) };
++    return { ...base, ...common, status: 'done', stages: stagesAt('video', 4), remainSec: undefined, durationSec: 96, scenes: sceneOf(() => 'ready').map(sc => ({ ...sc, status: 'ready' })) };
++  }
++  const q = rec.kind === 'requeue' ? 2 : 0;
++  if (t < q) return { ...base, ...common, status: 'queued', queue: { position: 2, ahead: 1, running: 4, capacity: 4, startInSec: Math.round((q - t) * 6) }, stages: stagesAt('video', 0), remainSec: 90, scenes: sceneOf(() => 'waiting') };
++  const u = t - q;
++  if (u < 4) {
++    const drawnNow = Math.floor((u / 4) * redo.length);
++    return { ...base, ...common, status: 'running', stages: stagesAt('video', 1, { progress: Math.round((u / 4) * 100) }), remainSec: Math.round((11 - u) * 6),
++      scenes: sceneOf(i => { const k = redo.indexOf(i); return k < drawnNow ? 'drawn' : k === drawnNow ? 'drawing' : 'waiting'; }) };
++  }
++  if (u < 8) {
++    const voiced = Math.floor(((u - 4) / 4) * 6);
++    return { ...base, ...common, status: 'running', stages: stagesAt('video', 2, { progress: Math.round(((u - 4) / 4) * 100) }), remainSec: Math.round((11 - u) * 6),
++      scenes: (base.scenes ?? []).map((sc, i) => ({ ...sc, status: i < voiced ? 'ready' : i === voiced ? 'voicing' : 'drawn' })) };
++  }
++  const done = u >= 11;
++  return { ...base, ...common, status: done ? 'done' : 'running', stages: stagesAt('video', done ? 4 : 3, { progress: Math.round(((u - 8) / 3) * 100) }), remainSec: done ? undefined : Math.round((11 - u) * 6), durationSec: 96,
++    scenes: (base.scenes ?? []).map(sc => ({ ...sc, status: 'ready' })) };
+ }
+ 
+ function getRun(id: string): QcRun | undefined {
++  const rec = recovering.get(id);
++  if (rec) return withPublish(recoveryRun(rec));
+   const l = live.get(id);
+   if (l) return withPublish(liveRun(id, l));
+   const f = fixedRuns[id];
+@@ -77,7 +115,7 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+   const method = (init?.method ?? 'GET').toUpperCase();
+   const path = url.pathname;
+   const body = typeof init?.body === 'string' ? JSON.parse(init.body || '{}') : {};
+-  await new Promise(r => setTimeout(r, 120));
++  await new Promise(r => setTimeout(r, 80));
+ 
+   /* 外壳自身的接口：给出与服务端同形的空数据 */
+   if (/user-preferences\/?$/.test(path)) return ok({ navOrder: [], navHidden: [], defaultNavOrder: [], defaultNavHidden: [] });
+@@ -96,6 +134,13 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+     kbCursor += 1;
+     return ok(next);
+   }
++  if (path.endsWith('/attachments/text') && method === 'POST') {
++    seq += 1;
++    const text = String(body.text ?? '');
++    const item: QcAttachment = { id: `att-text-${seq}`, kind: 'doc', name: String(body.name || '粘贴的正文.md'), meta: `粘贴的正文 · ${text.length.toLocaleString('zh-CN')} 字`, status: 'ready', chars: text.length, excerpt: text.slice(0, 4000) };
++    createdAttachments.set(item.id, item);
++    return ok(item);
++  }
+   const reread = path.match(/\/attachments\/([^/]+)\/read$/);
+   if (reread) {
+     const item = attachmentQueue.find(a => a.id === reread[1]);
+@@ -103,22 +148,39 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+   }
+   if (path.endsWith('/attachments') && method === 'POST') {
+     seq += 1;
+-    return ok({ id: `att-upload-${seq}`, kind: 'doc', name: `上传的稿件-${seq}.md`, meta: 'Markdown · 1.2 KB', status: 'ready', chars: 420, excerpt: '（上传的稿件正文）' });
++    const file = init?.body instanceof FormData ? init.body.get('file') : null;
++    if (!(file instanceof File)) return fail('没有收到文件，请重新选择', 'INVALID_FORMAT');
++    const isImage = file.type.startsWith('image/');
++    const isText = /\.(md|markdown|txt)$/i.test(file.name) || file.type.startsWith('text/');
++    if (!isImage && !isText) return fail('只支持 Markdown、TXT 稿件和图片', 'INVALID_FORMAT');
++    const text = isText ? await file.text() : '';
++    const size = file.size < 1024 ? `${file.size} B` : `${(file.size / 1024).toFixed(1)} KB`;
++    const item: QcAttachment = isImage
++      ? { id: `att-upload-${seq}`, kind: 'image', name: file.name, meta: `图片 · ${size}`, status: 'ready', note: '作为画面参考，不读入旁白' }
++      : text.trim()
++        ? { id: `att-upload-${seq}`, kind: 'doc', name: file.name, meta: `${/\.txt$/i.test(file.name) ? 'TXT' : 'Markdown'} · ${size}`, status: 'ready', chars: text.length, excerpt: text.slice(0, 4000) }
++        : { id: `att-upload-${seq}`, kind: 'doc', name: file.name, meta: size, status: 'failed', error: '没读出文字：文件是空的。请换一个文件。' };
++    createdAttachments.set(item.id, item);
++    return ok(item);
+   }
+   if (path.endsWith('/runs') && method === 'POST') {
+     seq += 1;
+     const id = `run-live-${seq}`;
+-    const atts = [sampleDoc, ...attachmentQueue].filter(a => (body.attachmentIds ?? []).includes(a.id));
++    const atts = [sampleDoc, ...attachmentQueue, ...createdAttachments.values()].filter(a => (body.attachmentIds ?? []).includes(a.id));
+     live.set(id, { kind: body.kind, startedAt: Date.now(), title: body.title || '未命名', templateId: body.templateId, ask: body.ask ?? '', attachments: atts.length ? atts : [sampleDoc] });
+     return ok(getRun(id));
+   }
+   const retry = path.match(/\/runs\/([^/]+)\/retry$/);
+   if (retry) {
+     const f = fixedRuns[retry[1]];
+-    if (!f) return fail('没有找到这个任务', 'NOT_FOUND');
+-    /* 只重做没完成的部分：单幕配音失败从配音继续；超时从分镜继续 */
+-    const from = f.failure?.stageKey === 'storyboard' ? 1 : 2;
+-    live.set(retry[1], { kind: f.kind, startedAt: Date.now() - VIDEO_STEPS[from - 1] * 1000, title: f.title, templateId: f.templateId, ask: f.ask, attachments: f.attachments, fromStage: from });
++    if (!f || f.status !== 'failed') return fail('这个任务现在不需要恢复', 'NOT_FOUND');
++    /* 只重做没完成的部分：已完成的幕原样保留 */
++    const keep = new Map<number, QcScene['status']>();
++    const redo: number[] = [];
++    (f.scenes ?? []).forEach((sc, i) => { if (sc.status === 'ready' || sc.status === 'drawn') keep.set(i, sc.status); else redo.push(i); });
++    const kind = body.action === 'requeue' ? 'requeue' : f.failure?.stageKey === 'voice' ? 'scene' : 'step';
++    if (body.action === 'skip-unit') { redo.forEach(i => keep.set(i, 'ready')); redo.length = 0; }
++    recovering.set(retry[1], { kind, startedAt: Date.now(), base: f, keep, redo });
+     return ok(getRun(retry[1]));
+   }
+   const publish = path.match(/\/runs\/([^/]+)\/publish$/);
+@@ -126,7 +188,7 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+     const id = publish[1];
+     const tries = (publishTries.get(id) ?? 0) + 1;
+     publishTries.set(id, tries);
+-    await new Promise(r => setTimeout(r, 1200));
++    await new Promise(r => setTimeout(r, 500));
+     /* 第一次发布故意失败，用来演示重试；之后成功 */
+     if (tries === 1 && id !== 'run-publish-failed') return fail('网页托管这次没有响应（14:21）');
+     publishedAt.set(id, '14:23');
+diff --git a/src/main.tsx b/src/main.tsx
+--- a/src/main.tsx
++++ b/src/main.tsx
+@@ -4,7 +4,7 @@
+ import './env';
+ import React, { useEffect, useState } from 'react';
+ import ReactDOM from 'react-dom/client';
+-import { MemoryRouter, Navigate, Route, Routes } from 'react-router-dom';
++import { MemoryRouter, Navigate, Route, Routes, useSearchParams } from 'react-router-dom';
+ import '@/styles/tailwind.css';
+ import '@/styles/tokens.css';
+ import '@/styles/globals.css';
+@@ -14,6 +14,13 @@ import { QuickCreationAgentPage } from '@/pages/quick-creation-agent/QuickCreati
+ import { HostingLanding, ToolboxLanding } from './concept/Landings';
+ import { SettingsConcept } from './concept/SettingsConcept';
+ import { StudioConcept } from './concept/StudioConcept';
++import { TemplateFrame } from '@/pages/quick-creation-agent/TemplateFrames';
++
++/* 只用于生成演示成片（tools/make-demo-film.mjs）：整页渲染一帧模板画面 */
++function FilmFrame() {
++  const [q] = useSearchParams();
++  return <div data-qc-ready="film-frame" style={{ width: 1280 }}><TemplateFrame frame="visual-note" scene={Number(q.get('scene') ?? 1)} /></div>;
++}
+ 
+ /* 菜单目录与服务端 AdminMenuCatalog 的侧栏分组一致（prd-api/src/PrdAgent.Core/Security/AdminMenuCatalog.cs） */
+ const menu = [
+@@ -42,6 +49,7 @@ function Prototype() {
+   return (
+     <MemoryRouter key={entry} initialEntries={[entry]}>
+       <Routes>
++        <Route path="/film-frame" element={<FilmFrame />} />
+         <Route element={<AppShell />}>
+           <Route path="/quick-creation-agent" element={<QuickCreationAgentPage />} />
+           <Route path="/web-pages" element={<HostingLanding />} />

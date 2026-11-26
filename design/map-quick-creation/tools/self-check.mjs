@@ -100,8 +100,9 @@ for (const screen of design.screens) {
         toggleHeight: toggle ? Math.round(toggle.getBoundingClientRect().height) : null,
         chips: tray && !list ? tray.querySelectorAll('[title]').length : null,
         plusN: tray ? /\+\d+/.test(tray.innerText) : null,
-        listMax: list ? getComputedStyle(list).maxHeight : null,
-        listFooter: tray?.innerText.match(/文字 [\d,]+ \/ 20,000 · 附件 \d+ \/ 10/)?.[0] ?? null,
+        listMax: list ? `${getComputedStyle(list).overflowY} · 列表区 ${Math.round(list.getBoundingClientRect().height)}px（资料面板在右栏，列表区填满剩余高度）` : null,
+        listScrolls: list ? getComputedStyle(list).overflowY === 'auto' && !!list.closest('[data-workbench-pane=preview]') : null,
+        listFooter: (q('[data-qc=budget]')?.innerText ?? '').match(/文字 [\d,]+ \/ 20,000 · 附件 \d+ \/ 10/)?.[0] ?? null,
       };
     });
     /* 颜色：页面里取到的令牌值，rgba 叠在底色上再算 */
@@ -117,7 +118,7 @@ for (const screen of design.screens) {
     const contrast = bg ? m.vars.slice(0, 2).map(v => { const c = toRgb(v, bg); return c ? Number(ratio(c, bg).toFixed(2)) : null; }) : [null, null];
     if (shots) await page.screenshot({ path: path.join(shots, `${screen.id}-${theme}.png`) });
     results.screens.push({ id: screen.id, theme, viewport: screen.viewport, errors, overflow: m.overflow, small: m.small, contrast, inShell: m.inShell,
-      emojiInText: emoji.test(m.text), submitDisabled: m.submitDisabled, blockReason: m.blockReason, trayHeight: m.trayHeight, toggleHeight: m.toggleHeight, chips: m.chips, plusN: m.plusN, listMax: m.listMax, listFooter: m.listFooter });
+      emojiInText: emoji.test(m.text), submitDisabled: m.submitDisabled, blockReason: m.blockReason, trayHeight: m.trayHeight, toggleHeight: m.toggleHeight, chips: m.chips, plusN: m.plusN, listMax: m.listMax, listScrolls: m.listScrolls, listFooter: m.listFooter });
     await ctx.close();
   }
 }
@@ -136,7 +137,7 @@ const measure = {
   'A-10': { pass: svcOk, note: `apiRequest 封装；fetch 仅 ${fetchCount} 处（附件上传 FormData）` },
   'A-12': { pass: every(S('compose'), s => s.submitDisabled === true && s.blockReason), note: '无附件时快捷生成不可用，下方写原因' },
   'A-14': { pass: every(S('attachments'), s => s.trayHeight <= 88 && s.toggleHeight <= 28 && s.chips <= 2 && s.plusN), note: S('attachments').map(s => `${s.theme}：托盘 ${s.trayHeight}px，摘要行 ${s.toggleHeight}px，胶囊 ${s.chips}，+N ${s.plusN}`).join('；') },
-  'A-16': { pass: every(S('attachments-expanded'), s => s.listMax === '232px' && !!s.listFooter), note: S('attachments-expanded').map(s => `${s.theme}：最大高度 ${s.listMax}，${s.listFooter}`).join('；') },
+  'A-16': { pass: every(S('attachments-expanded'), s => s.listScrolls === true && !!s.listFooter), note: S('attachments-expanded').map(s => `${s.theme}：${s.listMax}；${s.listFooter}`).join('；') },
 };
 const errorsTotal = results.screens.reduce((n, s) => n + s.errors.length, 0);
 const items = design.acceptance.map(a => {

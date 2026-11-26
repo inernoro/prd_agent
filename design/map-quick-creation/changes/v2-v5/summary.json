@@ -1,0 +1,273 @@
+{
+ "from": {
+  "label": "V2",
+  "version": 2,
+  "commit": "b3c2428f839e300f040866d7e367d1b1cd39e7ed",
+  "title": "快速创作 · 交付说明（V2）"
+ },
+ "to": {
+  "label": "V5",
+  "version": 5,
+  "commit": null,
+  "title": "快速创作 · 交付说明（V5）"
+ },
+ "direction": "upgrade",
+ "acceptance": {
+  "added": [],
+  "removed": [],
+  "changed": [
+   {
+    "id": "A-11",
+    "fields": [
+     "rule",
+     "expected"
+    ],
+    "from": {
+     "rule": "首屏：产出（视频 / 网页）、模板卡与快捷生成在一屏内；模板缩略图是真实成品帧，选中态唯一",
+     "expected": "1440×900 首屏同时看到产出切换、模板卡、输入框与「快捷生成」；只有一张模板卡带选中边框"
+    },
+    "to": {
+     "rule": "首屏：左栏是助手开场与输入框，右栏是产出切换、选中模板的大图和全部模板卡；模板缩略图是真实成品帧，选中态唯一",
+     "expected": "1440×900 首屏同时看到右栏的产出切换、模板大图与模板卡，左栏的开场、输入框与「快捷生成」"
+    }
+   },
+   {
+    "id": "A-14",
+    "fields": [
+     "rule",
+     "expected"
+    ],
+    "from": {
+     "rule": "附件再多，收起时托盘也只占一行胶囊：一行摘要（数量、字数、读取中、失败）+ 最多两个胶囊 + 「+N」",
+     "expected": "检查：6 个附件时托盘高度 ≤ 88px，摘要行不折行，胶囊不超过 2 个且有「+N」"
+    },
+    "to": {
+     "rule": "附件再多，输入框顶部也只占一块：一行摘要（份数、字数、读取中、失败）+ 最多两张资料卡 + 「+N」，管理在右栏",
+     "expected": "检查：6 个附件时托盘高度 ≤ 88px，摘要行不折行，资料卡不超过 2 张且有「+N」"
+    }
+   },
+   {
+    "id": "A-16",
+    "fields": [
+     "rule",
+     "expected"
+    ],
+    "from": {
+     "rule": "展开列表限高可滚动，按稿件 / 知识库文档 / 图片分组，底部显示文字预算与附件上限",
+     "expected": "检查：[data-qc=attachment-list] 最大高度 232px；分组标题含数量；底部写「文字 x / 20,000 · 附件 n / 10」"
+    },
+    "to": {
+     "rule": "资料管理在右栏面板：按读取失败 / 稿件 / 知识库文档 / 图片分组，列表区内部滚动，右侧看正文，底部显示文字预算与附件上限",
+     "expected": "检查：[data-qc=attachment-list] 在预览栏内且 overflow-y 为 auto；分组标题含数量；底部写「文字 x / 20,000 · 附件 n / 10」"
+    }
+   },
+   {
+    "id": "A-18",
+    "fields": [
+     "rule",
+     "expected"
+    ],
+    "from": {
+     "rule": "发送后附件收成一行（前两个 + 「全部 N 个附件」），点开在右栏按类型回看原文，可回到预览",
+     "expected": "右栏出现附件分组列表与原文，顶部有「回到预览」"
+    },
+    "to": {
+     "rule": "发送后资料收在你的消息气泡里（两张资料卡 + 「全部 N 份」），点开在右栏按类型回看原文，可回到预览",
+     "expected": "右栏出现资料分组列表与原文，顶部有「回到预览」"
+    }
+   },
+   {
+    "id": "A-22",
+    "fields": [
+     "rule",
+     "expected"
+    ],
+    "from": {
+     "rule": "分镜逐幕亮起，区分正在画、待配音、配音中、已完成、没有完成",
+     "expected": "右栏 6 幕各带状态标签，配音中的一幕描边强调"
+    },
+    "to": {
+     "rule": "生成中右栏是作品本身在生长：当前这一幕放大显示（配音中带声波与正在配的字幕），下方分镜胶片逐幕亮起，区分正在画、待配音、配音中、已完成、没有完成",
+     "expected": "右栏大画面为第 3 幕并标「配音中」，下方 6 幕各带状态，当前幕描边"
+    }
+   },
+   {
+    "id": "A-28",
+    "fields": [
+     "expected"
+    ],
+    "from": {
+     "expected": "左栏显示「排队 → 分镜 → 配音 → 合成 全部完成 · 用时」一行，可展开；主按钮是「发布到网页托管」"
+    },
+    "to": {
+     "expected": "左栏助手一轮里显示「排队 · 分镜 · 配音 · 合成 全部完成，用时」一行，可展开；主按钮是「发布到网页托管」"
+    }
+   },
+   {
+    "id": "A-31",
+    "fields": [
+     "rule",
+     "expected"
+    ],
+    "from": {
+     "rule": "成品可追溯：原稿、模板、配音写在预览上方，原稿可点开回看",
+     "expected": "预览标题右侧有「原稿 · n 个附件」「模板 · 视觉笔记」「配音 · 女声 · 稍快」"
+    },
+    "to": {
+     "rule": "成品可追溯：模板、配音写在预览上方，原稿收在你的消息里可点开回看",
+     "expected": "预览标题下写时长、幕数与配音，右侧「模板 · 视觉笔记」；你的消息里有资料卡与「全部 n 份」"
+    }
+   },
+   {
+    "id": "A-35",
+    "fields": [
+     "rule",
+     "expected"
+    ],
+    "from": {
+     "rule": "手机上「创作 / 预览」切换，输入框与「快捷生成」在底部可达",
+     "expected": "390×844 下底部可见输入框、附件托盘与「快捷生成」"
+    },
+    "to": {
+     "rule": "手机上「对话 / 预览」切换，输入框与「快捷生成」在底部可达；选模板在「预览」页签",
+     "expected": "390×844 下底部可见输入框、资料托盘与「快捷生成」"
+    }
+   }
+  ]
+ },
+ "screens": {
+  "added": [],
+  "removed": [],
+  "changed": [
+   {
+    "id": "phone-preview",
+    "fields": [
+     "entryActions"
+    ],
+    "from": {
+     "entryActions": [
+      ".overflow-x-auto.border-b > button:nth-child(2)"
+     ]
+    },
+    "to": {
+     "entryActions": [
+      "[aria-label=对话与预览] button:nth-child(2)"
+     ]
+    }
+   }
+  ]
+ },
+ "docs": {
+  "added": [],
+  "removed": []
+ },
+ "meta": {
+  "prototypeVersion": {
+   "from": 2,
+   "to": 5
+  }
+ },
+ "files": {
+  "added": [
+   {
+    "path": "src/added/pages/quick-creation-agent/Conversation.tsx",
+    "area": "源码"
+   }
+  ],
+  "removed": [],
+  "changed": [
+   {
+    "path": "checks/result.json",
+    "area": "自检"
+   },
+   {
+    "path": "design.json",
+    "area": "其他"
+   },
+   {
+    "path": "dist/index.html",
+    "area": "原型"
+   },
+   {
+    "path": "src/added/pages/quick-creation-agent/AttachmentTray.tsx",
+    "area": "源码"
+   },
+   {
+    "path": "src/added/pages/quick-creation-agent/QuickCreationAgentPage.tsx",
+    "area": "源码"
+   },
+   {
+    "path": "src/added/pages/quick-creation-agent/ResultPanel.tsx",
+    "area": "源码"
+   },
+   {
+    "path": "src/added/pages/quick-creation-agent/RunProgress.tsx",
+    "area": "源码"
+   },
+   {
+    "path": "src/added/pages/quick-creation-agent/TemplateFrames.tsx",
+    "area": "源码"
+   },
+   {
+    "path": "src/added/pages/quick-creation-agent/quickCreation.css",
+    "area": "源码"
+   },
+   {
+    "path": "src/env.ts",
+    "area": "源码"
+   },
+   {
+    "path": "tools/handoff-local.mjs",
+    "area": "工具"
+   },
+   {
+    "path": "tools/manifest-src.mjs",
+    "area": "工具"
+   },
+   {
+    "path": "tools/self-check.mjs",
+    "area": "工具"
+   },
+   {
+    "path": "tools/walkthrough.json",
+    "area": "工具"
+   },
+   {
+    "path": "versions.json",
+    "area": "其他"
+   },
+   {
+    "path": "交付说明.md",
+    "area": "文档"
+   },
+   {
+    "path": "交接清单.md",
+    "area": "文档"
+   },
+   {
+    "path": "思路.md",
+    "area": "文档"
+   },
+   {
+    "path": "设计文档/源码差异.diff",
+    "area": "文档"
+   }
+  ]
+ },
+ "checks": {
+  "from": {
+   "passed": 43,
+   "total": 43,
+   "failed": []
+  },
+  "to": {
+   "passed": 43,
+   "total": 43,
+   "failed": []
+  }
+ },
+ "source": {
+  "files": 8,
+  "bytes": 113684
+ }
+}

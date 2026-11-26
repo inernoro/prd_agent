@@ -160,16 +160,25 @@ export function TemplateFrame({ frame, scene = 1 }: { frame: FrameKey; scene?: n
   return <VisualNote scene={scene} />;
 }
 
-/** 网页成品的正文（作品配色）。activeAnchor 用于从重点定位到对应一节。 */
-export function TemplatePageBody({ sections, activeAnchor }: { sections: QcWebSection[]; activeAnchor?: string }) {
+/**
+ * 网页成品的正文（作品配色）。activeAnchor 用于从重点定位到对应一节；
+ * pendingFrom 用于生成中：从这一节起还没写完，画成作品纸面上的占位行。
+ */
+export function TemplatePageBody({ sections, activeAnchor, pendingFrom, maxHeight = 220 }: { sections: QcWebSection[]; activeAnchor?: string; pendingFrom?: number; maxHeight?: number | 'none' }) {
+  const line = (w: string): CSSProperties => ({ height: 9, width: w, borderRadius: 4, background: '#ECE6DA' });
   return (
-    <div style={{ maxHeight: 220, overflowY: 'auto', padding: '16px 20px', color: '#1C1B19', fontFamily: sans, display: 'flex', flexDirection: 'column', gap: 12 }}>
-      {sections.map(s => (
+    <div style={{ maxHeight, overflowY: 'auto', padding: '16px 20px', color: '#1C1B19', fontFamily: sans, display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {sections.map((s, i) => (pendingFrom != null && i >= pendingFrom ? (
+        <section key={s.anchor} aria-label={`${s.title}（生成中）`} className="qc-shimmer" style={{ borderRadius: 6, padding: 8, display: 'flex', flexDirection: 'column', gap: 7 }}>
+          <div style={{ fontSize: 14, fontWeight: 600, color: i === pendingFrom ? '#1C1B19' : '#A39C8E' }}>{s.title}</div>
+          <div style={line('92%')} /><div style={line('78%')} />{i === pendingFrom && <div style={line('54%')} />}
+        </section>
+      ) : (
         <section key={s.anchor} id={`qc-${s.anchor}`} style={{ borderRadius: 6, padding: 8, outline: activeAnchor === s.anchor ? '2px solid #B4532A' : 'none', outlineOffset: 2 }}>
           <h3 style={{ margin: 0, fontSize: 14, fontWeight: 600 }}>{s.title}</h3>
           <p style={{ margin: '4px 0 0', fontSize: 12.5, lineHeight: 1.8, color: '#4A463F' }}>{s.body}</p>
         </section>
-      ))}
+      )))}
     </div>
   );
 }

@@ -9,13 +9,23 @@
   height: 32px;
   flex: none;
   border: 0;
-  border-radius: var(--radius-control);
+  border-radius: 9px;
   background: transparent;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   cursor: pointer;
+  transition: background-color .15s, color .15s;
 }
-.qc-icon-btn:hover { background: var(--bg-card-hover); color: var(--text-primary); }
+.qc-icon-btn:hover { background: var(--bg-tertiary); color: var(--text-primary); }
 .qc-icon-btn:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 1px; }
+.qc-icon-btn:disabled { opacity: .4; cursor: not-allowed; }
+
+/* 卡片：左栏对话里的过程卡、右栏的面板。浅色主题带一层很轻的投影，深色主题靠边框 */
+.qc-card {
+  border: 1px solid var(--border-subtle);
+  border-radius: 14px;
+  background: var(--bg-input);
+  box-shadow: var(--shadow-site-card);
+}
 
 .qc-range { appearance: none; background: transparent; cursor: pointer; margin: 0; }
 .qc-range::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: var(--border-default); }
@@ -27,7 +37,44 @@
 .qc-pulse { animation: qc-pulse 1.4s ease-in-out infinite; }
 @keyframes qc-rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 .qc-rise { animation: qc-rise .32s ease-out both; }
-@media (prefers-reduced-motion: reduce) { .qc-pulse, .qc-rise { animation: none; } }
+
+/* 生成中的扫光：正在画 / 正在写的那一块有一道光扫过，表示「此刻在这里干活」 */
+@keyframes qc-sweep { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
+.qc-shimmer { position: relative; overflow: hidden; }
+.qc-shimmer::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg, transparent 20%, color-mix(in srgb, var(--accent-primary) 16%, transparent) 50%, transparent 80%);
+  animation: qc-sweep 1.8s ease-in-out infinite;
+  pointer-events: none;
+}
+
+/* 进行中阶段的进度条：主色 + 缓慢流动的斜纹 */
+@keyframes qc-stripes { from { background-position: 0 0; } to { background-position: 24px 0; } }
+.qc-bar-live {
+  background-color: var(--accent-primary);
+  background-image: linear-gradient(135deg, color-mix(in srgb, var(--accent-on-primary) 22%, transparent) 25%, transparent 25%, transparent 50%, color-mix(in srgb, var(--accent-on-primary) 22%, transparent) 50%, color-mix(in srgb, var(--accent-on-primary) 22%, transparent) 75%, transparent 75%);
+  background-size: 24px 24px;
+  animation: qc-stripes 1s linear infinite;
+}
+
+/* 配音中的声波：几根竖条高低起伏 */
+@keyframes qc-wave { 0%, 100% { transform: scaleY(.3); } 50% { transform: scaleY(1); } }
+.qc-wave { display: inline-flex; align-items: center; gap: 2px; height: 14px; }
+.qc-wave > i { display: block; width: 2.5px; height: 100%; border-radius: 2px; background: currentColor; transform-origin: center; animation: qc-wave 1s ease-in-out infinite; }
+.qc-wave > i:nth-child(2) { animation-delay: -.8s; }
+.qc-wave > i:nth-child(3) { animation-delay: -.6s; }
+.qc-wave > i:nth-child(4) { animation-delay: -.4s; }
+.qc-wave > i:nth-child(5) { animation-delay: -.2s; }
+
+/* 骨架：作品形状的占位在呼吸 */
+@keyframes qc-breathe { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
+.qc-skel { background: var(--skeleton-base); border-radius: 6px; animation: qc-breathe 1.6s ease-in-out infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .qc-pulse, .qc-rise, .qc-shimmer::after, .qc-bar-live, .qc-wave > i, .qc-skel { animation: none; }
+}
 
 @media (max-width: 767px) {
   .qc-icon-btn { width: 44px; height: 44px; }

@@ -1,63 +1,82 @@
 {
- "to": 4,
+ "to": 5,
  "from": [
   {
    "version": 1,
    "commit": "6eece65e23cb0379f6cfc391b3bd126e77a3f0a6",
    "files": [
-    "changes/v1-v4/summary.json",
-    "changes/v1-v4/changes.md",
-    "changes/v1-v4/source.diff"
+    "changes/v1-v5/summary.json",
+    "changes/v1-v5/changes.md",
+    "changes/v1-v5/source.diff"
    ],
    "acceptance": {
     "added": 2,
     "removed": 0,
-    "changed": 17
+    "changed": 24
    },
    "screens": {
     "added": 0,
     "removed": 0,
-    "changed": 0
+    "changed": 1
    },
-   "sourceFiles": 10
+   "sourceFiles": 13
   },
   {
    "version": 2,
    "commit": "b3c2428f839e300f040866d7e367d1b1cd39e7ed",
    "files": [
-    "changes/v2-v4/summary.json",
-    "changes/v2-v4/changes.md"
+    "changes/v2-v5/summary.json",
+    "changes/v2-v5/changes.md"
    ],
    "acceptance": {
     "added": 0,
     "removed": 0,
-    "changed": 0
+    "changed": 8
    },
    "screens": {
     "added": 0,
     "removed": 0,
-    "changed": 0
+    "changed": 1
    },
-   "sourceFiles": 3
+   "sourceFiles": 8
   },
   {
    "version": 3,
    "commit": "01d17f2f4dfcf1db196c7d97df0cf8279292aa69",
    "files": [
-    "changes/v3-v4/summary.json",
-    "changes/v3-v4/changes.md"
+    "changes/v3-v5/summary.json",
+    "changes/v3-v5/changes.md"
    ],
    "acceptance": {
     "added": 0,
     "removed": 0,
-    "changed": 0
+    "changed": 8
    },
    "screens": {
     "added": 0,
     "removed": 0,
-    "changed": 0
+    "changed": 1
    },
-   "sourceFiles": 1
+   "sourceFiles": 7
+  },
+  {
+   "version": 4,
+   "commit": "055404cd0bcc928a47a6cf4b4f243d8d39db3310",
+   "files": [
+    "changes/v4-v5/summary.json",
+    "changes/v4-v5/changes.md"
+   ],
+   "acceptance": {
+    "added": 0,
+    "removed": 0,
+    "changed": 8
+   },
+   "screens": {
+    "added": 0,
+    "removed": 0,
+    "changed": 1
+   },
+   "sourceFiles": 7
   }
  ]
 }

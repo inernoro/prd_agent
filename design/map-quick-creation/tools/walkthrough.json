@@ -13,7 +13,7 @@
  },
  "A-11": {
   "status": "passed",
-  "note": "compose 两主题截图：产出、模板卡、输入框与快捷生成同屏，选中卡唯一"
+  "note": "compose 两主题截图：左栏助手开场（三种放稿件方式）与输入框，右栏产出切换、选中模板大图与 3 张模板卡同屏，选中卡唯一（V5 走查）"
  },
  "A-13": {
   "status": "passed",
@@ -21,7 +21,7 @@
  },
  "A-15": {
   "status": "passed",
-  "note": "attachments-expanded：失败组置顶，含原因、重试与移除"
+  "note": "attachments-expanded：右栏资料面板，「读取失败」组置顶、错误底色，原因单独一行，含重试与移除；右侧显示所选资料正文"
  },
  "A-17": {
   "status": "passed",
@@ -29,11 +29,11 @@
  },
  "A-18": {
   "status": "passed",
-  "note": "attachment-review：右栏分组列表 + 原文 + 回到预览"
+  "note": "attachment-review：点你的消息里「全部 5 份」→ 右栏分组列表 + 原文 + 回到预览"
  },
  "A-19": {
   "status": "passed",
-  "note": "queued：第一张卡为「稿件和要求已保存……离开页面也会继续」"
+  "note": "queued：助手一轮的第一行为「稿件和要求已保存，生成在后台进行，离开页面也会继续」"
  },
  "A-20": {
   "status": "passed",
@@ -41,11 +41,11 @@
  },
  "A-21": {
   "status": "passed",
-  "note": "generating：配音阶段说明、进度条、已用 7 分 20 秒 · 预计还需约 1 分 30 秒、预计依据"
+  "note": "generating：进度卡标题「正在配音」+ 当前说明、走动的计时 07:20 与「还需约 1 分 30 秒」、分段进度条（当前段流动）、任务清单与预计依据"
  },
  "A-22": {
   "status": "passed",
-  "note": "generating：6 幕带状态（已完成 / 配音中 / 待配音），配音中一幕描边"
+  "note": "generating：右栏大画面为第 3 幕「配音中」带声波与字幕，下方 6 幕两行标注（已完成 / 配音中 / 待配音），当前幕描边"
  },
  "A-23": {
   "status": "passed",
@@ -69,7 +69,7 @@
  },
  "A-28": {
   "status": "passed",
-  "note": "done-video：过程收成一行「排队 → 分镜 → 配音 → 合成 全部完成 · 用时」，主按钮为发布"
+  "note": "done-video：助手一轮里过程收成一行「排队 · 分镜 · 配音 · 合成 全部完成，用时 3 分 10 秒」，主按钮为发布"
  },
  "A-29": {
   "status": "passed",
@@ -81,7 +81,7 @@
  },
  "A-31": {
   "status": "passed",
-  "note": "done-video：预览上方原稿、模板、配音三项可见，原稿可点开回看"
+  "note": "done-video：预览标题下「1:36 · 6 幕 · 1080p · 配音 女声 · 稍快」，右侧「模板 · 视觉笔记」；原稿在你的消息里可点开回看"
  },
  "A-32": {
   "status": "passed",
@@ -97,7 +97,7 @@
  },
  "A-35": {
   "status": "passed",
-  "note": "phone-compose：底部输入框、附件托盘与快捷生成可见"
+  "note": "phone-compose：底部输入框、资料托盘（两张资料卡 + 「+3」）与快捷生成可见；顶部「对话 / 预览」切换"
  },
  "A-36": {
   "status": "passed",
@@ -105,7 +105,7 @@
  },
  "A-37": {
   "status": "passed",
-  "note": "phone-preview：进度条单独一行，按钮一行排完（窄屏隐藏音量）"
+  "note": "phone-preview：进度条单独一行，播放、时间、字幕、全屏一行排完（窄屏隐藏音量与上下幕）"
  },
  "A-38": {
   "status": "passed",
