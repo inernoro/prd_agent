@@ -171,6 +171,7 @@ export function revisionHistoryErrorMessage(error: unknown): string {
 
 export interface SiteEditSessionOptions {
   onPublished: (site: HostedSite) => void;
+  modelOptionId?: string;
   /**
    * 打开一个待发布草稿时，把它当时的修改要求回填进输入框（默认开）。
    * 旧面板靠它「按原要求再来一次」；工作台里那一轮已经作为对话气泡摆着，再回填就是重复，所以关掉。
@@ -178,7 +179,7 @@ export interface SiteEditSessionOptions {
   prefillInstructionFromDraft?: boolean;
 }
 
-export function useSiteEditSession(site: HostedSite, { onPublished, prefillInstructionFromDraft = true }: SiteEditSessionOptions) {
+export function useSiteEditSession(site: HostedSite, { onPublished, modelOptionId, prefillInstructionFromDraft = true }: SiteEditSessionOptions) {
   const [instruction, setInstruction] = useState('');
   const prefillFromDraftRef = useRef(prefillInstructionFromDraft);
   prefillFromDraftRef.current = prefillInstructionFromDraft;
@@ -260,10 +261,7 @@ export function useSiteEditSession(site: HostedSite, { onPublished, prefillInstr
     : '当前没有可用执行器，请根据下方原因完成配置。';
   // 新修改任务固定走 OpenDesign；服务未就绪时截图仍可保留，但不允许发起任务。
   const screenshotsSupported = screenshotRuntimeSupported(requestRuntime?.id);
-  const addScreenshots = (files: File[]) => {
-    const rejected = screenshots.addFiles(files);
-    if (rejected.length > 0) toast.error('有截图没有加入', rejected.join('；'));
-  };
+  const addScreenshots = screenshots.addFiles;
   const generationStageIndex = previewHtml && !generating
     ? GENERATION_STAGES.length - 1
     : GENERATION_STAGES.reduce(
@@ -568,7 +566,11 @@ export function useSiteEditSession(site: HostedSite, { onPublished, prefillInstr
     const text = instruction.trim();
     if (!text || generating || busyRef.current) return;
     if (screenshots.busy) {
-      toast.info('截图还在上传', '等缩略图显示「可以用」后再生成');
+      toast.info('截图还在上传', '等缩略图出现后再生成');
+      return;
+    }
+    if (screenshots.hasFailed) {
+      toast.info('有截图没有加入', '处理或移除对应截图后再生成');
       return;
     }
     if (!requestRuntime) {
@@ -629,6 +631,7 @@ export function useSiteEditSession(site: HostedSite, { onPublished, prefillInstr
     }));
     const created = await createHostedSiteEditRun(site.id, text, knowledgeReferences, {
       screenshotAttachmentIds: screenshots.readyIds,
+      ...(modelOptionId ? { modelOptionId } : {}),
     });
     // 创建期间工作台被关掉或重开：这个实例已经不是用户眼前那一个，交出去，别再往下走。
     if (abort.signal.aborted) {

@@ -56,6 +56,7 @@ public sealed class DesignArtifactPresentationInput
 /// </summary>
 public sealed class DesignArtifactBrowserQualitySummary
 {
+    public string? ReferenceStyleCheck { get; set; }
     public string SchemaVersion { get; set; } = string.Empty;
     public string RuleVersion { get; set; } = string.Empty;
     public string HeuristicVersion { get; set; } = string.Empty;

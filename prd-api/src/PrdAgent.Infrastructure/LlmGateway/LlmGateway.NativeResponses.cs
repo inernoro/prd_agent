@@ -14,6 +14,11 @@ public partial class LlmGateway
     /// <summary>非流式原生响应「先校验再交付」的缓冲上界；超过就如实失败，不悄悄退回裸转发。</summary>
     private const int MaxBufferedNativeResponseBytes = 32 * 1024 * 1024;
 
+    internal static bool SupportsNativeResponsesRoute(bool isExchange, string? protocol, string? platformType, string? endpointPath)
+        => !isExchange
+            && NormalizeAdapterKey(string.IsNullOrWhiteSpace(protocol) ? platformType : protocol) == "openai"
+            && (string.IsNullOrWhiteSpace(endpointPath) || endpointPath.TrimEnd('/') == "/v1/responses");
+
     public async Task<GatewayRawResponse> SendNativeResponsesWithResolutionAsync(
         GatewayRawRequest request,
         GatewayModelResolution resolution,
@@ -30,10 +35,7 @@ public partial class LlmGateway
         if (!string.Equals(request.HttpMethod, "POST", StringComparison.Ordinal)
             || request.EndpointPath != "/v1/responses" || request.IsMultipart || request.ExtraHeaders is { Count: > 0 })
             return GatewayRawResponse.Fail("NATIVE_RESPONSES_REQUEST_INVALID", "原生 Responses 请求形态不受支持", 400);
-        if (resolution.IsExchange
-            || NormalizeAdapterKey(string.IsNullOrWhiteSpace(resolution.Protocol) ? resolution.PlatformType : resolution.Protocol) != "openai"
-            || (!string.IsNullOrWhiteSpace(resolution.OfferingEndpointPath)
-                && resolution.OfferingEndpointPath.TrimEnd('/') != "/v1/responses"))
+        if (!SupportsNativeResponsesRoute(resolution.IsExchange, resolution.Protocol, resolution.PlatformType, resolution.OfferingEndpointPath))
             return GatewayRawResponse.Fail("NATIVE_RESPONSES_PROTOCOL_UNSUPPORTED", "指定上游未提供原生 Responses 协议", 400);
         // PinnedModelId 支持登记记录 Id 或模型名；由唯一一次 resolver 校验，不能与物理模型名再次比较。
         if ((!string.IsNullOrWhiteSpace(request.PinnedPlatformId) && request.PinnedPlatformId != resolution.ActualPlatformId)

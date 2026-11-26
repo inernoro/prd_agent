@@ -22,9 +22,9 @@ import { normalizeRelativePath } from './primitives.js';
 const MAX_WORKSPACE_FILE_COUNT = 1024;
 const MAX_WORKSPACE_NODE_COUNT = 2048;
 const MAX_WORKSPACE_DIRECTORY_DEPTH = 16;
-// OpenDesign 的原生 deck skill 可能在公开资源目录旁写一份给执行代理看的说明。
-// 它不是网页资源，也不能因为位于 assets/** 就被当成公网文件；只认这一个已证实路径。
-const WORKSPACE_ONLY_AUXILIARY_OUTPUT_PATHS = new Set(['ASSETS/README.MD']);
+// OpenDesign 会把演示说明和网页风格笔记写进工作区。只保留已确认的内部文件，
+// 交付包不会包含它们，也不会因为写了这两份笔记而拒绝网页。
+const WORKSPACE_ONLY_AUXILIARY_OUTPUT_PATHS = new Set(['ASSETS/README.MD', 'BRAND-SPEC.MD']);
 
 function isWorkspaceOnlyAuxiliaryOutputPath(filePath: string): boolean {
   return WORKSPACE_ONLY_AUXILIARY_OUTPUT_PATHS.has(filePath.toUpperCase());

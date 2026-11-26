@@ -39,7 +39,8 @@ if (command === 'check') {
   if (run('changes-index.mjs', ['--dir', dir, '--to', String(version), ...(full ? ['--full', full] : [])])) fail('生成版本差异失败', 1);
   /* 交接清单：按目标生成给实现方的唯一一份清单；基线取 --baseline，没给就取 --full 的第一个起点 */
   const baseline = Number(opt('baseline') ?? String(full).split(',')[0]);
-  if (baseline && baseline < version && run('handoff.mjs', ['--dir', dir, '--to', String(version), '--from', String(baseline)])) process.exit(1);
+  /* 首版（没有旧版本）也生成：基线记为 0，所有验收项算新增 */
+  if (Number.isInteger(baseline) && baseline >= 0 && baseline < version && run('handoff.mjs', ['--dir', dir, '--to', String(version), '--from', String(baseline)])) process.exit(1);
   if (run('gate.mjs', ['--dir', dir, '--expect', String(version)])) process.exit(1);
   const rel = path.relative(process.cwd(), dir).split(path.sep).join('/') || '.';
   console.log(last
@@ -57,7 +58,19 @@ if (command === 'check') {
   if (changed) fail(`来源提交 ${full.slice(0, 10)} 和工作区的稿件目录不一致（先提交，再用发布时的提交登记）：\n${changed}`, 1);
   const version = opt('version') ? Number(opt('version')) : last + 1;
   if (last && version !== last + 1) fail(`版本号必须接着 V${last}`);
-  process.exit(run('version-diff.mjs', ['--dir', dir, '--register', String(version), '--commit', full, ...(opt('design') ? ['--design', opt('design')] : [])]));
+  const status = run('version-diff.mjs', ['--dir', dir, '--register', String(version), '--commit', full, ...(opt('design') ? ['--design', opt('design')] : [])]);
+  if (status) process.exit(status);
+  /* 设计这一轮的结果是 CDS 上的稿件地址：登记成功后打印出来，交给用户。
+   * 地址和项目取环境变量 CDS_HOST / CDS_PROJECT_ID，或仓库根目录 .cds/credentials.json 里的 host、projectId（只读这两项，不读不打印密钥）。 */
+  const design = JSON.parse(readFileSync(registryPath, 'utf8')).design ?? opt('design');
+  let host = process.env.CDS_HOST, project = process.env.CDS_PROJECT_ID;
+  try {
+    const credentials = JSON.parse(readFileSync(path.join(git(['rev-parse', '--show-toplevel']), '.cds', 'credentials.json'), 'utf8'));
+    host ??= credentials.host; project ??= credentials.projectId;
+  } catch { /* 没有本地授权文件时只用环境变量 */ }
+  console.log(host && project && design
+    ? `稿件地址：${String(host).replace(/\/+$/, '')}/design?project=${encodeURIComponent(project)}&design=${encodeURIComponent(design)}&version=${version}`
+    : '没有拿到 CDS 地址或项目编号（CDS_HOST、CDS_PROJECT_ID 或 .cds/credentials.json），稿件地址请从 cdscli design list 的结果里取，并交给用户。');
 } else {
   fail('用法：node release.mjs check [--dir <稿件目录>] [--full 1,11]\n      node release.mjs register --commit <来源提交> [--design <稿件编号>] [--version <N>] [--dir <稿件目录>]');
 }

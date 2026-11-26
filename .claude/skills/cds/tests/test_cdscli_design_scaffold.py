@@ -31,12 +31,19 @@ def test_scaffold_pins_framework_and_preserves_rule_check_modes(workspace, monke
     assert code == 0, output
     manifest = json.loads((destination / 'design.json').read_text())
     assert manifest['frameworkVersion'] == 4
-    assert [(row['id'], row['how']) for row in manifest['acceptance']] == [('R-01', 'measure'), ('R-02', 'human'), ('R-03', 'human')]
-    assert manifest['acceptance'][0]['expected'] == 'measure the same page header'
+    # 验收项编号是 A-xx（CDS 只认这种），ruleId 记框架规则；每条引用画面，测量项的预期以「检查：」开头
+    assert [(row['id'], row['ruleId'], row['how']) for row in manifest['acceptance']] == [
+        ('A-01', 'R-01', 'measure'), ('A-02', 'R-02', 'human'), ('A-03', 'R-03', 'human')]
+    assert manifest['acceptance'][0]['expected'] == '检查：measure the same page header'
+    assert {row['screenId'] for row in manifest['acceptance']} == {'home'}
+    assert manifest['screens'][0]['entryReadySelector'] == '.cds-main'
     result = json.loads((destination / 'checks/result.json').read_text())
     assert result['passed'] == 0
-    assert [row['id'] for row in result['items']] == ['R-01', 'R-02', 'R-03']
+    assert [(row['id'], row['ruleId']) for row in result['items']] == [('A-01', 'R-01'), ('A-02', 'R-02'), ('A-03', 'R-03')]
     assert {row['status'] for row in result['items']} == {'unverified'}
+    # 原型由正式前端构建（门禁 G-10）：不再从 skeleton.html 生成静态页，写构建配置和入口
+    assert (destination / 'prototype.json').exists() and (destination / 'src/main.tsx').exists()
+    assert not (destination / 'dist/index.html').exists()
 
 
 def test_design_accept_root_measurement_does_not_approve_a_container_rule(monkeypatch):

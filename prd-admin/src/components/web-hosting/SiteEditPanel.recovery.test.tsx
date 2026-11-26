@@ -33,7 +33,7 @@ vi.mock('./workbench/useSiteEditSession', async importOriginal => ({
   ...await importOriginal<typeof import('./workbench/useSiteEditSession')>(),
   useSiteEditSession: vi.fn(() => ({
     instruction: '', setInstruction: vi.fn(), phase: 'idle', progress: 0, elapsedSeconds: 0,
-    revisions: [], recentKnowledge: [], selectedKnowledge: [], capabilities: [], screenshots: { items: [] }, unavailableRuntimes: [],
+    revisions: [], recentKnowledge: [], selectedKnowledge: [], capabilities: [], screenshots: { items: [], rejections: [] }, unavailableRuntimes: [],
     generating: false, loadingHistory: false, loadingKnowledge: false, mutatingId: null, runtimeRecoveryGate: null,
     recoveryNotice: { title: '生成未完成', detail: '请查看版本', action: 'generate' },
   })),

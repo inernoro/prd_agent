@@ -72,6 +72,37 @@ internal sealed record DesignArtifactModelSelection(string? ModelPoolId, string?
         return snapshot;
     }
 
+    internal static async Task<IReadOnlyList<DesignArtifactModelOption>> ListWebPageModelsAsync(
+        IModelResolver resolver, string operation, CancellationToken ct)
+    {
+        var caller = operation == DesignArtifactOperations.Edit
+            ? AppCallerRegistry.Admin.WebHosting.EditHtml
+            : AppCallerRegistry.Admin.WebHosting.GenerateHtml;
+        var pools = await resolver.GetAvailablePoolsAsync(caller, ModelTypes.Chat, ct);
+        return pools
+            .Where(pool => pool.ResolutionType == "LogicalModel" && !string.IsNullOrWhiteSpace(pool.Code)
+                && pool.Models.Any(model => model.SupportsNativeResponses))
+            .Select(pool => new DesignArtifactModelOption(pool.Code, string.IsNullOrWhiteSpace(pool.Name) ? pool.Code : pool.Name))
+            .ToArray();
+    }
+
+    internal static async Task<DesignArtifactLlmRequestPolicy> CaptureForWebPageAsync(
+        IConfiguration configuration, IModelResolver? resolver, string? modelOptionId, string operation, CancellationToken ct)
+    {
+        var policy = CaptureForNewRun(configuration);
+        if (string.IsNullOrWhiteSpace(modelOptionId)) return policy;
+        var options = resolver is not null && modelOptionId.Length <= 200
+            ? await ListWebPageModelsAsync(resolver, operation, ct)
+            : [];
+        var selected = options.FirstOrDefault(option => option.Id == modelOptionId);
+        if (selected is null) throw new DesignArtifactModelUnavailableException();
+        policy.Model = selected.Id;
+        policy.ModelPoolId = null;
+        policy.PinnedPlatformId = null;
+        policy.PinnedModelId = null;
+        return policy;
+    }
+
     internal static DesignArtifactModelSelection ForRun(DesignArtifactRun run, IConfiguration configuration)
     {
         if (run.LlmRequestPolicy is not { } snapshot) return Resolve(configuration); // legacy：只读、不回填
@@ -190,6 +221,14 @@ internal sealed record DesignArtifactModelSelection(string? ModelPoolId, string?
             body["model"] = Model;
         }
     }
+}
+
+internal sealed record DesignArtifactModelOption(string Id, string Label);
+
+internal sealed class DesignArtifactModelUnavailableException()
+    : Exception("所选模型目前无法生成网页，请重新选择模型后发送")
+{
+    public const string Code = "DESIGN_MODEL_UNAVAILABLE";
 }
 
 /// <summary>首个生产实现：通过 MAP LLM Gateway 生成或微调完整 HTML。</summary>

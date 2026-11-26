@@ -1378,6 +1378,9 @@ public static class DesignArtifactWorkspaceContract
             task = JsonSerializer.SerializeToUtf8Bytes(completeTask, JsonOptions);
         }
         files.Add(ToFile("brief/task.json", "application/json", task));
+        if (run.Operation == DesignArtifactOperations.Generate && run.ArtifactType == DesignArtifactTypes.WebPage
+            && run.DesignDirection?.ReferenceVisualHtml is { Length: > 0 } visualReference)
+            files.Add(ToFile("brief/visual-reference.html", "text/html", Encoding.UTF8.GetBytes(visualReference)));
         if (run.PresentationInput != null)
         {
             files.Add(ToFile(

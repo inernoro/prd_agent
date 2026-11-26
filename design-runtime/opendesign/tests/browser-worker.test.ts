@@ -189,6 +189,44 @@ describe('quality browser public-file and egress boundary', () => {
 });
 
 describe('isolated Chromium quality measurements', () => {
+  it('measures the root background when the body is transparent', async () => {
+    const referenceHtml = `<!doctype html><html><head><style>
+      html{background:#f1ede0} body{background:transparent}
+      @media(prefers-color-scheme:dark){html{background:#13241d}}
+    </style></head><body><main><h1>A document</h1></main></body></html>`;
+    const sample = workspace(referenceHtml);
+    const { referenceStyle } = await runBrowserWorker({ ...sample, repairAttempt: 0, referenceHtml });
+    expect(referenceStyle?.map(view => view.background)).toEqual([
+      'rgb(241, 237, 224)', 'rgb(19, 36, 29)', 'rgb(241, 237, 224)', 'rgb(19, 36, 29)',
+    ]);
+  });
+
+  it('flags a landing-page headline on a same-color document reference in both themes', async () => {
+    const ref = `<!doctype html><html><head><style>
+      body{margin:0;font:17px/1.85 Georgia,serif;color:#1d2421;background:#fbfcfa}
+      @media(prefers-color-scheme:dark){body{color:#e7ece9;background:#141917}}
+      main{max-width:656px;margin:auto;padding:76px 32px}h1{font-size:38px}
+    </style></head><body><main><h1>Example document</h1><p>Document introduction in a compact reading column.</p></main></body></html>`;
+    const sample = workspace(ref.replace('font-size:38px', 'font-size:64px').replace('padding:76px', 'padding:180px'));
+    const { referenceStyle } = await runBrowserWorker({ ...sample, repairAttempt: 0, referenceHtml: ref });
+    expect(referenceStyle).toHaveLength(4);
+    expect(referenceStyle?.find(x => x.viewport === 'desktop' && x.scheme === 'dark')?.background).toBe('rgb(20, 25, 23)');
+    const result = await runBrowserWorker({ ...sample, repairAttempt: 0, referenceStyle });
+    expect(result.measurements).toHaveLength(4);
+    expect(result.measurements.every(x => x.issues.some(issue => issue.issueCode === 'reference_style_mismatch'
+      && String(issue.actual.differences).includes('heading size 64px; reference 38px')))).toBe(true);
+    const withSubtitle = ref.replace('</h1>', '</h1><p style="font-size:13px;line-height:21px">An explanatory subtitle may use its own text scale.</p>')
+      .replace('</main>', '<p>Details and context remain in the same reading column.</p></main>');
+    fs.writeFileSync(path.join(sample.workspaceDir, 'index.html'), withSubtitle);
+    const matching = await runBrowserWorker({ ...sample, repairAttempt: 1, referenceStyle });
+    expect(matching.measurements.every(x => x.issues.every(issue => issue.issueCode !== 'reference_style_mismatch'))).toBe(true);
+
+    fs.writeFileSync(path.join(sample.workspaceDir, 'index.html'), withSubtitle.replace('font:17px', 'font:12px'));
+    const smallerBody = await runBrowserWorker({ ...sample, repairAttempt: 2, referenceStyle });
+    expect(smallerBody.measurements.every(x => x.issues.some(issue => issue.issueCode === 'reference_style_mismatch'
+      && String(issue.actual.differences).includes('paragraph size 12px; reference 17px')))).toBe(true);
+  }, 30_000);
+
   it('detects every deterministic hard-gate category from a fixed broken sample', async () => {
     const sample = workspace(`<!doctype html><html><head><style>
       body{margin:0}.wide{width:1600px}.cta{position:absolute;left:1500px;background:#111;color:#fff}

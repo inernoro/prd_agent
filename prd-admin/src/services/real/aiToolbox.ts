@@ -541,6 +541,8 @@ export interface UploadedAttachment {
   fileName: string;
   mimeType: string;
   size: number;
+  textPreview?: string;
+  previewTruncated?: boolean;
 }
 
 export interface UploadAttachmentOptions {
@@ -550,6 +552,8 @@ export interface UploadAttachmentOptions {
    */
   onProgress?: (loaded: number, total: number) => void;
   signal?: AbortSignal;
+  includeTextPreview?: boolean;
+  timeoutMs?: number;
 }
 
 function parseAttachmentResponse(text: string): ApiResponse<UploadedAttachment> {
@@ -569,12 +573,14 @@ function uploadAttachmentWithProgress(
   return new Promise((resolve) => {
     const xhr = new XMLHttpRequest();
     xhr.open('POST', url);
+    if (options.timeoutMs) xhr.timeout = options.timeoutMs;
     Object.entries(headers).forEach(([key, value]) => xhr.setRequestHeader(key, value));
     xhr.upload.onprogress = (event) => {
       if (event.lengthComputable) options.onProgress?.(event.loaded, event.total);
     };
     xhr.onload = () => resolve(parseAttachmentResponse(xhr.responseText));
     xhr.onerror = () => resolve({ success: false, data: null, error: { code: 'NETWORK_ERROR', message: '网络中断，文件没有传上去' } });
+    xhr.ontimeout = () => resolve({ success: false, data: null, error: { code: 'UPLOAD_TIMEOUT', message: '上传等待超时，请重试' } });
     xhr.onabort = () => resolve({ success: false, data: null, error: { code: 'ABORTED', message: '已取消上传' } });
     options.signal?.addEventListener('abort', () => xhr.abort(), { once: true });
     xhr.send(body);
@@ -596,7 +602,8 @@ export async function uploadAttachment(
   fd.append('file', file);
 
   const rawBase = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '').trim().replace(/\/+$/, '');
-  const url = rawBase ? `${rawBase}/api/v1/attachments` : '/api/v1/attachments';
+  const query = options?.includeTextPreview ? '?includeTextPreview=true' : '';
+  const url = `${rawBase}/api/v1/attachments${query}`;
 
   if (options?.onProgress || options?.signal) {
     return uploadAttachmentWithProgress(url, headers, fd, options);
@@ -612,6 +619,10 @@ export async function uploadAttachment(
  */
 export async function getAttachmentMeta(attachmentId: string): Promise<ApiResponse<UploadedAttachment & { uploadedAt?: string }>> {
   return await apiRequest(`/api/v1/attachments/${attachmentId}`);
+}
+
+export function getAttachmentPreview(attachmentId: string): Promise<ApiResponse<UploadedAttachment>> {
+  return apiRequest(`/api/v1/attachments/${encodeURIComponent(attachmentId)}/preview`);
 }
 
 // ============ Message Feedback ============

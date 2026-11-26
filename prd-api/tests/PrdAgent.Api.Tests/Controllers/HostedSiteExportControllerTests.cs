@@ -267,6 +267,32 @@ public sealed class HostedSiteExportControllerTests
         Assert.Equal("OFFLINE_EXPORT_CSP_META", ErrorCode(result));
     }
 
+    [Theory]
+    [InlineData("", null)]
+    [InlineData("<link rel='stylesheet' href='css/app.css'>", HostedSiteOfflineExportFailure.ContentSecurityPolicyLinkedCode)]
+    [InlineData("<meta http-equiv='Content-Security-Policy' content=\"style-src 'self'\">", HostedSiteOfflineExportFailure.ContentSecurityPolicyMeta)]
+    public async Task 已知系统策略保留原样_额外策略或无法离线显示的分文件仍拒绝(
+        string extraHead, HostedSiteOfflineExportFailure? failure)
+    {
+        var policy = $"<meta http-equiv=\"Content-Security-Policy\" content=\"{HostedSiteRevisionRules.VerifiedPackageArtifactCsp}\">";
+        var input = $"<!doctype html><html><head>{policy}{extraHead}<style>h1{{color:red}}</style></head><body><h1>架构指南</h1></body></html>";
+        var storage = new Mock<IAssetStorage>();
+        storage.Setup(x => x.TryDownloadBytesAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string key, CancellationToken _) => Encoding.UTF8.GetBytes(
+                key.EndsWith("index.html", StringComparison.Ordinal) ? input : "h1{color:blue}"));
+
+        var result = await new HostedSiteOfflineExportService(storage.Object,
+            NullLogger<HostedSiteOfflineExportService>.Instance).ExportAsync(Site());
+
+        Assert.Equal(failure, result.Failure);
+        if (failure == null)
+        {
+            Assert.Contains(policy, Encoding.UTF8.GetString(result.Html));
+            Assert.Contains("架构指南", Encoding.UTF8.GetString(result.Html));
+        }
+        else Assert.Empty(result.Html);
+    }
+
     /// <summary>每个失败枚举都要有自己的对外错误码，不许落到兜底码（新增枚举忘了接线会红）。</summary>
     [Fact]
     public void 每个失败类型都有专属错误码()

@@ -5,6 +5,7 @@ on:
     branches: ["**"]
     paths:
       - ".claude/skills/cds/**"
+      - ".claude/skills/cds-design/**"
       - ".claude/skills/cds-deploy-pipeline/**"
       - ".claude/skills/cds-project-scan/**"
       - ".claude/skills/cds-release/**"
@@ -14,6 +15,7 @@ on:
   pull_request:
     paths:
       - ".claude/skills/cds/**"
+      - ".claude/skills/cds-design/**"
       - ".claude/skills/cds-deploy-pipeline/**"
       - ".claude/skills/cds-project-scan/**"
       - ".claude/skills/cds-release/**"

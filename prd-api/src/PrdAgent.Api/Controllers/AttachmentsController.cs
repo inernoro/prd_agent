@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
+using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Services;
@@ -23,6 +24,7 @@ public class AttachmentsController : ControllerBase
 
     /// <summary>20 MB per file</summary>
     private const long MaxUploadBytes = 20 * 1024 * 1024;
+    private const int MaxPreviewCharacters = 8_000;
 
     private static readonly HashSet<string> AllowedMimeTypes = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -75,7 +77,7 @@ public class AttachmentsController : ControllerBase
     /// </summary>
     [HttpPost]
     [RequestSizeLimit(MaxUploadBytes)]
-    public async Task<IActionResult> Upload([FromForm] IFormFile file, CancellationToken ct)
+    public async Task<IActionResult> Upload([FromForm] IFormFile file, CancellationToken ct, [FromQuery] bool includeTextPreview = false)
     {
         if (file == null || file.Length == 0)
             return BadRequest(ApiResponse<object>.Fail("INVALID_FILE", "请选择要上传的文件"));
@@ -159,6 +161,9 @@ public class AttachmentsController : ControllerBase
             "Attachment uploaded: {AttachmentId} by {UserId}, size={Size}, mime={Mime}",
             attachment.AttachmentId, userId, file.Length, mime);
 
+        if (includeTextPreview)
+            return Ok(ApiResponse<object>.Ok(ToPreview(attachment)));
+
         return Ok(ApiResponse<object>.Ok(new
         {
             attachmentId = attachment.AttachmentId,
@@ -167,6 +172,38 @@ public class AttachmentsController : ControllerBase
             mimeType = attachment.MimeType,
             size = attachment.Size,
         }));
+    }
+
+    [HttpGet("{attachmentId}/preview")]
+    public async Task<IActionResult> Preview(string attachmentId, CancellationToken ct)
+    {
+        var userId = this.GetRequiredUserId();
+        var attachment = await _db.Attachments
+            .Find(a => a.AttachmentId == attachmentId && a.UploaderId == userId)
+            .FirstOrDefaultAsync(ct);
+        if (attachment == null)
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "附件已无法预览，请重新上传文件"));
+
+        Response.Headers.CacheControl = "private, no-store";
+        return Ok(ApiResponse<object>.Ok(ToPreview(attachment)));
+    }
+
+    private object ToPreview(Attachment attachment)
+    {
+        var text = attachment.ExtractedText?.Trim() ?? "";
+        var truncated = text.Length > MaxPreviewCharacters;
+        return new
+        {
+            attachmentId = attachment.AttachmentId,
+            url = attachment.Type == AttachmentType.Image && !string.IsNullOrEmpty(attachment.StorageKey)
+                ? _assetStorage.BuildUrlForKey(attachment.StorageKey)
+                : attachment.Url,
+            fileName = attachment.FileName,
+            mimeType = attachment.MimeType,
+            size = attachment.Size,
+            textPreview = truncated ? text[..MaxPreviewCharacters] : text,
+            previewTruncated = truncated,
+        };
     }
 
     /// <summary>

@@ -1197,6 +1197,9 @@ public class ModelResolver : IModelResolver
                         },
                         ActualModelId = catalogResolution?.ActualModel,
                         ActualPlatformId = catalogResolution?.ActualPlatformId,
+                        SupportsNativeResponses = catalogResolution != null
+                            && LlmGateway.SupportsNativeResponsesRoute(catalogResolution.IsExchange,
+                                catalogResolution.Protocol, catalogResolution.PlatformType, catalogResolution.OfferingEndpointPath),
                         ParameterCapabilities = catalogResolution?.ParameterCapabilities,
                         ImageCapabilities = BuildImageCapabilitiesSnapshot(catalogResolution?.ActualModel),
                     }

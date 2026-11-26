@@ -17,6 +17,42 @@ namespace PrdAgent.Api.Tests.Services;
 /// </summary>
 public sealed class DesignArtifactModelVisibilityTests
 {
+    [Theory]
+    [InlineData(DesignArtifactOperations.Generate, AppCallerRegistry.Admin.WebHosting.GenerateHtml)]
+    [InlineData(DesignArtifactOperations.Edit, AppCallerRegistry.Admin.WebHosting.EditHtml)]
+    public async Task SelectedWebPageModelUsesOnlyTheAvailableGatewayCatalog(string operation, string caller)
+    {
+        var resolver = new Mock<IModelResolver>(MockBehavior.Strict);
+        resolver.Setup(x => x.GetAvailablePoolsAsync(caller, ModelTypes.Chat, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([
+                new AvailableModelPool { Code = "selected-logical", Name = "可选模型", ResolutionType = "LogicalModel",
+                    Models = [new PoolModelInfo { SupportsNativeResponses = true }] },
+                new AvailableModelPool { Code = "chat-only", ResolutionType = "LogicalModel",
+                    Models = [new PoolModelInfo { SupportsNativeResponses = false }] },
+                new AvailableModelPool { Code = "private-physical", ResolutionType = "DirectModel",
+                    Models = [new PoolModelInfo { SupportsNativeResponses = true }] },
+            ]);
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["DesignArtifactRuntime:Model"] = "automatic-logical",
+            ["DesignArtifactRuntime:ModelPoolId"] = "automatic-pool",
+            ["DesignArtifactRuntime:RequestPolicy:OutputTokenMode"] = "omit",
+        }).Build();
+
+        var listed = Assert.Single(await DesignArtifactModelSelection.ListWebPageModelsAsync(resolver.Object, operation, default));
+        Assert.Equal("selected-logical", listed.Id);
+        var selected = await DesignArtifactModelSelection.CaptureForWebPageAsync(config, resolver.Object, listed.Id, operation, default);
+        Assert.Equal("selected-logical", selected.Model);
+        Assert.Null(selected.ModelPoolId);
+        Assert.Equal("omit", selected.OutputTokenMode);
+        var automatic = await DesignArtifactModelSelection.CaptureForWebPageAsync(config, null, null, operation, default);
+        Assert.Equal("automatic-pool", automatic.ModelPoolId);
+        await Assert.ThrowsAsync<DesignArtifactModelUnavailableException>(() =>
+            DesignArtifactModelSelection.CaptureForWebPageAsync(config, resolver.Object, "chat-only", operation, default));
+        await Assert.ThrowsAsync<DesignArtifactModelUnavailableException>(() =>
+            DesignArtifactModelSelection.CaptureForWebPageAsync(config, resolver.Object, "private-physical", operation, default));
+    }
+
     [Fact]
     public async Task StartChunkResolutionBecomesAModelChunkBeforeAnyText()
     {

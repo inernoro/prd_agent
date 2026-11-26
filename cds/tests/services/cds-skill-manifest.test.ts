@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import { afterEach, describe, expect, it } from 'vitest';
 import { buildCdsSkillManifest, copyCdsSkillSource } from '../../src/services/cds-skill-manifest.js';
 
-const skills = ['cds', 'cds-project-scan', 'cds-deploy-pipeline', 'cds-release', 'preview-url'];
+const skills = ['cds', 'cds-design', 'cds-project-scan', 'cds-deploy-pipeline', 'cds-release', 'preview-url'];
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => fs.rm(root, { recursive: true, force: true }))); });
 async function fixture() {
@@ -19,7 +19,7 @@ async function fixture() {
   return root;
 }
 describe('CDS full skill export receipt', () => {
-  it('covers all five skills and changes the digest when shipped code changes', async () => {
+  it('covers all six skills and changes the digest when shipped code changes', async () => {
     const root = await fixture();
     const first = await buildCdsSkillManifest(root);
     expect(first.version).toBe('0.20.0');

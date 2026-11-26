@@ -108,6 +108,12 @@ export interface HostedSiteRevision {
   instruction?: string | null;
   runtime: 'map-gateway' | 'open-design' | 'codex' | 'manual';
   knowledgeEntryIds: string[];
+  sourceInputs?: {
+    instruction: string;
+    attachments: Array<{ attachmentId: string; fileName: string; size?: number | null }>;
+    chips: string[];
+    referenceStyleCheck?: 'matched' | 'mismatch' | 'unavailable' | null;
+  } | null;
   basedOnContentVersion: string;
   publishedContentVersion?: string | null;
   createdAt: string;
@@ -197,6 +203,7 @@ export interface DesignArtifactRunSummary {
   sourceSurface: 'web-hosting' | 'knowledge-base' | 'html-ppt';
   runtime: string;
   title?: string | null;
+  instruction?: string | null;
   progress: number;
   phase: string;
   phaseCode?: string | null;
@@ -221,6 +228,7 @@ export interface DesignArtifactRunSummary {
     finalScore: number;
     viewports: string[];
     evidenceRef: string;
+    referenceStyleCheck?: 'matched' | 'mismatch' | null;
   } | null;
   restartedFromRunId?: string | null;
   artifactSiteId?: string | null;
@@ -239,12 +247,18 @@ export interface DesignArtifactRunSummary {
   styleId?: string | null;
   styleName?: string | null;
   designSystemId?: string | null;
+  referenceSiteId?: string | null;
+  referenceSiteTitle?: string | null;
   /** 三段提示词拼接后的指纹，用来追溯「这一轮用的是哪一版提示词」。 */
   promptFingerprint?: string | null;
   reviewMode?: DesignReviewMode | null;
   resolvedModel?: string | null;
   resolvedPlatform?: string | null;
   error?: string | null;
+  failureCode?: string | null;
+  /** Present only when the server can retry this failed generation with its original inputs. */
+  retryInstruction?: string | null;
+  uploadedSources?: Array<{ attachmentId: string; fileName: string; contentHash: string }> | null;
   runtimeFailure?: DesignArtifactRuntimeFailure | null;
   cancelRequested?: boolean;
   cancelRequestedAt?: string | null;
@@ -1935,8 +1949,18 @@ export async function resolveDesignKnowledgeReferences(
   });
 }
 
+export interface DesignModelOption {
+  id: string;
+  label: string;
+}
+
+export function listDesignModelOptions(operation: 'generate' | 'edit'): Promise<ApiResponse<{ items: DesignModelOption[] }>> {
+  return apiRequest(api.designArtifacts.modelOptions(operation));
+}
+
 export async function createDesignArtifactRun(input: {
   instruction: string;
+  modelOptionId?: string;
   title?: string;
   sourceSurface: 'web-hosting' | 'knowledge-base';
   /**
@@ -1952,12 +1976,13 @@ export async function createDesignArtifactRun(input: {
   styleId?: string | null;
   /** 风格画廊「更多风格」里直接选的 OpenDesign 设计系统；与 styleId 二选一，有它就不传 styleId。 */
   designSystemId?: string | null;
+  referenceSiteId?: string | null;
   /** 直接上传的文件（POST /api/v1/attachments 返回的 id），最多 5 个。 */
   attachmentIds?: string[];
 }): Promise<ApiResponse<DesignArtifactRunSummary>> {
   const resolved = await resolveDesignKnowledgeReferences(input.knowledgeReferences);
   if (!resolved.success) return resolved;
-  const { styleId, designSystemId, attachmentIds, ...rest } = input;
+  const { styleId, designSystemId, referenceSiteId, attachmentIds, ...rest } = input;
   return apiRequest(api.designArtifacts.runs(), {
     method: 'POST',
     body: {
@@ -1969,7 +1994,7 @@ export async function createDesignArtifactRun(input: {
         storeId,
         contentHash,
       })),
-      ...(designSystemId ? { designSystemId } : styleId ? { styleId } : {}),
+      ...(referenceSiteId ? { referenceSiteId } : designSystemId ? { designSystemId } : styleId ? { styleId } : {}),
       ...(attachmentIds && attachmentIds.length > 0 ? { attachmentIds } : {}),
     },
   });
@@ -2029,6 +2054,7 @@ export async function streamDesignArtifactRun(input: {
 }
 
 export interface HostedSiteEditRunExtras {
+  modelOptionId?: string;
   /** 「附上截图」：用户圈出问题的图片附件，最多 3 张。 */
   screenshotAttachmentIds?: string[];
   /** 补充资料附件。 */
@@ -2050,6 +2076,7 @@ export async function createHostedSiteEditRun(
     method: 'POST',
     body: {
       instruction,
+      ...(extras.modelOptionId ? { modelOptionId: extras.modelOptionId } : {}),
       knowledgeReferences: resolved.data.items.map(({ entryId, storeId, contentHash }) => ({
         entryId,
         storeId,

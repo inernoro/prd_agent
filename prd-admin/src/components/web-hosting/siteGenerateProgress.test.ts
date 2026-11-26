@@ -118,7 +118,7 @@ describe('生成工作台的进度契约', () => {
       expect(source).toContain('resolvePersistedRunPreview(result.data)');
       expect(source).toContain('designPreviewEventDocument(persistedPreview.html)');
     }
-    expect(generation).toContain("const interrupted = status === 'error' && result.data.phaseCode === 'interrupted'");
+    expect(generation).toContain('failedRun?.retryInstruction ? failedRun.runId : null');
     expect(generation).toContain("runtimeFailureRecoveryMessage(result.data, 'generate')");
     expect(generation).not.toContain("setRestartableRunId(result.data.runId)");
     expect(edit).toContain("runtimeFailureRecoveryMessage(result.data, 'edit')");
@@ -127,7 +127,7 @@ describe('生成工作台的进度契约', () => {
 
   it('keeps recovery inside the workbench when the public stream ends or fails', () => {
     const source = generationRunSource();
-    expect(source.match(/await recoverActiveRun\(created\.data\.runId, abort\.signal\)/g)).toHaveLength(2);
+    expect(source.match(/await recoverActiveRun\(runId, abort\.signal\)/g)).toHaveLength(2);
     expect(source).toContain('resolveGeneratedSiteId(result.data)');
     expect(source).not.toContain("if (!result.success) {\n        sessionStorage.removeItem(ACTIVE_GENERATION_RUN_KEY)");
   });
@@ -185,8 +185,8 @@ describe('浏览器质量失败的用户恢复文案', () => {
 
     expect(message).toContain('移动端导航还不能可靠操作');
     expect(message).toContain('关键文字对比度仍不足');
-    expect(message).toContain('已保留最后一版预览');
-    expect(message).toContain('请按原资料和要求重新生成');
+    expect(message).toContain('调整设计要求后再生成');
+    expect(message).not.toContain('已保留最后一版预览');
     expect(message).not.toContain('ratio');
     expect(message).not.toContain('provider');
     expect(message).not.toContain('model');
