@@ -56,7 +56,9 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Optional
 
-VERSION = "0.26.27"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.26.28"  # ← bundled cli 变更时 bump；服务端自动读这一行
+
+CDS_SKILLS = ("cds", "cds-design", "cds-build", "cds-project-scan", "cds-deploy-pipeline", "cds-release", "preview-url")
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -901,12 +903,12 @@ def cmd_setup_check(args: argparse.Namespace) -> None:
         fail("project", "project_mismatch", "当前仓库绑定了其他项目，先确认项目范围；尚未发送任何请求。")
     checks.append({"stage": "credentials", "passed": True})
 
-    skill_keys = ("cds", "cds-design", "cds-project-scan", "cds-deploy-pipeline", "cds-release", "preview-url")
+    skill_keys = CDS_SKILLS
     selected = [key.strip() for key in args.skills.split(",")]
     if not selected or any(key not in skill_keys for key in selected):
         fail("skills", "unknown_skill", "从接入页面重新复制当前任务的技能选择。")
     skills_root = Path(__file__).resolve().parents[2]
-    install_bundle = (f"从 {expected_host}/api/skills/cds-pack/download 下载并核对完整技能包（六个技能），"
+    install_bundle = (f"从 {expected_host}/api/skills/cds-pack/download 下载并核对完整技能包，"
                       "用本机工具解压到当前工作区的技能根，之后复用现有授权重新自检。")
     missing = [key for key in skill_keys if not (skills_root / key / "SKILL.md").is_file()]
     if missing:
@@ -4534,7 +4536,7 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
         die("请在 CDS 确认，或使用 --as-user 由有权成员在终端登录")
 
     def request(method: str, endpoint: str = "", body: Any = None, headers: dict[str, str] | None = None,
-                retry_id: str | None = None) -> dict:
+                retry_id: str | None = None, *, artifact_receipt: bool = False) -> dict:
         status, result, _ = _request(method, base + endpoint, body, timeout=60,
                                      extra_headers={**identity_headers, **(headers or {})}, follow_redirects=False, fatal_network_errors=False)
         if not 200 <= status < 300:
@@ -4553,7 +4555,7 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
             if retry and _HUMAN:
                 message = f"{message}\n本次请求编号 {retry_id}"
             die(message, code=2 if 400 <= status < 500 else 3, extra=retry)
-        if not isinstance(result, dict) or result.get("projectId") != project:
+        if not isinstance(result, dict) or (not artifact_receipt and result.get("projectId") != project):
             die("CDS 返回的设计记录不属于当前项目")
         return result
 
@@ -4594,12 +4596,54 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
             die("CDS 设计接入协议版本不符，请检查当前安装的技能与 CDS 版本")
         ok(intake)
 
-    if action == "handoff":
+    if action in ("handoff", "delivery"):
+        if args.version < 1:
+            die("请指定已发布的正整数版本")
         query = urllib.parse.urlencode({"designId": args.id, "version": args.version})
         workspace = request("GET", "?" + query)
         design = next((row for row in workspace.get("designs", []) if row.get("id") == args.id and row.get("projectId") == project), None)
         selected = next((row for row in (design or {}).get("versions", []) if row.get("version") == args.version), None)
-        if not selected or not isinstance(selected.get("handoff"), dict):
+        if not selected:
+            die("未找到指定稿件版本，请核对当前项目和版本号")
+        if action == "delivery":
+            metadata = {"projectId": project, "designId": args.id, "version": args.version, "sourceCommit": selected.get("sourceCommit")}
+            delivery = selected.get("delivery") or {}
+            if args.file is None:
+                ok({**metadata, "delivery": delivery, "screens": selected.get("screens", []),
+                    "acceptance": selected.get("acceptance", []), "handoff": selected.get("handoff")})
+            file = next((row for row in delivery.get("files", []) if row.get("path") == args.file), None)
+            if not file or not file.get("id") or not file.get("sha256"):
+                die("所选版本没有此文件，请先回读固定版交付索引")
+            if not file.get("text") and not re.search(r"\.(?:diff|patch)$", args.file, re.I):
+                die("此附件为二进制文件，请从固定版交付页下载")
+            artifact_path = "/artifacts/" + urllib.parse.quote(file["id"], safe="")
+            offset = 0
+            text_parts = []
+            length = 0
+            while True:
+                params = urllib.parse.urlencode({"view": "text", "offset": offset})
+                receipt = request("GET", artifact_path + "?" + params, artifact_receipt=True)
+                text = receipt.get("text")
+                if (receipt.get("artifactId") != file["id"] or receipt.get("path") != args.file
+                        or receipt.get("sha256") != file["sha256"] or receipt.get("offset") != offset
+                        or not isinstance(text, str) or "nextOffset" not in receipt):
+                    die("交付资料回执与固定版本的文件不一致")
+                try:
+                    length += len(text.encode("utf-8"))
+                    next_position = offset + len(text.encode("utf-16-le")) // 2
+                except UnicodeError:
+                    die("交付资料含无效的文本编码")
+                if length > 8 * 1024 * 1024:
+                    die("单份交付文本超过 8 MiB，请使用固定版附件下载")
+                text_parts.append(text)
+                next_offset = receipt["nextOffset"]
+                if next_offset is None:
+                    break
+                if type(next_offset) is not int or next_offset <= offset or next_offset != next_position:
+                    die("交付资料分页回执无效")
+                offset = next_offset
+            ok({**metadata, "path": args.file, "sha256": file["sha256"], "text": "".join(text_parts)})
+        if not isinstance(selected.get("handoff"), dict):
             die("请核对稿件版本及 CDS 交接能力")
         if args.run:
             receipt = send({"type": "handoff.check", "designId": args.id, "version": args.version}, endpoint="/handoff/check")
@@ -5134,7 +5178,7 @@ def _register_design_parser(sub: Any) -> None:
     preview.add_argument("--theme", choices=("light", "dark"), default="light")
     preview.add_argument("--port", type=int, default=0, help="环回端口，默认自动选择")
     framework = sub.add_parser("framework", help="项目设计框架").add_subparsers(dest="design_action", required=True)
-    for routes, actions in ((design, ("intake", "handoff", "brief-reply", "brief-claim", "brief-release", "feedback", "feedback-create", "feedback-reply", "feedback-resolve", "attach-evidence", "publish", "list", "reviewers", "request-review", "comments", "diff", "accept", "record", "visual", "capture", "recheck", "flow", "smoke", "coverage", "regress", "known-create", "result", "freeze", "start-upgrade", "cancel-upgrade", "sign", "scaffold", "extract", "enable-method", "disable-method")),
+    for routes, actions in ((design, ("intake", "delivery", "handoff", "brief-reply", "brief-claim", "brief-release", "feedback", "feedback-create", "feedback-reply", "feedback-resolve", "attach-evidence", "publish", "list", "reviewers", "request-review", "comments", "diff", "accept", "record", "visual", "capture", "recheck", "flow", "smoke", "coverage", "regress", "known-create", "result", "freeze", "start-upgrade", "cancel-upgrade", "sign", "scaffold", "extract", "enable-method", "disable-method")),
                             (framework, ("show", "list", "publish", "import"))):
         for action in actions:
             parser = routes.add_parser(action, help="发布项目框架版本" if action == "publish" and routes is framework else None)
@@ -5145,8 +5189,11 @@ def _register_design_parser(sub: Any) -> None:
                 parser.add_argument("id")
             if action in ("publish", "request-review", "accept", "record", "visual", "capture", "recheck", "flow", "smoke", "coverage", "regress", "known-create", "freeze", "start-upgrade", "cancel-upgrade", "sign", "extract", "import"):
                 parser.add_argument("--request-id")
-            if action == "handoff":
+            if action in ("handoff", "delivery"):
                 parser.add_argument("--version", required=True, type=int, help="已发布的稿件版本")
+            if action == "delivery":
+                parser.add_argument("--file", help="按固定交付索引回读当版的包内文本路径")
+            if action == "handoff":
                 parser.add_argument("--run", action="store_true", help="启动检查或重试未通过场景，默认只回读")
                 parser.add_argument("--request-id")
             if action in ("enable-method", "disable-method"):
@@ -11495,7 +11542,7 @@ def cmd_update(args: argparse.Namespace) -> None:
         die(f"cdscli.py 不在期望的 <skills>/cds/cli/ 位置（实际: {cli_path}）。"
             f"请用 Dashboard 的 (zip) 按钮重新下载完整包。", code=1)
     skills_root = os.path.dirname(skill_root)
-    bundle_skills = ["cds", "cds-design", "cds-project-scan", "cds-deploy-pipeline", "cds-release", "preview-url"]
+    bundle_skills = list(CDS_SKILLS)
 
     # 1. 下载
     url = _cds_base() + "/api/export-skill"

@@ -98,7 +98,7 @@ export type CdsCapabilityAccess = 'public' | 'project' | 'system' | 'human-only'
 export type CdsMcpExposure = 'read-only-candidate' | 'approval-required' | 'not-exposed' | 'available';
 
 export interface CdsAgentSkillDefinition {
-  id: 'cds' | 'cds-design' | 'cds-project-scan' | 'cds-deploy-pipeline' | 'cds-release' | 'preview-url';
+  id: 'cds' | 'cds-design' | 'cds-build' | 'cds-project-scan' | 'cds-deploy-pipeline' | 'cds-release' | 'preview-url';
   label: string;
   role: string;
   required: boolean;
@@ -140,6 +140,7 @@ export const AGENT_MISSION_CATEGORY_DEFINITIONS: readonly AgentMissionCategoryDe
 export const CDS_AGENT_SKILL_DEFINITIONS: readonly CdsAgentSkillDefinition[] = [
   { id: 'cds', label: 'CDS 核心技能', role: '认证、能力分诊、环境变量、系统维护和共享 CLI', required: true },
   { id: 'cds-design', label: '设计技能', role: '发布框架和私有稿件，检查交接场景并提供稿件地址', required: true },
+  { id: 'cds-build', label: '实施技能', role: '按已获准的稿件版本实现并回填验收', required: true },
   { id: 'cds-project-scan', label: '项目扫描技能', role: '扫描仓库、生成和校验 Compose、提交项目接入', required: true },
   { id: 'cds-deploy-pipeline', label: '部署排障技能', role: '部署、日志、诊断、冒烟和灰度状态', required: true },
   { id: 'cds-release', label: '正式发布技能', role: '生产目标发现、预检、发布、回滚和证据归档', required: true },

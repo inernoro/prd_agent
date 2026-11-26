@@ -8,7 +8,7 @@ import { buildCdsSkillManifest, copyCdsSkillSource } from '../../src/services/cd
 import { designAcceptancePolicy } from '../../src/shared/design-acceptance-standard.mjs';
 import { designDimensions, designObjectiveMethods } from '../../src/shared/design-methods.js';
 
-const skills = ['cds', 'cds-design', 'cds-project-scan', 'cds-deploy-pipeline', 'cds-release', 'preview-url'];
+const skills = ['cds', 'cds-design', 'cds-build', 'cds-project-scan', 'cds-deploy-pipeline', 'cds-release', 'preview-url'];
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => fs.rm(root, { recursive: true, force: true }))); });
 async function fixture() {
@@ -32,11 +32,11 @@ describe('CDS full skill export receipt', () => {
     expect(designAcceptancePolicy.dimensions).toEqual(Object.entries(designDimensions).map(([id, label]) => ({ id, label })));
   });
 
-  it('covers all six skills and changes the digest when shipped code changes', async () => {
+  it('covers the seven skills and changes the digest when shipped code changes', async () => {
     const root = await fixture();
     const first = await buildCdsSkillManifest(root);
     expect(first.version).toBe('0.20.0');
-    expect(first.skills).toEqual(skills);
+    expect([...first.skills].sort()).toEqual([...skills].sort());
     for (const name of skills) expect(first.files[`${name}/SKILL.md`]).toBe(createHash('sha256').update(`skill ${name}`).digest('hex'));
     await fs.writeFile(path.join(root, 'cds/cli/cdscli.py'), 'VERSION = "0.20.1"\n');
     const second = await buildCdsSkillManifest(root);

@@ -58,7 +58,7 @@ def main():
         receipt = json.load(archive.extractfile('skills/cds/cli/cds-skill-manifest.json'))
         assert receipt.get('format') == 'agent-skills', '技能 manifest 格式不一致'
         assert receipt.get('version') == setup.get('cliVersion'), '技能 manifest 版本不一致'
-        required_skills = {'cds', 'cds-design', 'cds-project-scan', 'cds-deploy-pipeline', 'cds-release', 'preview-url'}
+        required_skills = {'cds', 'cds-design', 'cds-build', 'cds-project-scan', 'cds-deploy-pipeline', 'cds-release', 'preview-url'}
         assert set(receipt.get('skills', [])) == required_skills
         required_files = {skill + '/SKILL.md' for skill in required_skills} | {'cds/cli/cdscli.py'}
         assert required_files <= receipt.get('files', {}).keys(), '技能 manifest 未覆盖完整的 CDS 技能包'

@@ -68,9 +68,10 @@ function archive(overrides: Record<string, unknown> = {}, version = 1, extra: Re
 
 const issue = (field: string, code: string, ruleId?: string) => expect.objectContaining({ field, code, ...(ruleId ? { ruleId } : {}) });
 
-async function serve(service: DesignWorkspaceService, run: (url: string) => Promise<void>) {
+async function serve(service: DesignWorkspaceService, run: (url: string) => Promise<void>,
+  resolveAccess: Parameters<typeof createDesignWorkspaceRouter>[0]['resolveAccess'] = () => designer) {
   const app = express();
-  app.use('/api', createDesignWorkspaceRouter({ service, resolveAccess: () => designer }));
+  app.use('/api', createDesignWorkspaceRouter({ service, resolveAccess }));
   const server = app.listen(0, '127.0.0.1');
   try {
     await once(server, 'listening');
@@ -97,6 +98,71 @@ describe('稿件发布验收标准', () => {
     service = new DesignWorkspaceService(store);
   });
   afterEach(async () => { await rm(directory, { recursive: true, force: true }); });
+
+  it('接入清单只提供已批准的实施目标，续版不会移动锁定的目标', async () => {
+    const reviewer: DesignActor = { kind: 'human', id: 'fixture-reviewer', label: '示例评审人', permissions: ['read', 'write', 'approve'] };
+    const reader: DesignActor = { kind: 'agent', id: 'fixture-reader', label: '示例实施方', permissions: ['read'] };
+    const actors = new Map(Object.entries({ designer, reader, reviewer }));
+    await serve(service, async endpoint => {
+      const published = await submit(endpoint, { requestId: 'implementation-draft', sourceCommit: firstCommit }, archive());
+      expect(published.status).toBe(201);
+      const { designId } = (await published.json()).result;
+      const readIntake = (role = 'reader') => fetch(`${endpoint}/intake`, { headers: { 'X-Fixture-Role': role } });
+      const readTarget = async () => {
+        const response = await readIntake();
+        expect(response.status).toBe(200);
+        const intake = await response.json();
+        expect(intake.permissions.write).toBe(false);
+        return intake.designs.find((item: { designId: string }) => item.designId === designId);
+      };
+      const command = (type: string, fields: Record<string, unknown>, role = 'reviewer') => fetch(`${endpoint}/commands`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Fixture-Role': role },
+        body: JSON.stringify({ requestId: `fixture-${type}`, type, designId, ...fields }),
+      });
+
+      expect((await readIntake('outside')).status).toBe(404);
+      expect((await command('implementation.start', { version: 1 }, 'reader')).status).toBe(403);
+      expect((await command('implementation.start', { version: 1 }, 'designer')).status).toBe(403);
+      expect(await readTarget()).toMatchObject({ latestVersion: 1, implementationTargetVersion: null });
+
+      expect((await command('design.freeze', { version: 1 })).status).toBe(201);
+      expect(await readTarget()).toMatchObject({ latestVersion: 1, baselineVersion: 1, implementationTargetVersion: 1 });
+      const started = await command('implementation.start', { version: 1, expectedBaseline: 1 });
+      expect(started.status).toBe(201);
+      const { upgradeId } = (await started.json()).result;
+      expect((await submit(endpoint, { requestId: 'implementation-revision', sourceCommit: nextCommit, designId }, archive({}, 2))).status).toBe(201);
+      expect(await readTarget()).toMatchObject({ latestVersion: 2, baselineVersion: 1, implementationTargetVersion: 1, sourceCommit: nextCommit,
+        upgrade: { id: upgradeId, targetVersion: 1, status: 'active' } });
+
+      expect((await command('implementation.cancel', { upgradeId, reason: '示例成员暂停实施升级。' })).status).toBe(201);
+      expect(await readTarget()).toMatchObject({ latestVersion: 2, baselineVersion: 1, implementationTargetVersion: 1,
+        upgrade: { id: upgradeId, status: 'cancelled' } });
+      expect((await command('design.unfreeze', { version: 1 })).status).toBe(201);
+      expect(await readTarget()).toMatchObject({ latestVersion: 2, implementationTargetVersion: null,
+        upgrade: { id: upgradeId, status: 'cancelled' } });
+    }, (req, selectedProject) => selectedProject === projectId ? actors.get(req.get('X-Fixture-Role') ?? 'designer') ?? null : null);
+  });
+
+  it('接入清单优先采用记录中的活跃升级目标，升级完成后采用实施基线', async () => {
+    const { result: { designId } } = await service.publish(projectId, designer,
+      { requestId: 'stored-upgrade-v1', sourceCommit: firstCommit }, archive());
+    await service.publish(projectId, designer,
+      { requestId: 'stored-upgrade-v2', sourceCommit: nextCommit, designId }, archive({}, 2));
+    const id = designId!;
+    const lock = { id: 'fixture-upgrade', fromVersion: 1, targetVersion: 2, startedAt: `${date}T00:00:00Z`, startedBy: 'fixture-reviewer' };
+    const storeUpgrade = async (status: 'active' | 'completed', revision: number) => {
+      expect(await store.append({ projectId, revision, request: {
+        key: `stored-${status}`, fingerprint: `stored-${status}`, result: { type: 'fixture', designId: id },
+      }, design: { id, frozen: 1, upgrade: { ...lock, status } } })).toBe(true);
+    };
+    await serve(service, async endpoint => {
+      const read = async () => (await (await fetch(`${endpoint}/intake`)).json()).designs[0];
+      await storeUpgrade('active', 3);
+      expect(await read()).toMatchObject({ baselineVersion: 1, implementationTargetVersion: 2 });
+      await storeUpgrade('completed', 4);
+      expect(await read()).toMatchObject({ baselineVersion: 1, implementationTargetVersion: 1 });
+    });
+  });
 
   it('经 HTTP 拒绝有 42 条旧式规则的稿件，定位最后一条缺维度的规则，修正后沿用原请求编号', async () => {
     const append = vi.spyOn(store, 'append');

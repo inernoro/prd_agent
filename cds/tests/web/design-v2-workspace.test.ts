@@ -5,7 +5,7 @@ import { build } from 'esbuild';
 import { createElement, type ComponentType } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { chromium, type Browser, type BrowserContextOptions, type Locator, type Page } from 'playwright';
-import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { DesignComment, DesignEntry, DesignFeedback, DesignRequirement, DesignRun, DesignScreen, DesignThumbnailStatus, DesignVersion, DesignViewerState, DesignWorkspace } from '../../src/shared/design-workspace';
 import type { PlanningBoard } from '../../src/shared/engineering-planning';
 import { measureDesignPage } from '../../src/services/design-acceptance-observations';
@@ -27,11 +27,14 @@ afterEach(() => vi.unstubAllGlobals());
 let fixtureBrowser: Promise<Browser> | undefined;
 afterAll(async () => { await fixtureBrowser?.then(browser => browser.close()); });
 
-async function fixturePage(options?: BrowserContextOptions) {
-  fixtureBrowser ??= chromium.launch({ headless: true,
+function getFixtureBrowser() {
+  return fixtureBrowser ??= chromium.launch({ headless: true,
     ...(process.env.CDS_CHROMIUM_PATH ? { executablePath: process.env.CDS_CHROMIUM_PATH } : { channel: 'chrome' }),
   });
-  return (await fixtureBrowser).newPage({ ...options, serviceWorkers: 'block' });
+}
+
+async function fixturePage(options?: BrowserContextOptions) {
+  return (await getFixtureBrowser()).newPage({ ...options, serviceWorkers: 'block' });
 }
 
 const projectId = 'fixture-design-v2';
@@ -137,6 +140,10 @@ const legacyAcceptanceDraft: DesignEntry = {
 const standardMethods = ['人工', 'MECE 覆盖', '对照图', '视觉', '历史易错', '流程', '冒烟', '验收债务'];
 
 describe('稿件通用验收手段', () => {
+  beforeAll(async () => {
+    await Promise.all([getFixtureBrowser(), getBrowserDesignScript()]);
+  }, 45_000);
+
   it('V5 无分手段计划的稿件从设计库进入后显示完整目录、未运行状态和键盘导航', async () => {
     const input = { ...workspace, designs: [legacyAcceptanceDraft] };
     const css = await layoutStyles(design(`&design=${legacyAcceptanceDraft.id}&version=5&tab=accept`, input), acceptanceStyles);
@@ -360,6 +367,115 @@ describe('稿件通用验收手段', () => {
 });
 
 describe('V17 交付工作区', () => {
+  it('从设计库进入交付可复制实施基线的提示词和当前实例深链', async () => {
+    const input = { ...workspace, designs: [bound] };
+    await withDesignBrowser(() => input, async (page, commands) => {
+      await page.goto(browserDesignUrl());
+      await page.getByRole('link', { name: boundTitle, exact: true }).click();
+      const header = page.locator('.dw-draft-actions');
+      await header.waitFor();
+      const copy = header.getByRole('button', { name: '复制实现提示词', exact: true });
+      expect(await copy.count()).toBe(1);
+      expect(await copy.getAttribute('data-action')).toBe('copy-build-prompt');
+      expect(await page.getByRole('combobox', { name: '稿件版本' }).inputValue()).toBe('2');
+      await copy.click();
+      const link = await checkCopiedBuildPrompt(page, bound.id, 1);
+      await page.getByRole('status').filter({ hasText: '已复制 V1 实现提示词。' }).waitFor();
+      await page.goto(link);
+      expect(await page.getByRole('combobox', { name: '稿件版本' }).inputValue()).toBe('1');
+      expect(await page.getByRole('navigation', { name: '稿件标签' }).getByRole('button', { name: /^交付/ }).getAttribute('aria-current')).toBe('true');
+      expect(commands).toHaveLength(0);
+    }, { permissions: ['clipboard-read', 'clipboard-write'], viewport: { width: 1280, height: 800 }, reducedMotion: 'reduce' });
+  }, 35_000);
+
+  it('复制实现提示词优先使用锁定升级目标，浏览最新版和历史版均指向同一获准版本', async () => {
+    const draft: DesignEntry = { ...bound, versions: [...bound.versions, { ...second, version: 3 }],
+      upgrade: { id: 'UPG-fixture-handoff', fromVersion: 1, targetVersion: 2, startedAt: at, startedBy: author.id, status: 'active' } };
+    const input = { ...workspace, designs: [draft] };
+    await withDesignBrowser(() => input, async (page, commands) => {
+      await page.goto(browserDesignUrl({ design: draft.id, version: '3', tab: 'delivery' }));
+      const copy = page.locator('[data-action="copy-build-prompt"]');
+      const version = page.getByRole('combobox', { name: '稿件版本' });
+      await copy.waitFor();
+      expect(await version.inputValue()).toBe('3');
+      await copy.click();
+      await checkCopiedBuildPrompt(page, draft.id, 2);
+
+      await version.selectOption('1');
+      await page.waitForURL(url => url.searchParams.get('version') === '1');
+      expect(await version.inputValue()).toBe('1');
+      await page.evaluate(() => navigator.clipboard.writeText('fixture clipboard reset'));
+      await copy.click();
+      await checkCopiedBuildPrompt(page, draft.id, 2);
+      expect(commands).toHaveLength(0);
+    }, { permissions: ['clipboard-read', 'clipboard-write'], reducedMotion: 'reduce' });
+  }, 30_000);
+
+  it('未确定实施版本时提示原因且无法复制实现提示词，验收和记录页没有该入口', async () => {
+    const input = { ...workspace, designs: [unbound] };
+    await withDesignBrowser(() => input, async (page, commands) => {
+      await page.goto(browserDesignUrl({ design: unbound.id, version: '1', tab: 'delivery' }));
+      const copy = page.getByRole('button', { name: '复制实现提示词', exact: true });
+      await copy.waitFor();
+      expect(await copy.isDisabled()).toBe(true);
+      await copy.getByText('待定稿', { exact: true }).waitFor();
+      const header = page.locator('.dw-head--draft');
+      const explanation = [await copy.getAttribute('title'), await copy.getAttribute('aria-description'), await header.innerText()].join(' ');
+      expect(explanation).toMatch(/先.*?(?:实施基线|实施版本|升级目标)/);
+      const tabs = page.getByRole('navigation', { name: '稿件标签' });
+      for (const [tab, name] of [['accept', '验收'], ['log', '记录']]) {
+        await tabs.getByRole('button', { name, exact: true }).click();
+        await page.waitForURL(url => url.searchParams.get('tab') === tab);
+        expect(await page.locator('[data-action="copy-build-prompt"]').count()).toBe(0);
+      }
+      expect(commands).toHaveLength(0);
+    }, { reducedMotion: 'reduce' });
+  }, 30_000);
+
+  it('375px 触屏可从设计库进入交付并复制实现提示词', async () => {
+    const input = { ...guidedWorkspace, designs: [guidedDraft] };
+    const css = await layoutStyles(design(`&design=${guidedDraft.id}&tab=delivery`, input), draftHeaderStyles);
+    await withDesignBrowser(() => input, async (page, commands) => {
+      await page.goto(browserDesignUrl());
+      await applyFixtureStyles(page, css);
+      await page.getByRole('link', { name: guidedVersion.title, exact: true }).tap();
+      expect(await page.evaluate(() => ({ width: innerWidth, touch: navigator.maxTouchPoints }))).toEqual({ width: 375, touch: 1 });
+      const copy = page.getByRole('button', { name: '复制实现提示词', exact: true });
+      await copy.waitFor();
+      const box = await copy.boundingBox();
+      expect(box).not.toBeNull();
+      expect(box!.x).toBeGreaterThanOrEqual(0);
+      expect(box!.x + box!.width).toBeLessThanOrEqual(375);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(376);
+      await copy.tap();
+      await checkCopiedBuildPrompt(page, guidedDraft.id, 1);
+      expect(commands).toHaveLength(0);
+    }, { viewport: { width: 375, height: 812 }, hasTouch: true, isMobile: true,
+      permissions: ['clipboard-read', 'clipboard-write'], reducedMotion: 'reduce' });
+  }, 35_000);
+
+  it('浏览器拒绝自动复制实现提示词时提供可选中的同一命令和深链', async () => {
+    const input = { ...workspace, designs: [bound] };
+    await withDesignBrowser(() => input, async (page, commands) => {
+      await page.addInitScript(() => {
+        Object.defineProperty(navigator.clipboard, 'writeText', { value: async () => {
+          throw new DOMException('Fixture denied clipboard write', 'NotAllowedError');
+        } });
+        Object.defineProperty(document, 'execCommand', { value: () => false });
+      });
+      await page.goto(browserDesignUrl({ design: bound.id, version: '2', tab: 'delivery' }));
+      await page.getByRole('button', { name: '复制实现提示词', exact: true }).click();
+      const dialog = page.getByRole('dialog', { name: '实现提示词' });
+      await dialog.getByText(/请选择下方文字手动复制/).waitFor();
+      const prompt = dialog.getByRole('textbox', { name: '实现提示词' });
+      expect(await prompt.inputValue()).toBe(`/cds-build 帮我实现 ${bound.id} V1\n${browserDesignUrl({ design: bound.id, version: '1', tab: 'delivery' })}`);
+      await prompt.focus();
+      expect(await prompt.evaluate((node: HTMLTextAreaElement) => node.selectionStart === 0 && node.selectionEnd === node.textLength)).toBe(true);
+      expect(await page.getByText(/已复制 V1 实现提示词/).count()).toBe(0);
+      expect(commands).toHaveLength(0);
+    }, { reducedMotion: 'reduce' });
+  }, 30_000);
+
   it('打开稿件先看画面和这一屏，同时保留旧链接的全文入口', () => {
     const query = `&design=${historyDraft.id}&version=2`;
     const initial = design(query, historyWorkspace);
@@ -678,13 +794,17 @@ describe('V17 交付工作区', () => {
     });
   }, 20_000);
 
-  it('交付、验收和记录切换时页头及三项操作的几何一致', async () => {
+  it('交付、验收和记录切换时可见页签及原有操作保持原位', async () => {
     const input = { ...workspace, designs: [layoutDraft] };
     const details = `&design=${layoutDraft.id}&version=4&tab=`;
-    await withLayout(design(details + 'delivery', input), draftStyles, async page => {
-      const layout = async () => {
-        const { titleGroup, actionGroup, headerBox, tabsBox } = await measureDraftHeader(page, boundTitle);
-        return { titleGroup, actionGroup, headerBox, tabsBox };
+    await withLayout(design(details + 'delivery', input), draftHeaderStyles, async page => {
+      const layout = async (width: number) => {
+        const { titleGroup, actionGroup, headerBox } = await measureDraftHeader(page, boundTitle);
+        const tabs = await page.getByRole('navigation', { name: '稿件标签' }).getByRole('button').all();
+        expect(tabs).toHaveLength(3);
+        const tabBoxes = await Promise.all(tabs.map(tab => tab.boundingBox()));
+        expect(tabBoxes.every(box => box !== null)).toBe(true);
+        return { titleGroup: width < 768 ? titleGroup : undefined, actionGroup, headerBox, tabBoxes };
       };
       for (const [width, height] of infoSizes) {
         await page.setViewportSize({ width, height });
@@ -692,8 +812,8 @@ describe('V17 交付工作区', () => {
         for (const tab of ['delivery', 'accept', 'log']) {
           const markup = design(details + tab, input);
           await page.locator('#root').evaluate((scope, html) => { scope.innerHTML = html; }, markup);
-          const current = await layout();
-          if (initial) expect(current).toEqual(initial);
+          const current = await layout(width);
+          if (initial) expect(current, `${width}px ${tab} 页头控件位置`).toEqual(initial);
           else initial = current;
         }
       }
@@ -951,7 +1071,7 @@ describe('已发布的演示、评论和交付布局', () => {
 
   it('新版桌面页头一行，手机保留完整版本文案和可用的三个页签', async () => {
     const markup = design(`&design=${guidedDraft.id}&version=18`, guidedWorkspace);
-    await withLayout(markup, [...draftStyles, 'web/src/pages/design-workspace/design-v18.css'], async page => {
+    await withLayout(markup, draftHeaderStyles, async page => {
       await page.setViewportSize({ width: 1280, height: 800 });
       const header = page.locator('.dw-head--v18');
       const tabs = header.getByRole('navigation', { name: '稿件标签' });
@@ -1095,9 +1215,8 @@ type FixtureView = { kind: 'library' } | { kind: 'brief'; designKey: string; sha
 const browserDesignOrigin = 'http://127.0.0.1:1';
 let browserDesignScript: Promise<string> | undefined;
 
-async function withDesignBrowser(input: () => DesignWorkspace,
-  check: (page: Page, commands: RecordedDesignCommand[], views: FixtureView[]) => Promise<void>, options?: BrowserContextOptions) {
-  browserDesignScript ??= build({
+function getBrowserDesignScript() {
+  return browserDesignScript ??= build({
     stdin: {
       contents: `import React from 'react';
         import { createRoot } from 'react-dom/client';
@@ -1113,7 +1232,11 @@ async function withDesignBrowser(input: () => DesignWorkspace,
     define: { 'process.env.NODE_ENV': '"production"', 'import.meta.env': '{}' },
     loader: { '.css': 'empty', '.svg': 'dataurl' }, jsx: 'automatic', bundle: true, write: false,
   }).then(result => result.outputFiles[0].text);
-  const script = await browserDesignScript;
+}
+
+async function withDesignBrowser(input: () => DesignWorkspace,
+  check: (page: Page, commands: RecordedDesignCommand[], views: FixtureView[]) => Promise<void>, options?: BrowserContextOptions) {
+  const script = await getBrowserDesignScript();
   const page = await fixturePage(options);
   try {
     page.setDefaultTimeout(8000);
@@ -1161,8 +1284,20 @@ function browserDesignUrl(params: Record<string, string> = {}) {
   return browserDesignOrigin + '/design?' + new URLSearchParams({ project: projectId, ...params });
 }
 
+async function checkCopiedBuildPrompt(page: Page, designId: string, targetVersion: number) {
+  const clipboard = () => page.evaluate(() => navigator.clipboard.readText());
+  const expectedCommand = `/cds-build 帮我实现 ${designId} V${targetVersion}`;
+  await expect.poll(async () => (await clipboard()).split(/\r?\n/u)).toContain(expectedCommand);
+  const url = new URL((await clipboard()).match(/https?:\/\/[^\s<>)]+/u)?.[0] ?? 'about:blank');
+  expect(url.origin).toBe(browserDesignOrigin);
+  expect(url.pathname).toBe('/design');
+  expect(Object.fromEntries(url.searchParams)).toEqual({ project: projectId, design: designId, version: String(targetVersion), tab: 'delivery' });
+  return url.href;
+}
+
 const draftStyles = ['web/src/pages/engineering-planning/planning.css', 'web/src/pages/design-workspace/design.css',
   'web/src/pages/design-workspace/design-v17-delivery.css'];
+const draftHeaderStyles = [...draftStyles, 'web/src/pages/design-workspace/design-v18.css'];
 const acceptanceStyles = [...draftStyles, 'web/src/pages/design-workspace/design-v17-acceptance.css'];
 const desktopSizes = [[1280, 800], [1024, 640], [853, 533]] as const;
 const infoSizes = [...desktopSizes, [375, 812]] as const;
@@ -2112,7 +2247,7 @@ describe('工程规划与设计 V2 前端回归', () => {
 
   it('A-28 在 375px 触控视口可操作三个页签，无横向滚动', async () => {
     const markup = design(`&design=${layoutDraft.id}&version=4&tab=preview`, { ...workspace, designs: [layoutDraft] });
-    await withLayout(markup, draftStyles, async page => {
+    await withLayout(markup, draftHeaderStyles, async page => {
       const metrics = await measureDraftHeader(page, boundTitle);
       checkDraftBounds(metrics, 375);
       expect(metrics.touchPoints, '使用 375px 触控视口').toBeGreaterThan(0);

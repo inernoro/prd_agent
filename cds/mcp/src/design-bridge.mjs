@@ -253,7 +253,7 @@ export function createDesignBridge(credentials, options = {}) {
         if (args.view === 'file') {
           const file = selected.delivery?.files.find(row => row.path === args.path);
           if (!file) throw new Error('所选版本没有这份交付资料。请读取 delivery 中的完整路径，历史稿请先核对 Git 来源。');
-          if (!file.text) throw new Error('这份资料是二进制附件。请在 CDS 交付页按文件下载。');
+          if (!file.text && !/\.(?:diff|patch)$/i.test(file.path)) throw new Error('这份资料是二进制附件。请在 CDS 交付页按文件下载。');
           const query = new URLSearchParams({ view: 'text', offset: String(args.offset ?? 0), limit: String(args.limit ?? 12_000) });
           const result = await client.request('GET', `${path}/artifacts/${encodeURIComponent(file.id)}?${query}`);
           if (result.artifactId !== file.id || result.path !== file.path || result.sha256 !== file.sha256 || typeof result.text !== 'string') {

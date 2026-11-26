@@ -104,6 +104,7 @@ jobs:
               - '.github/workflows/cds-prebuilt.yml'
               - '.claude/skills/cds/**'
               - '.claude/skills/cds-design/**'
+              - '.claude/skills/cds-build/**'
               - '.claude/skills/cds-project-scan/**'
               - '.claude/skills/cds-deploy-pipeline/**'
               - '.claude/skills/cds-release/**'

@@ -6,7 +6,7 @@ import type {
   DesignDelivery, DesignDeliveryFile, DesignFeedback, DesignFrameworkCharter, DesignImplementation, DesignIntake, DesignRequirement, DesignScope, DesignSharePreparation, DesignSystem, DesignThumbnailStatus, DesignUpgrade, DesignViewerState, FrameworkResolutions,
 } from '../shared/design-workspace.js';
 import type { PlanningActor, PlanningDesignLink } from '../shared/engineering-planning.js';
-import { adoptedFrameworkVersion, currentDesignRun, designAcceptanceTarget, designDatasetRequired, designDemoImplementationPath, designFeedbackCategories, designMaterialKeys, designProgramEvidenceRequired, designSlots, designVersionGap, designViewports, frameworkInUse, frameworkMaterialCandidates, latestDesignFeedbackAt } from '../shared/design-workspace.js';
+import { adoptedFrameworkVersion, currentDesignRun, designAcceptanceTarget, designDatasetRequired, designDemoImplementationPath, designFeedbackCategories, designImplementationTargetVersion, designMaterialKeys, designProgramEvidenceRequired, designSlots, designVersionGap, designViewports, frameworkInUse, frameworkMaterialCandidates, latestDesignFeedbackAt } from '../shared/design-workspace.js';
 import { designAcceptancePolicy } from '../shared/design-acceptance-standard.mjs';
 import { completeFeedback, feedbackParts } from '../shared/design-feedback.js';
 import { concreteVisualEvidence, designProgramStatus, designVisualKey, designVisualSlots, designVisualStandard, designVisualRequired, designVisualRuleShot, designVisualSummary,
@@ -742,7 +742,8 @@ export class DesignWorkspaceService {
         const latest = entry.versions.at(-1)!;
         return { designId: entry.id, designKey: entry.designKey, title: latest.title, latestVersion: latest.version,
           sourceCommit: latest.sourceCommit, sourcePaths: registeredDesignPaths(entry),
-          baselineVersion: entry.frozen, implementedVersion: entry.implementedVersion, upgrade: entry.upgrade,
+          baselineVersion: entry.frozen, implementationTargetVersion: designImplementationTargetVersion(entry),
+          implementedVersion: entry.implementedVersion, upgrade: entry.upgrade,
           handoffStatus: this.handoffStatus(projectId, entry, latest)?.status,
           versionGap: designVersionGap(entry.frozen, entry.implementedVersion),
           versionHistory: entry.versions.map(({ version, sourceCommit }) => ({ version, sourceCommit })),

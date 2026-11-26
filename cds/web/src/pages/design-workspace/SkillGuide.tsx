@@ -6,10 +6,47 @@
 import { useEffect, useRef, useState } from 'react';
 import { Activity, ArrowRight, CalendarRange, Check, CheckCircle2, ClipboardCheck, Code2, Copy, PenTool, Rocket, Sparkles, TriangleAlert } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { copyTextToClipboard } from '@/lib/clipboard';
 import { reducedSurfaceMotion } from '@/lib/surfaceMotion';
+import { designImplementationTargetVersion, type DesignEntry } from '../../../../src/shared/design-workspace';
 import menuIntents from '../../../../../.claude/skills/cds/reference/menu-intents.json';
 import './design-skills.css';
+
+export function CopyDesignBuildPrompt({ entry, onCopied }: { entry: DesignEntry; onCopied: (version: number) => void }) {
+  const version = designImplementationTargetVersion(entry);
+  const [manual, setManual] = useState('');
+
+  async function copy() {
+    if (version === null) return;
+    const link = new URL('/design', window.location.origin);
+    link.search = new URLSearchParams({ project: entry.projectId, design: entry.id, version: String(version), tab: 'delivery' }).toString();
+    const text = `/cds-build 帮我实现 ${entry.id} V${version}\n${link.href}`;
+    try {
+      await copyTextToClipboard(text);
+      onCopied(version);
+    } catch {
+      setManual(text);
+    }
+  }
+
+  return <>
+    <button type="button" className="ep-button dw-copy-build" data-action="copy-build-prompt" aria-label="复制实现提示词"
+      title={version === null ? '请由评审人先在更多稿件操作中定为实施基线' : `复制 V${version} 实现提示词`}
+      disabled={version === null} onClick={() => void copy()}>
+      <Copy aria-hidden="true" /><span className="dw-copy-build-label">复制实现提示词</span>
+      <small>{version === null ? '待定稿' : `V${version}`}</small>
+    </button>
+    {manual && <Dialog open onOpenChange={open => { if (!open) setManual(''); }}>
+      <DialogContent>
+        <DialogTitle>实现提示词</DialogTitle>
+        <DialogDescription>浏览器未允许自动复制。请选择下方文字手动复制。</DialogDescription>
+        <textarea className="w-full rounded border bg-background p-2 text-sm" aria-label="实现提示词" rows={4}
+          readOnly value={manual} onFocus={event => event.currentTarget.select()} />
+      </DialogContent>
+    </Dialog>}
+  </>;
+}
 
 const menuPhrases = new Set(menuIntents.menus.flatMap(menu => menu.intents.flatMap(intent => intent.say)));
 function prompt(phrase: string) {

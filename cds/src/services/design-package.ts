@@ -449,7 +449,7 @@ export function parseDesignHandoffPlan(value: unknown, screens: DesignScreen[], 
   return { cases };
 }
 
-const deliveryText = /\.(?:md|mdx|txt|json|ya?ml|html?|css|[cm]?js|ts|tsx|jsx|csv|toml|xml|svg)$/i;
+const deliveryText = /\.(?:md|mdx|txt|json|ya?ml|html?|css|[cm]?js|ts|tsx|jsx|csv|toml|xml|svg|diff|patch)$/i;
 
 function describeDesignDelivery(entries: Map<string, Buffer>, root: string, input: Record<string, unknown>,
   prototype: string, rationale: string, checks: string, rendered: ReadonlySet<string>) {

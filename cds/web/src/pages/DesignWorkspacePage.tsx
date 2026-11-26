@@ -22,7 +22,7 @@ import { DesignRequirementView } from './design-workspace/DesignRequirements';
 import { DesignLibrary, libraryStatus } from './design-workspace/DesignLibrary';
 import { DesignShareDialog } from './design-workspace/DesignShareDialog';
 import { DesignFrameworkView, FrameworkBadge, frameworkTabs } from './design-workspace/DesignFramework';
-import { DesignSkillsMenu, SkillGuide } from './design-workspace/SkillGuide';
+import { CopyDesignBuildPrompt, DesignSkillsMenu, SkillGuide } from './design-workspace/SkillGuide';
 import { defaultDesignScreen, designDate, designDetailPath, designFeedbackAwaitsViewer, designPath, designPublisherLabel, designSourceNames, designStatus, emptyDesignViewer, failedBaseline, latestDesign, legacyRequirementGroup, materialNames, openReviews, scopePath, statusNames, type DesignCommand } from './design-workspace/design-ui';
 import './engineering-planning/planning.css';
 import './design-workspace/design.css';
@@ -367,6 +367,10 @@ export function DesignWorkspacePage() {
         return <option key={row.version} value={row.version}>{label}</option>;
       })}
     </select>
+    {tab === 'delivery' && <CopyDesignBuildPrompt key={entry.id} entry={entry} onCopied={target => {
+      setIssue('');
+      setNotice(`已复制 V${target} 实现提示词。`);
+    }} />}
     <button className="ep-button ep-icon-button" type="button" aria-label="大屏" title="大屏" onClick={() => openLarge(entry, version)}><Maximize /></button>
     <details className="ep-new dw-info" data-design-panel="design-info" open={panel === 'design-info' || undefined}
       onToggle={event => { if (!event.currentTarget.open) dismissPanel('design-info'); }}>
