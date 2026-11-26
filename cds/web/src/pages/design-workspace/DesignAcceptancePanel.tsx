@@ -50,10 +50,10 @@ function BindImplementation({ choices, preferred, busy, close, bind }: {
   </DialogContent></Dialog>;
 }
 
-export function DesignAcceptancePanel({ entry, version, busy, canWrite, canReview, canSign, command, onSetBaseline, onPreviewStale, requirement, onOpen, installedAcceptance, actorId }: {
+export function DesignAcceptancePanel({ entry, version, busy, canWrite, canReview, canSign, command, onSetBaseline, onPreviewStale, requirement, onOpen, onOpenPrototype, installedAcceptance, actorId }: {
   entry: DesignEntry; version: DesignVersion; busy: boolean; canWrite: boolean; canReview: boolean; canSign: boolean;
   command: DesignCommand; onSetBaseline?: () => void; onPreviewStale: () => void;
-  requirement?: DesignRequirement; onOpen?: OpenAcceptance; installedAcceptance?: boolean; actorId?: string;
+  requirement?: DesignRequirement; onOpen?: OpenAcceptance; onOpenPrototype?: () => void; installedAcceptance?: boolean; actorId?: string;
 }) {
   const [params, setParams] = useSearchParams();
   const [runId, setRunId] = useState(params.get('run') ?? '');
@@ -400,7 +400,7 @@ export function DesignAcceptancePanel({ entry, version, busy, canWrite, canRevie
       {showComparison && <li data-item="screens"><h4><b>{objective && visualOnly ? 4 : objective || !methodData || visualOnly ? 3 : 2}</b>{visualOnly ? '逐画面实拍与检查' : '逐画面对照'}
         <small>{visualOnly ? '按画面记录实际截图和十项检查' : methodData ? '查看同条件的两张图和对照结论' : requiresVisual ? '缺实拍或缺证据的画面需补齐后签收' : '选择画面查看同条件下的两张截图'}</small></h4>
         <DesignVisualAcceptance key={version.version} entry={entry} version={version} run={run} busy={busy} writable={visualWritable}
-          canGenerateReferences={canReview}
+          canGenerateReferences={canReview} onOpenPrototype={onOpenPrototype}
           program={programRequired ? { capture: canWrite && activeRun && !proof.invalid,
             recheck: Boolean((version.publisher.id === actorId || canReview && entry.reviewers?.some(reviewer => reviewer.id === actorId))
               && activeRun && !proof.invalid), actor: actorId } : undefined}

@@ -866,9 +866,10 @@ async function withDesignBrowser(input: () => DesignWorkspace,
       contents: `import React from 'react';
         import { createRoot } from 'react-dom/client';
         import { BrowserRouter } from 'react-router-dom';
+        import { RouteMotion } from './src/components/layout/RouteMotion';
         import { DesignWorkspacePage } from './src/pages/DesignWorkspacePage';
         createRoot(document.getElementById('root')).render(
-          React.createElement(BrowserRouter, null, React.createElement(DesignWorkspacePage)));
+          React.createElement(BrowserRouter, null, React.createElement(RouteMotion), React.createElement(DesignWorkspacePage)));
       `,
       resolveDir: path.resolve('web'),
     },

@@ -512,8 +512,11 @@ export function DesignWorkspacePage() {
             canSign={Boolean(permissions?.sign ?? (permissions?.write && permissions?.review))}
             installedAcceptance={permissions?.installedAcceptance} requirement={draftRequirement} onOpen={(view, screen) => {
               if (view === 'need') openFull('need');
-              else onChange({ ...deliveryQuery, tab: 'delivery', screen: screen ?? '' });
-            }}
+              else {
+                setOpenGallery(undefined);
+                onChange({ ...deliveryQuery, tab: 'delivery', screen: screen ?? '' });
+              }
+            }} onOpenPrototype={() => setOpenGallery(undefined)}
             onSetBaseline={canFreeze && !handoffBlocks && !activeUpgrade ? () => setFreezeTarget({ id: entry.id, version: version.version }) : undefined}
             command={command} onPreviewStale={refreshWorkspace} />}
           {tab === 'log' && <DesignHistory entry={entry} version={version}
