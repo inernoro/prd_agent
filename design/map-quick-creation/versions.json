@@ -23,6 +23,13 @@
    "tag": "design/DSN-1400E277/v3",
    "committedAt": "2026-11-26T12:12:48+00:00",
    "subject": "docs(design): 快速创作设计稿 V3：按 V2 交接检查回执修正单幕重做场景"
+  },
+  {
+   "version": 4,
+   "commit": "055404cd0bcc928a47a6cf4b4f243d8d39db3310",
+   "tag": "design/DSN-1400E277/v4",
+   "committedAt": "2026-11-26T12:18:45+00:00",
+   "subject": "docs(design): 快速创作设计稿 V4：单幕重做场景改为检查恢复的即时结果"
   }
  ]
 }
