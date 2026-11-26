@@ -745,16 +745,19 @@ public sealed class DesignArtifactsController : ControllerBase
         [FromServices] OpenDesignServiceArtifactExecutor recovery,
         CancellationToken ct)
     {
-        if (!CodeFilmEnabled()) return NotFound();
+        if (!CodeFilmEnabled() || DeploymentScope.CurrentDurable is not { } branchScope) return NotFound();
         var userId = this.GetRequiredUserId();
-        var run = await _db.DesignArtifactRuns.Find(item => item.DeploymentSlug == DeploymentScope.Current
-            && item.Id == runId && item.UserId == userId && item.ArtifactType == DesignArtifactTypes.CodeFilm)
+        var revisionPrefix = branchScope + "::revision::";
+        var run = await _db.DesignArtifactRuns.Find(item => item.Id == runId
+            && item.UserId == userId && item.ArtifactType == DesignArtifactTypes.CodeFilm
+            && (item.DeploymentSlug == branchScope
+                || (item.DeploymentSlug != null && item.DeploymentSlug.StartsWith(revisionPrefix))))
             .FirstOrDefaultAsync(ct);
         if (run == null || run.Status == RunStatuses.Cancelled) return NotFound();
         byte[]? bytes;
         if (!string.IsNullOrWhiteSpace(run.WorkspaceResultAssetKey))
         {
-            var package = await workspace.ReadResultAsync(run.Id, ct);
+            var package = await workspace.ReadCommittedCodeFilmAsync(run, ct);
             bytes = Convert.FromBase64String(package.Files.Single(file => file.Path == "film.mp4").ContentBase64);
         }
         else

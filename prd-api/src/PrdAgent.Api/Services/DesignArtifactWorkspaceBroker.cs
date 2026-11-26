@@ -62,6 +62,8 @@ public interface IDesignArtifactWorkspaceBroker
 
     Task<ParsedDesignWorkspaceResult> ReadResultAsync(string runId, CancellationToken ct);
 
+    Task<ParsedDesignWorkspaceResult> ReadCommittedCodeFilmAsync(DesignArtifactRun ownedRun, CancellationToken ct);
+
     Task<DesignArtifactRun> ReserveModelCallAsync(string runId, string token, CancellationToken ct);
 
     Task<TaskExecutionIdentity> RestoreExecutionAsync(string runId, string token, CancellationToken ct);
@@ -719,6 +721,23 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
     {
         var run = await _db.DesignArtifactRuns.Find(item => item.DeploymentSlug == DeploymentScope.Current && (item.Id == runId)).FirstOrDefaultAsync(ct)
             ?? throw new KeyNotFoundException("设计任务不存在");
+        return await ReadCommittedResultAsync(run, ct);
+    }
+
+    // The owner-authorized download can reference a film from an older revision
+    // of the same CDS branch. Keep the normal worker read fenced to its revision.
+    public Task<ParsedDesignWorkspaceResult> ReadCommittedCodeFilmAsync(DesignArtifactRun ownedRun, CancellationToken ct)
+    {
+        if (ownedRun.ArtifactType != DesignArtifactTypes.CodeFilm
+            || DeploymentScope.CurrentDurable is not { } scope
+            || (ownedRun.DeploymentSlug != scope
+                && ownedRun.DeploymentSlug?.StartsWith(scope + "::revision::", StringComparison.Ordinal) != true))
+            throw new KeyNotFoundException("影片任务不存在");
+        return ReadCommittedResultAsync(ownedRun, ct);
+    }
+
+    private async Task<ParsedDesignWorkspaceResult> ReadCommittedResultAsync(DesignArtifactRun run, CancellationToken ct)
+    {
         if (string.IsNullOrWhiteSpace(run.WorkspaceResultAssetKey))
             throw new InvalidOperationException("远程设计任务没有提交可用页面，请重试");
         var bytes = await _storage.TryDownloadBytesAsync(run.WorkspaceResultAssetKey, CancellationToken.None)
@@ -727,7 +746,7 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
             throw new InvalidOperationException("远程设计结果校验失败，请重新发起任务");
         var parsed = DesignArtifactWorkspaceContract.ParseAndValidateResult(
                 bytes,
-                runId,
+                run.Id,
                 run.WorkspaceBaseRevision ?? string.Empty,
                 ResultLimit(run),
                 run.ArtifactType == DesignArtifactTypes.CodeFilm);
