@@ -16,6 +16,7 @@ on:
       - ".github/workflows/cds-prebuilt.yml"
       - ".claude/skills/cds/**"
       - ".claude/skills/cds-design/**"
+      - ".claude/skills/cds-build/**"
       - ".claude/skills/cds-project-scan/**"
       - ".claude/skills/cds-deploy-pipeline/**"
       - ".claude/skills/cds-release/**"
@@ -172,7 +173,7 @@ jobs:
       - name: Stage canonical CDS onboarding skills
         run: |
           mkdir -p cds/agent-skills
-          for skill in cds cds-design cds-project-scan cds-deploy-pipeline cds-release preview-url; do
+          for skill in cds cds-design cds-build cds-project-scan cds-deploy-pipeline cds-release preview-url; do
             cp -R ".claude/skills/$skill" "cds/agent-skills/$skill"
           done
 

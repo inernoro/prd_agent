@@ -125,18 +125,22 @@ export function createDesignWorkspaceRouter(deps: {
     const artifactId = designId(req.params.id, '稿件附件');
     const artifact = await deps.service.artifact(projectId, actor, artifactId);
     if (req.query.view === 'text') {
-      if (!artifact.file?.text) return invalidDesign('这个附件可下载，无法按 UTF-8 文本读取');
+      const file = artifact.file;
+      if (!file || (!file.text && !/\.(?:diff|patch)$/i.test(file.path))) return invalidDesign('这个附件可下载，无法按 UTF-8 文本读取');
       const parse = (value: unknown, fallback: number) => value === undefined ? fallback
         : typeof value === 'string' && /^\d+$/.test(value) ? Number(value) : NaN;
       const offset = parse(req.query.offset, 0);
       const limit = parse(req.query.limit, 12_000);
       const content = artifact.bytes.toString('utf8');
+      if (/\.(?:diff|patch)$/i.test(file.path) && (content.includes('\0') || !Buffer.from(content).equals(artifact.bytes))) {
+        return invalidDesign('源码差异不是有效的 UTF-8 文本');
+      }
       if (!Number.isSafeInteger(offset) || offset < 0 || offset > content.length
         || !Number.isInteger(limit) || limit < 1 || limit > 16_000) return invalidDesign('请使用有效的文本起点及长度');
       let end = Math.min(offset + limit, content.length);
       const nextChar = content.charCodeAt(end);
       if (nextChar >= 0xdc00 && nextChar <= 0xdfff) end++;
-      return res.json({ artifactId, path: artifact.file.path, sha256: artifact.file.sha256, offset,
+      return res.json({ artifactId, path: file.path, sha256: file.sha256, offset,
         nextOffset: end < content.length ? end : null, text: content.slice(offset, end) });
     }
     const attachment = artifact.attachment ?? (req.query.download === 'true' ? artifact.file?.path.split('/').at(-1) : undefined);

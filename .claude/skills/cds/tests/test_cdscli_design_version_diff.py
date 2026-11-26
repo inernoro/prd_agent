@@ -5,7 +5,9 @@ import importlib.util
 import io
 import json
 import os
+from hashlib import sha256
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -85,6 +87,55 @@ class DesignVersionCli(unittest.TestCase):
                 self.assertNotEqual(status, 0, payload)
                 self.assertIn('版本', payload['error'])
         self.assertEqual(self.calls, [])
+
+    def test_delivery_pins_the_requested_version_and_checks_every_file_receipt(self):
+        filename = '交接清单.md'
+        chunks = {0: '前𠀀', 3: '后\n'}
+        content = ''.join(chunks.values())
+        digest = sha256(content.encode()).hexdigest()
+        selected = {'id': 'archived-v11', 'path': filename, 'kind': 'document',
+                    'text': True, 'sha256': digest, 'size': len(content.encode())}
+        later = {**selected, 'id': 'archived-v17', 'path': '新版说明.md'}
+        revisions = [{'version': 11, 'sourceCommit': 'a' * 40, 'delivery': {'files': [selected]}},
+                     {'version': 17, 'sourceCommit': 'b' * 40, 'delivery': {'files': [later]}}]
+        offsets = []
+        requested_versions = []
+        receipt_id = selected['id']
+
+        def read(method, endpoint, _body=None, **_kwargs):
+            self.assertEqual(method, 'GET')
+            target = urlsplit(endpoint)
+            arguments = parse_qs(target.query)
+            if target.path == BASE:
+                self.assertEqual(arguments['designId'], [DESIGN_ID])
+                requested_versions.append(arguments['version'][0])
+                return 200, {'projectId': 'fixture', 'designs': [
+                    {'id': DESIGN_ID, 'projectId': 'fixture', 'versions': revisions}]}, {}
+            self.assertEqual(target.path, BASE + '/artifacts/' + selected['id'])
+            self.assertEqual(arguments['view'], ['text'])
+            offset = int(arguments.get('offset', ['0'])[0])
+            offsets.append(offset)
+            return 200, {'path': filename, 'artifactId': receipt_id, 'sha256': digest,
+                         'offset': offset, 'nextOffset': 3 if offset == 0 else None, 'text': chunks[offset]}, {}
+
+        with patch.object(self.cli, '_request', read):
+            args = ('delivery', DESIGN_ID, '--version', '11')
+            status, payload = self.command(*args)
+            self.assertEqual(status, 0, payload)
+            self.assertEqual(payload['data']['version'], 11)
+            self.assertEqual(payload['data']['delivery']['files'], [selected])
+            status, payload = self.command(*args, '--file', filename)
+            self.assertEqual(status, 0, payload)
+            self.assertEqual(payload['data']['path'], filename)
+            self.assertEqual(payload['data']['text'], content)
+            self.assertEqual(offsets, [0, 3])
+
+            self.assertNotEqual(self.command('delivery', DESIGN_ID, '--version', '12')[0], 0)
+            self.assertNotEqual(self.command(*args, '--file', later['path'])[0], 0)
+            self.assertEqual(offsets, [0, 3])
+            receipt_id = later['id']
+            self.assertNotEqual(self.command(*args, '--file', filename)[0], 0)
+            self.assertEqual(requested_versions, ['11', '11', '12', '11', '11'])
 
     def test_freeze_passes_reason_and_expected_baseline_with_member_session(self):
         status, payload = self.command('freeze', DESIGN_ID, '11', '--reason', '复验旧版', '--expected-baseline', '17',

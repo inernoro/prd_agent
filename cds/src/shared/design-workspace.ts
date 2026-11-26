@@ -255,6 +255,10 @@ export type DesignEntry = {
   };
 };
 
+export function designImplementationTargetVersion(entry: Pick<DesignEntry, 'frozen' | 'upgrade'>): number | null {
+  return entry.upgrade?.status === 'active' ? entry.upgrade.targetVersion : entry.frozen ?? null;
+}
+
 export function currentDesignRun(entry: DesignEntry): DesignRun | undefined {
   if (entry.frozen === undefined) return undefined;
   return entry.runs.slice().reverse().find(run => run.version === entry.frozen
@@ -307,7 +311,8 @@ export type DesignIntake = {
   designs: Array<{
     designId: string; designKey?: string; title: string; latestVersion: number;
     sourceCommit: string; sourcePaths: string[]; scope?: DesignScope; canRevise: boolean; openFeedbackCount?: number;
-    baselineVersion?: number; handoffStatus?: DesignHandoffState['status']; implementedVersion?: number; versionGap?: DesignVersionGap; upgrade?: DesignUpgrade;
+    baselineVersion?: number; implementationTargetVersion: number | null; handoffStatus?: DesignHandoffState['status'];
+    implementedVersion?: number; versionGap?: DesignVersionGap; upgrade?: DesignUpgrade;
     versionHistory?: Array<{ version: number; sourceCommit: string }>;
   }>;
   frameworks: Array<{ id: string; title: string; latestVersion: number; adoptedVersion?: number }>;

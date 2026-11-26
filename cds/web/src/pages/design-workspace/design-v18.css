@@ -6,6 +6,14 @@
 .dw-crumb-draft { display: inline-flex; align-items: center; gap: 8px; min-width: 0; max-width: 34vw; vertical-align: bottom; }
 .dw-crumb-draft strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 650; }
 .dw-draft-actions .dw-info-body { z-index: 35; }
+.dw-copy-build small { color: var(--dw-muted); }
+@media (min-width: 768px) {
+  .dw-copy-build { order: -1; }
+}
+@media (max-width: 620px) {
+  .dw-draft-actions .dw-copy-build svg { display: block; }
+  .dw-copy-build-label { display: none; }
+}
 .dw-crumb-draft .dw-status { flex: none; }
 .dw-workspace--canvas > .dw-deliver[data-guided=true] { grid-template-columns: minmax(0, 1fr) min(300px, 30%); gap: 10px; }
 .dw-workspace--canvas > .dw-deliver[data-guided=true][data-side=off] { grid-template-columns: minmax(0, 1fr); }

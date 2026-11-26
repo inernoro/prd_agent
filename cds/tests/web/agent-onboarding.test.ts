@@ -243,11 +243,12 @@ describe('CDS Agent 接入口令', () => {
     expect(monitorOnboarding?.note).toContain('GET 只读说明和 POST 监控提议草案');
   });
 
-  it('每个任务都绑定真实能力，并声明完整技能包（六个技能）', () => {
+  it('每个任务都绑定真实能力，并声明完整技能包', () => {
     const capabilityIds = new Set(CDS_AGENT_CAPABILITY_DEFINITIONS.map((item) => item.id));
     expect(CDS_AGENT_SKILL_DEFINITIONS.map((item) => item.id)).toEqual([
       'cds',
       'cds-design',
+      'cds-build',
       'cds-project-scan',
       'cds-deploy-pipeline',
       'cds-release',
@@ -258,6 +259,14 @@ describe('CDS Agent 接入口令', () => {
       expect(bindings.length, `${missionId} 没有能力绑定`).toBeGreaterThan(0);
       expect(bindings.every((id) => capabilityIds.has(id)), `${missionId} 绑定了未知能力`).toBe(true);
     }
+  });
+
+  it('Codex 和 Claude Code 可从主仓发现同一份实施技能', () => {
+    const repo = path.resolve(process.cwd(), '..');
+    const canonical = path.join(repo, '.claude/skills/cds-build/SKILL.md');
+    const codex = path.join(repo, '.agents/skills/cds-build/SKILL.md');
+    expect(fs.realpathSync(codex)).toBe(fs.realpathSync(canonical));
+    expect(fs.readFileSync(canonical, 'utf8')).toMatch(/^name: cds-build\r?$/m);
   });
 
   it('账号身份、恢复、Key 通知交接和系统改密保留人工确认且不暴露工具', () => {
