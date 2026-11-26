@@ -62,8 +62,6 @@ cd cds
 
 复查上线首周时，以控制面实际更新时刻为起点。用 `GET /api/server-events?source=artifact-verification` 的 `since` 和 `before` 参数分段取样，筛选范围含起点、排除终点。单段达到 1000 条时继续拆短，避免漏掉较早记录。排障结束后，可将 `CDS_ARTIFACT_VERIFICATION_MONITOR` 设为 `0` 并按 CDS 配置流程重启。历史记录按保留期过期，镜像核验和重试继续生效。
 
-使用隔离的本地 Docker 可复现末尾镜像未启动的问题。安装 CDS 依赖后，在 `cds/` 运行 `pnpm exec tsx scripts/verify-artifact-retry.ts` 验证当前版本。将主干基线检出到另一个工作区并安装其 CDS 依赖，再从候选版本运行同一脚本并加 `--baseline <基线仓库目录>`。两边使用相同的六镜像和超时条件，脚本只清理本次生成的镜像。
-
 ### 托管站点免密登录
 
 托管站点免密登录默认关闭，现有 HTTPS 会话沿用原有 Cookie。启用时，在使用 MongoDB 持久化账号的 CDS 控制面设置 `CDS_PASSKEYS_ENABLED=1`，并用 `CDS_PUBLIC_BASE_URL` 指定登录页的 HTTPS 源地址。OpenID Connect 签发服务使用 Node 22 LTS 或更新的 LTS。项目必须由 CDS 实际发布，项目入口和 CDS 登录页使用同一注册域下的独立 HTTPS 主机。
@@ -228,3 +226,7 @@ GitHub App 授权也不是项目运行变量。
 ## 跨项目引用变量
 
 要调用别的项目的服务，不要手写它的预览域名。值里写 `${CDS_REF:项目/服务}`（可加 `@分支`），CDS 在部署时换成目标的公网入口，并在分支「配置 → 引用」分区显示目标现在活没活、可以切换指向哪条分支。手写的网址会被标为「建议改成引用变量」。
+
+## 实现来源
+
+使用隔离的本地 Docker 可复现末尾镜像未启动的问题。安装 CDS 依赖后，在 `cds/` 运行 `pnpm exec tsx scripts/verify-artifact-retry.ts` 验证当前版本。将主干基线检出到另一个工作区并安装其 CDS 依赖，再从候选版本运行同一脚本并加 `--baseline <基线仓库目录>`。两边使用相同的六镜像和超时条件，脚本只清理本次生成的镜像。[镜像核验复现脚本](../cds/scripts/verify-artifact-retry.ts)
