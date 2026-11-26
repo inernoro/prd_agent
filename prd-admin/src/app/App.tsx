@@ -93,6 +93,7 @@ const RichComposerLab = lazy(() => import('@/pages/_dev/RichComposerLab'));
 const WebHostingShareDemo = lazy(() => import('@/pages/_dev/WebHostingShareDemo'));
 const WebHostingCardsDemo = lazy(() => import('@/pages/_dev/WebHostingCardsDemo'));
 const StreamingTextLab = lazy(() => import('@/pages/_dev/StreamingTextLab'));
+const SpeakerLogPrototype = lazy(() => import('@/pages/_dev/speaker-log/SpeakerLogPrototype'));
 const MobileAuditPage = lazy(() => import('@/pages/_dev/MobileAuditPage'));
 const PortfolioShowcasePage = lazy(() => import('@/pages/PortfolioShowcasePage'));
 const MarketplacePage = lazy(() => import('@/pages/marketplace').then(m => ({ default: m.MarketplacePage })));
@@ -328,6 +329,7 @@ export default function App() {
         <Route path="/_dev/web-hosting-share" element={<WebHostingShareDemo />} />
         <Route path="/_dev/web-hosting-cards" element={<WebHostingCardsDemo />} />
         <Route path="/_dev/streaming-text-lab" element={<StreamingTextLab />} />
+        <Route path="/_dev/speaker-log" element={<SpeakerLogPrototype />} />
         <Route path="/_dev/marketplace-card-demo" element={<MarketplacePage />} />
 
         {/* ── NAV_REGISTRY 中 placement='fullscreen' 的条目（独立全屏，不进 AppShell） */}
