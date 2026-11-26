@@ -1,4 +1,4 @@
-# 版本差异：V1 → V2
+# 版本差异：V1 → V3
 
 > 程序生成（version-diff.mjs），不要手改。方向：升级。只列净变化：中间版本加了又删的不出现。
 
@@ -18,15 +18,15 @@
 
 - 新增 4：自检 1（checks/handoff-local.json）；源码 1（src/assets/demo-film.webm）；工具 2（tools/handoff-local.mjs、tools/make-demo-film.mjs）
 - 删除 0：无
-- 改动 21：自检 1（checks/result.json）；其他 2（design.json、versions.json）；原型 1（dist/index.html）；源码 9（src/added/pages/quick-creation-agent/AttachmentTray.tsx、src/added/pages/quick-creation-agent/QuickCreationAgentPage.tsx、src/added/pages/quick-creation-agent/ResultPanel.tsx、src/added/pages/quick-creation-agent/RunProgress.tsx、src/added/pages/quick-creation-agent/WorksList.tsx、src/added/pages/quick-creation-agent/types.ts…）；工具 5（tools/interact-check.mjs、tools/manifest-src.mjs、tools/prototype-build.prd-admin.patch、tools/self-check.mjs、tools/walkthrough.json）；文档 3（交付说明.md、思路.md、设计文档/源码差异.diff）
+- 改动 22：自检 1（checks/result.json）；其他 2（design.json、versions.json）；原型 1（dist/index.html）；源码 9（src/added/pages/quick-creation-agent/AttachmentTray.tsx、src/added/pages/quick-creation-agent/QuickCreationAgentPage.tsx、src/added/pages/quick-creation-agent/ResultPanel.tsx、src/added/pages/quick-creation-agent/RunProgress.tsx、src/added/pages/quick-creation-agent/WorksList.tsx、src/added/pages/quick-creation-agent/types.ts…）；工具 5（tools/interact-check.mjs、tools/manifest-src.mjs、tools/prototype-build.prd-admin.patch、tools/self-check.mjs、tools/walkthrough.json）；文档 4（交付说明.md、交接清单.md、思路.md、设计文档/源码差异.diff）
 
 源码差异在 `source.diff`：10 个文件。
 
 ## 四、自检
 
 - V1：41/41
-- V2：43/43
+- V3：43/43
 
 ## 五、稿件属性
 
-- prototypeVersion：1 → 2
+- prototypeVersion：1 → 3

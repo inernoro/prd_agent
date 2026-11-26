@@ -52,7 +52,7 @@ diff --git a/src/added/pages/quick-creation-agent/QuickCreationAgentPage.tsx b/s
  } from '@/services/real/quickCreation';
  import { AttachmentReview, AttachmentTray, SentAttachmentSummary } from './AttachmentTray';
  import { FailureCard, QueueCard, RunProgress } from './RunProgress';
-@@ -72,24 +72,30 @@ export function QuickCreationAgentPage() {
+@@ -72,24 +72,32 @@ export function QuickCreationAgentPage() {
      if (!templateId && kindTemplates[0]) setTemplateId(kindTemplates[0].id);
    }, [kindTemplates, templateId]);
  
@@ -79,6 +79,8 @@ diff --git a/src/added/pages/quick-creation-agent/QuickCreationAgentPage.tsx b/s
 +    return () => { stop = true; };
    }, [runId]);
  
++  /* 进行中的任务每秒查一次：阶段切换和恢复结果能在一秒内出现 */
++  const POLL_MS = 1000;
 +  /* 轮询跟着任务状态走：排队、生成、发布中继续查；恢复或重试让任务重新进行时自动接上 */
 +  const isLive = !!run && run.id === runId && (run.status === 'queued' || run.status === 'running' || run.publish.status === 'publishing');
 +  useEffect(() => {
@@ -87,14 +89,14 @@ diff --git a/src/added/pages/quick-creation-agent/QuickCreationAgentPage.tsx b/s
 +    const timer = window.setTimeout(async () => {
 +      const res = await getQuickCreationRun(runId);
 +      if (!stop && res.success) setRun(res.data);
-+    }, 1500);
++    }, POLL_MS);
 +    return () => { stop = true; window.clearTimeout(timer); };
 +  }, [isLive, runId, run]);
 +
    const openRun = (id: string) => setParams({ run: id });
    const startNew = () => { setParams({}); setAsk(''); setAttachments([]); };
  
-@@ -108,7 +114,19 @@ export function QuickCreationAgentPage() {
+@@ -108,7 +116,19 @@ export function QuickCreationAgentPage() {
    const retryRead = async (id: string) => {
      setAttachments(list => list.map(a => (a.id === id ? { ...a, status: 'reading', progress: 0, error: undefined } : a)));
      const res = await retryAttachmentRead(id);
@@ -115,7 +117,7 @@ diff --git a/src/added/pages/quick-creation-agent/QuickCreationAgentPage.tsx b/s
    };
    const sum = summarizeAttachments(attachments);
    const hasText = attachments.some(a => a.status === 'ready' && a.kind !== 'image');
-@@ -227,11 +245,11 @@ export function QuickCreationAgentPage() {
+@@ -227,11 +247,11 @@ export function QuickCreationAgentPage() {
            <AttachmentTray items={attachments} onRemove={id => setAttachments(l => l.filter(a => a.id !== id))} onRetry={id => void retryRead(id)}
              onClearFailed={() => setAttachments(l => l.filter(a => a.status !== 'failed'))} />
            <label htmlFor="qc-ask" className="sr-only">补充要求</label>
@@ -129,7 +131,7 @@ diff --git a/src/added/pages/quick-creation-agent/QuickCreationAgentPage.tsx b/s
                onChange={e => { const files = Array.from(e.target.files ?? []); e.target.value = ''; files.forEach(f => void addFile(f)); }} />
              <button type="button" aria-label="上传稿件或图片" className="qc-icon-btn" onClick={() => fileInput.current?.click()}><Paperclip size={16} /></button>
              <button type="button" aria-label="从知识库选择" data-qc="pick-knowledge" className="qc-icon-btn" onClick={() => void addKnowledge('kb-picker')}><BookOpen size={16} /></button>
-@@ -256,7 +274,7 @@ export function QuickCreationAgentPage() {
+@@ -256,7 +276,7 @@ export function QuickCreationAgentPage() {
          </div>
          <div className="qc-rise flex items-center gap-2 rounded-[var(--radius-field)] border border-token-subtle bg-token-nested px-3 py-2 text-[12.5px] text-token-secondary">
            <Check size={14} className="shrink-0 text-[color:var(--accent-fg-success)]" aria-hidden />
@@ -138,7 +140,7 @@ diff --git a/src/added/pages/quick-creation-agent/QuickCreationAgentPage.tsx b/s
          </div>
          {run.status === 'queued' && <QueueCard run={run} />}
          <RunProgress run={run} />
-@@ -276,14 +294,14 @@ export function QuickCreationAgentPage() {
+@@ -276,14 +296,14 @@ export function QuickCreationAgentPage() {
                <div className="space-y-2 rounded-[var(--radius-field)] border border-[color:var(--accent-fg-error)]/35 bg-[color:var(--accent-fg-error)]/[0.06] p-3" role="alert" data-qc="publish-failed">
                  <div className="text-[13px] font-medium text-[color:var(--accent-fg-error)]">发布没有完成</div>
                  <div className="text-[12px] leading-5 text-token-secondary">{run.publish.error}。{run.kind === 'video' ? '成片' : '网页'}已保存在作品里，右侧照常可看；重试只上传，不会重新生成。</div>
@@ -155,7 +157,7 @@ diff --git a/src/added/pages/quick-creation-agent/QuickCreationAgentPage.tsx b/s
                    <ExternalLink size={13} />在网页托管中查看
                  </Button>
                </div>
-@@ -295,14 +313,14 @@ export function QuickCreationAgentPage() {
+@@ -295,14 +315,14 @@ export function QuickCreationAgentPage() {
          {run.status === 'queued' || run.status === 'running' ? (
            <>
              <span className="min-w-0 flex-1">可以离开，完成后会发站内通知，也能在「我的作品」找到它。</span>
@@ -172,7 +174,7 @@ diff --git a/src/added/pages/quick-creation-agent/QuickCreationAgentPage.tsx b/s
                用这份稿件做{run.kind === 'video' ? '网页' : '视频'}
              </Button>
            </>
-@@ -342,7 +360,7 @@ export function QuickCreationAgentPage() {
+@@ -342,7 +362,7 @@ export function QuickCreationAgentPage() {
    const loading = runId && !run && !runError;
    const ready = loading ? undefined : run ? `run-${run.status}` : 'compose';
    return (
@@ -433,15 +435,15 @@ diff --git a/src/env.ts b/src/env.ts
 +  return at ? { ...withMedia, publish: { status: 'done', siteId: `site-${run.id}`, siteTitle: run.title, at } } : withMedia;
 +}
 +
-+/* 恢复中的任务（演示时间压缩）：单幕重做约 3 秒；超时后重新排队约 2 秒，再从未画完的幕继续 */
++/* 恢复中的任务（演示时间压缩）：单幕重做约 1.6 秒；超时后重新排队约 2 秒，再从未画完的幕继续 */
 +function recoveryRun(rec: Recovery): QcRun {
 +  const t = (Date.now() - rec.startedAt) / 1000;
 +  const { base, keep, redo } = rec;
 +  const sceneOf = (status: (i: number) => QcScene['status']) => (base.scenes ?? []).map((sc, i) => ({ ...sc, status: keep.has(i) ? keep.get(i)! : status(i) }));
 +  const common = { failure: undefined, elapsedSec: base.elapsedSec + Math.round(t * 6), estimateBasis: '只重做没完成的部分', publish: base.publish };
 +  if (rec.kind === 'scene') {
-+    if (t < 1.5) return { ...base, ...common, status: 'running', stages: stagesAt('video', 2, { progress: Math.round((t / 1.5) * 100) }), remainSec: Math.round((3 - t) * 6), scenes: sceneOf(() => 'voicing') };
-+    if (t < 3) return { ...base, ...common, status: 'running', stages: stagesAt('video', 3, { progress: Math.round(((t - 1.5) / 1.5) * 100) }), remainSec: Math.round((3 - t) * 6), scenes: sceneOf(() => 'ready').map(sc => ({ ...sc, status: 'ready' })) };
++    if (t < 0.8) return { ...base, ...common, status: 'running', stages: stagesAt('video', 2, { progress: Math.round((t / 0.8) * 100) }), remainSec: Math.round((1.6 - t) * 6), scenes: sceneOf(() => 'voicing') };
++    if (t < 1.6) return { ...base, ...common, status: 'running', stages: stagesAt('video', 3, { progress: Math.round(((t - 0.8) / 0.8) * 100) }), remainSec: Math.round((1.6 - t) * 6), scenes: sceneOf(() => 'ready').map(sc => ({ ...sc, status: 'ready' })) };
 +    return { ...base, ...common, status: 'done', stages: stagesAt('video', 4), remainSec: undefined, durationSec: 96, scenes: sceneOf(() => 'ready').map(sc => ({ ...sc, status: 'ready' })) };
 +  }
 +  const q = rec.kind === 'requeue' ? 2 : 0;

@@ -84,6 +84,8 @@ export function QuickCreationAgentPage() {
     return () => { stop = true; };
   }, [runId]);
 
+  /* 进行中的任务每秒查一次：阶段切换和恢复结果能在一秒内出现 */
+  const POLL_MS = 1000;
   /* 轮询跟着任务状态走：排队、生成、发布中继续查；恢复或重试让任务重新进行时自动接上 */
   const isLive = !!run && run.id === runId && (run.status === 'queued' || run.status === 'running' || run.publish.status === 'publishing');
   useEffect(() => {
@@ -92,7 +94,7 @@ export function QuickCreationAgentPage() {
     const timer = window.setTimeout(async () => {
       const res = await getQuickCreationRun(runId);
       if (!stop && res.success) setRun(res.data);
-    }, 1500);
+    }, POLL_MS);
     return () => { stop = true; window.clearTimeout(timer); };
   }, [isLive, runId, run]);
 

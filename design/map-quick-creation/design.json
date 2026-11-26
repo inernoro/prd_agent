@@ -4,7 +4,7 @@
   "group": "MAP · 创作",
   "framework": "FW-MAP-ADMIN",
   "frameworkVersion": 1,
-  "prototypeVersion": 2,
+  "prototypeVersion": 3,
   "date": "2026-11-26",
   "rationale": "思路.md",
   "prototype": "dist/index.html",

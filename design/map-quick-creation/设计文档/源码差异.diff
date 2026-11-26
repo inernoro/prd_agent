@@ -262,10 +262,10 @@ index 00000000..b747e90e
 +}
 diff --git a/prd-admin/src/pages/quick-creation-agent/QuickCreationAgentPage.tsx b/prd-admin/src/pages/quick-creation-agent/QuickCreationAgentPage.tsx
 new file mode 100644
-index 00000000..a6425996
+index 00000000..005993ba
 --- /dev/null
 +++ b/prd-admin/src/pages/quick-creation-agent/QuickCreationAgentPage.tsx
-@@ -0,0 +1,384 @@
+@@ -0,0 +1,386 @@
 +/**
 + * 快速创作智能体：一份文档 + 一个模板 → 能播放的视频或能浏览的网页，并发布到网页托管。
 + * - 生成在服务端排队执行，离开页面不取消；地址里的 ?run= 让用户回到同一个任务。
@@ -352,6 +352,8 @@ index 00000000..a6425996
 +    return () => { stop = true; };
 +  }, [runId]);
 +
++  /* 进行中的任务每秒查一次：阶段切换和恢复结果能在一秒内出现 */
++  const POLL_MS = 1000;
 +  /* 轮询跟着任务状态走：排队、生成、发布中继续查；恢复或重试让任务重新进行时自动接上 */
 +  const isLive = !!run && run.id === runId && (run.status === 'queued' || run.status === 'running' || run.publish.status === 'publishing');
 +  useEffect(() => {
@@ -360,7 +362,7 @@ index 00000000..a6425996
 +    const timer = window.setTimeout(async () => {
 +      const res = await getQuickCreationRun(runId);
 +      if (!stop && res.success) setRun(res.data);
-+    }, 1500);
++    }, POLL_MS);
 +    return () => { stop = true; window.clearTimeout(timer); };
 +  }, [isLive, runId, run]);
 +

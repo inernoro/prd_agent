@@ -89,7 +89,8 @@ const rows = [
 const INTERACTIVE = new Set(['A-12', 'A-15', 'A-17', 'A-18', 'A-19', 'A-20', 'A-23', 'A-24', 'A-25', 'A-26', 'A-27', 'A-29', 'A-30', 'A-32', 'A-33', 'A-39', 'A-40', 'A-41', 'A-42']);
 const acceptance = rows.map(([id, ruleId, screenId, how, slots, rule, expected, extra]) => ({ id, ...(ruleId ? { ruleId } : {}), screenId, how, slots, rule, expected, ...(extra ?? {}), ...(INTERACTIVE.has(id) ? { interaction: true } : {}) }));
 
-/* 可运行场景：每个从进入画面开始、以结果检查结束；失败恢复先 remember 已完成的状态，再用 sameAs 核对保留 */
+/* 可运行场景：每个从进入画面开始、以结果检查结束；失败恢复先 remember 已完成的状态，再用 sameAs 核对保留。
+ * 字段与 CDS 发布接口一致：expect 的字面值用 equals；media-playing / audio-playing 是 expect 的检查方式。 */
 const SAMPLE_PASTE = '# 新同事入职第一周\n' + '第一天先领账号与权限，第二天熟悉知识库目录，第三天旁听一次需求评审，第四天提一个小改动，第五天写一份周小结。'.repeat(8);
 const cases = [
   { id: 'submit-sample-doc', title: '用示例稿件快捷生成，提交后看到已保存与排队', screenId: 'compose', theme: 'light', ruleIds: ['A-12', 'A-19', 'A-20'], steps: [
@@ -102,31 +103,31 @@ const cases = [
   ] },
   { id: 'submit-pasted-text', title: '粘贴长正文成为稿件附件后生成', screenId: 'compose', theme: 'light', ruleIds: ['A-41'], steps: [
     { action: 'fill', selector: '#qc-ask', value: SAMPLE_PASTE },
-    { action: 'expect', selector: '#qc-ask', check: 'value', value: '' },
-    { action: 'expect', selector: '[data-qc=attachment-tray]', check: 'attribute', attribute: 'data-count', value: '1' },
+    { action: 'expect', selector: '#qc-ask', check: 'value', equals: '' },
+    { action: 'expect', selector: '[data-qc=attachment-tray]', check: 'attribute', attribute: 'data-count', equals: '1' },
     { action: 'expect', selector: '[data-qc=submit]', check: 'enabled' },
     { action: 'click', selector: '[data-qc=submit]' },
     { action: 'expect', selector: '[data-qc=queue-card]', check: 'visible' },
   ] },
   { id: 'submit-uploaded-file', title: '上传 Markdown 稿件后生成', screenId: 'compose', theme: 'light', ruleIds: ['A-42'], steps: [
     { action: 'attach', selector: '[data-qc=file-input]', name: '评审要点.md', value: '# 评审要点\n先读目标，再画边界，最后对验收。' },
-    { action: 'expect', selector: '[data-qc=attachment-tray]', check: 'attribute', attribute: 'data-count', value: '1' },
+    { action: 'expect', selector: '[data-qc=attachment-tray]', check: 'attribute', attribute: 'data-count', equals: '1' },
     { action: 'expect', selector: '[data-qc=submit]', check: 'enabled' },
     { action: 'click', selector: '[data-qc=submit]' },
     { action: 'expect', selector: '[data-qc=queue-card]', check: 'visible' },
   ] },
   { id: 'retry-failed-attachment', title: '读取失败的附件单项重试，其它附件保持不变', screenId: 'attachments-expanded', theme: 'light', ruleIds: ['A-15', 'A-17'], steps: [
     { action: 'remember', selector: '[data-att-id=att-doc-habits]', check: 'attribute', attribute: 'data-att-status', as: 'habits' },
-    { action: 'expect', selector: '[data-att-id=att-doc-minutes]', check: 'attribute', attribute: 'data-att-status', value: 'failed' },
+    { action: 'expect', selector: '[data-att-id=att-doc-minutes]', check: 'attribute', attribute: 'data-att-status', equals: 'failed' },
     { action: 'click', selector: '[data-att-id=att-doc-minutes] [data-qc=att-retry]' },
-    { action: 'expect', selector: '[data-att-id=att-doc-minutes]', check: 'attribute', attribute: 'data-att-status', value: 'ready' },
+    { action: 'expect', selector: '[data-att-id=att-doc-minutes]', check: 'attribute', attribute: 'data-att-status', equals: 'ready' },
     { action: 'expect', selector: '[data-att-id=att-doc-habits]', check: 'attribute', attribute: 'data-att-status', sameAs: 'habits' },
-    { action: 'expect', selector: '[data-qc=attachment-tray]', check: 'attribute', attribute: 'data-failed-count', value: '0' },
+    { action: 'expect', selector: '[data-qc=attachment-tray]', check: 'attribute', attribute: 'data-failed-count', equals: '0' },
   ] },
   { id: 'remove-failed-attachment', title: '移除读取失败的附件', screenId: 'attachments-expanded', theme: 'dark', ruleIds: ['A-15'], steps: [
     { action: 'remember', selector: '[data-att-id=att-doc-habits]', check: 'attribute', attribute: 'data-att-status', as: 'habits' },
     { action: 'click', selector: '[data-att-id=att-doc-minutes] [data-qc=att-remove]' },
-    { action: 'expect', selector: '[data-qc=attachment-tray]', check: 'attribute', attribute: 'data-failed-count', value: '0' },
+    { action: 'expect', selector: '[data-qc=attachment-tray]', check: 'attribute', attribute: 'data-failed-count', equals: '0' },
     { action: 'expect', selector: '[data-att-id=att-doc-habits]', check: 'attribute', attribute: 'data-att-status', sameAs: 'habits' },
   ] },
   { id: 'leave-and-return', title: '排队中离开，从作品列表回到同一任务', screenId: 'queued', theme: 'light', ruleIds: ['A-23'], steps: [
@@ -139,9 +140,9 @@ const cases = [
   ] },
   { id: 'retry-failed-scene', title: '单幕配音失败只重做这一幕，其余幕保留，最后得到成片', screenId: 'failed-scene', theme: 'light', ruleIds: ['A-24'], steps: [
     { action: 'remember', selector: '[data-scene="1"]', check: 'attribute', attribute: 'data-scene-status', as: 'scene1' },
-    { action: 'expect', selector: '[data-scene="4"]', check: 'attribute', attribute: 'data-scene-status', value: 'failed' },
+    { action: 'expect', selector: '[data-scene="4"]', check: 'attribute', attribute: 'data-scene-status', equals: 'failed' },
     { action: 'click', selector: '[data-qc=recover-primary]' },
-    { action: 'expect', selector: '[data-scene="4"]', check: 'attribute', attribute: 'data-scene-status', value: 'voicing' },
+    { action: 'expect', selector: '[data-scene="4"]', check: 'attribute', attribute: 'data-scene-status', equals: 'voicing' },
     { action: 'expect', selector: '[data-scene="1"]', check: 'attribute', attribute: 'data-scene-status', sameAs: 'scene1' },
     { action: 'expect', selector: '[data-qc=video-player]', check: 'visible' },
   ] },
@@ -156,9 +157,9 @@ const cases = [
     { action: 'expect', selector: '[data-qc=film]', check: 'media-playing' },
     { action: 'expect', selector: '[data-qc=film]', check: 'audio-playing' },
     { action: 'click', selector: '[data-qc=key-point-2]' },
-    { action: 'expect', selector: '[data-qc=video-player]', check: 'attribute', attribute: 'data-scene-index', value: '4' },
+    { action: 'expect', selector: '[data-qc=video-player]', check: 'attribute', attribute: 'data-scene-index', equals: '4' },
     { action: 'click', selector: '[data-qc=captions-toggle]' },
-    { action: 'expect', selector: '[data-qc=captions-toggle]', check: 'attribute', attribute: 'aria-pressed', value: 'false' },
+    { action: 'expect', selector: '[data-qc=captions-toggle]', check: 'attribute', attribute: 'aria-pressed', equals: 'false' },
   ] },
   { id: 'publish-retry-to-hosting', title: '发布失败后成片仍可播，重试成功并落到网页托管记录', screenId: 'done-video', theme: 'dark', ruleIds: ['A-29', 'A-30', 'A-40'], steps: [
     { action: 'click', selector: '[data-qc=publish]' },
@@ -171,11 +172,11 @@ const cases = [
   ] },
   { id: 'web-key-point', title: '网页成品：重点定位到对应一节', screenId: 'web-done', theme: 'light', ruleIds: ['A-32'], steps: [
     { action: 'click', selector: '[data-qc=web-point-2]' },
-    { action: 'expect', selector: '[data-qc=web-preview]', check: 'attribute', attribute: 'data-active-anchor', value: 'scope' },
+    { action: 'expect', selector: '[data-qc=web-preview]', check: 'attribute', attribute: 'data-active-anchor', equals: 'scope' },
   ] },
   { id: 'redo-as-web', title: '用同一份稿件改做网页，稿件与要求带回', screenId: 'done-video', theme: 'light', ruleIds: ['A-33', 'A-39'], steps: [
     { action: 'click', selector: '[data-qc=redo-other]' },
-    { action: 'expect', selector: '[data-qc-ready]', check: 'attribute', attribute: 'data-output', value: 'web' },
+    { action: 'expect', selector: '[data-qc-ready]', check: 'attribute', attribute: 'data-output', equals: 'web' },
     { action: 'expect', selector: '[data-qc=submit]', check: 'enabled' },
   ] },
   { id: 'review-sent-attachments', title: '回看已发送的附件并回到预览', screenId: 'done-video', theme: 'light', ruleIds: ['A-18'], steps: [
@@ -203,7 +204,7 @@ const manifest = {
   group: 'MAP · 创作',
   framework: 'FW-MAP-ADMIN',
   frameworkVersion: 1,
-  prototypeVersion: 2,
+  prototypeVersion: 3,
   date: new Date().toISOString().slice(0, 10),
   rationale: '思路.md',
   prototype: 'dist/index.html',

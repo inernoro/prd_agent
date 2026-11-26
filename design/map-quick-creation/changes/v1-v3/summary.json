@@ -6,10 +6,10 @@
   "title": "快速创作 · 交付说明（V1）"
  },
  "to": {
-  "label": "V2",
-  "version": 2,
+  "label": "V3",
+  "version": 3,
   "commit": null,
-  "title": "快速创作 · 交付说明（V2）"
+  "title": "快速创作 · 交付说明（V3）"
  },
  "direction": "upgrade",
  "acceptance": {
@@ -232,7 +232,7 @@
  "meta": {
   "prototypeVersion": {
    "from": 1,
-   "to": 2
+   "to": 3
   }
  },
  "files": {
@@ -333,6 +333,10 @@
     "area": "文档"
    },
    {
+    "path": "交接清单.md",
+    "area": "文档"
+   },
+   {
     "path": "思路.md",
     "area": "文档"
    },
@@ -356,6 +360,6 @@
  },
  "source": {
   "files": 10,
-  "bytes": 45236
+  "bytes": 45366
  }
 }

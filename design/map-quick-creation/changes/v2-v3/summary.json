@@ -1,0 +1,97 @@
+{
+ "from": {
+  "label": "V2",
+  "version": 2,
+  "commit": "b3c2428f839e300f040866d7e367d1b1cd39e7ed",
+  "title": "快速创作 · 交付说明（V2）"
+ },
+ "to": {
+  "label": "V3",
+  "version": 3,
+  "commit": null,
+  "title": "快速创作 · 交付说明（V3）"
+ },
+ "direction": "upgrade",
+ "acceptance": {
+  "added": [],
+  "removed": [],
+  "changed": []
+ },
+ "screens": {
+  "added": [],
+  "removed": [],
+  "changed": []
+ },
+ "docs": {
+  "added": [],
+  "removed": []
+ },
+ "meta": {
+  "prototypeVersion": {
+   "from": 2,
+   "to": 3
+  }
+ },
+ "files": {
+  "added": [],
+  "removed": [],
+  "changed": [
+   {
+    "path": "design.json",
+    "area": "其他"
+   },
+   {
+    "path": "dist/index.html",
+    "area": "原型"
+   },
+   {
+    "path": "src/added/pages/quick-creation-agent/QuickCreationAgentPage.tsx",
+    "area": "源码"
+   },
+   {
+    "path": "src/env.ts",
+    "area": "源码"
+   },
+   {
+    "path": "tools/handoff-local.mjs",
+    "area": "工具"
+   },
+   {
+    "path": "tools/manifest-src.mjs",
+    "area": "工具"
+   },
+   {
+    "path": "versions.json",
+    "area": "其他"
+   },
+   {
+    "path": "交付说明.md",
+    "area": "文档"
+   },
+   {
+    "path": "思路.md",
+    "area": "文档"
+   },
+   {
+    "path": "设计文档/源码差异.diff",
+    "area": "文档"
+   }
+  ]
+ },
+ "checks": {
+  "from": {
+   "passed": 43,
+   "total": 43,
+   "failed": []
+  },
+  "to": {
+   "passed": 43,
+   "total": 43,
+   "failed": []
+  }
+ },
+ "source": {
+  "files": 2,
+  "bytes": 3360
+ }
+}

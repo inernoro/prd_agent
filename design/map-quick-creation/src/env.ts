@@ -69,15 +69,15 @@ function withPublish(run: QcRun): QcRun {
   return at ? { ...withMedia, publish: { status: 'done', siteId: `site-${run.id}`, siteTitle: run.title, at } } : withMedia;
 }
 
-/* 恢复中的任务（演示时间压缩）：单幕重做约 3 秒；超时后重新排队约 2 秒，再从未画完的幕继续 */
+/* 恢复中的任务（演示时间压缩）：单幕重做约 1.6 秒；超时后重新排队约 2 秒，再从未画完的幕继续 */
 function recoveryRun(rec: Recovery): QcRun {
   const t = (Date.now() - rec.startedAt) / 1000;
   const { base, keep, redo } = rec;
   const sceneOf = (status: (i: number) => QcScene['status']) => (base.scenes ?? []).map((sc, i) => ({ ...sc, status: keep.has(i) ? keep.get(i)! : status(i) }));
   const common = { failure: undefined, elapsedSec: base.elapsedSec + Math.round(t * 6), estimateBasis: '只重做没完成的部分', publish: base.publish };
   if (rec.kind === 'scene') {
-    if (t < 1.5) return { ...base, ...common, status: 'running', stages: stagesAt('video', 2, { progress: Math.round((t / 1.5) * 100) }), remainSec: Math.round((3 - t) * 6), scenes: sceneOf(() => 'voicing') };
-    if (t < 3) return { ...base, ...common, status: 'running', stages: stagesAt('video', 3, { progress: Math.round(((t - 1.5) / 1.5) * 100) }), remainSec: Math.round((3 - t) * 6), scenes: sceneOf(() => 'ready').map(sc => ({ ...sc, status: 'ready' })) };
+    if (t < 0.8) return { ...base, ...common, status: 'running', stages: stagesAt('video', 2, { progress: Math.round((t / 0.8) * 100) }), remainSec: Math.round((1.6 - t) * 6), scenes: sceneOf(() => 'voicing') };
+    if (t < 1.6) return { ...base, ...common, status: 'running', stages: stagesAt('video', 3, { progress: Math.round(((t - 0.8) / 0.8) * 100) }), remainSec: Math.round((1.6 - t) * 6), scenes: sceneOf(() => 'ready').map(sc => ({ ...sc, status: 'ready' })) };
     return { ...base, ...common, status: 'done', stages: stagesAt('video', 4), remainSec: undefined, durationSec: 96, scenes: sceneOf(() => 'ready').map(sc => ({ ...sc, status: 'ready' })) };
   }
   const q = rec.kind === 'requeue' ? 2 : 0;

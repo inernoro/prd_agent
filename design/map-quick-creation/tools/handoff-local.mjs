@@ -44,7 +44,9 @@ async function readCheck(frame, step) {
   if (step.check === 'enabled') return String(await el.isEnabled());
   throw new Error(`不支持的检查：${step.check}`);
 }
-async function until(fn, ms = 8000) {
+/* 等待上限取 3 秒：比 CDS 交接检查更严，避免本机预跑放过只在宽松等待下才通过的场景（V2 回执的 retry-failed-scene 就是这样） */
+const WAIT_MS = Number(opt('wait') ?? 3000);
+async function until(fn, ms = WAIT_MS) {
   const end = Date.now() + ms; let last;
   while (Date.now() < end) { try { const r = await fn(); if (r === true) return; last = r; } catch (e) { last = e.message; } await new Promise(r => setTimeout(r, 150)); }
   throw new Error(typeof last === 'string' ? last : `超时：${JSON.stringify(last)}`);
@@ -75,8 +77,18 @@ for (const c of design.handoff.cases) {
         else if (step.action === 'attach') { const el = await only1(frame, step.selector); await el.setInputFiles({ name: step.name, mimeType: /\.md$/.test(step.name) ? 'text/markdown' : 'text/plain', buffer: Buffer.from(step.value) }); }
         else if (step.action === 'remember') memory[step.as] = await readCheck(frame, step);
         else if (step.action === 'expect') {
-          const want = step.sameAs !== undefined ? memory[step.sameAs] : step.value !== undefined ? String(step.value) : 'true';
-          await until(async () => { const got = await readCheck(frame, step); return got === want || { want, got }; });
+          if (step.check === 'media-playing' || step.check === 'audio-playing') {
+            await only1(frame, step.selector);
+            const t0 = await frame.$eval(step.selector, v => v.currentTime);
+            await until(async () => {
+              const s = await frame.$eval(step.selector, v => ({ paused: v.paused, t: v.currentTime, audio: v.webkitAudioDecodedByteCount ?? (v.mozHasAudio ? 1 : 0), ready: v.readyState }));
+              const moving = !s.paused && s.t > t0 + 0.3;
+              return (step.check === 'media-playing' ? moving : moving && s.audio > 0) || s;
+            });
+          } else {
+            const want = step.sameAs !== undefined ? memory[step.sameAs] : step.equals !== undefined ? String(step.equals) : 'true';
+            await until(async () => { const got = await readCheck(frame, step); return got === want || { want, got }; });
+          }
         } else if (step.action === 'media-playing' || step.action === 'audio-playing') {
           await only1(frame, step.selector);
           const t0 = await frame.$eval(step.selector, v => v.currentTime);
