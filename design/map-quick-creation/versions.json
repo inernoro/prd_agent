@@ -1,3 +1,14 @@
 {
- "versions": []
+ "design": "DSN-1400E277",
+ "path": "design/map-quick-creation",
+ "note": "版本登记由程序写入（version-diff.mjs --register）。commit 是发布时的来源提交；tag 只在本地，供 git 计算差异。",
+ "versions": [
+  {
+   "version": 1,
+   "commit": "6eece65e23cb0379f6cfc391b3bd126e77a3f0a6",
+   "tag": "design/DSN-1400E277/v1",
+   "committedAt": "2026-11-25T21:29:52+00:00",
+   "subject": "docs(design): 快速创作设计稿：字段对齐 CDS 发布接口（演示数据进 docs、自检条目用 pass 布尔值）"
+  }
+ ]
 }
