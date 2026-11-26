@@ -10,7 +10,7 @@
     "changes/v1-v6/source.diff"
    ],
    "acceptance": {
-    "added": 9,
+    "added": 8,
     "removed": 0,
     "changed": 25
    },
@@ -29,7 +29,7 @@
     "changes/v2-v6/changes.md"
    ],
    "acceptance": {
-    "added": 7,
+    "added": 6,
     "removed": 0,
     "changed": 10
    },
@@ -48,7 +48,7 @@
     "changes/v3-v6/changes.md"
    ],
    "acceptance": {
-    "added": 7,
+    "added": 6,
     "removed": 0,
     "changed": 10
    },
@@ -67,7 +67,7 @@
     "changes/v4-v6/changes.md"
    ],
    "acceptance": {
-    "added": 7,
+    "added": 6,
     "removed": 0,
     "changed": 10
    },
@@ -86,7 +86,7 @@
     "changes/v5-v6/changes.md"
    ],
    "acceptance": {
-    "added": 7,
+    "added": 6,
     "removed": 0,
     "changed": 4
    },

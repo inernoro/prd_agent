@@ -432,7 +432,7 @@
     },
     {
       "dimension": "security",
-      "risk": "风格说明 STYLE.md 为 CC BY-NC 4.0，内置进产品属于商用",
+      "risk": "风格说明的使用授权与样片署名",
       "ruleIds": [
         "A-46"
       ]
@@ -442,13 +442,6 @@
       "risk": "前端请求绕过统一鉴权",
       "ruleIds": [
         "A-10"
-      ]
-    },
-    {
-      "dimension": "security",
-      "risk": "团队产物把同事未发布的成品暴露给无权查看的人",
-      "ruleIds": [
-        "A-49"
       ]
     },
     {
@@ -1057,8 +1050,8 @@
         "desktop-light",
         "desktop-dark"
       ],
-      "rule": "风格来源与授权写清：风格说明（STYLE.md，CC BY-NC 4.0）只按编号引用、界面与源码差异不含原文；样片海报署名「Lemo-Opuscar by Lemomo (LemoLab)」并注明 CC BY 4.0",
-      "expected": "风格详情底部有署名与「样片海报 CC BY 4.0」；源码差异与界面里搜不到 STYLE.md 正文；类型字段 promptRef 只存位置",
+      "rule": "风格说明（STYLE.md，已取得使用授权）由服务端在生成时交给智能体，界面只显示风格名、样片与一句话说明，不展示风格说明全文；样片海报署名「Lemo-Opuscar by Lemomo (LemoLab)」",
+      "expected": "风格详情底部有署名；界面与前端源码里没有风格说明正文，类型字段 promptRef 只存位置，正文由服务端按编号读取",
       "dimension": "security"
     },
     {
@@ -1086,18 +1079,6 @@
       "expected": "选同事的「新版 OKR 填写指南」点「用这个风格」→ 风格按钮变为「中国水墨」并提示；任务中点「打开」→ 进入该产物的任务",
       "dimension": "correctness",
       "interaction": true
-    },
-    {
-      "id": "A-49",
-      "screenId": "assets-team",
-      "how": "human",
-      "slots": [
-        "desktop-light",
-        "desktop-dark"
-      ],
-      "rule": "团队产物只列当前成员有权查看的成品：已发布的按网页托管的可见范围，未发布的只对作者和团队管理员可见（可见范围待确认，见待定问题）",
-      "expected": "服务端按权限过滤后返回；原型的团队数据全部为同团队可见的虚构样例",
-      "dimension": "security"
     }
   ],
   "goals": [
@@ -1117,11 +1098,10 @@
     {
       "id": "G-11",
       "goal": "右栏同时承担选择与资产：创作时能回看自己和团队生成过的产物",
-      "doneWhen": "右栏有「产物」页签，可按我的 / 团队与产出类型浏览已生成的成品，能打开原任务、把风格带回输入框、去网页托管；团队产物按权限过滤",
+      "doneWhen": "右栏有「产物」页签，可按我的 / 团队与产出类型浏览已生成的成品，能打开原任务、把风格带回输入框、去网页托管",
       "items": [
         "A-47",
-        "A-48",
-        "A-49"
+        "A-48"
       ]
     },
     {

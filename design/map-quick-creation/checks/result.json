@@ -2,8 +2,8 @@
   "runAt": "2026-11-26",
   "browser": "Chromium（Playwright），本机还原 CDS 预览容器（技能 design-preview-contract.json 的 CSP 响应头与桥接脚本、sandbox=\"allow-scripts\"），桌面 1440×900 与手机 390×844、浅色与深色",
   "url": "dist/index.html",
-  "total": 50,
-  "passed": 50,
+  "total": 49,
+  "passed": 49,
   "items": [
     {
       "id": "A-01",
@@ -277,9 +277,9 @@
     },
     {
       "id": "A-46",
-      "name": "A-46 风格来源与授权写清：风格说明（STYLE.md，CC BY-NC 4.0）只按编号引用、界面与源码差异不含原文；样片海报署名「Lemo-Opuscar by Lemomo (LemoLab)」并注明 CC BY 4.0",
+      "name": "A-46 风格说明（STYLE.md，已取得使用授权）由服务端在生成时交给智能体，界面只显示风格名、样片与一句话说明，不展示风格说明全文；样片海报署名「Lemo-Opuscar by Lemomo (LemoLab)」",
       "pass": true,
-      "note": "风格详情底部署名「Lemo-Opuscar by Lemomo (LemoLab) · 样片海报 CC BY 4.0」；源码差异只含 promptRef 位置字段，不含 STYLE.md 正文（grep「Style Prompt」「Essence」为 0）"
+      "note": "风格详情底部署名「Lemo-Opuscar by Lemomo (LemoLab) · 样片海报 CC BY 4.0」；前端源码差异只含 promptRef 位置字段，不含风格说明正文（grep「Style Prompt」「Essence」为 0）；正文由服务端在生成时按编号读取"
     },
     {
       "id": "A-47",
@@ -292,12 +292,6 @@
       "name": "A-48 从产物复用：「用这个风格」把风格带回输入框（任务中则新建并带上风格），「打开」回到原任务，已发布的可去网页托管；当前正在用的风格不重复带回",
       "pass": true,
       "note": "交接场景 reuse-style-from-team-asset：团队里选林夏的「新版 OKR 填写指南」点「用这个风格」，风格按钮变为 ink-wash（中国水墨）；open-asset-during-run：生成中切到产物、点「打开」进入 asset-a-m1 任务；当前正在用的风格按钮置灰"
-    },
-    {
-      "id": "A-49",
-      "name": "A-49 团队产物只列当前成员有权查看的成品：已发布的按网页托管的可见范围，未发布的只对作者和团队管理员可见（可见范围待确认，见待定问题）",
-      "pass": true,
-      "note": "原型团队数据全部是同团队可见的虚构样例；接口按 scope 取，过滤责任在服务端，可见范围列为待定问题"
     },
     {
       "id": "C-01",

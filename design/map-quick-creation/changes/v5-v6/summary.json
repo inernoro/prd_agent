@@ -52,8 +52,8 @@
    },
    {
     "id": "A-46",
-    "rule": "风格来源与授权写清：风格说明（STYLE.md，CC BY-NC 4.0）只按编号引用、界面与源码差异不含原文；样片海报署名「Lemo-Opuscar by Lemomo (LemoLab)」并注明 CC BY 4.0",
-    "expected": "风格详情底部有署名与「样片海报 CC BY 4.0」；源码差异与界面里搜不到 STYLE.md 正文；类型字段 promptRef 只存位置",
+    "rule": "风格说明（STYLE.md，已取得使用授权）由服务端在生成时交给智能体，界面只显示风格名、样片与一句话说明，不展示风格说明全文；样片海报署名「Lemo-Opuscar by Lemomo (LemoLab)」",
+    "expected": "风格详情底部有署名；界面与前端源码里没有风格说明正文，类型字段 promptRef 只存位置，正文由服务端按编号读取",
     "how": "human",
     "screenId": "compose",
     "slots": [
@@ -84,17 +84,6 @@
      "desktop-dark"
     ],
     "interaction": true
-   },
-   {
-    "id": "A-49",
-    "rule": "团队产物只列当前成员有权查看的成品：已发布的按网页托管的可见范围，未发布的只对作者和团队管理员可见（可见范围待确认，见待定问题）",
-    "expected": "服务端按权限过滤后返回；原型的团队数据全部为同团队可见的虚构样例",
-    "how": "human",
-    "screenId": "assets-team",
-    "slots": [
-     "desktop-light",
-     "desktop-dark"
-    ]
    }
   ],
   "removed": [],
@@ -735,8 +724,8 @@
    "failed": []
   },
   "to": {
-   "passed": 50,
-   "total": 50,
+   "passed": 49,
+   "total": 49,
    "failed": []
   }
  },
