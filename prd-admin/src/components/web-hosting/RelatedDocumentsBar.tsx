@@ -143,7 +143,7 @@ export default function RelatedDocumentsBar({ siteId, source, onNavigate, onRefe
           onSelectContext={contextId => setSelectedScope({ siteId, contextId })} maxHeight={maxHeight - 2} onSplitChange={setSplit} onClose={close} onNavigate={onNavigate} onReference={onReference} onBodyReference={onBodyReference}
           onEditCollection={draft => { close(); setCollectionEditor(draft); }} cardsOnly={reviewReader}
           onManage={next => openManager(next)} onPermissions={next => openPermissions(next)} onTagEdit={item => { close(); setTagTarget(item); }} />
-          : <RelatedDocumentContent key={siteId + token} siteId={siteId} maxHeight={maxHeight - 2} source={source} data={data} error={error} loading={loading} compact={compact} cardsOnly={reviewReader} membersOnly={membersOnly} includeCurrent={!!contextTitle} heading={contextTitle ?? (membersOnly ? '合集成员' : surfaceName)}
+          : <RelatedDocumentContent key={siteId + token} siteId={siteId} maxHeight={maxHeight - 2} source={source} data={data} error={error} loading={loading} compact={compact} cardsOnly={reviewReader} membersOnly={membersOnly} heading={contextTitle ?? (membersOnly ? '合集成员' : surfaceName)}
             emptyMessage={collectionNavigation ? '没有其他可查看的合集成员。' : undefined}
             onReload={() => { setLoading(true); void refresh(); }} onManage={() => openManager()} onPermissions={() => openPermissions()}
             onTagEdit={item => { close(); setTagTarget(item); }} onNavigate={onNavigate} onReference={onReference} onBodyReference={onBodyReference} onClose={close} />}
