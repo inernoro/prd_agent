@@ -256,6 +256,27 @@ public sealed class WebPagesCollectionHistoryTests
     }
 
     [Fact]
+    public async Task ExistingManualMembersAppearInTheSameCollectionDirectory()
+    {
+        var collections = new Mock<IMongoCollection<HostedCollection>>(MockBehavior.Strict);
+        collections.Setup(x => x.FindAsync(It.IsAny<FilterDefinition<HostedCollection>>(), It.IsAny<FindOptions<HostedCollection, HostedCollection>>(), It.IsAny<CancellationToken>()))
+            .Returns(() => Task.FromResult(Cursor(new HostedCollection { Id = "named", Title = "已有合集", SiteIds = ["site-a"] })));
+        var shares = new Mock<IMongoCollection<WebPageShareLink>>(MockBehavior.Strict);
+        shares.Setup(x => x.FindAsync(It.IsAny<FilterDefinition<WebPageShareLink>>(), It.IsAny<FindOptions<WebPageShareLink, WebPageShareLink>>(), It.IsAny<CancellationToken>()))
+            .Returns(() => Task.FromResult(Cursor<WebPageShareLink>()));
+        var group = new HostedDocumentGroup { Id = "manual-group", OwnerUserId = "owner-user", MainSiteId = "site-a", SiteIds = ["site-a", "site-b"] };
+        var controller = ContextControllerWithManualGroup(collections.Object, shares.Object, group);
+
+        var result = Result(await controller.CollectionContexts("site-a"));
+        Assert.Equal(2, result.GetProperty("totalContexts").GetInt32());
+        var item = result.GetProperty("items").EnumerateArray().Single(x => x.GetProperty("id").GetString() == "manual:manual-group");
+        Assert.Equal("总体方案合集", item.GetProperty("title").GetString());
+        Assert.Equal(2, item.GetProperty("memberCount").GetInt32());
+        Assert.Equal(0, item.GetProperty("shareCount").GetInt32());
+        Assert.IsType<NotFoundObjectResult>(await controller.CollectionContextDocuments("site-a", "manual:different-group"));
+    }
+
+    [Fact]
     public void BothCollectionApiContractsKeepDistinctRoutes()
     {
         var routes = typeof(WebPagesController).GetMethods().SelectMany(method => method.GetCustomAttributes<Microsoft.AspNetCore.Mvc.Routing.HttpMethodAttribute>()
@@ -271,7 +292,11 @@ public sealed class WebPagesCollectionHistoryTests
     private static JsonElement Result(IActionResult response) => JsonSerializer.SerializeToElement(Assert.IsType<OkObjectResult>(response).Value,
         new JsonSerializerOptions(JsonSerializerDefaults.Web)).GetProperty("data");
 
-    private static WebPagesController ContextController(IMongoCollection<HostedCollection> collections, IMongoCollection<WebPageShareLink> shares, params HostedDocumentCollection[] documentCollections)
+    private static WebPagesController ContextController(IMongoCollection<HostedCollection> collections, IMongoCollection<WebPageShareLink> shares, params HostedDocumentCollection[] documentCollections) =>
+        ContextControllerWithManualGroup(collections, shares, null, documentCollections);
+
+    private static WebPagesController ContextControllerWithManualGroup(IMongoCollection<HostedCollection> collections, IMongoCollection<WebPageShareLink> shares,
+        HostedDocumentGroup? group, params HostedDocumentCollection[] documentCollections)
     {
         var db = new Mock<IMongoDatabase>(MockBehavior.Strict);
         db.Setup(x => x.GetCollection<HostedCollection>("hosted_collections", null)).Returns(collections);
@@ -280,10 +305,14 @@ public sealed class WebPagesCollectionHistoryTests
             .Returns(() => Task.FromResult(Cursor(documentCollections)));
         db.Setup(x => x.GetCollection<HostedDocumentCollection>("hosted_document_collections", null)).Returns(documents.Object);
         db.Setup(x => x.GetCollection<WebPageShareLink>("web_page_share_links", null)).Returns(shares);
+        var manualGroups = new Mock<IMongoCollection<HostedDocumentGroup>>(MockBehavior.Strict);
+        manualGroups.Setup(x => x.FindAsync(It.IsAny<FilterDefinition<HostedDocumentGroup>>(), It.IsAny<FindOptions<HostedDocumentGroup, HostedDocumentGroup>>(), It.IsAny<CancellationToken>()))
+            .Returns(() => Task.FromResult(Cursor(group == null ? [] : new[] { group })));
+        db.Setup(x => x.GetCollection<HostedDocumentGroup>("hosted_document_groups", null)).Returns(manualGroups.Object);
         var context = (MongoDbContext)RuntimeHelpers.GetUninitializedObject(typeof(MongoDbContext));
         typeof(MongoDbContext).GetField("_database", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(context, db.Object);
         var service = new Mock<IHostedSiteService>(MockBehavior.Strict);
-        service.Setup(x => x.GetByIdAsync("site-a", "owner-user", CancellationToken.None)).ReturnsAsync(new HostedSite { Id = "site-a" });
+        service.Setup(x => x.GetByIdAsync("site-a", "owner-user", CancellationToken.None)).ReturnsAsync(new HostedSite { Id = "site-a", Title = "总体方案" });
         service.Setup(x => x.GetAccessibleByIdsAsync(It.Is<IEnumerable<string>>(ids => ids.SequenceEqual(new[] { "site-a" })), "owner-user", CancellationToken.None))
             .ReturnsAsync(new Dictionary<string, HostedSite> { ["site-a"] = new HostedSite { Id = "site-a" } });
         return Build(service.Object, context);

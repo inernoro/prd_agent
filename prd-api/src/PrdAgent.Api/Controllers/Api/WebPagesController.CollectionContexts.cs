@@ -27,6 +27,9 @@ public partial class WebPagesController
         Builders<WebPageShareLink>.Filter.Where(x => x.CreatedBy == GetUserId() && x.ShareType == "collection"
             && x.Purpose != "visit" && (x.SiteId == siteId || x.SiteIds.Contains(siteId)));
 
+    private async Task<HostedDocumentGroup?> ManualCollectionAsync(string siteId) =>
+        await _db.HostedDocumentGroups.Find(x => x.OwnerUserId == GetUserId() && x.SiteIds.Contains(siteId)).FirstOrDefaultAsync();
+
     private async Task<(Dictionary<string, HostedCollection> Directories, Dictionary<string, HostedDocumentCollection> Documents)> ContextLinkRecordsAsync(
         IEnumerable<WebPageShareLink> shares, IReadOnlyDictionary<string, HostedCollection>? knownDirectories = null,
         IReadOnlyDictionary<string, HostedDocumentCollection>? knownDocuments = null)
@@ -49,7 +52,8 @@ public partial class WebPagesController
     public async Task<IActionResult> CollectionContexts(string siteId, [FromQuery] int page = 1, [FromQuery] string? keyword = null)
     {
         Response.Headers.CacheControl = "no-store";
-        if (await _siteService.GetByIdAsync(siteId, GetUserId(), CancellationToken.None) == null) return RelatedNotFound();
+        var site = await _siteService.GetByIdAsync(siteId, GetUserId(), CancellationToken.None);
+        if (site == null) return RelatedNotFound();
         if (keyword?.Trim().Length > 100) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "搜索内容请控制在 100 字以内"));
         var collections = await _db.HostedCollections.Find(x => x.OwnerUserId == GetUserId() && !x.IsDissolved && x.SiteIds.Contains(siteId)).ToListAsync();
         var byId = collections.ToDictionary(x => x.Id);
@@ -59,6 +63,15 @@ public partial class WebPagesController
             x.Title, x.SiteIds.Count, x.UpdatedAt, x.Id, null, 0, null));
         foreach (var item in documentCollections)
             contexts["document-collection:" + item.Id] = new("document-collection:" + item.Id, item.Name, item.SiteIds.Count, item.UpdatedAt, item.Id, null, 0, null);
+        var manual = await ManualCollectionAsync(siteId);
+        if (manual != null && manual.SiteIds.Count > 1)
+        {
+            var main = manual.MainSiteId == site.Id ? site : await _siteService.GetByIdAsync(manual.MainSiteId, GetUserId());
+            var title = string.IsNullOrWhiteSpace(main?.Title) ? site.Title : main.Title;
+            var id = "manual:" + manual.Id;
+            contexts[id] = new(id, title.EndsWith("合集", StringComparison.Ordinal) ? title : title + "合集",
+                manual.SiteIds.Count, manual.UpdatedAt, null, null, 0, null);
+        }
         var matched = new HashSet<string>();
         var query = keyword?.Trim();
         // 按当前文档、当前创建者流式读取；只保留每个合集的摘要，不把全部分享历史发送给浏览器。
@@ -120,6 +133,13 @@ public partial class WebPagesController
     public async Task<IActionResult> CollectionContextDocuments(string siteId, string contextId)
     {
         Response.Headers.CacheControl = "no-store";
+        if (contextId.StartsWith("manual:", StringComparison.Ordinal))
+        {
+            var current = await _siteService.GetByIdAsync(siteId, GetUserId());
+            var manual = current == null ? null : await ManualCollectionAsync(siteId);
+            if (current == null || manual?.Id != contextId["manual:".Length..]) return RelatedNotFound();
+            return await RelatedViewAsync(current, GetUserId(), new HashSet<string>(), resolvedManualGroup: manual);
+        }
         var (site, collection, legacy, documentCollection) = await ResolveCollectionContextAsync(siteId, contextId);
         if (site == null) return RelatedNotFound();
         var group = new HostedDocumentGroup { OwnerUserId = GetUserId(),

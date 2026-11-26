@@ -276,7 +276,7 @@ export function SiteCard({
     onAiEdit,
   });
   if (relatedNavigation === undefined && !relatedSummary?.count) {
-    menuActions.push({ label: '关联与合集', icon: <FolderInput size={13} />, onClick: setRelatedMenuAnchor });
+    menuActions.push({ label: '合集', icon: <FolderInput size={13} />, onClick: setRelatedMenuAnchor });
   }
 
   const statusItems = [

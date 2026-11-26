@@ -25,10 +25,7 @@
 .collection-search input { flex: 1; min-width: 0; padding: 0; background: transparent; border: 0; color: inherit; outline: none; font: inherit; }
 .collection-section, .collection-pager, .collection-danger-actions { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
 .collection-section > span, .collection-pager > span { color: var(--text-secondary); font-size: 11px; }
-.collection-name-suggestions { display: flex; flex-wrap: wrap; gap: 6px; }
-.collection-name-suggestions > span { display: flex; align-items: center; gap: 6px; color: var(--text-secondary); }
-.collection-name-suggestions > button { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 1px solid var(--hosting-border); border-radius: 6px; background: var(--hosting-surface); padding: 5px 9px; text-align: left; color: var(--text-secondary); cursor: pointer; }
-.collection-name-suggestions > button[aria-pressed=true] { border-color: var(--hosting-accent); color: var(--hosting-accent); background: var(--hosting-accent-soft); }
+.collection-naming-status { display: flex; align-items: center; gap: 6px; color: var(--text-secondary); }
 .collection-member-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 164px), 1fr)); gap: 10px; }
 .collection-member-card { min-width: 0; overflow: hidden; border: 1px solid var(--hosting-border); border-radius: 9px; background: var(--hosting-surface); }
 .collection-member-card[data-main=true] { border-color: var(--hosting-accent); }

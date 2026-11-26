@@ -256,13 +256,13 @@ for (const width of [390, 1440]) {
         await unlinkedCard.hover();
         await expect(unlinkedCard.locator('.related-trigger')).toHaveCount(0);
         await unlinkedCard.getByRole('button', { name: '更多设置', exact: true }).filter({ visible: true }).last().click();
-        await page.getByRole('menuitem', { name: '关联与合集', exact: true }).click();
-        const relations = page.getByRole('dialog', { name: '关联文档', exact: true });
-        await expect(relations.getByText('暂无关联文档。')).toBeVisible();
-        await relations.getByRole('button', { name: '管理关联', exact: true }).click();
-        const manager = page.getByRole('dialog', { name: '管理关联文档', exact: true });
+        await page.getByRole('menuitem', { name: '合集', exact: true }).click();
+        const relations = page.getByRole('dialog', { name: '合集', exact: true });
+        await expect(relations.getByText('这份文档尚未加入合集。')).toBeVisible();
+        await relations.getByRole('button', { name: '创建合集', exact: true }).click();
+        const manager = page.getByRole('dialog', { name: '创建合集', exact: true });
         await expect(manager).toBeVisible();
-        await manager.getByRole('button', { name: '取消', exact: true }).click();
+        await manager.getByRole('button', { name: '关闭', exact: true }).last().click();
         await page.mouse.move(0, 0);
         await expect(unlinkedCard.locator('.related-trigger')).toHaveCount(0);
         const metrics = await cards.evaluateAll(elements => elements.map(card => {
@@ -570,7 +570,7 @@ for (const mode of ['list', 'account-share', 'guest-share'] as const) {
       await expect(sourceFrame.getByLabel('保留输入')).toHaveValue('原页面状态');
     }
     const listReads = apiRequests.filter(path => path === '/api/web-pages').length;
-    const related = page.getByRole('dialog', { name: '关联文档', exact: true });
+    const related = page.getByRole('dialog', { name: '合集', exact: true });
     await related.getByText('关联目标', { exact: true }).click();
     const modal = mode === 'guest-share' ? page.getByRole('dialog', { name: '关联文档预览', exact: true })
       : page.getByRole('dialog', { name: '关联目标', exact: true });
@@ -620,9 +620,9 @@ for (const mode of ['list', 'account-share', 'guest-share'] as const) {
     }
     // 原生和 Radix 阅读器都必须一次只关闭最上层，不丢失当前正文状态。
     await modal.locator('.related-trigger').click();
-    await expect(page.getByRole('dialog', { name: '关联文档', exact: true })).toBeVisible();
+    await expect(page.getByRole('dialog', { name: '合集', exact: true })).toBeVisible();
     await page.keyboard.press('Escape');
-    await expect(page.getByRole('dialog', { name: '关联文档', exact: true })).toHaveCount(0);
+    await expect(page.getByRole('dialog', { name: '合集', exact: true })).toHaveCount(0);
     await expect(modal).toBeVisible();
     await expect(modal.locator('.related-trigger')).toBeFocused();
     await page.keyboard.press('Escape');
@@ -696,7 +696,7 @@ for (const width of [390, 1440]) for (const theme of ['light', 'dark'] as const)
     await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
     const trigger = page.locator('[data-hosted-site-id="context-source"] .related-trigger');
     await expect(trigger).toHaveCount(1); await trigger.click();
-    const dialog = page.getByRole('dialog', { name: '关联文档', exact: true });
+    const dialog = page.getByRole('dialog', { name: '合集', exact: true });
     await expect(dialog.locator('.related-document-card')).toHaveCount(multiple ? 9 : 2);
     const footer = dialog.getByRole('region', { name: '合集链接操作', exact: true });
     await expect(footer.getByLabel('合集完整地址', { exact: true })).toHaveValue(new URL('/s/wp/original-0-0', page.url()).href);
@@ -798,8 +798,8 @@ for (const theme of ['light', 'dark'] as const) {
     await expect.poll(() => requests).toBe(initialRequests + 1);
     await expect(page.locator('iframe[title="阅读文档 2"]')).toBeVisible();
     await expect(page.locator('.review-reader-title').getByRole('link', { name: '返回合集' })).toBeVisible();
-    await page.getByRole('button', { name: '关联文档', exact: true }).click();
-    const related = page.getByRole('dialog', { name: '关联文档' });
+    await page.getByRole('button', { name: '合集', exact: true }).click();
+    const related = page.getByRole('dialog', { name: '合集', exact: true });
     await expect(related.locator('.related-document-card')).toHaveCount(3);
     await expect(related.locator('.related-document-card').filter({ hasText: '阅读文档 1' })).toBeVisible();
     await page.keyboard.press('Escape');
@@ -820,6 +820,39 @@ for (const theme of ['light', 'dark'] as const) {
     await expect(page.locator('.ledger-directory .hosted-share-member')).toHaveCount(4);
   });
 }
+
+test('视频分享可打开历史版本和合集卡片，分享读者没有上传操作', async ({ page }) => {
+  const token = 'video-review';
+  const sharePath = `/api/web-pages/shares/view/${token}`;
+  const liveUrl = 'https://hosting.example/film/v2/index.html';
+  const oldUrl = 'https://hosting.example/film/v1/index.html';
+  const film = { id: 'film', title: '项目演示视频', siteUrl: liveUrl, entryFile: 'index.html', wrappedAssetType: 'video', contentShape: 'multi-file' };
+  const member = { id: 'notes', title: '项目演示笔记', siteUrl: 'https://hosting.example/notes/index.html', entryFile: 'index.html' };
+  const common = { siteId: film.id, canPreview: true, entryFile: 'index.html', contentShape: 'multi-file' };
+  const current = { ...common, id: 'new-video', versionLabel: 'V2', contentVersionKey: '2026-11-26T12:00:00.000Z', isCurrent: true, siteUrl: liveUrl };
+  const older = { ...common, id: 'old-video', versionLabel: 'V1', contentVersionKey: '2026-11-25T12:00:00.000Z', isCurrent: false, siteUrl: oldUrl };
+  await page.route('https://hosting.example/**', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><video controls></video>' }));
+  await page.route('**/api/**', async route => {
+    const url = new URL(route.request().url());
+    let data: unknown = { items: [] };
+    if (url.pathname === sharePath) data = { title: '项目演示合集', shareType: 'collection', mainSiteId: film.id, sites: [film, member], createdBy: 'author', createdAt: '2026-11-26T12:00:00Z' };
+    if (url.pathname === `${sharePath}/revisions`) data = [current, older];
+    if (url.pathname === `${sharePath}/revisions/old-video/preview`) data = { revision: older, siteUrl: oldUrl, html: '' };
+    if (url.pathname === `${sharePath}/related-documents`) data = { items: [film, member].map(site => ({ id: site.id, title: site.title, preview: { ...site, useShareAccess: true }, isManual: true, href: `/s/wp/${token}?siteId=${site.id}` })), canManage: false, version: 0 };
+    if (url.pathname.endsWith('/comments')) data = { comments: [], commentsEnabled: true, canComment: false };
+    await route.fulfill({ json: { success: true, data, error: null } });
+  });
+  await page.goto(`/s/wp/${token}?siteId=${film.id}`);
+  await expect(page.frameLocator('iframe[title="项目演示视频"]').locator('video')).toBeVisible();
+  await page.getByRole('button', { name: '视频版本：V2' }).click();
+  await expect(page.locator('iframe[title="V1 网页预览"]')).toHaveAttribute('src', oldUrl);
+  await expect(page.getByRole('button', { name: '上传新版本', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: '关闭历史版本' }).click();
+  await page.getByRole('button', { name: '合集', exact: true }).click();
+  const collection = page.getByRole('dialog', { name: '合集', exact: true });
+  await expect(collection.locator('.related-document-card')).toHaveCount(1);
+  await expect(collection.locator('.related-document-card')).toContainText(member.title);
+});
 
 // 从资产库入口验证批量创建、保存、分享和回读，测试数据不写入运行环境。
 for (const mobile of [false, true]) test.describe(mobile ? '手机合集' : '桌面合集', () => {
@@ -845,7 +878,7 @@ for (const mobile of [false, true]) test.describe(mobile ? '手机合集' : '桌
       ownerUserId: 'collection-qa', viewCount: 0, createdAt: date, updatedAt: date,
     }));
     const compat = '/api/web-pages/collections/compat';
-    const proposed = ['架构实践合集', '决策参考合集', '技术共读合集'];
+    const proposed = ['架构实践合集'];
     let namesRequested = 0;
     let payload: { title: string; mainSiteId: string; siteIds: string[] } | undefined;
     let shares: Record<string, unknown>[] = [];

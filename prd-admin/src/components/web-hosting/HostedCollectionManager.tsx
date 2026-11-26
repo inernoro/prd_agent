@@ -114,10 +114,10 @@ export function HostedCollectionLibrary({ onBack, recentId, onArrival, renderCar
   </section>;
 }
 
-function collectionNames(members: CollectionMember[], generated: string[] = []) {
+function fallbackCollectionName(members: CollectionMember[]) {
   const raw = members.find(member => member.available !== false)?.title.trim() ?? '';
   const subject = [...raw.replace(/合集$/, '')].slice(0, 23).join('').trim() || '网页文档';
-  return [...new Set([...generated, `${subject}合集`, `${subject}阅读合集`, `${subject}参考合集`])].slice(0, 3);
+  return `${subject}合集`;
 }
 
 function currentShare(details: CollectionDetails, collection: HostedCollection): ShareLinkItem | null {
@@ -189,8 +189,7 @@ export function HostedCollectionEditor({ collectionId, shareToken, initialSites 
   const [detail, setDetail] = useState<CollectionDetails | null>(() => demo ? { collection: { id: 'demo-collection', ownerUserId: 'demo', title: initialTitle || '2026 Q4 Agent 平台评审资料', siteIds: initialSites.map(site => site.id), mainSiteId: initialSites[0]?.id || '', version: 1, shareGeneration: 1, isDissolved: false, updatedAt: '' }, sites: initialSites, shares: [] } : null);
   const isCreate = !demo && !collectionId && !shareToken;
   const initialMain = initialSites.find(site => site.available !== false);
-  const [title, setTitle] = useState(demo ? initialTitle || '2026 Q4 Agent 平台评审资料' : isCreate && initialMain ? collectionNames(initialSites)[0] : '');
-  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [title, setTitle] = useState(demo ? initialTitle || '2026 Q4 Agent 平台评审资料' : isCreate && initialMain ? fallbackCollectionName(initialSites) : '');
   const [naming, setNaming] = useState(false);
   const named = useRef(false);
   const titleChosen = useRef(false);
@@ -253,33 +252,29 @@ export function HostedCollectionEditor({ collectionId, shareToken, initialSites 
   useEffect(() => {
     if (!isCreate || !hasNamingMembers || named.current) return;
     const abort = new AbortController();
+    let deadline: number | undefined;
     const schedule = window.setTimeout(() => {
       if (named.current || !namingMembers.current) return;
       named.current = true;
       const input = namingMembers.current.filter(member => member.available !== false);
       setNaming(true);
-      const fallback = window.setTimeout(() => {
+      deadline = window.setTimeout(() => {
         abort.abort();
         setNaming(false);
-        setSuggestions(collectionNames(input));
       }, 1975);
       void (async () => {
-        let names = collectionNames(input);
         try {
           const result = await suggestCollectionNames(input.map(member => member.id), abort.signal);
-          if (result.success) names = collectionNames(input, result.data.names);
+          const name = result.success ? result.data.names[0]?.trim() : undefined;
+          if (!abort.signal.aborted && !titleChosen.current && name?.endsWith('合集')) setTitle(name);
         } catch { /* The draft already has a usable name. */ }
         finally {
-          window.clearTimeout(fallback);
-          if (!abort.signal.aborted) {
-            setNaming(false);
-            setSuggestions(names);
-            if (!titleChosen.current) setTitle(names[0]);
-          }
+          window.clearTimeout(deadline);
+          if (!abort.signal.aborted) setNaming(false);
         }
       })();
     }, 0);
-    return () => { window.clearTimeout(schedule); abort.abort(); };
+    return () => { window.clearTimeout(schedule); window.clearTimeout(deadline); abort.abort(); };
   }, [hasNamingMembers, isCreate]);
 
   const finishEditor = () => {
@@ -303,7 +298,7 @@ export function HostedCollectionEditor({ collectionId, shareToken, initialSites 
     if (!main && item.available !== false) setMain(item.id);
     if (isCreate && !namingMembers.current) {
       namingMembers.current = next;
-      if (!titleChosen.current) setTitle(collectionNames(next)[0]);
+      if (!titleChosen.current) setTitle(fallbackCollectionName(next));
     }
   };
 
@@ -356,11 +351,7 @@ export function HostedCollectionEditor({ collectionId, shareToken, initialSites 
       {loading ? <MapSpinner size={22} /> : targetUnavailable ? null : pending ? <div className="collection-confirm"><h3>{pending === 'dissolve' ? '解散这个合集？' : '停止分享？'}</h3><p>{pending === 'dissolve' ? '合集的全部分享入口将失效。原文档及其独立分享保留，已有手动关联组不会被解除。' : pending === 'stop' ? '本合集当前全部分享入口将失效，合集和原文档保留。以后可重新生成新链接。' : '仅停止这一条链接，其他分享和原文档保留。'}</p><p>已下载或缓存的副本无法收回。</p></div> : <>
         <div className="collection-editor-grid"><section className="collection-editor-primary">        {legacy && <p className="collection-notice">旧链接和原授权范围保留。先确认名称与主文档完成导入，再调整成员；不会自动合并已有的关联组。</p>}
         <label className="collection-field">合集名称（必填）<input aria-label="合集名称" maxLength={100} value={title} onChange={e => { titleChosen.current = true; setTitle(e.target.value); }} placeholder="例如：项目发布资料" disabled={busy} /></label>
-        {isCreate && !collection && (naming || suggestions.length > 0) && <div className="collection-name-suggestions" aria-label="推荐合集名称">
-          {naming ? <span role="status"><MapSpinner size={13} /> 正在提议合集名称 · 约 2 秒</span> : suggestions.map(name =>
-            <button type="button" key={name} title={name} aria-pressed={title === name} disabled={busy}
-              onClick={() => { titleChosen.current = true; setTitle(name); }}>{name}</button>)}
-        </div>}
+        {isCreate && !collection && naming && <span className="collection-naming-status" role="status"><MapSpinner size={13} />正在生成合集名称 · 约 2 秒</span>}
         <div className="collection-section"><strong>合集成员 · {members.length} / 90</strong><span>拖动卡片或用箭头调整顺序</span></div>
         <div className="collection-member-list">
           {members.map((item, index) => <article key={item.id} className="collection-member-card" data-main={main === item.id} draggable={!busy && !legacy && item.id !== main}

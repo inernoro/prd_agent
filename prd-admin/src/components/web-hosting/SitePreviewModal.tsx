@@ -78,8 +78,10 @@ export default function SitePreviewModal({
   const documentPanelId = useId(), discussionPanelId = useId();
   const siteWindow = useHostedSiteWindow();
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const video = originalSite.wrappedAssetType === 'video';
+  const hasVersionHistory = !originalSite.wrappedAssetType || video;
   const review = useHostedReview(iframeRef, originalSite,
-    originalSite.wrappedAssetType ? null : { mode: 'site', siteId: originalSite.id },
+    hasVersionHistory ? { mode: 'site', siteId: originalSite.id } : null,
     () => setRightPanel('comments'), onSiteVersionChanged, { dualColumn: true, pinOpensDiscussion: isMobile });
   const pdfDownload = useHostedPdfDownload(review.historical ? null : { ...originalSite, ...review.liveSite }, undefined, iframeRef);
   const site = { ...originalSite, ...review.site };
@@ -289,10 +291,10 @@ export default function SitePreviewModal({
               {site.description && <span className="review-reader-source">{site.description}</span>}
             </div>
           </div>
-          {!originalSite.wrappedAssetType && <ReviewVersionBar review={review} canUpload={canToggleComments} readerToolbar readerStage={iframeRef} />}
+          {hasVersionHistory && <ReviewVersionBar review={review} canUpload={canToggleComments} video={video} readerToolbar readerStage={iframeRef} />}
           <div className="review-reader-actions">
             {!isMobile && historyHint && !review.historical && <ReviewHistoryHint value={historyHint} onOpen={id => review.setVersionPreview({ id })} />}
-            <RelatedDocumentsBar siteId={originalSite.id} variant="toolbar" reviewReader
+            <RelatedDocumentsBar siteId={originalSite.id} variant="toolbar" reviewReader collectionNavigation
               onNavigate={onNavigateRelated ? item => onNavigateRelated(item.id) : undefined} />
             {!isMobile && <ReviewToolbarControls review={review} canUpload={canToggleComments} onOpen={() => setShowComments(value => !value)}
               expanded={showComments} count={commentCount} showVersions={false} showBubbleToggle={!originalSite.wrappedAssetType} readerLayout />}
@@ -330,7 +332,7 @@ export default function SitePreviewModal({
           <div id={documentPanelId} role={isMobile ? 'tabpanel' : undefined} aria-labelledby={isMobile ? `${documentPanelId}-tab` : undefined}
             aria-hidden={isMobile && rightPanel !== 'none' ? true : undefined}
             className="review-document-stage flex-1 min-w-0 min-h-0 relative" style={{ background: 'var(--review-b-paper)' }}>
-            {!review.loading && (site.wrappedAssetType === 'pdf' || (annotations.connectionChecked && !annotations.ready)) && <ReviewUnavailableNotice />}
+            {!review.loading && (site.wrappedAssetType === 'pdf' || (!video && annotations.connectionChecked && !annotations.ready)) && <ReviewUnavailableNotice />}
             {/* loading 遮罩只在「还没到慢提示阈值」时盖住——超过阈值就让位给 iframe，
                 因为此时页面大概率已经画出来了，只是 load 事件还没来。 */}
             {(historicalLoading || (loading && !slow)) && (

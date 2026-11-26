@@ -3,9 +3,10 @@ export const HOSTED_SITE_MAX_PACKAGE_BYTES = 5000 * 1024 * 1024;
 export const HOSTED_SITE_MAX_FILE_BYTES = 500 * 1024 * 1024;
 
 /** 所有托管上传入口共用，图片与后端 WebPagesController.ImageExtensions 保持一致。 */
+export const WEB_HOSTING_VIDEO_EXTENSIONS = ['.mp4', '.webm', '.mov', '.m4v', '.ogg', '.ogv'] as const;
 export const WEB_HOSTING_UPLOAD_EXTENSIONS = [
   '.html', '.htm', '.zip', '.md', '.markdown', '.pdf',
-  '.mp4', '.webm', '.mov', '.m4v', '.ogg', '.ogv',
+  ...WEB_HOSTING_VIDEO_EXTENSIONS,
   '.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.avif', '.ico', '.bmp',
 ] as const;
 export const WEB_HOSTING_UPLOAD_ACCEPT = WEB_HOSTING_UPLOAD_EXTENSIONS.join(',');

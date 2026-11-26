@@ -324,7 +324,7 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
   }, []);
 
   const review = useHostedReview(reviewFrameRef, readsSingleSite ? data!.sites[0] : null,
-    token && readsSingleSite && !data!.sites[0].wrappedAssetType ? { mode: 'share', token, siteId: data.sites[0].id, password: password || undefined } : null,
+    token && readsSingleSite && (!data!.sites[0].wrappedAssetType || data!.sites[0].wrappedAssetType === 'video') ? { mode: 'share', token, siteId: data.sites[0].id, password: password || undefined } : null,
     () => setShowComments(true), handleOwnerSitePublished, { dualColumn: true, pinOpensDiscussion: isMobile });
   const pdfDownload = useHostedPdfDownload(review.historical || data?.sites.length !== 1 ? null : { ...data.sites[0], ...review.liveSite },
     token ? { token, password: password || undefined } : undefined, reviewFrameRef);
@@ -975,12 +975,13 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
                   : site.description && <span className="review-reader-source" title={site.description}>{site.description}</span>}
               </div>
             </div>
-            {token && !liveSite.wrappedAssetType && <ReviewVersionBar review={review} canUpload={liveSite.viewerCanEdit === true} readerToolbar readerStage={reviewFrameRef} />}
+            {token && (!liveSite.wrappedAssetType || liveSite.wrappedAssetType === 'video') && <ReviewVersionBar review={review} canUpload={liveSite.viewerCanEdit === true} video={liveSite.wrappedAssetType === 'video'} readerToolbar readerStage={reviewFrameRef} />}
             {/* 常用操作用图标直达；低频操作收进更多，避免挤压网页标题。 */}
             <div className="share-topbar-actions">
               {!isMobile && historyHint && !review.historical && <ReviewHistoryHint value={historyHint} onOpen={id => review.setVersionPreview({ id })} />}
               {collectionManagerOpen && <HostedCollectionEditor shareToken={token} initialSharing={collectionShareFirst} onClose={() => { setCollectionManagerOpen(false); void fetchShare(password || undefined); }} />}
-              <RelatedDocumentsBar siteId={liveSite.id} variant="toolbar" reviewReader source={{ token, password: password || undefined }}
+              <RelatedDocumentsBar siteId={liveSite.id} variant="toolbar" reviewReader collectionNavigation membersOnly={data.shareType === 'collection'}
+                source={data.shareType === 'collection' || !liveSite.viewerIsOwner ? { token, password: password || undefined } : undefined}
                 onNavigate={openRelatedDocument} />
               {relatedAccountSite && <SitePreviewModal key={relatedAccountSite.id} site={relatedAccountSite}
                 canToggleComments={relatedAccountSite.ownerUserId === currentUserId}
@@ -1116,7 +1117,7 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
         <div id={documentPanelId} role={isMobile && token ? 'tabpanel' : undefined} aria-labelledby={isMobile && token ? `${documentPanelId}-tab` : undefined}
           aria-hidden={isMobile && showComments && !isFullscreen ? true : undefined}
           className="review-document-stage" style={{ position: 'relative', minHeight: 0, minWidth: 0, gridColumn: 1, gridRow: isFullscreen ? 1 : 2, background: 'var(--review-b-paper)' }}>
-          {!isFullscreen && !review.loading && (site.wrappedAssetType === 'pdf' || (annotations.connectionChecked && !annotations.ready)) && <ReviewUnavailableNotice />}
+          {!isFullscreen && !review.loading && (site.wrappedAssetType === 'pdf' || (liveSite.wrappedAssetType !== 'video' && annotations.connectionChecked && !annotations.ready)) && <ReviewUnavailableNotice />}
           <AnnotationModeBar annotations={annotations} onCancel={() => setShowComments(true)} />
           {pageFullscreen && (
             <button

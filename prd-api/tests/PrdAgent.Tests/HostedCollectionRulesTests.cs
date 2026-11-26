@@ -6,21 +6,22 @@ namespace PrdAgent.Tests;
 public class HostedCollectionRulesTests
 {
     [Theory]
-    [InlineData("[\"架构决策合集\",\"评审实践合集\",\"设计指南合集\"]")]
-    [InlineData("```json\n[\"架构决策合集\",\"评审实践合集\",\"设计指南合集\"]\n```")]
-    [InlineData("```\r\n[\"架构决策合集\",\"评审实践合集\",\"设计指南合集\"]\r\n```")]
-    public void SuggestedNamesAcceptRawAndFencedJson(string response)
+    [InlineData("[\"架构决策合集\"]")]
+    [InlineData("```json\n[\"架构决策合集\"]\n```")]
+    [InlineData("```\r\n[\"架构决策\"]\r\n```")]
+    [InlineData("[\"架构决策合集\",\"旧版多余名称合集\"]")]
+    public void SuggestedNameUsesOneRawOrFencedCandidate(string response)
     {
-        Assert.Equal(new[] { "架构决策合集", "评审实践合集", "设计指南合集" }, HostedCollectionRules.ParseSuggestedNames(response));
+        Assert.Equal("架构决策合集", HostedCollectionRules.ParseSuggestedName(response));
     }
 
     [Theory]
     [InlineData("```json```")]
-    [InlineData("```json\n[\"架构决策合集\",\"架构决策合集\",\"设计指南合集\"]\n```")]
-    [InlineData("```json\n[\"架构决策合集\",\"评审实践合集\",\"设计指南合集\"]\n```额外说明")]
-    public void SuggestedNamesRequireThreeDistinctNamesInOneJsonArray(string response)
+    [InlineData("[]")]
+    [InlineData("```json\n[\"架构决策合集\"]\n```额外说明")]
+    public void SuggestedNameRejectsMalformedOutput(string response)
     {
-        Assert.Empty(HostedCollectionRules.ParseSuggestedNames(response));
+        Assert.Null(HostedCollectionRules.ParseSuggestedName(response));
     }
 
     [Fact]

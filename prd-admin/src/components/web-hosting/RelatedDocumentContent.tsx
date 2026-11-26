@@ -18,10 +18,12 @@ function useRelatedNavigation(onNavigate: ((item: RelatedDocument) => void) | un
   return { navigate, siteWindow };
 }
 
-export function RelatedDocumentContent({ siteId, data, error = '', loading, source, compact = true, maxHeight, includeCurrent = false, cardsOnly = false, onReload, onManage, onPermissions, onTagEdit, onNavigate, onClose, heading = '关联文档' }: {
-  siteId: string; data: RelatedDocuments | null; error?: string; loading: boolean; source?: RelatedDocumentSource; compact?: boolean; maxHeight?: number; includeCurrent?: boolean; cardsOnly?: boolean;
+export function RelatedDocumentContent({ siteId, data, error = '', loading, source, compact = true, maxHeight, includeCurrent = false, cardsOnly = false, membersOnly = false, onReload, onManage, onPermissions, onTagEdit, onNavigate, onClose, heading = '关联文档', manageAction, emptyMessage }: {
+  siteId: string; data: RelatedDocuments | null; error?: string; loading: boolean; source?: RelatedDocumentSource; compact?: boolean; maxHeight?: number; includeCurrent?: boolean; cardsOnly?: boolean; membersOnly?: boolean;
   onReload: () => void; onManage: () => void; onPermissions: () => void; onTagEdit: (item: RelatedDocument) => void;
   onNavigate?: (item: RelatedDocument) => void; onClose: () => void; heading?: string;
+  manageAction?: { label: string } & ({ href: string } | { onClick: () => void }) | null;
+  emptyMessage?: string;
 }) {
   const [page, setPage] = useState(0);
   const { navigate, siteWindow } = useRelatedNavigation(onNavigate, onClose);
@@ -35,11 +37,12 @@ export function RelatedDocumentContent({ siteId, data, error = '', loading, sour
   const token = source?.token;
   const password = source?.password;
   const close = onClose;
-  const openManager = onManage;
+  const action = manageAction === undefined && data?.canManage ? { label: '管理关联', onClick: onManage } : manageAction;
   const openPermissions = onPermissions;
   const setTagTarget = onTagEdit;
   const refresh = onReload;
-  const displayed = data?.items.filter(item => (includeCurrent || item.id !== siteId)).filter(item => referenceScope === 'all' || (referenceScope === 'members' ? item.isManual !== false : item.isManual === false)) ?? [];
+  const displayed = data?.items.filter(item => includeCurrent || item.id !== siteId)
+    .filter(item => membersOnly ? item.isManual !== false : referenceScope === 'all' || (referenceScope === 'members' ? item.isManual !== false : item.isManual === false)) ?? [];
   const pages = Math.max(1, Math.ceil(displayed.length / 9));
   const currentPage = Math.min(page, pages - 1);
   return <section className="related-document-content" aria-label={heading} style={{ minHeight: 0, maxHeight: maxHeight ?? 'calc(100dvh - 44px)' }}>
@@ -47,9 +50,11 @@ export function RelatedDocumentContent({ siteId, data, error = '', loading, sour
       <div className="related-heading-actions">{!cardsOnly && <div className="related-view-switch" aria-label="关联文档展示方式">
         <button type="button" aria-label="卡片视图" aria-pressed={view === 'cards'} onClick={() => changeView('cards')}><Grid2X2 size={14} /></button>
         <button type="button" aria-label="列表视图" aria-pressed={view === 'list'} onClick={() => changeView('list')}><List size={15} /></button>
-      </div>}{compact && data?.canManage && data.version > 0 && <button type="button" className="related-text-button" aria-label={data.hasPermissionDifferences ? '权限不一致' : '权限与分享'} title={data.hasPermissionDifferences ? '权限不一致' : '权限与分享'} onClick={openPermissions}>{data.hasPermissionDifferences ? <ShieldAlert size={14} /> : <ShieldCheck size={14} />}</button>}{data?.canManage && <button className="related-text-button" type="button" onClick={openManager}><FolderPlus size={14} />管理关联</button>}</div>
+      </div>}{compact && data?.canManage && data.version > 0 && <button type="button" className="related-text-button" aria-label={data.hasPermissionDifferences ? '权限不一致' : '权限与分享'} title={data.hasPermissionDifferences ? '权限不一致' : '权限与分享'} onClick={openPermissions}>{data.hasPermissionDifferences ? <ShieldAlert size={14} /> : <ShieldCheck size={14} />}</button>}
+      {action && ('href' in action ? <a className="related-text-button" href={action.href}><ExternalLink size={14} />{action.label}</a>
+        : <button className="related-text-button" type="button" onClick={action.onClick}><FolderPlus size={14} />{action.label}</button>)}</div>
     </div>
-        {data?.items.some(item => item.isManual === false) && <div className="related-tag-filters" aria-label="按关联来源筛选">
+        {!membersOnly && data?.items.some(item => item.isManual === false) && <div className="related-tag-filters" aria-label="按关联来源筛选">
           <button type="button" aria-pressed={referenceScope === 'all'} onClick={() => { setReferenceScope('all'); setPage(0); }}>全部</button>
           <button type="button" aria-pressed={referenceScope === 'members'} onClick={() => { setReferenceScope('members'); setPage(0); }}>{data.contextLabel || '手动关联'}</button>
           <button type="button" aria-pressed={referenceScope === 'references'} onClick={() => { setReferenceScope('references'); setPage(0); }}>评论引用</button>
@@ -86,7 +91,7 @@ export function RelatedDocumentContent({ siteId, data, error = '', loading, sour
                   {item.canEditTags && <button type="button" className="related-tag-edit" aria-label={`编辑标签：${item.title}`} title="编辑文档标签"
                     onClick={() => { close(); setTagTarget(item); }}><Tags size={13} /></button>}
                 </div>; })}
-                {!displayed.length && <p className="related-small-note">{referenceScope === 'all' ? '暂无关联文档。' : '没有符合条件的关联文档。'}</p>}
+                {!displayed.length && <p className="related-small-note">{referenceScope === 'all' ? emptyMessage ?? '暂无关联文档。' : '没有符合条件的关联文档。'}</p>}
               </div>}
 
         </div>

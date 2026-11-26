@@ -452,7 +452,7 @@ function ReviewHistoryWindow({ placement, site, source, versionId, commentId, ve
         <footer className="review-history-window-footer" data-history-dismissable>
           <span>{uploadError ? <span role="alert" className="review-history-window-upload-error">{uploadError}</span>
             : archiveReady && (isUnarchived ? '原文未归档的版本不能恢复' : version?.historyRestricted ? '当前权限只可阅读当前版本' : version?.isCurrent ? '这是当前版本'
-              : eligible ? '恢复后会发布新的当前版本' : '只读权限：如需恢复，请联系文档所有者')}</span>
+              : eligible ? '恢复后会发布新的当前版本' : site.wrappedAssetType === 'video' && onUpload ? '可预览历史视频，上传视频可发布新版本' : '只读权限：如需恢复，请联系文档所有者')}</span>
           {onUpload && <button type="button" className="review-history-button review-history-upload" disabled={restoring} onClick={onUpload}
             aria-label={uploading ? '正在上传新版本' : '上传新版本'}>
             {uploading ? <MapSpinner size={14} /> : <Upload size={14} />}{uploading ? '正在上传…' : '上传新版本'}

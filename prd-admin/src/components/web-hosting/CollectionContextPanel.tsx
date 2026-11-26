@@ -1,15 +1,18 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Copy, ExternalLink, Search, X } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { copyWithFeedback } from '@/lib/clipboard';
 import { getCollectionContexts, getCollectionContextDocuments, getCollectionContextLinks,
   type CollectionContext, type CollectionContextPage, type CollectionHistoryItem } from '@/services/real/hostedCollections';
+import type { CollectionMember } from '@/services/real/hostedCollections';
 import { getRelatedDocuments, type RelatedDocument, type RelatedDocuments } from '@/services/real/relatedDocuments';
 import { RelatedDocumentContent } from './RelatedDocumentContent';
 
 type DocumentActions = {
   onClose: () => void; onNavigate?: (item: RelatedDocument) => void; onTagEdit: (item: RelatedDocument) => void;
   onManage: (data: RelatedDocuments) => void; onPermissions: (data: RelatedDocuments) => void;
+  onEditCollection: (draft: { collectionId?: string; initialSites?: CollectionMember[] }) => void;
+  cardsOnly?: boolean;
 };
 
 /** 合集是选择上下文，右侧始终是该上下文的文档；只有一组时省去选择栏。 */
@@ -20,50 +23,32 @@ export function CollectionContextPanel({ siteId, maxHeight, onSplitChange, ...ac
   const [reload, setReload] = useState(0);
   const [result, setResult] = useState<CollectionContextPage | null>(null);
   const [selectedId, setSelectedId] = useState('');
-  const [hasRelated, setHasRelated] = useState(false);
-  const [relatedError, setRelatedError] = useState('');
-  const relatedRevision = useRef(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const footer = useRef<HTMLDivElement>(null);
   const [footerHeight, setFooterHeight] = useState(0);
   const ready = !!result && !error;
   useLayoutEffect(() => {
-    if (!ready || !footer.current) return;
+    if (!ready || !footer.current) { setFooterHeight(0); return; }
     const element = footer.current;
     const measure = () => setFooterHeight(element.getBoundingClientRect().height);
     measure();
     if (typeof ResizeObserver === 'undefined') return;
     const observer = new ResizeObserver(measure); observer.observe(element);
     return () => observer.disconnect();
-  }, [ready]);
+  }, [ready, selectedId]);
   useEffect(() => {
     if (search.trim() === keyword) return;
     const timer = setTimeout(() => { setKeyword(search.trim()); setPage(1); }, 250);
     return () => clearTimeout(timer);
   }, [search, keyword]);
   useEffect(() => {
-    let alive = true; setLoading(true); setError(''); setRelatedError('');
-    void getCollectionContexts(siteId, page, keyword).then(async response => {
+    let alive = true; setLoading(true); setError('');
+    void getCollectionContexts(siteId, page, keyword).then(response => {
       if (!alive) return;
       if (response.success) {
         setResult(response.data);
-        setSelectedId(current => current === 'related' || response.data.items.some(item => item.id === current) ? current : response.data.items[0]?.id ?? 'related');
-        setLoading(false);
-        const revision = relatedRevision.current;
-        // 手动关系独立读取；其延迟或失败不能阻止已加载的合集与原链接。
-        try {
-          const related = await getRelatedDocuments(siteId);
-          if (!alive || revision !== relatedRevision.current) return;
-          if (!related.success) {
-            setHasRelated(true); setRelatedError(related.error?.message || '关联文档暂时无法读取，请重试。'); return;
-          }
-          const manual = related.data.items.some(item => item.id !== siteId);
-          setHasRelated(manual);
-          if (!manual) setSelectedId(current => current === 'related' ? response.data.items[0]?.id ?? 'related' : current);
-        } catch {
-          if (alive && revision === relatedRevision.current) { setHasRelated(true); setRelatedError('关联文档暂时无法读取，请检查网络后重试。'); }
-        }
+        setSelectedId(current => response.data.items.some(item => item.id === current) ? current : response.data.items[0]?.id ?? '');
       } else setError(response.error?.message || '合集暂时无法读取，请重试。');
     }).catch(() => { if (alive) setError('合集暂时无法读取，请检查网络后重试。'); })
       .finally(() => { if (alive) setLoading(false); });
@@ -78,13 +63,7 @@ export function CollectionContextPanel({ siteId, maxHeight, onSplitChange, ...ac
     return () => { window.removeEventListener('hosted-comments-changed', refresh); document.removeEventListener('visibilitychange', refresh); };
   }, []);
   const selected = result?.items.find(item => item.id === selectedId);
-  const onRelatedLoaded = useCallback((data: RelatedDocuments) => {
-    relatedRevision.current++;
-    const manual = data.items.some(item => item.id !== siteId);
-    setHasRelated(manual); setRelatedError('');
-    if (!manual) setSelectedId(current => current === 'related' ? result?.items[0]?.id ?? 'related' : current);
-  }, [siteId, result]);
-  const split = (result?.totalContexts ?? 0) + (hasRelated ? 1 : 0) > 1;
+  const split = (result?.totalContexts ?? 0) > 1;
   useEffect(() => { onSplitChange(split); }, [split, onSplitChange]);
   const pending = loading || search.trim() !== keyword;
   const totalHeight = split ? Math.min(360, maxHeight) : maxHeight;
@@ -100,9 +79,6 @@ export function CollectionContextPanel({ siteId, maxHeight, onSplitChange, ...ac
         {search && <button type="button" aria-label="清除合集搜索" onClick={clear}><X size={13} /></button>}
       </label>
       <nav className="collection-context-list" aria-label="选择合集" style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
-        {hasRelated && <section className={`collection-context-entry ${selectedId === 'related' ? 'is-selected' : ''}`}>
-          <button type="button" className="collection-context-select" aria-label="关联文档" aria-pressed={selectedId === 'related'} onClick={() => setSelectedId('related')}><strong>关联文档</strong>{relatedError && <small title={relatedError}>暂时无法读取</small>}</button>
-        </section>}
         {pending ? <div className="related-empty" role="status"><MapSpinner size={16} />正在查找…</div>
           : result.items.map(context => <section className={`collection-context-entry ${context.id === selectedId ? 'is-selected' : ''}`} key={context.id}>
             <button type="button" className="collection-context-select" aria-pressed={context.id === selectedId} onClick={() => setSelectedId(context.id)}>
@@ -118,16 +94,16 @@ export function CollectionContextPanel({ siteId, maxHeight, onSplitChange, ...ac
     </aside>}
     <div className="collection-context-documents" style={{ minWidth: 0, minHeight: 0, overflow: 'hidden' }}>
       {pending ? <div className="related-empty" role="status"><MapSpinner size={20} />正在读取合集…</div>
-        : selected || selectedId === 'related' || result.totalContexts === 0 ? <ContextDocuments key={`${siteId}:${selected?.id ?? 'related'}:${reload}`} siteId={siteId} maxHeight={contentHeight} context={selected} onRelatedLoaded={onRelatedLoaded} {...actions} />
+        : selected || result.totalContexts === 0 ? <ContextDocuments key={`${siteId}:${selected?.id ?? 'related'}:${reload}`} siteId={siteId} maxHeight={contentHeight} context={selected} {...actions} />
           : <div className="related-empty">选择左侧合集查看文档。</div>}
     </div></div>
-    <div ref={footer} className="collection-context-link-footer" role="region" aria-label="合集链接操作">
+    {selected && !selected.id.startsWith('manual:') && <div ref={footer} className="collection-context-link-footer" role="region" aria-label="合集链接操作">
       <CollectionLinks key={`${pending ? 'pending' : selected?.id ?? 'none'}:${reload}`} siteId={siteId} context={pending ? undefined : selected} pending={pending} maxListHeight={Math.min(120, Math.floor(maxHeight / 3))} />
-    </div>
+    </div>}
   </div>;
 }
 
-function ContextDocuments({ siteId, context, maxHeight, onRelatedLoaded, ...actions }: DocumentActions & { siteId: string; context?: CollectionContext; maxHeight: number; onRelatedLoaded: (data: RelatedDocuments) => void }) {
+function ContextDocuments({ siteId, context, maxHeight, ...actions }: DocumentActions & { siteId: string; context?: CollectionContext; maxHeight: number }) {
   const [data, setData] = useState<RelatedDocuments | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -138,12 +114,23 @@ function ContextDocuments({ siteId, context, maxHeight, onRelatedLoaded, ...acti
     const request = contextId ? getCollectionContextDocuments(siteId, contextId) : getRelatedDocuments(siteId);
     void request.then(response => {
       if (!alive) return;
-      if (response.success) { setData(response.data); if (!contextId) onRelatedLoaded(response.data); } else setError(response.error?.message || '文档暂时无法读取，请重试。');
+      if (response.success) setData(response.data); else setError(response.error?.message || '文档暂时无法读取，请重试。');
     }).catch(() => { if (alive) setError('文档暂时无法读取，请检查网络后重试。'); })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
-  }, [siteId, contextId, reload, onRelatedLoaded]);
-  return <RelatedDocumentContent includeCurrent={!!context} siteId={siteId} maxHeight={maxHeight} data={data} loading={loading} error={error} heading={context?.title ?? '关联文档'}
+  }, [siteId, contextId, reload]);
+  const manual = contextId?.startsWith('manual:');
+  const current = data?.items.find(item => item.id === siteId);
+  const collectionId = context?.collectionId;
+  const manageAction = contextId?.startsWith('collection:') && collectionId
+    ? { label: '管理合集', onClick: () => actions.onEditCollection({ collectionId }) }
+    : contextId?.startsWith('document-collection:') && collectionId
+      ? { label: '打开合集', href: `/web-pages/collections/${encodeURIComponent(collectionId)}` }
+      : manual && data?.canManage ? { label: '管理合集', onClick: () => actions.onManage(data) }
+      : !context && current && data?.canManage ? { label: '创建合集', onClick: () => actions.onEditCollection({ initialSites: [current] }) }
+      : undefined;
+  return <RelatedDocumentContent includeCurrent={!!context} siteId={siteId} maxHeight={maxHeight} data={data} loading={loading} error={error} heading={context?.title ?? '合集'} cardsOnly={actions.cardsOnly} membersOnly={!!context && !manual}
+    manageAction={manageAction ?? null} emptyMessage={context ? '没有其他合集成员。' : '这份文档尚未加入合集。'}
     onReload={() => setReload(value => value + 1)} onManage={() => { if (data) actions.onManage(data); }} onPermissions={() => { if (data) actions.onPermissions(data); }}
     onTagEdit={actions.onTagEdit} onClose={actions.onClose} onNavigate={actions.onNavigate} />;
 }

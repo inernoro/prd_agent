@@ -33,13 +33,13 @@ public partial class WebPagesController
         if (resolved.Site == null || resolved.Share == null) return RelatedNotFound();
         var allowed = resolved.Share.SiteIds.ToHashSet(StringComparer.Ordinal);
         if (resolved.Share.SiteId != null) allowed.Add(resolved.Share.SiteId);
-        return await RelatedViewAsync(resolved.Site, userId, allowed, token, resolved.Share.CollectionId != null ? resolved.Share : null);
+        return await RelatedViewAsync(resolved.Site, userId, allowed, token, resolved.Share.ShareType == "collection" ? resolved.Share : null);
     }
 
-    private async Task<IActionResult> RelatedViewAsync(HostedSite current, string? userId, HashSet<string> sharedIds, string? shareToken = null, WebPageShareLink? collectionShare = null, HostedDocumentGroup? contextGroup = null)
+    private async Task<IActionResult> RelatedViewAsync(HostedSite current, string? userId, HashSet<string> sharedIds, string? shareToken = null, WebPageShareLink? collectionShare = null, HostedDocumentGroup? contextGroup = null, HostedDocumentGroup? resolvedManualGroup = null)
     {
         Response.Headers.CacheControl = "no-store";
-        var group = contextGroup ?? (collectionShare == null
+        var group = contextGroup ?? resolvedManualGroup ?? (collectionShare == null
             ? await _db.HostedDocumentGroups.Find(x => x.SiteIds.Contains(current.Id)).FirstOrDefaultAsync()
             : new HostedDocumentGroup { SiteIds = HostedCollectionRules.OrderedIds(collectionShare.TargetSiteIds(), collectionShare.MainSiteId),
                 MainSiteId = collectionShare.MainSiteId ?? string.Empty, OwnerUserId = collectionShare.CreatedBy });
@@ -67,7 +67,7 @@ public partial class WebPagesController
         var ordered = visible;
         return Ok(ApiResponse<object>.Ok(new
         {
-            contextLabel = collectionShare != null || contextGroup != null ? "合集成员" : "关联文档",
+            contextLabel = "合集成员",
             version = canManage ? group?.Version ?? 0 : 0,
             mainSiteId,
             canManage,

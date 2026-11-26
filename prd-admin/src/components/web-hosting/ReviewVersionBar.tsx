@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type RefObject } from 'react';
 import { Check, ChevronDown, History, Upload, RefreshCw } from 'lucide-react';
 import { AnchoredMenu } from '@/components/ui/AnchoredMenu';
 import { MapSpinner } from '@/components/ui/VideoLoader';
+import { WEB_HOSTING_VIDEO_EXTENSIONS } from '@/lib/webHostingUploadLimits';
 import type { HostedReview } from './useHostedReview';
 import { ReviewVersionPreview, type ReviewHistoryPlacement } from './ReviewVersionPreview';
 
@@ -13,8 +14,8 @@ export function openReviewHistory(review: HostedReview) {
   if (next) review.setVersionPreview({ id: next.id });
 }
 
-export function ReviewVersionBar({ review, canUpload, renderPreview = true, readerToolbar = false, readerStage }: {
-  review: HostedReview; canUpload: boolean; renderPreview?: boolean; readerToolbar?: boolean; readerStage?: RefObject<HTMLElement>;
+export function ReviewVersionBar({ review, canUpload, video = false, renderPreview = true, readerToolbar = false, readerStage }: {
+  review: HostedReview; canUpload: boolean; video?: boolean; renderPreview?: boolean; readerToolbar?: boolean; readerStage?: RefObject<HTMLElement>;
 }) {
   const input = useRef<HTMLInputElement>(null), trigger = useRef<HTMLButtonElement>(null), list = useRef<HTMLDivElement>(null);
   const historyPosition = useRef<{ x: number; y: number } | null>(null);
@@ -27,6 +28,7 @@ export function ReviewVersionBar({ review, canUpload, renderPreview = true, read
     ? review.versions.find(version => version.id === review.selected?.restoredFromRevisionId)
     : undefined;
   const selectedLabel = review.selected?.versionLabel;
+  const versionTitle = video ? '视频版本' : '网页版本';
   useEffect(() => {
     if (open) list.current?.querySelector<HTMLButtonElement>('[aria-selected="true"]')?.focus();
   }, [open]);
@@ -34,7 +36,7 @@ export function ReviewVersionBar({ review, canUpload, renderPreview = true, read
   return <div className="review-version-control" onKeyDownCapture={event => {
     if (open && event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); setOpen(false); trigger.current?.focus(); }
   }}>
-    <button ref={trigger} type="button" className="review-tool review-version-trigger max-sm:min-h-11" aria-label={`网页版本：${selectedLabel ?? '加载中'}`}
+    <button ref={trigger} type="button" className="review-tool review-version-trigger max-sm:min-h-11" aria-label={`${versionTitle}：${selectedLabel ?? (review.error ? '加载失败' : '加载中')}`}
       aria-haspopup={directHistory ? 'dialog' : 'listbox'} aria-expanded={expanded}
       onClick={() => {
         if (!directHistory) setOpen(value => !value);
@@ -52,8 +54,8 @@ export function ReviewVersionBar({ review, canUpload, renderPreview = true, read
       <ChevronDown size={12} className={expanded ? 'review-chevron-open' : ''} />
     </button>
     <AnchoredMenu open={open && !directHistory} onClose={() => setOpen(false)} anchorRef={trigger} minWidth={260} className={`review-popover review-version-popover${trigger.current?.closest('.surface-tone-dark') ? ' surface-tone-dark' : ''}`} style={{ width: 280, maxWidth: 'calc(100vw - 16px)', maxHeight: 'min(420px, calc(100dvh - 88px))', overflow: 'hidden', display: 'flex', flexDirection: 'column', zIndex: 2147483647 }}>
-      <div className="review-popover-heading"><strong>网页版本</strong>{review.versions.some(version => version.historyRestricted) && <p>当前权限仅开放当前版本</p>}</div>
-      <div ref={list} role="listbox" aria-label="网页版本" className="review-version-list" onKeyDown={event => {
+      <div className="review-popover-heading"><strong>{versionTitle}</strong>{review.versions.some(version => version.historyRestricted) && <p>当前权限仅开放当前版本</p>}</div>
+      <div ref={list} role="listbox" aria-label={versionTitle} className="review-version-list" onKeyDown={event => {
         if (event.key === 'Escape') { setOpen(false); trigger.current?.focus(); return; }
         if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
         event.preventDefault();
@@ -77,19 +79,19 @@ export function ReviewVersionBar({ review, canUpload, renderPreview = true, read
       </div>
       {canUpload && <div className="review-menu-footer"><button type="button" className="review-upload-action" onClick={() => input.current?.click()} disabled={busy}>
         {review.uploading ? <MapSpinner size={15} /> : <Upload size={15} />}{review.uploading ? '正在保存新版本…' : '上传新版本'}
-        <span>HTML / ZIP</span>
+        <span>{video ? 'MP4 / WebM / MOV 等视频文件' : 'HTML / ZIP'}</span>
       </button></div>}
       {review.error && <div role="alert" className="review-version-error"><span>{review.error}</span><button type="button" aria-label="重试加载版本" onClick={() => void review.refresh()}><RefreshCw size={14} /></button></div>}
     </AnchoredMenu>
     {readerToolbar && directHistory && !review.versionPreview && review.error && <span className="review-version-error" role="alert">{review.error}</span>}
-    {canUpload && <input ref={input} type="file" accept=".html,.htm,.zip" className="hidden" aria-label="上传新版本文件" onChange={event => {
+    {canUpload && <input ref={input} type="file" accept={video ? WEB_HOSTING_VIDEO_EXTENSIONS.join(',') : '.html,.htm,.zip'} className="hidden" aria-label="上传新版本文件" onChange={event => {
       const file = event.target.files?.[0]; event.target.value = '';
       if (!file) return;
       const fromHistory = readerToolbar && !!review.versionPreview;
       setHistoryUpload(fromHistory);
       void review.upload(file).then(success => { if (success && fromHistory) review.setVersionPreview(null); });
     }} />}
-    {renderPreview && <ReviewVersionPreviewHost review={review} canRestore={canUpload}
+    {renderPreview && <ReviewVersionPreviewHost review={review} canRestore={canUpload && !video}
       placement={readerToolbar ? { trigger, stage: readerStage, lastPosition: historyPosition } : undefined}
       uploadError={historyUpload ? review.error : null} uploading={historyUpload && review.uploading}
       onUpload={canUpload ? () => input.current?.click() : undefined} onReturnFocus={event => {

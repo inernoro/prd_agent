@@ -3305,7 +3305,7 @@ export function SiteListItem({ site, selected, selectionMode = false, shared, ca
         )}
         <MoreActionsButton
           actions={[
-            !relatedSummary?.count ? { label: '关联与合集', icon: <FolderOpen size={13} />, onClick: setRelatedMenuAnchor } : null,
+            !relatedSummary?.count ? { label: '合集', icon: <FolderOpen size={13} />, onClick: setRelatedMenuAnchor } : null,
             c.canEdit && onAiEdit ? { label: '帮我修改', icon: <WandSparkles size={13} />, onClick: onAiEdit } : null,
             { label: '二维码', icon: <QrCode size={13} />, onClick: onQrCode },
             c.canSetVisibility

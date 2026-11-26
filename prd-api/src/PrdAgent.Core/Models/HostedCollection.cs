@@ -22,31 +22,30 @@ public class HostedCollection
 
 public static class HostedCollectionRules
 {
-    public static string[] ParseSuggestedNames(string? response)
+    public static string? ParseSuggestedName(string? response)
     {
-        if (response is not { Length: > 0 and <= 2048 }) return [];
+        if (response is not { Length: > 0 and <= 2048 }) return null;
 
         var output = response.Trim();
         if (output.StartsWith("```", StringComparison.Ordinal) && output.EndsWith("```", StringComparison.Ordinal))
         {
             var firstLineEnd = output.IndexOf('\n');
-            if (firstLineEnd < 3 || firstLineEnd >= output.Length - 3) return [];
+            if (firstLineEnd < 3 || firstLineEnd >= output.Length - 3) return null;
             var language = output[3..firstLineEnd].Trim();
-            if (language.Length != 0 && !language.Equals("json", StringComparison.OrdinalIgnoreCase)) return [];
+            if (language.Length != 0 && !language.Equals("json", StringComparison.OrdinalIgnoreCase)) return null;
             output = output[(firstLineEnd + 1)..^3];
         }
 
         try
         {
-            var names = (JsonSerializer.Deserialize<string?[]>(output) ?? [])
+            var name = (JsonSerializer.Deserialize<string?[]>(output) ?? [])
                 .Where(name => !string.IsNullOrWhiteSpace(name))
                 .Select(name => name!.Trim())
                 .Where(name => name.Length is > 2 and <= 32 && !name.Any(char.IsControl))
-                .Select(name => name.EndsWith("合集", StringComparison.Ordinal) ? name : name + "合集")
-                .Distinct(StringComparer.OrdinalIgnoreCase).Take(3).ToArray();
-            return names.Length == 3 ? names : [];
+                .FirstOrDefault();
+            return name == null || name.EndsWith("合集", StringComparison.Ordinal) ? name : name + "合集";
         }
-        catch (JsonException) { return []; }
+        catch (JsonException) { return null; }
     }
 
     public static List<string> OrderedIds(IEnumerable<string> ids, string? mainSiteId = null)

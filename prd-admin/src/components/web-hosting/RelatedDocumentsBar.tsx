@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useId, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useId, useRef, useState } from 'react';
 import { ArrowDown, ArrowUp, Check, ChevronDown, FileText, FolderPlus, Grid2X2, Link2, Plus, Search, ShieldAlert, ShieldCheck, Star, X } from 'lucide-react';
 import { AnchoredMenu } from '@/components/ui/AnchoredMenu';
 import { Dialog } from '@/components/ui/Dialog';
@@ -10,14 +10,16 @@ import { useIsMobile } from '@/hooks/useBreakpoint';
 import { HOSTED_SITE_PERMISSIONS_CHANGED, getRelatedCandidates, getRelatedDocuments, previewRelatedPermissions, saveRelatedDocuments, syncRelatedPermissions,
   type RelatedSummary, type RelatedDocument, type RelatedDocuments, type RelatedDocumentSource, type RelatedPermissionPreview, type RelatedSyncResult } from '@/services/real/relatedDocuments';
 import { updateSite } from '@/services/real/webPages';
-import { previewCollectionPermissions, syncCollectionPermissions } from '@/services/real/hostedCollections';
+import { previewCollectionPermissions, syncCollectionPermissions, type CollectionMember } from '@/services/real/hostedCollections';
 import { RelatedDocumentContent } from './RelatedDocumentContent';
 import { CollectionContextPanel } from './CollectionContextPanel';
 import './RelatedDocumentsBar.css';
 
-export default function RelatedDocumentsBar({ siteId, source, onNavigate, variant = 'bar', summary, collectionNavigation = false, siteTitle, reviewReader = false, menuAnchor, onMenuClose }: {
+const CollectionEditor = lazy(async () => ({ default: (await import('./HostedCollectionManager')).HostedCollectionEditor }));
+
+export default function RelatedDocumentsBar({ siteId, source, onNavigate, variant = 'bar', summary, collectionNavigation = false, membersOnly = false, siteTitle, reviewReader = false, menuAnchor, onMenuClose }: {
   siteId: string; collectionNavigation?: boolean; siteTitle?: string; variant?: 'bar' | 'toolbar' | 'badge';
-  summary?: RelatedSummary; source?: RelatedDocumentSource; onNavigate?: (item: RelatedDocument) => void; reviewReader?: boolean;
+  summary?: RelatedSummary; source?: RelatedDocumentSource; onNavigate?: (item: RelatedDocument) => void; reviewReader?: boolean; membersOnly?: boolean;
   menuAnchor?: HTMLElement | null; onMenuClose?: () => void;
 }) {
   const authToken = useAuthStore(state => state.token);
@@ -31,6 +33,7 @@ export default function RelatedDocumentsBar({ siteId, source, onNavigate, varian
   const [tagTarget, setTagTarget] = useState<RelatedDocument | null>(null);
   const [manage, setManage] = useState(false);
   const [permissions, setPermissions] = useState(false);
+  const [collectionEditor, setCollectionEditor] = useState<{ collectionId?: string; initialSites?: CollectionMember[] } | null>(null);
   const [split, setSplit] = useState(false);
   const [maxHeight, setMaxHeight] = useState(() => typeof window === 'undefined' ? 600 : window.innerHeight - 40);
   const anchor = useRef<HTMLButtonElement>(null);
@@ -96,27 +99,28 @@ export default function RelatedDocumentsBar({ siteId, source, onNavigate, varian
   };
   const openManager = (next = data) => { setData(next); close(); setManage(true); };
   const openPermissions = (next = data) => { setData(next); close(); setPermissions(true); };
-  if (variant === 'badge' && !hasBadge && !menuAnchor && !manage && !permissions && !tagTarget) return null;
+  if (variant === 'badge' && !hasBadge && !menuAnchor && !manage && !permissions && !tagTarget && !collectionEditor) return null;
   const compact = variant !== 'bar';
-  const relatedItems = data?.items.filter(item => item.id !== siteId) ?? [];
+  const relatedItems = data?.items.filter(item => item.id !== siteId && (!membersOnly || item.isManual !== false)) ?? [];
   const relatedCount = relatedItems.length;
-  if (variant === 'toolbar' && !collectionsEnabled && (loading || relatedCount === 0)) return null;
+  if (variant === 'toolbar' && !collectionNavigation && (loading || relatedCount === 0)) return null;
   const main = data?.items.find(item => item.isMain);
   const warn = variant === 'toolbar' && data?.canManage && data.hasPermissionDifferences;
-  const badgeTitle = collectionsEnabled ? `查看${siteTitle ? '「' + siteTitle + '」的' : ''}关联文档与所属合集`
+  const surfaceName = collectionNavigation ? '合集' : '关联文档';
+  const badgeTitle = collectionNavigation ? `查看${siteTitle ? '「' + siteTitle + '」的' : ''}合集`
     : summary ? `${summary.isMain ? '主文档 · ' : ''}关联 ${summary.count} 份文档：${summary.titles.join('、')}` : undefined;
-  return <div className={`related-documents-bar related-variant-${variant}`} aria-label="关联文档导航" data-no-drag>
+  return <div className={`related-documents-bar related-variant-${variant}`} aria-label={`${surfaceName}导航`} data-no-drag>
     {(variant !== 'badge' || hasBadge) && <button ref={anchor} type="button" className="related-trigger" title={warn ? '关联文档权限不一致，展开查看' : badgeTitle}
       aria-description={warn ? '关联文档权限不一致，展开可查看差异' : undefined} style={warn ? { color: 'var(--accent-fg-warning)' } : undefined}
-      aria-label={variant === 'badge' ? badgeTitle : '关联文档'} aria-expanded={open} aria-controls={menuId} aria-haspopup="dialog"
+      aria-label={variant === 'badge' ? badgeTitle : surfaceName} aria-expanded={open} aria-controls={menuId} aria-haspopup="dialog"
       onPointerEnter={event => { if (variant !== 'toolbar' && event.pointerType === 'mouse') openPanel(false); }} onPointerLeave={leave} onClick={() => openPanel(true)}
       onKeyDown={event => { if (event.key === 'ArrowDown' || event.key === 'Enter' || event.key === ' ') {
         event.preventDefault(); keepOpen(); setMaxHeight(measureAvailableHeight()); setOpen(true); setPinned(true);
         requestAnimationFrame(() => (panel.current?.querySelector<HTMLElement>('input,a,button') ?? panel.current)?.focus({ preventScroll: true }));
       } }}>
-      {variant === 'badge' || reviewReader ? <Link2 size={reviewReader ? 15 : 12} /> : <Grid2X2 size={14} />}{variant !== 'badge' && <span>关联文档</span>}
-      {variant === 'badge' ? <>{!!summary?.count && <span className="related-count">{summary.count}</span>}<span className="related-badge-name">{summary?.isMain ? '主文档' : summary?.mainTitle || summary?.titles[0] || '关联'}</span></>
-        : loading ? <MapSpinner size={12} /> : <span className="related-count">{data ? relatedCount : '—'}</span>}
+      {variant === 'badge' || reviewReader ? <Link2 size={reviewReader ? 15 : 12} /> : <Grid2X2 size={14} />}{variant !== 'badge' && <span>{surfaceName}</span>}
+      {variant === 'badge' ? <>{!!summary?.count && <span className="related-count">{summary.count}</span>}<span className="related-badge-name">{summary?.isMain ? '主文档' : summary?.mainTitle || summary?.titles[0] || surfaceName}</span></>
+        : !collectionsEnabled && (loading ? <MapSpinner size={12} /> : <span className="related-count">{data ? relatedCount : '—'}</span>)}
       {warn && <ShieldAlert size={12} data-permission-warning aria-hidden />}<ChevronDown size={13} className={open ? 'related-chevron-open' : ''} />
     </button>}
     {!compact && main && <span className="related-main-label"><Star size={12} />主文档<span title={main.title}>{main.title}</span></span>}
@@ -127,25 +131,29 @@ export default function RelatedDocumentsBar({ siteId, source, onNavigate, varian
       align={reviewReader && mobile ? 'viewport-right' : compact ? 'right' : 'left'}
       offsetX={0} gap={reviewReader && mobile ? 0 : 6} minWidth={280}
       className={`related-popover ${reviewReader ? 'related-reader-popover' : token ? 'surface-tone-dark' : ''}`} theme={reviewReader ? theme : undefined}
-      style={{ width: reviewReader ? 'min(464px, calc(100vw - 24px))' : collectionsEnabled && split ? 'min(680px, calc(100vw - 24px))' : 'min(464px, calc(100vw - 24px))', maxHeight, padding: 0,
+      style={{ width: collectionsEnabled && split ? 'min(680px, calc(100vw - 24px))' : 'min(464px, calc(100vw - 24px))', maxHeight, padding: 0,
         ...(reviewReader ? { background: 'var(--review-b-popover)', boxShadow: '0 12px 24px #0003, 0 2px 5px #0002' } : {}) }}>
-      <div id={menuId} ref={panel} tabIndex={-1} role="dialog" aria-label="关联文档" onPointerDown={event => { event.stopPropagation(); setPinned(true); }} onPointerEnter={keepOpen} onPointerLeave={leave}
+      <div id={menuId} ref={panel} tabIndex={-1} role="dialog" aria-label={surfaceName} onPointerDown={event => { event.stopPropagation(); setPinned(true); }} onPointerEnter={keepOpen} onPointerLeave={leave}
         onFocusCapture={keepOpen} onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget)) leave(); }}>
         {collectionsEnabled ? <CollectionContextPanel key={siteId + authToken} siteId={siteId} maxHeight={maxHeight - 2} onSplitChange={setSplit} onClose={close} onNavigate={onNavigate}
+          onEditCollection={draft => { close(); setCollectionEditor(draft); }} cardsOnly={reviewReader}
           onManage={next => openManager(next)} onPermissions={next => openPermissions(next)} onTagEdit={item => { close(); setTagTarget(item); }} />
-          : <RelatedDocumentContent key={siteId + token} siteId={siteId} maxHeight={maxHeight - 2} source={source} data={data} error={error} loading={loading} compact={compact} cardsOnly={reviewReader}
+          : <RelatedDocumentContent key={siteId + token} siteId={siteId} maxHeight={maxHeight - 2} source={source} data={data} error={error} loading={loading} compact={compact} cardsOnly={reviewReader} membersOnly={membersOnly} heading={membersOnly ? '合集成员' : surfaceName}
+            emptyMessage={collectionNavigation ? '没有其他可查看的合集成员。' : undefined}
             onReload={() => { setLoading(true); void refresh(); }} onManage={() => openManager()} onPermissions={() => openPermissions()}
             onTagEdit={item => { close(); setTagTarget(item); }} onNavigate={onNavigate} onClose={close} />}
       </div>
     </AnchoredMenu>
-    {manage && data?.canManage && <RelatedDocumentsManager key={siteId} siteId={siteId} data={data} onClose={() => setManage(false)} onSaved={next => { setData(next); setManage(false); window.dispatchEvent(new Event('hosted-relations-changed')); }} />}
+    {collectionEditor && <Suspense fallback={<MapSpinner size={16} />}><CollectionEditor {...collectionEditor}
+      onClose={() => { setCollectionEditor(null); window.dispatchEvent(new Event('hosted-relations-changed')); }} /></Suspense>}
+    {manage && data?.canManage && <RelatedDocumentsManager key={siteId} siteId={siteId} data={data} asCollection={collectionNavigation} onClose={() => setManage(false)} onSaved={next => { setData(next); setManage(false); window.dispatchEvent(new Event('hosted-relations-changed')); }} />}
     {tagTarget && <RelatedTagsDialog item={tagTarget} onClose={() => setTagTarget(null)} onSaved={async () => { await refresh(); setTagTarget(null); }} />}
     {permissions && data?.canManage && <RelatedPermissionsDialog siteId={siteId} onClose={() => { setPermissions(false); void refresh(); }} />}
   </div>;
 }
 
-function RelatedDocumentsManager({ siteId, data, onClose, onSaved }: {
-  siteId: string; data: RelatedDocuments; onClose: () => void; onSaved: (data: RelatedDocuments) => void;
+function RelatedDocumentsManager({ siteId, data, asCollection, onClose, onSaved }: {
+  siteId: string; data: RelatedDocuments; asCollection: boolean; onClose: () => void; onSaved: (data: RelatedDocuments) => void;
 }) {
   const [draft, setDraft] = useState(data.items.filter(item => item.isManual !== false));
   const [main, setMain] = useState(data.mainSiteId || siteId);
@@ -176,7 +184,7 @@ function RelatedDocumentsManager({ siteId, data, onClose, onSaved }: {
   };
   const relatedCount = draft.filter(item => item.id !== siteId).length;
   const available = candidates.filter(item => item.id !== siteId && !draft.some(selected => selected.id === item.id) && item.title.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()));
-  return <Dialog open onOpenChange={open => { if (!open && !saving) onClose(); }} title="管理关联文档" maxWidth={680} zIndex={1000}
+  return <Dialog open onOpenChange={open => { if (!open && !saving) onClose(); }} title={asCollection ? '管理合集成员' : '管理关联文档'} maxWidth={680} zIndex={1000}
     description="选择同组文件并指定一份主文档。关联关系不会改变任何文件的权限。"
     content={<div className="related-manager"><div className="related-section-label">已关联 {relatedCount} / 89<span>星标设为主文档</span></div>
       <div className="related-selected-list" style={{ maxHeight: '30dvh', overflowY: 'auto', minHeight: 0 }}>
@@ -197,7 +205,7 @@ function RelatedDocumentsManager({ siteId, data, onClose, onSaved }: {
       </div>
       {error && <p className="related-error" role="alert">{error}</p>}
     </div>}
-    actions={<><Button disabled={saving} onClick={onClose}>取消</Button><Button variant="primary" disabled={saving} onClick={() => void save()}>{saving && <MapSpinner size={14} />}保存关联</Button></>} />;
+    actions={<><Button disabled={saving} onClick={onClose}>取消</Button><Button variant="primary" disabled={saving} onClick={() => void save()}>{saving && <MapSpinner size={14} />}{asCollection ? '保存成员' : '保存关联'}</Button></>} />;
 }
 
 export function RelatedPermissionsDialog({ siteId, collectionId, onClose }: { siteId: string; collectionId?: string; onClose: () => void }) {

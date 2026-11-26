@@ -34,7 +34,7 @@ beforeEach(() => {
   element = document.createElement('div'); document.body.append(element); root = createRoot(element);
   vi.mocked(api.getCollectionCandidates).mockResolvedValue({ success: true, data: { items: sites, total: 3 }, error: null });
   vi.mocked(api.getCollection).mockResolvedValue({ success: true, data: details, error: null });
-  vi.mocked(api.suggestCollectionNames).mockResolvedValue({ success: true, data: { names: ['发布资料合集', '交付合集', '方案合集'] }, error: null });
+  vi.mocked(api.suggestCollectionNames).mockResolvedValue({ success: true, data: { names: ['发布资料合集'] }, error: null });
 });
 afterEach(() => { act(() => root.unmount()); element.remove(); vi.unstubAllGlobals(); });
 
@@ -82,19 +82,19 @@ it('在新截止时间内接收网关结果并且只请求一次', async () => {
   vi.useFakeTimers();
   try {
     vi.mocked(api.suggestCollectionNames).mockImplementation(() => new Promise(resolve => {
-      setTimeout(() => resolve({ success: true, data: { names: ['发布资料合集', '交付合集', '方案合集'] }, error: null }), 1850);
+      setTimeout(() => resolve({ success: true, data: { names: ['发布资料合集'] }, error: null }), 1850);
     }));
     await act(async () => root.render(<HostedCollectionEditor initialSites={sites} onClose={vi.fn()} />));
     await act(async () => { await vi.advanceTimersByTimeAsync(1851); });
     expect(element.querySelector<HTMLInputElement>('[aria-label="合集名称"]')?.value).toBe('发布资料合集');
-    expect(element.querySelectorAll('.collection-name-suggestions button')).toHaveLength(3);
+    expect(element.querySelector('.collection-naming-status')).toBeNull();
     expect(api.suggestCollectionNames).toHaveBeenCalledOnce();
   } finally {
     vi.useRealTimers();
   }
 });
 
-it('模型超时前可手动输入，超时后提供三个备用名称且不重复请求', async () => {
+it('模型超时保留用户已输入的名称且不重复请求', async () => {
   vi.useFakeTimers();
   try {
     vi.mocked(api.suggestCollectionNames).mockImplementation((_ids, signal) => new Promise(resolve => {
@@ -106,7 +106,7 @@ it('模型超时前可手动输入，超时后提供三个备用名称且不重�
     await input('我的自定义名称');
     await act(async () => { await vi.advanceTimersByTimeAsync(1975); });
     expect(element.querySelector<HTMLInputElement>('[aria-label="合集名称"]')?.value).toBe('我的自定义名称');
-    expect(element.querySelectorAll('.collection-name-suggestions button')).toHaveLength(3);
+    expect(element.querySelector('.collection-naming-status')).toBeNull();
     expect(api.suggestCollectionNames).toHaveBeenCalledOnce();
   } finally {
     vi.useRealTimers();
