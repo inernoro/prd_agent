@@ -22,7 +22,7 @@ import { multiPreviewUrl } from '../../web/src/lib/previewUrl.js';
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 import { branchEvents } from '../../src/services/branch-events.js';
 import { ExecutorRegistry } from '../../src/scheduler/executor-registry.js';
-import type { CdsConfig } from '../../src/types.js';
+import type { AccessRequest, CdsConfig } from '../../src/types.js';
 import { versionedDesignFixture, withAcceptanceStandard } from '../helpers/versioned-design-fixture.js';
 
 describe('human project grants through the production server', () => {
@@ -1566,6 +1566,97 @@ describe('human project grants through the production server', () => {
     expect((await call('DELETE', `/api/projects/${projectId}/agent-keys/${recoveredAgain.keyId}`, owner)).status).toBe(200);
     expect((await call('POST', `/api/access-requests/${pending.body.requestId}/approve`, owner, {})).status).toBe(409);
     expect((await begin(recoveredAgain.key)).status).toBe(403);
+  });
+
+  it('reports an approved design publishing key before and after its one-time collection', async () => {
+    const projectId = 'project-a';
+    const keys = `/api/projects/${projectId}/agent-keys`;
+    const requests = `/api/projects/${projectId}/access-requests`;
+    const started = await call('POST', requests, '', { designAccess: 'publish', agentName: 'Fixture designer' });
+    expect(started.status).toBe(201);
+    const { requestId, pollToken } = started.body;
+    expect((await call('POST', `/api/access-requests/${requestId}/approve`, owner, {})).status).toBe(200);
+
+    const approval = state.getAccessRequest(requestId)!;
+    const keyId = approval.issuedKeyId;
+    const stored = state.getAgentKeys(projectId).find(key => key.id === keyId)!;
+    const sensitive = [approval.issuedKeyPlaintext!, approval.pollTokenHash, stored.hash, pollToken as string];
+    expect(sensitive.every(value => typeof value === 'string' && value.length > 0)).toBe(true);
+    const getKey = async () => {
+      const listed = await call('GET', keys);
+      expect(listed.status).toBe(200);
+      const metadata = JSON.stringify(listed.body);
+      expect(sensitive.some(value => metadata.includes(value))).toBe(false);
+      const key = listed.body.keys.find((entry: { id: string }) => entry.id === keyId);
+      expect(key?.designAccess).toBe('publish');
+      return key;
+    };
+
+    expect((await getKey()).designApproval).toEqual({
+      requestId, approvedAt: approval.decidedAt, deliveryStatus: 'awaiting-collection', usable: true,
+    });
+    expect(state.getAccessRequest(requestId)?.deliveredAt).toBeUndefined();
+    await grant([projectId]);
+    expect((await call('GET', keys, member)).status).toBe(403);
+    const elsewhere = await call('GET', '/api/projects/project-b/agent-keys');
+    expect(elsewhere.body.keys).toEqual([]);
+
+    const collected = await fetch(`${base}${requests}/${requestId}`, { headers: { 'X-Poll-Token': pollToken } });
+    expect(collected.status).toBe(200);
+    const { authorizationKey } = await collected.json() as { authorizationKey: string };
+    const selfCheck = await credentialCall('GET', '/api/credentials/self-check', authorizationKey);
+    expect(selfCheck.body).toMatchObject({ kind: 'project', status: 'active', projectId, keyId });
+    const deliveredAt = state.getAccessRequest(requestId)?.deliveredAt;
+    expect(deliveredAt).toEqual(expect.any(String));
+    expect(state.getAccessRequest(requestId)?.issuedKeyPlaintext).toBeUndefined();
+    expect((await getKey()).designApproval).toEqual({
+      requestId, approvedAt: approval.decidedAt, deliveryStatus: 'delivered', deliveredAt, usable: true,
+    });
+
+    stored.expiresAt = new Date(Date.now() - 1000).toISOString();
+    expect(await getKey()).toMatchObject({ status: 'active', designApproval: {
+      requestId, deliveryStatus: 'delivered', deliveredAt, usable: false,
+    } });
+  });
+
+  it('omits design approval diagnostics for manual keys and unverified approval records', async () => {
+    const projectId = 'project-a';
+    const keys = `/api/projects/${projectId}/agent-keys`;
+    const manual = await call('POST', keys, owner, { designAccess: 'publish', label: 'Manual fixture publisher' });
+    expect(manual.status).toBe(201);
+    const now = new Date().toISOString();
+    const cases: [string, Partial<AccessRequest> | null][] = [
+      ['other-project', { projectId: 'project-b' }],
+      ['wrong-key', { issuedKeyId: 'different-key' }],
+      ['wrong-scope', { designAccess: 'feedback' }],
+      ['bootstrap', { kind: 'bootstrap' }],
+      ['not-approved', { status: 'rejected' }],
+      ['no-delivery-evidence', { deliveredAt: undefined }],
+      ['missing-request', null],
+      ['legacy-project-kind', { kind: undefined }],
+    ];
+    for (const [id, overrides] of cases) {
+      const requestId = `approval-${id}`;
+      state.addAgentKey(projectId, { id, label: 'Fixture publisher', scope: 'rw', createdAt: now, designAccess: 'publish',
+        designAccessRequestId: requestId, hash: createHash('sha256').update(id).digest('hex') });
+      if (overrides) state.addAccessRequest({
+        id: requestId, kind: 'project', projectId, status: 'approved', designAccess: 'publish',
+        issuedKeyId: id, createdAt: now, decidedAt: now, deliveredAt: now,
+        pollTokenHash: createHash('sha256').update(requestId).digest('hex'),
+        agentName: 'Fixture designer', purpose: 'Fixture provenance', ...overrides,
+      });
+    }
+    const listed = await call('GET', keys);
+    expect(listed.status).toBe(200);
+    const find = (id: string) => listed.body.keys.find((entry: { id: string }) => entry.id === id);
+    for (const id of [manual.body.keyId, ...cases.map(([id]) => id).filter(id => id !== 'legacy-project-kind')]) {
+      expect(find(id)).toMatchObject({ id, designAccess: 'publish' });
+      expect(find(id)).not.toHaveProperty('designApproval');
+      expect(JSON.stringify(find(id))).not.toContain(`approval-${id}`);
+    }
+    expect(find('legacy-project-kind').designApproval).toEqual({
+      requestId: 'approval-legacy-project-kind', approvedAt: now, deliveryStatus: 'delivered', deliveredAt: now, usable: true,
+    });
   });
 
   it('authorizes a design agent only for the selected project and does not issue broader keys', async () => {

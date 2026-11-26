@@ -16,9 +16,10 @@ export function buildAgentSetupGuide(origin: string, selection: AgentSetupSelect
     : '仅在自检明确报告缺少或失效的目标权限时';
   const host = quote(origin);
   const project = target.kind === 'existing' ? quote(target.projectId) : '<创建后返回的 projectId>';
-  const check = `python3 <技能根>/cds/cli/cdscli.py setup-check --host ${host} ${target.kind === 'system' ? '--system' : `--project ${project}`} --skills ${quote(skills.join(','))}${designArg}`;
+  const cli = `python3 <技能根>/cds/cli/cdscli.py${designAccess ? ' --workspace-credential' : ''}`;
+  const check = `${cli} setup-check --host ${host} ${target.kind === 'system' ? '--system' : `--project ${project}`} --skills ${quote(skills.join(','))}${designArg}`;
   const connect = target.kind === 'existing'
-    ? `python3 <技能根>/cds/cli/cdscli.py connect --host ${host} --project ${project}${designArg} --agent <当前Agent名称>`
+    ? `${cli} connect --host ${host} --project ${project}${designArg} --agent <当前Agent名称>`
     : `python3 <技能根>/cds/cli/cdscli.py connect --host ${host} --new-project --create-project <从仓库识别的项目名称> --agent <当前Agent名称>`;
   const taskUrl = new URL(buildAgentSetupUrl(origin, target, skills, selection.mission));
   taskUrl.searchParams.set('stage', 'task');
@@ -39,6 +40,10 @@ export function buildAgentSetupGuide(origin: string, selection: AgentSetupSelect
     '接入阶段只阅读本说明。安装后按任务读取所需的 SKILL.md 和 API reference。',
     '',
     '## 2. 先自检，再决定是否申请授权',
+    ...(designAccess ? [
+      'CLI 0.26.31 起使用以下工作区命令。当前可下载版本见同一接入链接的 JSON 中 cliVersion。低于 0.26.31 的兼容 CLI 可暂时省略 --workspace-credential。遇到环境凭据冲突时先更新完整技能包，再复用该工作区授权。',
+      '已有设计授权仅来自进程环境时，可省略 --workspace-credential 自检。通过后在同一环境继续使用该凭据。',
+    ] : []),
     designPublish
       ? '只读自检核对凭据、主机、技能版本和目标项目的设计接入清单。已有该项目的发布权限时直接复用。'
       : designRead
@@ -49,14 +54,18 @@ export function buildAgentSetupGuide(origin: string, selection: AgentSetupSelect
     target.kind === 'system'
       ? '当前是系统任务，没有项目 ID；不得拿项目列表第一项代替。CLI 只复用已有系统凭据；浏览器登录不能替代 CLI 凭据。没有系统 CLI 权限时由人类在已登录的 CDS 页面处理，不反复要求登录、不执行项目 connect、不自行签发或扩大权限。系统写操作仍按页面审批执行。'
       : `${requestCondition}，执行以下命令。\n\n\`\`\`sh\n${connect}\n\`\`\`\n\n申请发出后，让系统所有者打开 ${origin}/project-list，在右下角「授权申请」核对项目与智能体，点击「${approval}」。智能体等待批准，自动领取并保存凭据，然后再次运行自检。${designAccess ? '等待中断时，运行同一条命令继续领取原申请。' : ''}${target.kind === 'new' ? '使用同一条 connect 命令创建和换取授权，再用返回的 projectId 再次执行自检。' : ''}`,
-    '主机、项目或凭据来源冲突时停止并报告冲突，不把冲突当作缺少权限重新授权。凭据由现有 connect 原子保存到 .cds/credentials.json 并加入 Git 忽略；不索要、不展示、不复述密钥。',
+    designAccess
+      ? '主机或项目冲突时核对稿件链接与工作区后再自检。工作区有可用的普通项目绑定且需要设计授权时，保留原绑定，在独立工作区接入。批准后的凭据由 connect 保存在工作区并加入 Git 忽略。'
+      : '主机、项目或凭据来源冲突时停止并报告冲突，不把冲突当作缺少权限重新授权。凭据由现有 connect 原子保存到 .cds/credentials.json 并加入 Git 忽略；不索要、不展示、不复述密钥。',
     ...(designRead ? [
-      '主机绑定冲突时，先运行 `python3 <技能根>/cds/cli/cdscli.py auth inspect --strict` 查看脱敏的主机、项目和凭据来源，并与稿件链接核对。若应使用原主机，按原主机同一项目的接入说明再次自检。若确认目标是另一台 CDS，保留原绑定和凭据，在目标仓库的独立工作区中使用不继承原主机凭据的进程环境，再按目标实例的接入说明自检。',
-      '当前工作区已有可用的普通项目绑定但缺设计权限时，保留原绑定和凭据，在同一仓库的独立工作区用隔离的进程环境重新自检。需要申请时在独立工作区执行。',
+      '主机绑定冲突时，先运行 `python3 <技能根>/cds/cli/cdscli.py auth inspect --strict` 查看脱敏的主机、项目和凭据来源，并与稿件链接核对。若确认目标是另一台 CDS，保留原绑定，在目标仓库的独立工作区按该实例的接入说明自检。',
       '凭据已吊销时停止申请，请系统所有者在「项目列表 → 项目操作 → Agent Key → 已签发密钥」核对原项目的撤销记录。仍获授权的项目成员可在原稿同版「交付 → 反馈」接续。',
     ] : []),
     '',
     '## 3. 自检通过后才执行任务',
+    ...(designAccess ? [
+      '在同一工作区读取稿件、执行已获准的同稿发布或回填反馈时，每条 CLI 命令都使用 --workspace-credential，复用自检通过的项目凭据。MCP 确认绑定同一凭据后可复用，无法确认时使用已自检的 CLI 工作区模式。',
+    ] : []),
     `自检通过后读取本次任务说明：${taskUrl.toString()}。新项目先把链接中的 target 改为 existing 并补上创建后返回的 project 参数，禁止使用占位项目。`,
     `本次只加载这些技能的 SKILL.md：${skills.join('、')}。需要具体接口时再读该技能引用的单份 reference；任务变化时才加载其他技能。`,
     designRead

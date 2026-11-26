@@ -240,3 +240,41 @@ def test_release_check_blocks_missing_plan_and_passes_the_repaired_draft(tmp_pat
     assert repaired.returncode == 0, repaired.stdout + repaired.stderr
     assert 'G-11' not in repaired.stderr
     assert (tmp_path / '交接清单.md').is_file()
+    assert 'register --workspace-credential' in repaired.stdout
+
+
+@pytest.mark.skipif(not shutil.which('node') or not shutil.which('git'), reason='registration uses Node.js and Git')
+@pytest.mark.parametrize('explicit, bound', [(True, True), (True, False), (False, True)])
+def test_release_register_targets_the_explicit_workspace_binding(tmp_path, explicit, bound):
+    env = {**isolated_env(), 'CDS_HOST': 'https://inherited.example', 'CDS_PROJECT_ID': 'unrelated-project'}
+    artifact = tmp_path / 'draft'
+    artifact.mkdir()
+    (artifact / 'design.json').write_text(json.dumps({'project': PROJECT}), encoding='utf-8')
+
+    def git(*args):
+        return subprocess.check_output(['git', *args], cwd=tmp_path, env=env, text=True).strip()
+
+    git('init', '--quiet')
+    git('add', 'draft')
+    git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '--quiet', '-m', 'fixture')
+    if bound:
+        credentials = tmp_path / '.cds/credentials.json'
+        credentials.parent.mkdir()
+        credentials.write_text(json.dumps({'host': 'https://bound.example', 'projectId': PROJECT,
+                                           'projectKey': 'synthetic-never-print'}), encoding='utf-8')
+
+    options = ['--workspace-credential'] if explicit else []
+    result = subprocess.run(['node', str(RELEASE), 'register', *options, '--dir', 'draft',
+                             '--commit', git('rev-parse', 'HEAD'), '--design', 'DSN-0123ABCD'],
+                            cwd=tmp_path, env=env, capture_output=True, text=True, timeout=15)
+    assert 'synthetic-never-print' not in result.stdout + result.stderr
+    if explicit and not bound:
+        assert result.returncode != 0
+        assert 'inherited.example' not in result.stdout
+        assert not (artifact / 'versions.json').exists()
+        return
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    origin, project = ('https://bound.example', PROJECT) if explicit else (
+        'https://inherited.example', 'unrelated-project')
+    assert f'{origin}/design?project={project}&design=DSN-0123ABCD&version=1' in result.stdout

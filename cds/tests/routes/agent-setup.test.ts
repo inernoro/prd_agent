@@ -82,12 +82,16 @@ describe('Agent public bootstrap through the real auth gate', () => {
     expect(response.status).toBe(200);
     const guide = await response.text();
     expect(guide).toMatch(/setup-check[^\n]*--project 'proj-a'[^\n]*--design-access publish/);
-    const command = guide.split('\n').find(line => line.includes('cdscli.py connect') && line.includes('--design-access'));
+    expect(guide).toContain('cdscli.py --workspace-credential setup-check');
+    const command = guide.split('\n').find(line => line.includes('cdscli.py --workspace-credential connect') && line.includes('--design-access'));
     expect(command).toContain("--project 'proj-a'");
     expect(command).toMatch(/--design-access (?:publish|'publish'|"publish")(?=\s|$)/);
     expect(guide).toContain('右下角');
     expect(guide).toContain('批准');
     expect(guide).toContain('0.26.27');
+    expect(guide).toContain('0.26.31');
+    expect(guide).toContain('等待中断时，运行同一条命令继续领取原申请');
+    expect(guide).toContain('同稿发布或回填反馈');
     expect(guide).toContain(`${origin}/api/skills/cds-pack/download`);
     expect(guide).toContain('用本机工具解压');
     expect(guide).toMatch(/Windows[^\n]*0\.26\.10[^\n]*CRLF/);
@@ -110,8 +114,8 @@ describe('Agent public bootstrap through the real auth gate', () => {
     expect(instructions).toMatch(/原稿|同稿|已有稿件/);
     expect(instructions).toContain('只在本地提交');
     expect(instructions).toContain('sourceMode=private');
-    expect(instructions).toContain('cdscli design publish --private');
-    expect(instructions).toContain('cdscli framework publish');
+    expect(instructions).toContain('cdscli --workspace-credential design publish --private');
+    expect(instructions).toContain('cdscli --workspace-credential framework publish');
     expect(instructions).toContain('cds_design_framework_publish');
     expect(instructions).not.toMatch(/git push|推送[^。]*稿件/);
   });
