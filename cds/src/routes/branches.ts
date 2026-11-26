@@ -19769,13 +19769,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
       })();
 
       const projectKey = (req as { cdsProjectKey?: { projectId: string } }).cdsProjectKey;
+      const sharedProjectId = projectKey && stateService.getProject(projectKey.projectId)?.agentKeyCollaboration
+        ? projectKey.projectId : undefined;
       const allProfiles = stateService.getBuildProfiles();
       const targets = Array.isArray(profileIds) && profileIds.length > 0
         ? allProfiles.filter(p => profileIds.includes(p.id))
-        : allProfiles.filter(p => (!projectKey || projectKey.projectId === (p.projectId || 'default')) && matchPattern(p.dockerImage || ''));
-      for (const target of targets) {
-        const denied = assertProjectAccess(req as Parameters<typeof assertProjectAccess>[0], target.projectId || 'default');
-        if (denied) { res.status(denied.status).json(denied.body); return; }
+        : allProfiles.filter(p => (!sharedProjectId || sharedProjectId === (p.projectId || 'default')) && matchPattern(p.dockerImage || ''));
+      if (sharedProjectId) {
+        for (const target of targets) {
+          const denied = assertProjectAccess(req as Parameters<typeof assertProjectAccess>[0], target.projectId || 'default');
+          if (denied) { res.status(denied.status).json(denied.body); return; }
+        }
       }
 
       if (targets.length === 0) {
