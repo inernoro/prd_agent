@@ -21,6 +21,7 @@ import { designViewports, type DesignScreen, type DesignVersion, type DesignWork
 import { buildZip, crc32 } from '../../src/utils/zip.js';
 import { DesignFrame } from '../../web/src/pages/design-workspace/DesignCanvas';
 import { listenLoopbackFixture } from '../helpers/loopback-http-fixture.js';
+import { withAcceptanceStandard } from '../helpers/versioned-design-fixture.js';
 
 const projectId = 'fixture-prototype-host';
 const api = `/api/projects/${projectId}/design`;
@@ -182,9 +183,10 @@ describe('prototype host in Chromium', () => {
     if (!address || typeof address === 'string') throw new Error('Missing loopback prototype host');
     origin = `http://127.0.0.1:${address.port}`;
     const archive = buildZip([
-      { name: 'design.json', data: JSON.stringify({ project: projectId, title: 'Synthetic prototype host', screens: scenes,
+      { name: 'design.json', data: JSON.stringify(withAcceptanceStandard({ project: projectId, title: 'Synthetic prototype host', screens: scenes,
         prototypeVersion: 1, date: '2026-01-01', notes: '', rationale: '思路.md', prototype: 'dist/index.html',
-        checks: 'checks/result.json', docs: [], acceptance: [] }) },
+        checks: 'checks/result.json', docs: [], acceptance: [{ id: 'A-01', screenId: 'security', how: 'measure',
+          rule: 'The synthetic host opens', expected: '检查：主标题可见。' }] })) },
       { name: '思路.md', data: '# Synthetic prototype host（V1）\n\nExercise the embedded prototype with synthetic data.' },
       { name: '交付说明.md', data: '# Synthetic prototype host（V1）\n\nOpen each scene in the isolated prototype host.' },
       { name: 'checks/result.json', data: JSON.stringify({ total: 0, passed: 0, items: [] }) },
