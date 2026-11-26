@@ -56,11 +56,13 @@ export function refreshArtifactWaiters(options: {
         const branch = options.getBranch(item.pending.branchId)!;
         const profiles = item.input.profiles.filter(profile => !item.pending.request.profileId || profile.id === item.pending.request.profileId)
           .map(profile => resolveEffectiveProfile(profile, deploymentInputBranch(item.input, branch)));
+        const previous = item.input.artifactAdmission!;
         const result = options.inspect
           ? await options.inspect(item.pending, item.input, branch, assertCurrent)
-          : await options.containerService.inspectDeploymentArtifacts(profiles, item.input.artifactAdmission!.targetCommitSha, assertCurrent);
+          : await options.containerService.inspectDeploymentArtifacts(profiles, previous.targetCommitSha, assertCurrent,
+            { retry: previous.checkedAt ? { profileId: previous.profileIds?.[0] } : undefined });
         assertCurrent();
-        if (coordinator.updateArtifactWaiter(item.pending, result)) options.onChecked?.(item.pending, item.input.artifactAdmission!, result);
+        if (coordinator.updateArtifactWaiter(item.pending, result)) options.onChecked?.(item.pending, previous, result);
       } catch {
         // 资格变化不恢复旧任务；读取错误保留原等待，不能猜成ready或启动源码编译。
       }

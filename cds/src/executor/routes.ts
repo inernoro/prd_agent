@@ -90,7 +90,7 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
 
   // 只核验产物，不创建worktree、容器或修改项目/分支状态；使用本执行器daemon及registry访问。
   router.post('/artifact-preflight', async (req, res) => {
-    const { profiles, commitSha, owner, remainingMs } = req.body || {};
+    const { profiles, commitSha, owner, remainingMs, retry } = req.body || {};
     if (!Array.isArray(profiles) || profiles.length > 256 || typeof commitSha !== 'string' || !/^[0-9a-f]{40}$/i.test(commitSha)
       || !profiles.every(profile => profile && typeof profile.id === 'string' && profile.id.length <= 256
         && typeof profile.dockerImage === 'string' && profile.dockerImage.length <= 4096)) {
@@ -111,7 +111,10 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
       if (owner) preparation = preparations.beginDeploymentPreparation({ branchId: owner.branchId, projectId: owner.projectId,
         kind: 'deploy', trigger: 'system', commitSha, commitPinned: true, source: 'executor.artifact-preflight' });
       const context = artifactInspectionContext(shell, qualification.worktree, config.repoRoot, assertCurrent, owner ? remainingMs : 120_000);
-      const result = await containerService.inspectDeploymentArtifacts(profiles as BuildProfile[], commitSha, assertCurrent, context);
+      const retryContext = owner && retry && typeof retry === 'object' && !Array.isArray(retry)
+        ? { profileId: typeof retry.profileId === 'string' && retry.profileId.length <= 256 ? retry.profileId : undefined } : undefined;
+      const result = await containerService.inspectDeploymentArtifacts(profiles as BuildProfile[], commitSha, assertCurrent,
+        { ...context, retry: retryContext });
       context.remainingMs();
       res.json(result);
     } catch {

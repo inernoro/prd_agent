@@ -22,6 +22,7 @@ export interface VerifiedDeploymentArtifact {
 
 export interface ArtifactInspectionOptions {
   inspectLocalArtifacts?: boolean;
+  retry?: { profileId?: string };
   /** Identity pinned by the runtime storage admission for this local profile. */
   localStorageImageId?: string;
   isComponentUnchangedSince?: ProveFallbackImageInput['isComponentUnchangedSince'];
@@ -87,6 +88,8 @@ export async function inspectDeploymentArtifacts(
   const target = targetCommitSha.toLowerCase();
   const checkedAt = new Date().toISOString();
   const required = profiles.filter(profile => profile.prebuiltImage && !profile.managedBuild && (options.inspectLocalArtifacts || !profile.localArtifact));
+  const blocked = required.find(profile => profile.id === options.retry?.profileId);
+  const inspectionOrder = blocked ? [blocked, ...required.filter(profile => profile !== blocked)] : required;
   const waiting = (reason: ArtifactWaitReason, profileIds?: string[]): ArtifactAdmission => ({
     state: 'waiting', targetCommitSha: target, checkedAt, reason, profileIds, artifacts: [],
   });
@@ -121,6 +124,7 @@ export async function inspectDeploymentArtifacts(
     const cached = inspections.get(key); if (cached) return cached;
     const promise = (async (): Promise<Inspection> => {
       const cache = configuredImageCacheGovernance();let pin: { token: string } | undefined;
+      let confirmedImage: { Id: string; RepoDigests: string[]; Os: string; Architecture: string; Config: { Labels: Record<string, string> } } | undefined;
       const digestPinned = /^.+@sha256:[0-9a-f]{64}$/.test(image);
       const storagePinned = !needsPull && options.localStorageImageId &&
         (digestPinned || /^sha256:[0-9a-f]{64}$/.test(image));
@@ -128,15 +132,24 @@ export async function inspectDeploymentArtifacts(
       // not issue another pull receipt in parallel startup; still verify Docker's
       // current identity, revision and platform against that graph.
       if (cache && !storagePinned) {
-        try { const prepared = await cache.prepare(image, checkInspection, !needsPull, needsPull && !digestPinned, needsPull);if (prepared.token) pin = prepared; }
+        const reuseRevision = options.retry && exactTarget && image.endsWith(`:sha-${target}`) ? target : undefined;
+        try {
+          const prepared = await cache.prepare(image, checkInspection, !needsPull, needsPull && !digestPinned, needsPull, reuseRevision);
+          if (prepared.token) pin = { token: prepared.token };
+          confirmedImage = prepared.confirmedImage;
+        }
         catch (error) { assertCurrent();return { reason: error instanceof ImageCacheBudgetError ? 'cache-budget' : 'verification-unavailable' }; }
       }
       let failure: ArtifactWaitReason | undefined;
-      if (needsPull && cache) {
+      if (needsPull && cache && !confirmedImage) {
         if (!pin) return { reason: 'verification-unavailable' };
         const token = pin.token;
         const pull = await cache.executePull(token, image, checkInspection, options.remainingMs).catch(() => undefined);
-        if (!pull?.recorded) { assertCurrent(); return { reason: 'verification-unavailable' }; }
+        if (!pull?.recorded) {
+          // The host lock fences late launches. Started pulls with no proof remain reserved.
+          await cache.settlePulls(token, true).catch(() => []);
+          assertCurrent(); return { reason: 'verification-unavailable' };
+        }
         // The native receipt is durable. Try the fast path before rechecking
         // this caller's deadline. The scheduled pass can finish without it.
         const settlements = await cache.settlePulls(token).catch(() => []);
@@ -145,7 +158,7 @@ export async function inspectDeploymentArtifacts(
           assertCurrent();return { reason: 'verification-unavailable' };
         }
         pin = undefined;
-      } else if (needsPull) {
+      } else if (needsPull && !cache) {
         const pull = await startCommand(`docker pull ${shellQuoteArg(image)}`, 90_000, 'operation').catch(() => undefined);
         if (!pull) { assertCurrent();return { reason: 'verification-unavailable' }; }
         if (pull.exitCode) failure = pullFailureReason(pull.stdout, pull.stderr, image);
@@ -153,10 +166,13 @@ export async function inspectDeploymentArtifacts(
       try { checkInspection(); }
       catch { assertCurrent(); return { reason: 'verification-unavailable' }; }
       if (failure) return { reason: failure };
-      const inspection = await exec(`docker image inspect ${shellQuoteArg(image)}`).catch(() => undefined);
-      if (!inspection || inspection.exitCode) { assertCurrent(); return { reason: 'verification-unavailable' }; }
-      const parsed = readJson(inspection.stdout);
-      const metadata = Array.isArray(parsed) && parsed.length === 1 ? parsed[0] : undefined;
+      let metadata = confirmedImage;
+      if (!metadata) {
+        const inspection = await exec(`docker image inspect ${shellQuoteArg(image)}`).catch(() => undefined);
+        if (!inspection || inspection.exitCode) { assertCurrent(); return { reason: 'verification-unavailable' }; }
+        const parsed = readJson(inspection.stdout);
+        metadata = Array.isArray(parsed) && parsed.length === 1 ? parsed[0] : undefined;
+      }
       if (pin) { try { await cache!.confirm(pin.token, assertCurrent); } catch { assertCurrent();return { reason: 'verification-unavailable' }; } }
       const revision = normalizeImageRevision(metadata?.Config?.Labels?.['org.opencontainers.image.revision']);
       if (!revision || exactTarget && revision !== target) return { reason: 'revision-mismatch' };
@@ -168,7 +184,7 @@ export async function inspectDeploymentArtifacts(
       if (storagePinned && immutable !== options.localStorageImageId) return { reason: 'verification-unavailable' };
       // 已按固定仓库digest查询并核验内容，保留可跨执行器取回的引用。
       const digest = digestPinned ? `${imageRepositoryOf(image)}@${image.split('@')[1]}`
-        : !needsPull ? immutable : Array.isArray(metadata.RepoDigests)
+        : !needsPull ? immutable : Array.isArray(metadata?.RepoDigests)
         ? metadata.RepoDigests.find((value: unknown) => typeof value === 'string' && /^.+@sha256:[0-9a-f]{64}$/.test(value)
           && imageRepositoryOf(value) === imageRepositoryOf(image)) : undefined;
       if (!digest) return { reason: 'verification-unavailable' };
@@ -176,7 +192,7 @@ export async function inspectDeploymentArtifacts(
     })();
     inspections.set(key, promise); return promise;
   };
-  for (const profile of required) {
+  for (const profile of inspectionOrder) {
     const primary = profile.dockerImage.trim(), scope = normalizeBuildScope(profile.buildScope);
     const candidates = [primary, ...normalizeFallbackImages(profile.fallbackImage).filter(image => image !== primary
       && !image.includes('${') && imageRepositoryOf(image) === imageRepositoryOf(primary))];

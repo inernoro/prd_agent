@@ -96,7 +96,9 @@ export class ImageCacheGovernance {
         beforeStart: assertCurrent,
       });
       // Native exit 3 means the catalog lock rejected the request before any write.
-      if (action !== 'execute-pull' || result.exitCode === 3) assertCurrent();
+      // An expired native caller still needs the token to fence a reservation that never started.
+      const reservedNativePull = action === 'prepare' && payload.nativePull === true && result.exitCode === 0;
+      if (!reservedNativePull && (action !== 'execute-pull' || result.exitCode === 3)) assertCurrent();
       if (result.exitCode !== 3) break;
       const wait = Math.min(IMAGE_CACHE_LOCK_RETRY_MS, deadline - performance.now());
       if (wait > 0) await delay(wait);
@@ -106,7 +108,11 @@ export class ImageCacheGovernance {
     try { return JSON.parse(result.stdout); } catch { throw new Error('镜像盘点不完整，不能判断零占用。'); }
   }
   async publish(assertCurrent?: () => void) { return this.request('publish', () => ({ references: this.options.protectedReferences() }), assertCurrent); }
-  async prepare(image: string, assertCurrent: () => void, requirePresent = false, forceNew = false, nativePull = false) { await this.publish(assertCurrent);return this.request('prepare', { image, requirePresent, forceNew, nativePull }, assertCurrent); }
+  async prepare(image: string, assertCurrent: () => void, requirePresent = false, forceNew = false, nativePull = false,
+    reuseVerifiedRevision?: string) {
+    await this.publish(assertCurrent);
+    return this.request('prepare', { image, requirePresent, forceNew, nativePull, reuseVerifiedRevision }, assertCurrent);
+  }
   confirm(token: string, assertCurrent: () => void) { return this.request('confirm', { token }, assertCurrent); }
   abort(token: string, assertCurrent: () => void, completedNativeOperation = false) { return this.request('abort', { token, completedNativeOperation }, assertCurrent); }
   async executePull(token: string, image: string, assertCurrent: () => void, remainingMs?: () => number): Promise<{ outcome: NativePullOutcome; recorded: boolean }> {
@@ -116,8 +122,9 @@ export class ImageCacheGovernance {
       pullDeadlineMs: Date.now() + remaining,
     }), assertCurrent, limit);
   }
-  async settlePulls(token?: string): Promise<PullSettlement[]> {
-    const result: { settled: PullSettlement[] } = await this.request('settle-pulls', token ? { token } : {});
+  async settlePulls(token?: string, releaseUnstarted = false): Promise<PullSettlement[]> {
+    const result: { settled: PullSettlement[] } = await this.request('settle-pulls',
+      token ? { token, releaseUnstarted } : {}, undefined, releaseUnstarted ? 3_000 : IMAGE_CACHE_REQUEST_TIMEOUT_MS);
     if (!token && result.settled.length) {
       this.options.audit?.record({
         category: 'system', severity: 'info', source: 'image-cache-retention', action: 'image.cache.pulls.settled',

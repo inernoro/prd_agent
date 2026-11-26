@@ -3203,13 +3203,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
         || input.artifactAdmission?.targetCommitSha !== target) throw new BranchOperationSupersededError('', entry.id, 'artifact-input-owner');
     };
     const context = artifactInspectionContext(shell, worktreeService, repoRoot, assertOwner), compare = context.isComponentUnchangedSince;
+    const retry = input.artifactAdmission?.checkedAt ? { profileId: input.artifactAdmission.profileIds?.[0] } : undefined;
     // 当前单服务入口执行于本机；整分支按其实际派发执行器核验，不借Master架构冒充。
     const executor = profileId ? null : resolveDeployTarget(entry, explicitTarget);
-    if (!executor) return { ...await containerService.inspectDeploymentArtifacts(profiles, target, assertOwner, context), executorId: 'local' };
+    if (!executor) return { ...await containerService.inspectDeploymentArtifacts(profiles, target, assertOwner,
+      { ...context, retry }), executorId: 'local' };
     assertCurrent();
     const response = await fetch(`http://${executor.host}:${executor.port}/exec/artifact-preflight`, {
       method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Executor-Token': config.executorToken || '' },
-      body: JSON.stringify({ profiles, commitSha: target, owner: { branchId: entry.id, branchName, projectId }, remainingMs: context.remainingMs() }),
+      body: JSON.stringify({ profiles, commitSha: target, owner: { branchId: entry.id, branchName, projectId },
+        remainingMs: context.remainingMs(), retry }),
       signal: AbortSignal.timeout(context.remainingMs()),
     });
     context.remainingMs();

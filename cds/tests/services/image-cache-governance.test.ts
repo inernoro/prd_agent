@@ -263,6 +263,43 @@ with socketserver.UnixStreamServer(${JSON.stringify(socket)},Handler) as server:
     expect(f.request({action:'settle-pulls'}).settled).toMatchObject([{outcome:'never-started'}]);
     expect(()=>f.request({action:'execute-pull',token:pin.token,image,pullTimeoutMs:1_000})).toThrow(/pull-authorization-unconfirmed/);
   });
+  it('returns a never-started reservation to the caller immediately and keeps a started pull with unknown outcome', () => {
+    const f = fixture(), image = 'registry.example/test:old';
+    const notStarted = f.request({ action: 'prepare', image, nativePull: true, peakBytes: 1024 });
+    const started = f.request({ action: 'prepare', image, nativePull: true, peakBytes: 1024 });
+    f.values.pullDelay = 0.25;
+    f.save();
+    expect(f.request({ action: 'execute-pull', token: started.token, image, pullTimeoutMs: 20 }).recorded).toBe(false);
+    expect(f.request({ action: 'settle-pulls', token: started.token, releaseUnstarted: true }).settled).toEqual([]);
+    expect(f.request({ action: 'settle-pulls', token: notStarted.token }).settled).toEqual([]);
+    expect(f.request({ action: 'settle-pulls', token: notStarted.token, releaseUnstarted: true }).settled)
+      .toMatchObject([{ outcome: 'never-started', source: 'caller' }]);
+    expect(f.request({}).pullBudget.reservedBytes).toBe(1024);
+    expect(() => f.request({ action: 'execute-pull', token: notStarted.token, image, pullTimeoutMs: 1_000 }))
+      .toThrow(/pull-authorization-unconfirmed/);
+  });
+  it('reuses a settled SHA-tag pull only for the same local identity, revision, platform and repository digest', () => {
+    const f = fixture(), commit = 'c'.repeat(40), image = `registry.example/test:sha-${commit}`;
+    const input = { action: 'prepare', image, forceNew: true, nativePull: true, peakBytes: 1024 };
+    const expected = { ...f.image([image]), Config: { Labels: { 'org.opencontainers.image.revision': commit } } };
+    const pin = f.request(input);
+    f.values.pullImage = expected;
+    f.save();
+    f.request({ action: 'execute-pull', token: pin.token, image, pullTimeoutMs: 1_000 });
+    f.request({ action: 'settle-pulls', token: pin.token });
+    const reuse = { ...input, budgetBytes: 1, reuseVerifiedRevision: commit, nowMs: now + 500_000 };
+    expect(f.request(reuse)).toMatchObject({ confirmedImage: { Id: id, RepoDigests: [digest] } });
+    f.request({ action: 'publish', nowMs: now + 610_000, references: [] });
+    expect(f.request({}).pullReservations).toMatchObject([{ confirmed: true }]);
+    for (const changed of [
+      { Id: 'sha256:' + 'd'.repeat(64) }, { Config: { Labels: {} } },
+      { Architecture: 'arm64' }, { RepoDigests: [] }, { RepoDigests: [digest.replace('/test@', '/other@')] },
+    ]) {
+      f.values.images = [{ ...expected, ...changed }];
+      f.save();
+      expect(() => f.request(reuse)).toThrow(/host-image-cache-budget-exceeded/);
+    }
+  });
   it('spends the original deadline on daemon startup before launching a native pull', () => {
     const f=fixture(), image='registry.example/test:old';
     const pin=f.request({action:'prepare',image,nativePull:true,peakBytes:1024});
