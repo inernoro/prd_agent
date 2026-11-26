@@ -12,6 +12,7 @@ using PrdAgent.Core.LlmGateway;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.Services;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -126,6 +127,7 @@ public sealed class DesignArtifactsController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new
         {
             defaultRuntime = WebPageDesignRuntimePolicy.RequiredRuntime,
+            codeFilmEnabled = CodeFilmEnabled(),
             runtimes = runtimes.Select(ToPublicCapability).ToList(),
         }));
     }
@@ -738,6 +740,26 @@ public sealed class DesignArtifactsController : ControllerBase
         DeploymentScope.Current != null
         && Environment.GetEnvironmentVariable("VITE_GIT_BRANCH") == "codex/opendesign-sketchnote-film";
 
+    [HttpGet("code-films")]
+    public async Task<IActionResult> ListCodeFilms(CancellationToken ct)
+    {
+        if (!CodeFilmEnabled() || DeploymentScope.CurrentDurable is not { } branchScope) return NotFound();
+        var runs = await _db.DesignArtifactRuns.Find(CodeFilmOwnerFilter(this.GetRequiredUserId(), branchScope))
+            .SortByDescending(run => run.CreatedAt)
+            .Limit(20)
+            .ToListAsync(ct);
+        return Ok(ApiResponse<object>.Ok(new { items = runs.Select(ToDto).ToList() }));
+    }
+
+    private static FilterDefinition<DesignArtifactRun> CodeFilmOwnerFilter(string userId, string branchScope)
+    {
+        var revisionPrefix = branchScope + "::revision::";
+        return Builders<DesignArtifactRun>.Filter.Where(run => run.UserId == userId
+            && run.ArtifactType == DesignArtifactTypes.CodeFilm
+            && (run.DeploymentSlug == branchScope
+                || (run.DeploymentSlug != null && run.DeploymentSlug.StartsWith(revisionPrefix))));
+    }
+
     [HttpGet("runs/{runId}/film.mp4")]
     public async Task<IActionResult> GetCodeFilm(
         string runId,
@@ -746,35 +768,75 @@ public sealed class DesignArtifactsController : ControllerBase
         CancellationToken ct)
     {
         if (!CodeFilmEnabled() || DeploymentScope.CurrentDurable is not { } branchScope) return NotFound();
-        var userId = this.GetRequiredUserId();
-        var revisionPrefix = branchScope + "::revision::";
-        var run = await _db.DesignArtifactRuns.Find(item => item.Id == runId
-            && item.UserId == userId && item.ArtifactType == DesignArtifactTypes.CodeFilm
-            && (item.DeploymentSlug == branchScope
-                || (item.DeploymentSlug != null && item.DeploymentSlug.StartsWith(revisionPrefix))))
+        var run = await _db.DesignArtifactRuns.Find(CodeFilmOwnerFilter(this.GetRequiredUserId(), branchScope)
+                & Builders<DesignArtifactRun>.Filter.Eq(item => item.Id, runId))
             .FirstOrDefaultAsync(ct);
         if (run == null || run.Status == RunStatuses.Cancelled) return NotFound();
-        byte[]? bytes;
-        if (!string.IsNullOrWhiteSpace(run.WorkspaceResultAssetKey))
+        try
         {
-            var package = await workspace.ReadCommittedCodeFilmAsync(run, ct);
-            bytes = Convert.FromBase64String(package.Files.Single(file => file.Path == "film.mp4").ContentBase64);
+            var bytes = await ReadCodeFilmAsync(run, workspace, recovery, ct);
+            if (bytes == null) return NotFound();
+            Response.Headers.CacheControl = "private, no-store";
+            return File(bytes, "video/mp4", enableRangeProcessing: true);
         }
-        else
+        catch (Exception error) when (IsCodeFilmReadFailure(error, ct))
         {
-            try
-            {
-                bytes = await recovery.ReadRetainedFilmAsync(run.Id, ct);
-            }
-            catch (Exception error) when (error is HttpRequestException or InvalidDataException
-                || (error is OperationCanceledException && !ct.IsCancellationRequested))
-            {
-                return StatusCode(503, ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, "影片暂时无法取回，请稍后再次打开这条任务"));
-            }
+            _logger?.LogWarning(error, "影片取回失败 runId={RunId}", runId);
+            return StatusCode(503, ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, "影片暂时无法取回，请稍后再次打开这条任务"));
         }
-        if (bytes == null) return NotFound();
-        Response.Headers.CacheControl = "private, no-store";
-        return File(bytes, "video/mp4", enableRangeProcessing: true);
+    }
+
+    [HttpPost("runs/{runId}/save-film")]
+    public async Task<IActionResult> SaveCodeFilm(
+        string runId,
+        [FromServices] IDesignArtifactWorkspaceBroker workspace,
+        [FromServices] OpenDesignServiceArtifactExecutor recovery,
+        CancellationToken ct)
+    {
+        if (!CodeFilmEnabled() || DeploymentScope.CurrentDurable is not { } branchScope) return NotFound();
+        var userId = this.GetRequiredUserId();
+        var run = await _db.DesignArtifactRuns.Find(CodeFilmOwnerFilter(userId, branchScope)
+                & Builders<DesignArtifactRun>.Filter.Eq(item => item.Id, runId))
+            .FirstOrDefaultAsync(ct);
+        if (run == null || run.Status == RunStatuses.Cancelled) return NotFound();
+
+        var sourceRef = $"code-film:{run.Id}";
+        try
+        {
+            await using var lease = await VideoAssetMutationLease.AcquireAsync(_db, sourceRef, ct);
+            var existing = await _db.HostedSites.Find(site => site.OwnerUserId == userId && site.SourceRef == sourceRef)
+                .FirstOrDefaultAsync(ct);
+            if (existing != null) return Ok(ApiResponse<object>.Ok(new { siteId = existing.Id }));
+
+            var bytes = await ReadCodeFilmAsync(run, workspace, recovery, ct);
+            if (bytes == null)
+                return Conflict(ApiResponse<object>.Fail("FILM_NOT_AVAILABLE", "这条任务还没有可保存的成片，请查看任务状态"));
+
+            var title = string.IsNullOrWhiteSpace(run.Title) ? "视觉笔记" : run.Title;
+            var zip = WebPagesController.BuildWrapperZip("film.mp4", bytes, ".mp4", title);
+            // 客户端断线时允许这次保存收尾，重试会返回同一个站点。
+            var site = await _sites.CreateFromZipAsync(userId, zip, title, null, null, null, "video",
+                CancellationToken.None, sourceRef: sourceRef);
+            return Ok(ApiResponse<object>.Ok(new { siteId = site.Id }));
+        }
+        catch (Exception error) when (IsCodeFilmReadFailure(error, ct) || error is TimeoutException or InvalidOperationException)
+        {
+            _logger?.LogWarning(error, "影片保存失败 runId={RunId}", runId);
+            return StatusCode(503, ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, "暂时无法保存影片，请稍后在同一任务重试"));
+        }
+    }
+
+    private static bool IsCodeFilmReadFailure(Exception error, CancellationToken ct) =>
+        error is HttpRequestException or InvalidDataException
+        || (error is OperationCanceledException && !ct.IsCancellationRequested);
+
+    private static async Task<byte[]?> ReadCodeFilmAsync(DesignArtifactRun run, IDesignArtifactWorkspaceBroker workspace,
+        OpenDesignServiceArtifactExecutor recovery, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(run.WorkspaceResultAssetKey))
+            return await recovery.ReadRetainedFilmAsync(run.Id, ct);
+        var package = await workspace.ReadCommittedCodeFilmAsync(run, ct);
+        return Convert.FromBase64String(package.Files.Single(file => file.Path == "film.mp4").ContentBase64);
     }
 
     [HttpPost("runs/{runId}/cancel")]

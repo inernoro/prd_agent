@@ -6,6 +6,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { useHostedSiteSelection } from '@/components/web-hosting/useHostedSiteSelection';
 import { CheckSquare2 } from 'lucide-react';
 import { Button } from '@/components/design/Button';
+import { CodeFilmPanel } from '@/pages/CodeFilmPanel';
 import RelatedDocumentsBar from '@/components/web-hosting/RelatedDocumentsBar';
 import { getZipEntrySelection, ZipEntrySelector, type ZipEntryChoice } from '@/components/web-hosting/ZipEntrySelector';
 import { useRelatedSiteOpener } from '@/components/web-hosting/useRelatedSiteOpener';
@@ -1508,6 +1509,10 @@ export default function WebPagesPage() {
                     {/* 设计稿 Main：「生成网页」是主操作，下拉选素材来源，旁边齿轮进设置；「上传网页」退为次操作。 */}
                     <Button size="sm" variant="ghost" onClick={() => navigate("/web-pages/new-document")}>按模版新建文档</Button>
                     <Button size="sm" variant="ghost" onClick={() => navigate("/web-pages/collections")}>合集</Button>
+                    <CodeFilmPanel
+                      onSaved={() => { void load(); void loadMeta(); }}
+                      onShare={(siteId) => { setShareTargetId(siteId); setShowShareDialog(true); }}
+                    />
                     <GenerateSiteMenu
                       onGenerate={openGenerateDialog}
                       onOpenSettings={() => setShowGenerationSettings(true)}
