@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { ArrowUpRight, Copy, Layers, Terminal } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import type { DesignEntry, DesignFramework as Framework, DesignMaterial, DesignMaterialKey, FrameworkRevision } from '../../../../src/shared/design-workspace';
+import { adoptedFrameworkVersion } from '../../../../src/shared/design-workspace';
 import { designFrameworkRules } from '../../../../src/shared/design-framework-rules';
 import { designDate, designStatus, latestDesign, materialNames, statusNames } from './design-ui';
 import { describeDesignValue } from './design-structure';
@@ -15,15 +16,17 @@ const statusLabel = { adopted: '已采用', draft: '草案', deprecated: '已停
 const diffDecision = { framework: '进入公共框架', module: '留在模块规则', pending: '待实现方确认' } as const;
 
 /** 框架标识：在稿件卡片、稿件页头、侧栏和列表里统一写法，一眼区分「这是框架」以及稿件绑定的是哪一版 */
-export function FrameworkBadge({ id, version, latest, compact }: { id: string; version?: number; latest?: number; compact?: boolean }) {
-  const outdated = version !== undefined && latest !== undefined && version < latest;
-  return <span className="dw-fw-badge" data-outdated={outdated || undefined} title={outdated ? `绑定 v${version}，最新 v${latest}` : undefined}>
+export function FrameworkBadge({ id, version, adopted, compact }: { id: string; version?: number; adopted?: number; compact?: boolean }) {
+  const outdated = version !== undefined && adopted !== undefined && version < adopted;
+  return <span className="dw-fw-badge" data-outdated={outdated || undefined} title={outdated ? `绑定 v${version}，项目采用 v${adopted}` : undefined}>
     <Layers aria-hidden /><span className="dw-fw-badge-kind">框架</span><code>{id}</code>{version !== undefined && <span>v{version}</span>}
-    {outdated && !compact && <em>可升级到 v{latest}</em>}
+    {outdated && !compact && <em>可升级到 v{adopted}</em>}
   </span>;
 }
 export function FrameworkStatus({ revision }: { revision?: FrameworkRevision }) {
   const charter = charterOf(revision);
+  if (revision?.adoption === null) return <span className="dw-fw-status" data-state="draft">待采用</span>;
+  if (revision?.adoption) return <span className="dw-fw-status" data-state="adopted">已采用</span>;
   return <span className="dw-fw-status" data-state={charter?.status ?? 'unknown'}>{charter ? statusLabel[charter.status] : '未写初衷'}</span>;
 }
 
@@ -93,7 +96,7 @@ function FrameworkCharterView({ framework, revision }: { framework: Framework; r
 
 /** 采用：哪些稿件绑定了这套框架、各自用哪一版、能不能升级；同项目里还没绑定框架的稿件 */
 function FrameworkAdoption({ framework, designs }: { framework: Framework; designs: DesignEntry[] }) {
-  const latest = framework.versions.at(-1)!.version;
+  const adopted = adoptedFrameworkVersion(framework);
   const bound = frameworkUses(framework.id, designs);
   const unbound = designs.filter(entry => !latestDesign(entry).framework && !entry.versions.find(row => row.version === entry.frozen)?.framework);
   const link = (entry: DesignEntry) => `/design?project=${encodeURIComponent(entry.projectId)}&design=${encodeURIComponent(entry.id)}`;
@@ -102,7 +105,9 @@ function FrameworkAdoption({ framework, designs }: { framework: Framework; desig
       {bound.length ? <div className="dw-notes-table" role="region" aria-label="采用情况" tabIndex={0}><table><thead><tr><th scope="col">稿件</th><th scope="col">阶段</th><th scope="col">绑定版本</th><th scope="col">实施基线</th></tr></thead>
         <tbody>{bound.map(({ entry, binding }) => { const v = binding.frameworkVersion; return <tr key={entry.id}>
           <td><Link className="ep-link" to={link(entry) + '&version=' + binding.version}>{binding.title}</Link> <code>{entry.id}</code></td><td>{statusNames[designStatus(entry)]}</td>
-          <td>{v === undefined ? '版本未登记' : v < latest ? <span className="dw-fw-status" data-state="draft">v{v} · 可升级到 v{latest}</span> : <span className="dw-fw-status" data-state="adopted">v{v}{v === latest ? ' · 最新' : ''}</span>}</td>
+          <td>{v === undefined ? '版本未登记' : adopted !== undefined && v < adopted
+            ? <span className="dw-fw-status" data-state="draft">v{v} · 可升级到 v{adopted}</span>
+            : <span className="dw-fw-status" data-state={v === adopted ? 'adopted' : 'unknown'}>v{v}{v === adopted ? ' · 项目采用' : ''}</span>}</td>
           <td>{entry.frozen ? `V${entry.frozen}` : '未定稿'}</td></tr>; })}</tbody></table></div> : <p>还没有稿件绑定这套框架。发布稿件时在清单里写 <code>framework</code> 和 <code>frameworkVersion</code>。</p>}
     </section>
     {!!unbound.length && <section className="dw-surface dw-markdown"><h3>同项目里未绑定框架的稿件 <small>{unbound.length}</small></h3>
@@ -174,14 +179,17 @@ export function DesignMaterialView({ material, tab }: { material: DesignMaterial
   return <div className="dw-markdown dw-surface"><ReadableNotes source={detail} /></div>;
 }
 
-export function DesignFrameworkView({ framework, revision, tab, onTab, designs = [] }: {
+export function DesignFrameworkView({ framework, revision, tab, onTab, designs = [], busy, onAdopt }: {
   framework: Framework; revision?: FrameworkRevision; tab: FrameworkTab; onTab: (tab: FrameworkTab) => void; designs?: DesignEntry[];
+  busy?: boolean; onAdopt?: (version: number) => Promise<boolean>;
 }) {
   const [copied, setCopied] = useState(false);
-  const current = revision ?? framework.versions.at(-1)!;
+  const latest = framework.versions.at(-1)!;
+  const current = revision ?? latest;
   const charter = charterOf(current);
   const used = frameworkUses(framework.id, designs);
-  const outdated = used.filter(({ binding }) => binding.frameworkVersion !== undefined && binding.frameworkVersion < framework.versions.at(-1)!.version).length;
+  const adopted = adoptedFrameworkVersion(framework);
+  const outdated = adopted === undefined ? 0 : used.filter(({ binding }) => binding.frameworkVersion !== undefined && binding.frameworkVersion < adopted).length;
   const cli = `cdscli design scaffold --framework ${framework.id} --framework-version ${current.version} --dir design/new-draft --title "新稿件"`;
   return <>
     <header className="dw-head dw-row">
@@ -200,10 +208,20 @@ export function DesignFrameworkView({ framework, revision, tab, onTab, designs =
       {frameworkTabs.map(value => <button key={value} className="dw-tab" type="button" aria-current={tab === value} onClick={() => onTab(value)}>
         {tabNames[value]}{value === 'adoption' && used.length ? <small>{used.length}</small> : null}</button>)}
     </nav>
+    {tab === 'adoption' && current.adoption === null && <section className="dw-surface dw-markdown">
+      <h3>采用框架 v{current.version}</h3>
+      <p>{adopted === undefined ? '项目还未采用这套框架。' : `项目正在采用 v${adopted}。`}
+        采用后，默认使用这套框架的模块会为新稿选用 v{current.version}，已有稿件继续使用各自绑定的版本。</p>
+      {current === latest && onAdopt && <div className="dw-row">
+        <button type="button" className="ep-button" disabled={busy}
+          onClick={() => void onAdopt(current.version)}>确认采用 v{current.version}</button>
+      </div>}
+    </section>}
     {tab === 'history' ? <ol className="dw-surface dw-history">{[...framework.versions].reverse().map(version =>
       <li key={version.version}><strong>v{version.version}</strong><code>{version.sourceCommit.slice(0, 8)}</code>
         <small>{version.sourceVerification === 'git' ? '已核验' : '发布声明'}</small>
-        <small>{designDate(version.at)}</small><span>{version.note ?? (version.from ? '从已定稿的稿件提取' : '从 Git 提交导入')}</span>
+        <small>{designDate(version.at)}</small><span>{version.note ?? (version.from ? '从已定稿的稿件提取' : '从 Git 提交发布')}</span>
+        {version.adoption !== undefined && <FrameworkStatus revision={version} />}
         {version.from && <Link className="ep-link" to={`/design?project=${encodeURIComponent(framework.projectId)}&design=${encodeURIComponent(version.from.designId)}&version=${version.from.version}`}>
           {version.from.designId} · V{version.from.version}</Link>}
       </li>)}</ol> : tab === 'overview' ? <FrameworkCharterView framework={framework} revision={current} />

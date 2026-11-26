@@ -32,7 +32,7 @@ export interface BootstrapPreset {
   summary: string;
   /** 走 MAP 代理安装的技能或套装 key（按顺序装）。 */
   marketplaceKeys: string[];
-  /** 是否安装 CDS 自己的 5 个技能。 */
+  /** 是否安装 CDS 自己的技能（CDS_SKILL_KEYS）。 */
   includeCdsSkills: boolean;
   /** 装完之后用户该对 AI 说的第一句话。 */
   nextStep: string;
@@ -75,7 +75,7 @@ export const BOOTSTRAP_PRESETS: readonly BootstrapPreset[] = [
     key: 'cds-only',
     label: '仅接入 CDS',
     audience: '已有自己工作方法、只想要云端预览的团队',
-    summary: '只装 CDS 的五个技能，不带任何方法论约定。',
+    summary: '只装 CDS 的六个技能，不带任何方法论约定。',
     marketplaceKeys: [],
     includeCdsSkills: true,
     nextStep: '让 AI 运行 cdscli connect 完成项目授权',
@@ -123,7 +123,7 @@ function resolveSkillsRoot(repoRoot: string): string | null {
 }
 
 /**
- * 打包 CDS 自己的 5 个技能为 tar.gz。
+ * 打包 CDS 自己的技能（CDS_SKILL_KEYS）为 tar.gz。
  *
  * 为什么需要这个而不是复用已有的 `/api/export-skill`：那个端点要登录。
  * 客户在拿到任何 CDS 凭据之前就得装上 cdscli 和 preview-url，否则连
@@ -131,7 +131,7 @@ function resolveSkillsRoot(repoRoot: string): string | null {
  * 内容是技能说明与 CLI 源码（同款内容早已在海鲜市场公开），不含任何凭据。
  */
 async function buildCdsSkillPack(skillsRoot: string): Promise<Buffer | null> {
-  // 必须五个齐全才认本地包：少一个就是半成品，客户装完会缺部署或预览命令，
+  // 技能包目录齐全时才采用本地包：少一个就是半成品，客户装完会缺部署或预览命令，
   // 而且脚本看到合法的 skills/ 目录就认为装好了，不会再回源上游。宁可回源。
   const present = CDS_SKILL_KEYS.filter((k) => fs.existsSync(path.join(skillsRoot, k)));
   if (present.length !== CDS_SKILL_KEYS.length) return null;
@@ -154,7 +154,7 @@ async function buildCdsSkillPack(skillsRoot: string): Promise<Buffer | null> {
 }
 
 /**
- * 技能内容签名：五个技能目录里所有文件的数量与最新 mtime。
+ * 技能内容签名：各技能目录里所有文件的数量与最新 mtime。
  * 只 stat 不读内容，够便宜；技能一改签名就变，缓存自然失效。
  */
 async function skillPackSignature(skillsRoot: string): Promise<string> {

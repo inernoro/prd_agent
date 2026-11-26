@@ -141,6 +141,7 @@ DTS 与代码审查复用项目凭据与请求传输层，使用独立工具目�
 | --- | --- | --- |
 | `cds_design_read` | `view` 使用 `intake`、`designs`、`frameworks`、`design`、`framework`、`delivery`、`file`、`feedback` 或 `run` | 读取项目接入清单，发现稿件和框架，或回读固定版本。`intake` 由项目 API 提供，含 `protocolVersion`、稿件接入标识、已核验 Git 目录和续版权限。 |
 | `cds_design_publish` | 公共字段 `zipPath`、`sourceCommit`、`sourcePath`、`requestId`，可选 `note`。新稿传 `intent=create` 与 `designKey`，续版传 `intent=revise`、`designId` 与 `expectedVersion` | 从已同步项目 Git 导出 ZIP 并发布。服务器在同一项目内核对稳定标识、可信目录、基线版本和发布身份。 |
+| `cds_design_framework_publish` | `frameworkId`、`title`、`expectedVersion`、`sourceCommit`、`material` 和 `requestId`，可选 `sourcePath`、`charter`、`note` | 使用当前项目的设计发布授权发布待采用版本。同框架沿用编号，首发用 0，续版用接入清单中的最新版本。 |
 | `cds_design_feedback` | 指定稿件、请求编号和反馈动作。提交时提供固定版，回复或处理时提供反馈 ID | 同稿件的提问、答复、修订关联及复核 |
 | `cds_design_acceptance` | `acceptance.visual`、`acceptance.flow`、`acceptance.smoke` 指定运行、提交和对应记录 | 同一运行回填画面、流程与冒烟证据，按 `permissions.visual` 提供 |
 

@@ -12,7 +12,7 @@
 
 同一工作区的设计凭据到期时，使用原接入口令续接。CDS 会核对原凭据，获批后保留原稿作者身份。
 
-技能需要更新时，从接入说明提供的 `/api/skills/cds-pack/download` 匿名下载归档。用本机工具解压并核对 manifest，将完整五技能装到当前工作区，再以原来的设计授权自检。Windows 检出的技能文本只有 CRLF 与 LF 的差异时可以通过自检。
+技能需要更新时，从接入说明提供的 `/api/skills/cds-pack/download` 匿名下载归档。用本机工具解压并核对 manifest，将完整技能包装到当前工作区，再以原来的设计授权自检。Windows 检出的技能文本只有 CRLF 与 LF 的差异时可以通过自检。
 
 ## 决定写入动作
 
@@ -25,6 +25,18 @@
 `designKey` 使用 `module/draft`。两段用稳定的小写字母、数字和连字符，标题、文件名和换智能体都沿用原稿件接入标识。模块下可以有不同的稿件标识。`design.json.group` 用于页面展示分组。旧稿没有接入标识时，先用原 ID 续版。如已确认长期标识，可在一次已授权的续版中同时绑定。接口对项目内相同标识或已登记目录拒绝重复新建，过期基线须回读新版。已有稿件后，未声明意图的旧 Agent 可按原 ID 续版，新稿使用明确的创建动作。
 
 基线冲突先回读对应稿件的新版本和变更，再确认希望继续的修订。发布权取决于该稿件的发布身份，以 `canRevise` 为准。项目读取权限让接收者查看版本和回执。
+
+## 发布框架
+
+接入清单的 `permissions.frameworkPublish` 为 `true` 时，已授权的设计智能体可以直接发布。使用 CLI 0.26.23 或以上，复用当前项目的设计发布授权。
+
+1. 从接入清单的 `frameworks` 查重。首发选一个稳定的框架编号，`expectedVersion` 填 `0`。后续沿用原编号，`expectedVersion` 填刚回读的 `latestVersion`。
+2. 准备 JSON 材料，包含 `tokens`、`components`、`rules` 或 `skeleton`。可附 `charter` 说明初衷、适用范围、维护人及示意稿编号和版本。材料来自稿件时，先按固定版号读取规范与素材。
+3. 运行 `cdscli framework publish <框架编号> --title <名称> --file <材料.json> --source-commit <提交> --expected-version <版本>`。提供仓库相对 `--source-path` 后，CDS 在已同步项目 Git 中能找到对应提交和目录时会核验材料。
+4. MCP 使用 `cds_design_framework_publish`，提交 `frameworkId`、`title`、`material`、`sourceCommit`、`expectedVersion` 和 `requestId`，可另附 `sourcePath`、`charter` 和 `note`。接口为 `POST /api/projects/:projectId/design/frameworks/publish`，额外传 `type: "framework.publish"`。
+5. 用 `cdscli framework show <框架编号>` 或 `cds_design_read` 的 `framework` 固定版回读，核对项目、版本和来源提交。网络中断时复用同一请求编号和内容。版本冲突时回读最新框架再提交。
+
+新版本发布后可在「设计 › 框架」预览。试用时在稿件里明确填写 `frameworkVersion`。项目成员在框架页「采用」中确认切换，已配置该默认框架的模块会为新稿选用新版本。
 
 ## 出稿与发布前自查
 

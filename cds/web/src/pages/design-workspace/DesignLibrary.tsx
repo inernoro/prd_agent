@@ -4,7 +4,7 @@ import type { ReactNode } from 'react';
 import type { DesignComment, DesignEntry, DesignModuleRef, DesignTheme, DesignVersion, DesignViewerState, DesignWorkspace } from '../../../../src/shared/design-workspace';
 import { charterOf, FrameworkBadge, FrameworkOverview, FrameworkStatus, frameworkUses } from './DesignFramework';
 import { DesignRequirementList } from './DesignRequirements';
-import { latestDesignFeedbackAt } from '../../../../src/shared/design-workspace';
+import { adoptedFrameworkVersion, latestDesignFeedbackAt } from '../../../../src/shared/design-workspace';
 import { designArtifact, designDate, designFeedbackAwaitsViewer, designPublisherLabel, designStatus, failedBaseline, isNewDesignRequirement, latestDesign, legacyRequirementGroup, newDesignLabel, openReviews, scopeKey, statusNames } from './design-ui';
 
 export const libraryStatuses = [
@@ -74,7 +74,7 @@ function DesignCard({ entry, workspace, viewer, theme, href, onLarge, task }: Ca
         <code>V{version.version}</code>
         {entry.comments.length > 0 && <small className="dw-card-comments"><MessageSquare />{entry.comments.length}</small>}
         <span className="dw-card-framework">{framework
-          ? <FrameworkBadge id={framework.id} version={version.frameworkVersion} latest={framework.versions.at(-1)?.version} />
+          ? <FrameworkBadge id={framework.id} version={version.frameworkVersion} adopted={adoptedFrameworkVersion(framework)} />
           : <span className="dw-fw-badge" data-missing>未绑定框架</span>}</span>
       </div>
     </footer>
@@ -195,11 +195,12 @@ export function DesignLibrary({ workspace, query, onChange, mode, theme, viewer,
     const latest = row.versions.at(-1)!;
     const charter = charterOf(latest);
     const used = frameworkUses(row.id, drafts);
+    const adopted = adoptedFrameworkVersion(row);
     return <button type="button" key={row.id} className={'dw-surface ' + (overview ? 'dw-framework-card' : 'dw-fw-tile')} onClick={() => onFramework(row.id)}>
       <span className="dw-row"><FrameworkBadge id={row.id} version={latest.version} compact /><FrameworkStatus revision={latest} /></span>
       <strong>{latest.title}</strong>
       {overview ? <FrameworkOverview material={latest.material} revision={latest} used={used.length}
-        outdated={used.filter(({ binding }) => binding.frameworkVersion !== undefined && binding.frameworkVersion < latest.version).length} />
+        outdated={adopted === undefined ? 0 : used.filter(({ binding }) => binding.frameworkVersion !== undefined && binding.frameworkVersion < adopted).length} />
         : <><small>{charter?.intent ?? '还没有写设计初衷'}</small><small>{used.length} 份稿件在用</small></>}
     </button>;
   });
