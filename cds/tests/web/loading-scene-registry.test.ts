@@ -34,8 +34,7 @@ describe('加载场景登记由真实路由约束', () => {
       expect(render(pageSkeletonForPath(sample))).not.toContain('md:grid-cols-2 xl:grid-cols-3');
     }
     expect(loadingSceneForPath('/release-center/approval')).toEqual(loadingSceneForPath('/release-center/approval/fixture'));
-    expect(loadingSceneForPath('/overview')).toMatchObject({ kind: 'overview', workspace: 'fill' });
-    expect(render(pageSkeletonForPath('/overview'))).toContain('aria-label="读取项目关系总览"');
+    expect(loadingSceneForPath('/overview')).toBeUndefined();
     expect(loadingSceneForPath('/settings-extra/fixture')).toBeUndefined();
     expect(loadingSceneForPath('/branches')).toBeUndefined();
   });

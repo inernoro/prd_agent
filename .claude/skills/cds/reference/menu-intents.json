@@ -12,9 +12,7 @@
    { "say": ["服务起不来"], "mission": "startup-diagnostics" },
    { "say": ["查日志"], "mission": "log-diagnostics" },
    { "say": ["这个接口有问题"], "mission": "api-diagnostics" },
-   { "say": ["预览打不开"], "mission": "preview-diagnostics" }
-  ] },
-  { "menu": "概览", "say": "概览", "intents": [
+   { "say": ["预览打不开"], "mission": "preview-diagnostics" },
    { "say": ["看当前页面", "先帮我看看"], "mission": "general" }
   ] },
   { "menu": "发布中心", "say": "发布", "intents": [
