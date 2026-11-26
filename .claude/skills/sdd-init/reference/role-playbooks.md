@@ -30,7 +30,7 @@ curl -sSLo /tmp/<KEY>.zip "<BASE>/api/official-skills/<KEY>/download" \
 |---|---|---|
 | `sdd-init` | `/sdd-init` | 项目初始化，装工作方法骨架 |
 | `skill-validation` | `/validate` | 需求提出时先验一遍质量和价值 |
-| `plan-first` | `/plan-first` | 要动手之前先出方案 |
+| `cds-plan` | `/cds-plan` | 先列执行计划和验收待办，执行时更新进度 |
 | `product-document-generator` | 「写产品文档」 | 把想法写成结构化 PRD |
 | `doc-writer` | `/doc` | 套七类文档模板 |
 | `risk-matrix` | `/risk` | 方案评审时评六维度风险 |
@@ -72,7 +72,7 @@ curl -sSLo /tmp/<KEY>.zip "<BASE>/api/official-skills/<KEY>/download" \
 | 技能 | 触发词 | 什么时候用 |
 |---|---|---|
 | `sdd-init` | `/sdd-init` | 项目初始化 |
-| `plan-first` | `/plan-first` | 多文件改动前先出方案 |
+| `cds-plan` | `/cds-plan` | 多文件改动前先列步骤和验收标准 |
 | `human-verify` | `/verify` | 自己改完从四个角度反查 |
 | `code-hygiene` | `/hygiene` | 迁移/重构后清死代码和兼容垫片 |
 | `conflict-resolution` | `/resolve` | 提 PR 前预合并主分支解冲突 |
@@ -89,7 +89,7 @@ curl -sSLo /tmp/<KEY>.zip "<BASE>/api/official-skills/<KEY>/download" \
 ### 典型工作流
 
 ```
-接需求  →  /plan-first 出方案  →  实现  →  /verify 自查  →  /resolve 预合并  →  提交
+接需求  →  /cds-plan 出方案  →  实现  →  /verify 自查  →  /resolve 预合并  →  提交
 ```
 
 ---
@@ -126,8 +126,8 @@ curl -sSLo /tmp/<KEY>.zip "<BASE>/api/official-skills/<KEY>/download" \
 
 如果探测不到明确角色，按下面兜底：
 
-1. 只装 `sdd-init` + `plan-first` + `doc-writer` 三个的，按「通用」处理
+1. 只装 `sdd-init` + `cds-plan` + `doc-writer` 三个的，按「通用」处理
 2. 报告里的「下一步」给三条最保险的：
    - `/sdd-init` 装骨架
    - 「帮我读一下这个项目并总结它在做什么」建立上下文
-   - 「我接下来要做 X，先 `/plan-first`」
+   - 「我接下来要做 X，先 `/cds-plan`」

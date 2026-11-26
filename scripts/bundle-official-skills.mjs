@@ -50,7 +50,7 @@ const INCLUDE = new Set([
   'findmapskills',           // 海鲜市场操作技能（AI bootstrap 入口）
   'sdd-init',                // 骨架落地：把套装变成一套能用的工作方法（角色套装的入口技能）
   'phase0-guard',            // 底座阶段护栏 + 面向老板/PM 的六段式沟通规范
-  'plan-first',              // 通用先方案后动手
+  'cds-plan',              // 通用执行计划与进度跟踪
   'product-document-generator', // 通用产品文档生成
   'doc-writer',              // 仓库自适应文档生成
   'flow-trace',              // 通用端到端链路追踪（大白话版）
@@ -100,7 +100,7 @@ const DISPLAY_NAME = {
   'flow-trace': 'flow-trace · 端到端链路追踪',
   'human-verify': 'human-verify · 多视角人工验证',
   'laowang': '老王 · 米多解决问题五步法',
-  'plan-first': 'plan-first · 先方案后动手',
+  'cds-plan': 'cds-plan · 执行计划与进度跟踪',
   'product-document-generator': 'product-document-generator · 产品文档生成',
   'remotion-scene-codegen': 'remotion-scene-codegen · 视频场景代码生成',
   'risk-matrix': 'risk-matrix · MECE 风险评估',
@@ -140,7 +140,7 @@ const DISPLAY_SUMMARY = {
   'human-verify': '四个角度模拟人工审查：魔鬼辩护、反向验证、边界测试、用户场景',
   'laowang': '卡住时用米多解决问题五步法强制拆解，风格直率，副作用是可能给你加一项任务',
   'phase0-guard': '项目底座阶段的护栏：拦住 AI 在定位没定清楚时就开始建表写接口，附六段式汇报规范',
-  'plan-first': '要动手之前先出方案：说清改什么、影响什么、有什么风险，等你确认才执行',
+  'cds-plan': '先按阶段和步骤列验收待办，执行时逐项打勾并更新进度和阻塞原因',
   'product-document-generator': '按模板补全、优化、扩写产品文档，产出符合 AI 开发要求的 PRD',
   'preview-url': '读取 CDS 实际发布的预览地址，多入口全部列出，禁止本地推算',
   'remotion-scene-codegen': '提供 Remotion API 上下文，生成高质量视频场景代码',
@@ -190,7 +190,7 @@ const TAG_OVERRIDE = {
   'skill-validation': ['需求'],
   'sdd-init': ['需求', '精英'],
   'phase0-guard': ['需求', '精英'],
-  'plan-first': ['需求'],
+  'cds-plan': ['需求'],
   'product-document-generator': ['文档'],
   'doc-writer': ['文档'],
   'flow-trace': ['分析'],
