@@ -14,15 +14,16 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 const argv = process.argv.slice(2); const opt = k => { const i = argv.indexOf(`--${k}`); return i >= 0 ? argv[i + 1] : undefined; };
-const dir = path.resolve(opt('dir') ?? '.'); const to = Number(opt('to')); const from = Number(opt('from'));
-if (!to || !from || from >= to) { console.error('用法：node handoff.mjs --dir <稿件目录> --to <这一版> --from <实施基线>'); process.exit(2); }
+const dir = path.resolve(opt('dir') ?? '.'); const to = Number(opt('to')); const from = Number(opt('from') ?? 0);
+/* --from 0：首版，还没有实施基线，所有验收项都算新增 */
+if (!to || !Number.isInteger(from) || from < 0 || from >= to) { console.error('用法：node handoff.mjs --dir <稿件目录> --to <这一版> [--from <实施基线，首版为 0>]'); process.exit(2); }
 const design = JSON.parse(readFileSync(path.join(dir, 'design.json'), 'utf8'));
 const goals = design.goals ?? [];
 const items = design.acceptance ?? [];
 const byId = new Map(items.map(item => [item.id, item]));
 const summaryPath = path.join(dir, 'changes', `v${from}-v${to}`, 'summary.json');
 const summary = existsSync(summaryPath) ? JSON.parse(readFileSync(summaryPath, 'utf8')) : null;
-const added = new Set((summary?.acceptance?.added ?? []).map(row => row.id));
+const added = new Set(from === 0 ? items.map(row => row.id) : (summary?.acceptance?.added ?? []).map(row => row.id));
 const changed = new Set((summary?.acceptance?.changed ?? []).map(row => row.id));
 const removed = summary?.acceptance?.removed ?? [];
 
@@ -38,7 +39,7 @@ const mark = id => added.has(id) ? '**新增**' : changed.has(id) ? '**改了**'
 const how = { measure: '测量', human: '人工', screenshot: '截图' };
 const cell = text => String(text ?? '').replace(/\|/g, '｜').replace(/\n+/g, ' ');
 const row = item => `| ${item.id} | ${mark(item.id)} | ${cell(item.rule)} | ${how[item.how] ?? (item.probe ? '测量' : '—')} | ${cell(item.expected)} |`;
-const head = ['| 验收项 | 相对 V' + from + ' | 规则 | 检查 | 怎么算通过 |', '| --- | --- | --- | --- | --- |'];
+const head = ['| 验收项 | ' + (from === 0 ? '这一版' : '相对 V' + from) + ' | 规则 | 检查 | 怎么算通过 |', '| --- | --- | --- | --- | --- |'];
 const inGoal = new Set(goals.flatMap(goal => goal.items ?? []));
 const diff = (design.docs ?? []).find(doc => /\.diff$/.test(doc) && !doc.startsWith('changes/'));
 const sourceFiles = diff && existsSync(path.join(dir, diff)) ? [...readFileSync(path.join(dir, diff), 'utf8').matchAll(/^diff --git a\/(\S+)/gm)].map(m => m[1]) : [];
@@ -46,9 +47,9 @@ const touched = id => added.has(id) || changed.has(id);
 const order = [...items].sort((a, b) => Number(touched(b.id)) - Number(touched(a.id)));
 
 const md = [
-  `# 交接清单（V${to}，实施基线 V${from}）`, '',
+  from === 0 ? `# 交接清单（V${to}，首版，还没有实施基线）` : `# 交接清单（V${to}，实施基线 V${from}）`, '',
   `> 由程序生成（release.mjs check → handoff.mjs），不要手改。这是交给实现方的唯一一份清单；其他文档里的「交给实现方」以这里为准。`,
-  `> 相对 V${from}：新增 ${added.size} 条、改了 ${changed.size} 条、删掉 ${removed.length} 条验收项。`, '',
+  from === 0 ? `> 首版：${added.size} 条验收项全部要实现。` : `> 相对 V${from}：新增 ${added.size} 条、改了 ${changed.size} 条、删掉 ${removed.length} 条验收项。`, '',
   '## 一、按目标', '',
   ...goals.flatMap(goal => [`### ${goal.id} ${goal.goal}`, '', `怎么算做到：${goal.doneWhen}`, '',
     ...((goal.items ?? []).length ? [...head, ...goal.items.map(id => row(byId.get(id)))] : [`在别处：${goal.where}（不在本稿交接）`]), '']),

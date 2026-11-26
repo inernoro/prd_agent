@@ -1,47 +1,38 @@
 ---
 name: cds
 metadata:
-  version: 0.26.10
-description: CDS (Cloud Dev Space) 的唯一入口：用户说「/cds <一句话>」，按 CDS 左侧菜单路由到对应任务，例如 /cds 建项目、/cds 部署这个分支、/cds 发布到 xx 环境、/cds 回滚、/cds 添加一个任务调度、/cds 加一个 xx 的监控、/cds 审查这次改动、/cds 记下这个决策、/cds 记一笔债、/cds 改 xx 模块的设计、/cds 领一个验收任务、/cds 给智能体授权、/cds 更新 CDS。也用于 CDS 授权接入、cdscli 命令、预览地址、部署记录和版本回滚。页面验收和验收报告的取证仍用 create-visual-test-to-kb；报告上传只是传输，不等于验收执行。
+  version: 0.26.25
+description: CDS (Cloud Dev Space) core skill for onboarding, project-scoped authentication, engineering planning, decision lookup, debt intake and private design intake (CDS 设计接入), canonical cdscli commands, deployment runs, versions and rollback. Use for 工程规划、记下这个决策、排进落地计划、在 CDS 记一笔债 and CDS collaboration. Read actual preview URLs through preview-url. For 页面验收、功能验收、回归验收、验收报告 or delivery acceptance, use create-visual-test-to-kb and its design/orchestration prerequisites. Report upload is transport, not acceptance execution.
 ---
 
 # CDS — 核心技能：安全接入 / cdscli / 托管交付 / self-update / 分诊器
 
-> **版本**：v0.26.10 | **状态**：已落地 | **触发**：`/cds <一句话>`（按菜单路由，见下表）、`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"预览地址"、"工程规划"、"CDS 设计接入"
+> **版本**：v0.26.25 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"、"数据库操作"、"代码审查报告"、"工程规划"、"CDS 设计接入"
 
 > **冷热分离**：
 > - 接入新项目、生成 compose、上传 YAML → **`cds-project-scan`**（冷路径）
 > - 部署 / 调试 / 看日志 / 冒烟 → **`cds-deploy-pipeline`**（热路径）
 > - 认证、env、Key、CDS 服务自更新、SSOT 公式 → **本技能**
 
-## /cds 一句话（按 CDS 菜单）
+## 分诊器（用户只说"cds"或意图模糊时）
 
-用户只说 `/cds <一句话>`，按 CDS 左侧菜单找到对应的任务，照「先读」加载技能和文档再做。CDS 的每一环都从这里进：建项目、部署、发布、任务调度、监控、审查、规划和债务、设计、验收。
+用户说"帮我看看 cds" / "搞下 cds" / 单独 `/cds` 时，**不要立即跑命令**，先反问一句区分意图：
 
-- 一句话能对上下表就直接做，**不要再问**；对不上时列出菜单名问一次。
-- 单独 `/cds` 或「帮我看看 cds」：先读当前仓库绑定的项目和页面，再按菜单问一句要做什么。
-- 交接只走 CDS：需求、评论、反馈、验收结果、债务和决策都在 CDS 里流转，不让用户在对话之间转述。
-- 下表由程序从 CDS 的 Agent 任务注册表生成，改说法只改 `reference/menu-intents.json`。
+```
+CDS 这边您想做什么？
+  (1) 新项目接入 / 生成 compose / 上传配置  → 我去走「冷路径」（cds-project-scan）
+  (2) 部署 / 看日志 / deploy 失败排查      → 我去走「热路径」（cds-deploy-pipeline）
+  (3) 配认证 / 改 env / 项目 Key 管理       → 留在这里处理
+  (4) 更新 CDS 服务本体（改了 cds/ 代码）   → 留在这里处理
+```
 
-<!-- cds-menu:start（程序生成，改 reference/menu-intents.json 后运行 cds/scripts/sync-cds-menu-routes.ts） -->
+明确触发词（含"扫描" / "部署" / "认证"）就直接派发，**不要再问**。
 
-| 菜单 | 你可以说 |
-| --- | --- |
-| 项目列表 | `/cds 建项目`、`/cds 接入一个仓库`、`/cds 有哪些项目`、`/cds 看项目状态` |
-| 概览 | `/cds 看当前页面`、`/cds 先帮我看看` |
-| 发布中心 | `/cds 发布到 xx 环境`、`/cds 上线`、`/cds 回滚到上一个版本` |
-| 任务调度 | `/cds 添加一个任务调度`、`/cds 每天 9 点跑 xx` |
-| 验收中心 | `/cds 跑 DSN-xxx 的验收`、`/cds 领一个验收任务` |
-| 监控中心 | `/cds 加一个 xx 的监控`、`/cds CDS 健康吗`、`/cds 看慢请求和错误` |
-| 代码审查报告 | `/cds 审查这次改动`、`/cds 上传审查报告` |
-| 工程规划 | `/cds 记下这个决策`、`/cds 记一笔债` |
-| 设计 | `/cds 帮我设计一个页面`、`/cds 改 xx 模块的设计`、`/cds 帮我实现 DSN-xxx`、`/cds 按交接清单实现` |
-| 接入 Agent | `/cds 给智能体授权`、`/cds 提权到另一个项目` |
-| 提交缺陷 | `/cds 提交一个 CDS 缺陷` |
-| CDS 系统设置 | `/cds 配登录和 SSO`、`/cds 接 GitHub`、`/cds 更新或重启 CDS`、`/cds 改系统设置` |
+发布框架、出稿或修订时，读取同一技能根下的 [cds-design](../cds-design/SKILL.md)。
 
-完整路由、每个任务要读的技能、命令和步骤见 [按菜单的路由表](reference/menu.md)。
-<!-- cds-menu:end -->
+按 CDS 左侧入口识别任务。「规划」处理决策、计划和债务，「设计」处理需求交接、稿件、框架、反馈和稿件验收。「设计」下说到实现截图或设计方复验时，先读[逐画面对照](reference/design-intake.md#逐画面对照)，从运行回执取得实际提交和目标画面。
+
+用户说 `/cds` 加一句话时，按[路由表](reference/menu-intents.json)找到对应任务。明确的实现或续版请求读[设计闭环](reference/design-loop.md)，验收请求读[测试闭环](reference/test-loop.md)。如果语句指定了稿件和版本，先回读该版本与当前任务的锁定目标。需求、实现反馈和复验结果在同一 CDS 线程流转。
 
 ## 本技能处理 / 不处理
 
@@ -76,6 +67,17 @@ description: CDS (Cloud Dev Space) 的唯一入口：用户说「/cds <一句话
 新项目先在主 CDS 创建并建立成员项目绑定，成员不独立创建或签发项目授权。原授权被撤销或主体被停用后，两侧均须拒绝后续请求；不得用旧本地凭据、自助补发或匿名审批绕过。
 
 ## cdscli — 唯一 CLI 入口（其他两个技能也走它）
+
+### 账号操作提案
+
+用户明确要求对已知成员账号进行重置口令、停用或结束会话时，先核对用户给的 CDS 账号编号、当前项目范围和变更原因。使用已经获「账号提案」授权的设备，不接收口令或粘贴密钥。若缺权，由系统所有者在「系统设置 › 账号与登录 › 身份恢复 › 设备接入」批准原项目及管理员设备的提案资格。
+
+```bash
+cdscli account propose revoke-sessions --target <CDS账号编号> --reason "<变更原因>"
+cdscli account receipt <服务端申请编号>
+```
+
+MCP 的 `--accounts` 服务提供 `cds_account_propose` 和 `cds_account_receipt`。CLI、MCP 与 HTTP 走同一服务端校验。收到 `pending` 时把原编号和下一步交还给用户，系统所有者可在「待批申请」核对目标、影响及原因。回读 `completed` 后再报告实际执行结果。
 
 ```bash
 CLI="python3 $(git rev-parse --show-toplevel)/.claude/skills/cds/cli/cdscli.py"
@@ -275,16 +277,17 @@ python3 <当前项目技能根>/cds/cli/cdscli.py monitor add \
 
 ## 完整技能包与版本协作
 
-CDS 对外技能包固定包含五个目录：
+CDS 对外技能包固定包含六个目录：
 
+- `cds-design`：设计接入、框架发布、稿件交付。
 - `cds`
 - `cds-project-scan`
 - `cds-deploy-pipeline`
 - `cds-release`
 - `preview-url`
 
-Agent 接入时先运行 `cdscli version`。只有五个技能都存在、manifest 可读且版本不是
-`stale` 时才静默复用。`cdscli update` 会统一备份并更新完整五技能包；不能只更新
+Agent 接入时先运行 `cdscli version`。只有六个技能都存在、manifest 可读且版本不是
+`stale` 时才静默复用。`cdscli update` 会统一备份并更新完整技能包；不能只更新
 `skills/cds/` 后让其余技能继续漂移。
 
 仓库内 Web 任务使用能力注册表登记真实接口模块族、认证、风险、首选技能和 CLI 状态。
@@ -411,13 +414,11 @@ $CLI debt stats
 
 ## 设计稿件与框架
 
-收到「请阅读 CDS 设计接入并按规范提交」或 `/cds 改 xx 模块的设计` 时，先读 [CDS 设计接入](reference/design-intake.md)。通过已绑定项目的 MCP 读取接入清单，确认同一稿件的最新版本、稳定标识和来源。首发、同稿续版和新模块按同一协议操作。能回读的先查，仍有歧义时在动笔前一次澄清。
-
-发布只走两条程序命令：先 `node scripts/design/release.mjs check --dir design/<目录>`，生成版本差异并跑门禁 G-01 到 G-09，被驳回就按规则编号修改；发布成功后运行 `release.mjs register --commit <来源提交>` 登记版本。详见[程序做门禁](reference/design-intake.md#程序做门禁智能体只做输入)。
+收到「请阅读 CDS 设计接入并按规范提交」时，先读 [CDS 设计接入](reference/design-intake.md)。通过已绑定项目的 MCP 读取接入清单，确认同一稿件的最新版本、稳定标识和来源。首发、同稿续版和新模块按同一协议操作。能回读的先查，仍有歧义时在动笔前一次澄清。
 
 发布前必须按 [出稿与发布前自查](reference/design-intake.md#出稿与发布前自查) 执行，结果写进交付说明：
-- 逐画面和实施基线对比，每处差异写明有意改动还是回退；
-- 在 CDS 预览容器里自检，零报错（CSP 不允许嵌套 `data:` 页面，原型是不透明源，没有存储）；
+- 逐画面对照实施基线，首稿或尚无基线时记录已确认需求、采用框架及对应正式页面；
+- 用 `cdscli design preview` 在 CDS 预览容器里自检，核对嵌套画面和全部控制台记录；
 - 按角色和任务亲自走查。
 
 自检通过不代表稿件可用，问题要在用户发现之前由设计方找出。
@@ -428,7 +429,7 @@ $CLI debt stats
 
 脚手架把框架版本、规则类别和自检待办写进稿件。从本地提交的稿件子目录用 `design publish --private --dir <目录>` 或 MCP 的 `sourceMode: "private"` 私有归档。项目内已同步的授权材料可沿用 Git 核验。稿件可在 `screens/<画面编号>.<light|dark>.png` 附浏览器截图，桌面为 1280×800，手机为 375×812。
 
-新版到达后，用 `design diff <稿件编号> <旧版> <新版>` 固定两个版本及提交。输出包括画面清单、框架和规则变化、包及 HTML 摘要变化，并按画面及主题比对已有实拍。缺实拍的主题显示 `unverified`。同尺寸实拍可在设计「对比」查看像素差异。先复现变化区域，再调整受影响的页面。
+开始升级时由有权成员锁定本轮实施目标，再用 `design diff <稿件编号> --from <实现起点> --to <目标版>` 读取 CDS 计算的画面、验收项和文件净变化。回退时调换起点和终点。按目标稿件完成验收并签收，CDS 会写回已实现版本。版本锁定、历史定稿理由和角色权限见 [实施版本与升降级](reference/design-intake.md#实施版本与升降级)。同尺寸实拍可在设计「对比」查看像素差异。
 
 通过 CLI 修改评审人或验收证据时，每次主动更新使用新的请求编号。响应丢失时，从输出读取 `retry.requestId`，以 `--request-id` 和本次原参数重试。使用 `--human` 时，直接从错误提示读取编号。
 
@@ -445,7 +446,10 @@ $CLI design request-review <稿件编号> --reviewer <成员ID>
 $CLI design publish <稿件编号> --private --intent revise --expected-version <最新版本> --dir design/<目录> --resolves "<评论编号>=如何处理"
 $CLI design list
 $CLI design comments <稿件编号> --open
-$CLI design diff <稿件编号> 1 2
+$CLI design feedback <稿件编号>
+$CLI design feedback-reply <稿件编号> --feedback-id <反馈编号> --body "核对结果"
+$CLI design preview --dir design/<目录> --screen <画面编号>
+$CLI design diff <稿件编号> --from 1 --to 2
 $CLI design accept <稿件编号> --pr <PR编号> --commit <完整提交>
 $CLI design record <稿件编号> --run <运行编号> --commit <完整提交> --file <证据.json>
 $CLI design result <稿件编号> --run <运行编号>

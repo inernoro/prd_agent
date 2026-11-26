@@ -16,10 +16,11 @@ CLI = Path(__file__).resolve().parents[1] / "cli" / "cdscli.py"
 SECRET = "cdsp_setup_test_secret_never_print"
 POLL_TOKEN = "design_request_fixture_poll_token_never_print"
 DESIGN_SETUP = "/api/agent/setup.json?target=existing&project=proj-a&mission=design-publish"
+FRESH_SETUP = "/api/agent/setup.json?target=system&skills=cds"
 DESIGN_INTAKE = "/api/projects/proj-a/design/intake"
 DESIGN_REQUEST = "/api/projects/proj-a/access-requests"
 DESIGN_POLL = DESIGN_REQUEST + "/design-request-fixture"
-SKILLS = ("cds", "cds-project-scan", "cds-deploy-pipeline", "cds-release", "preview-url")
+SKILLS = ("cds", "cds-design", "cds-project-scan", "cds-deploy-pipeline", "cds-release", "preview-url")
 
 
 class SetupCheckTests(unittest.TestCase):
@@ -71,7 +72,7 @@ class SetupCheckTests(unittest.TestCase):
                     self.end_headers()
                     return
                 status = 200
-                if self.path == "/api/agent/setup.json":
+                if self.path in ("/api/agent/setup.json", FRESH_SETUP):
                     body = {"version": "cds-agent-setup.v1", "cliVersion": test.version,
                             "minCliVersion": test.minimum_version}
                 elif self.path == DESIGN_SETUP:
@@ -161,6 +162,56 @@ class SetupCheckTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse(payload["data"]["connected"])
         self.assertEqual(payload["data"]["checks"][-1]["reason"], reason)
+
+    @unittest.skipUnless(shutil.which("node") and shutil.which("git"), "requires Node and Git")
+    def test_skill_fresh_checks_cds_for_an_installed_bundle_inside_git(self):
+        for args in (("init", "--quiet", "--initial-branch=main"),
+                     ("-c", "user.name=Fixture", "-c", "user.email=fixture@example.test",
+                      "commit", "--quiet", "--allow-empty", "-m", "fixture"),
+                     ("remote", "add", "origin", str(self.root))):
+            subprocess.run(["git", *args], cwd=self.root, check=True, capture_output=True)
+        scripts = self.cli.parent.parent / "scripts"
+        scripts.mkdir()
+        script = scripts / "skill-fresh.mjs"
+        shutil.copyfile(CLI.parent.parent / "scripts" / script.name, script)
+        self.cli.write_text(re.sub(r'^VERSION = "[^"]+"', 'VERSION = "0.26.20"',
+                                   self.cli.read_text(), count=1, flags=re.MULTILINE))
+        result = subprocess.run(
+            ["node", str(script)], cwd=self.root, env={**os.environ, "CDS_HOST": self.host},
+            capture_output=True, text=True, timeout=20,
+        )
+        self.assertEqual(self.requests, [(FRESH_SETUP, None)])
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertFalse(json.loads(result.stdout.splitlines()[0])["fresh"])
+        self.assertIn(f"{self.host}/api/skills/cds-pack/download", result.stdout)
+
+    @unittest.skipUnless(shutil.which("node") and shutil.which("git"), "requires Node and Git")
+    def test_skill_fresh_accepts_a_tracked_bundle_on_a_branch_ahead_of_main(self):
+        def git(*args):
+            subprocess.run(["git", *args], cwd=self.root, check=True, capture_output=True)
+
+        scripts = self.cli.parent.parent / "scripts"
+        scripts.mkdir()
+        script = scripts / "skill-fresh.mjs"
+        shutil.copyfile(CLI.parent.parent / "scripts" / script.name, script)
+        current_cli = self.cli.read_text()
+        self.cli.write_text(re.sub(r'^VERSION = "[^"]+"', 'VERSION = "0.26.20"',
+                                   current_cli, count=1, flags=re.MULTILINE))
+        git("init", "--quiet", "--initial-branch=main")
+        git("add", "--", ".agents/skills/cds")
+        git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "--quiet", "-m", "main")
+        git("remote", "add", "origin", str(self.root))
+        git("switch", "--quiet", "-c", "newer-skills")
+        self.cli.write_text(current_cli)
+        git("add", "--", self.cli.relative_to(self.root).as_posix())
+        git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "--quiet", "-m", "update")
+        result = subprocess.run(
+            ["node", str(script)], cwd=self.root, env={**os.environ, "CDS_HOST": self.host},
+            capture_output=True, text=True, timeout=20,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.requests, [(FRESH_SETUP, None)])
+        self.assertTrue(json.loads(result.stdout.splitlines()[0])["fresh"])
 
     def test_existing_credentials_are_reused_and_target_is_really_read(self):
         before = self.credentials.read_bytes()

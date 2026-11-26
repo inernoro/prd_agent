@@ -56,7 +56,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Optional
 
-VERSION = "0.26.10"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.26.25"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -901,12 +901,12 @@ def cmd_setup_check(args: argparse.Namespace) -> None:
         fail("project", "project_mismatch", "当前仓库绑定了其他项目，先确认项目范围；尚未发送任何请求。")
     checks.append({"stage": "credentials", "passed": True})
 
-    skill_keys = ("cds", "cds-project-scan", "cds-deploy-pipeline", "cds-release", "preview-url")
+    skill_keys = ("cds", "cds-design", "cds-project-scan", "cds-deploy-pipeline", "cds-release", "preview-url")
     selected = [key.strip() for key in args.skills.split(",")]
     if not selected or any(key not in skill_keys for key in selected):
         fail("skills", "unknown_skill", "从接入页面重新复制当前任务的技能选择。")
     skills_root = Path(__file__).resolve().parents[2]
-    install_bundle = (f"从 {expected_host}/api/skills/cds-pack/download 下载并核对完整五技能包，"
+    install_bundle = (f"从 {expected_host}/api/skills/cds-pack/download 下载并核对完整技能包，"
                       "用本机工具解压到当前工作区的技能根，之后复用现有授权重新自检。")
     missing = [key for key in skill_keys if not (skills_root / key / "SKILL.md").is_file()]
     if missing:
@@ -920,7 +920,7 @@ def cmd_setup_check(args: argparse.Namespace) -> None:
             or not isinstance(bundle.get("skills"), list)
             or any(not isinstance(key, str) for key in bundle["skills"])
             or set(bundle["skills"]) != set(skill_keys)):
-        fail("skills", "invalid_bundle_manifest", "技能包 manifest 未覆盖完整五技能。" + install_bundle)
+        fail("skills", "invalid_bundle_manifest", "技能包 manifest 未覆盖完整技能包。" + install_bundle)
     if bundle.get("version") != VERSION:
         fail("skills", "stale_bundle", "技能包与核心 CLI 版本不一致。" + install_bundle)
     file_hashes = bundle.get("files")
@@ -4498,7 +4498,8 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
         die("请使用当前绑定的 CDS 项目或有权限的成员账号")
     base = "/api/projects/" + urllib.parse.quote(project, safe="") + "/design"
     identity_headers = _human_session_headers(args.as_user) if args.as_user else {}
-    human_action = args.design_action in ("freeze", "sign", "import") or (args.design_action == "extract" and args.apply)
+    human_action = args.design_action in ("freeze", "sign", "start-upgrade", "cancel-upgrade", "enable-method", "disable-method") or (
+        args.design_action == "extract" and args.apply)
     if human_action and not identity_headers:
         die("请在 CDS 确认，或使用 --as-user 由有权成员在终端登录")
 
@@ -4509,6 +4510,9 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
         if not 200 <= status < 300:
             message = result.get("message") if isinstance(result, dict) else None
             retry = {"retry": {"requestId": retry_id}} if retry_id and (status == 0 or status >= 500) else None
+            error = result.get("error") if isinstance(result, dict) else None
+            if status in (400, 413) and isinstance(error, str) and re.fullmatch(r"G-0[1-9]", error):
+                die(f"稿件门禁 {error} 未通过。请按设计接入规则修正后重试。", code=2, extra={"gate": error})
             message = message or "CDS 暂未确认本次操作，请检查连接并保留原请求编号"
             if retry and _HUMAN:
                 message = f"{message}\n本次请求编号 {retry_id}"
@@ -4517,14 +4521,14 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
             die("CDS 返回的设计记录不属于当前项目")
         return result
 
-    def send(command: dict, *, use_flag: bool = True) -> dict:
+    def send(command: dict, *, use_flag: bool = True, endpoint: str = "/commands") -> dict:
         if use_flag:
             request_id = getattr(args, "request_id", None) or secrets.token_hex(18)
         else:
             # A capture is derived from the acceptance run, and retries can reuse its original receipt.
             material = json.dumps([project, command], sort_keys=True, ensure_ascii=False).encode()
             request_id = hashlib.sha256(material).hexdigest()
-        return request("POST", "/commands", {**command, "requestId": request_id}, retry_id=request_id)
+        return request("POST", endpoint, {**command, "requestId": request_id}, retry_id=request_id)
 
     def read_input(filename: str) -> Any:
         try:
@@ -4536,12 +4540,129 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
         except (OSError, ValueError):
             die("无法读取文件，请提供有效的 JSON")
 
+    def read_design_png(filename: str) -> str:
+        file_path = Path(filename)
+        try:
+            with file_path.open("rb") as stream:
+                content = stream.read(1536 * 1024 + 1)
+        except OSError:
+            die("无法读取对照图")
+        if file_path.suffix.lower() != ".png" or len(content) > 1536 * 1024 or not content.startswith(b"\x89PNG\r\n\x1a\n"):
+            die("请提供 1.5 MiB 以内的 PNG 对照图")
+        return "data:image/png;base64," + base64.b64encode(content).decode("ascii")
+
     action = args.design_action
     if action == "intake":
         intake = request("GET", "/intake")
         if intake.get("protocolVersion") != 1:
             die("CDS 设计接入协议版本不符，请检查当前安装的技能与 CDS 版本")
         ok(intake)
+
+    if action == "handoff":
+        query = urllib.parse.urlencode({"designId": args.id, "version": args.version})
+        workspace = request("GET", "?" + query)
+        design = next((row for row in workspace.get("designs", []) if row.get("id") == args.id and row.get("projectId") == project), None)
+        selected = next((row for row in (design or {}).get("versions", []) if row.get("version") == args.version), None)
+        if not selected or not isinstance(selected.get("handoff"), dict):
+            die("请核对稿件版本及 CDS 交接能力")
+        if args.run:
+            receipt = send({"type": "handoff.check", "designId": args.id, "version": args.version}, endpoint="/handoff/check")
+            result = receipt.get("result") or {}
+            if (result.get("type") != "handoff.check" or result.get("designId") != args.id or result.get("version") != args.version):
+                die("CDS 返回了不同稿件或版本的检查回执")
+            ok(receipt)
+        ok({"projectId": project, "designId": args.id, "version": args.version, "handoff": selected["handoff"]})
+
+    if action in ("brief-reply", "brief-claim", "brief-release"):
+        command = {"type": action.replace("-", ".", 1), "designKey": args.id, "expectedVersion": args.expected_version}
+        if action == "brief-reply":
+            command["body"] = args.body
+            request_id = args.request_id or hashlib.sha256(json.dumps([project, command], sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+        else:
+            request_id = args.request_id or secrets.token_hex(18)
+        receipt = request("POST", "/feedback", {**command, "requestId": request_id}, retry_id=request_id)
+        result = receipt.get("result") or {}
+        if result.get("type") != command["type"] or result.get("designKey") != args.id or result.get("version") != args.expected_version:
+            die("CDS 返回的回执与当前设计需求不符")
+        ok(receipt)
+
+    if action == "feedback":
+        designs = request("GET").get("designs", [])
+        item = next((row for row in designs if row.get("id") == args.id), None)
+        if not item:
+            die("请先读 design intake 并核对原稿编号")
+        feedback = item.get("feedback") or []
+        if args.version is not None:
+            if all(row.get("version") != args.version for row in item.get("versions", [])):
+                die("原稿没有这一版本")
+            feedback = [row for row in feedback if (row.get("status") != "closed" and row.get("version", 0) < args.version) or row.get("version") == args.version
+                        or any(reply.get("revision") == args.version for reply in row.get("replies", []))
+                        or any(attachment.get("version") == args.version for attachment in row.get("attachments", []))]
+        ok({"projectId": project, "designId": args.id, "items": feedback})
+
+    if action in ("feedback-create", "feedback-reply", "feedback-resolve"):
+        action_type = action.replace("-", ".", 1)
+        command = {"type": action_type, "designId": args.id, "body": args.body}
+        if action == "feedback-create":
+            command.update(version=args.version, category=args.category, title=args.title)
+            for key, value in (("screenId", args.screen), ("filePath", args.file_path), ("evidence", args.evidence)):
+                if value:
+                    command[key] = value
+        else:
+            command["feedbackId"] = args.feedback_id
+            if action == "feedback-reply":
+                if args.revision is not None:
+                    command["revision"] = args.revision
+                if args.supplement:
+                    command["supplement"] = True
+            if action == "feedback-resolve":
+                command["decision"] = args.decision
+        request_id = args.request_id or hashlib.sha256(json.dumps([project, command], sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+        receipt = request("POST", "/feedback", {**command, "requestId": request_id}, retry_id=request_id)
+        result = receipt.get("result") or {}
+        if result.get("type") != action_type or result.get("designId") != args.id or not result.get("id"):
+            die("CDS 返回的反馈回执与当前稿件不符")
+        if action != "feedback-create" and result["id"] != args.feedback_id:
+            die("CDS 返回的反馈回执与当前线程不符")
+        ok(receipt)
+
+    if action == "attach-evidence":
+        command = {"type": "feedback.attach", "designId": args.id, "feedbackId": args.feedback_id, "title": args.title,
+                   "image": read_design_png(args.file)}
+        for field, value in (("version", args.version), ("screenId", args.screen), ("slot", args.slot)):
+            if value is not None:
+                command[field] = value
+        request_id = args.request_id or hashlib.sha256(json.dumps([project, command], sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+        receipt = request("POST", "/feedback/attachments", {**command, "requestId": request_id}, retry_id=request_id)
+        result = receipt.get("result") or {}
+        if (result.get("type") != command["type"] or result.get("designId") != args.id or result.get("id") != args.feedback_id
+                or not result.get("artifactId") or (args.version is not None and result.get("version") != args.version)):
+            die("CDS 返回的对照图回执与当前反馈不符")
+        ok(receipt)
+
+    if args.cmd == "framework" and action in ("publish", "import"):
+        document = read_input(args.file)
+        if not isinstance(document, dict) or not set(document) <= {"tokens", "rules", "components", "skeleton", "charter"}:
+            die("框架材料需包含令牌、规则、组件或骨架")
+        member_import = action == "import" and bool(identity_headers)
+        kind = "framework.import" if member_import else "framework.publish"
+        command = {"type": kind, "frameworkId": args.id, "title": args.title, "expectedVersion": args.expected_version,
+                   "sourceCommit": args.source_commit, **({"sourcePath": args.source_path} if args.source_path else {})}
+        if "charter" in document:
+            command["charter"] = document.pop("charter")
+        command["material"] = document
+        if args.note:
+            command["note"] = args.note
+        if member_import:
+            ok(send(command))
+        material = json.dumps([project, command], sort_keys=True, ensure_ascii=False).encode()
+        request_id = args.request_id or hashlib.sha256(material).hexdigest()
+        receipt = request("POST", "/frameworks/publish", {**command, "requestId": request_id}, retry_id=request_id)
+        result = receipt.get("result") or {}
+        if (result.get("type") != kind or result.get("frameworkId") != args.id or type(result.get("version")) is not int
+                or result["version"] != args.expected_version + 1 or type(receipt.get("reused")) is not bool):
+            die("CDS 框架发布回执与所选框架或版本不符", code=2)
+        ok(receipt)
 
     if action == "publish":
         if args.zip:
@@ -4585,6 +4706,56 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
     if action == "reviewers":
         ok(request("GET", "/reviewers"))
 
+    if action in ("enable-method", "disable-method"):
+        command = {"type": "acceptance.enable" if action == "enable-method" else "acceptance.disable",
+                   "designId": args.id, "version": args.version, "method": args.method}
+        if action == "disable-method":
+            command["reason"] = args.reason
+        receipt = send(command)
+        result = receipt.get("result") or {}
+        if (any(result.get(field) != command[field] for field in ("type", "designId", "version"))
+                or result.get("id") != args.method or type(receipt.get("reused")) is not bool):
+            die("CDS 返回的验收回执与当前手段或稿件版本不符")
+        ok(receipt)
+
+    if action == "diff":
+        named = args.from_version is not None or args.to_version is not None
+        if named:
+            if args.left is not None or args.right is not None or min(args.from_version or 0, args.to_version or 0) < 1:
+                die("请用 --from 和 --to 指定两个已有的正整数版本")
+            query = urllib.parse.urlencode({"designId": args.id, "from": args.from_version, "to": args.to_version})
+            diff = request("GET", "/diff?" + query)
+            if (diff.get("designId") != args.id or diff.get("fromVersion") != args.from_version or diff.get("toVersion") != args.to_version
+                    or any(not isinstance(diff.get(group), dict) or
+                           any(not isinstance(diff[group].get(kind), list) for kind in ("added", "removed", "changed"))
+                           for group in ("screens", "acceptance", "files"))):
+                die("CDS 返回的净变化与当前稿件或指定版本不符")
+            ok(diff)
+        if args.left is None or args.right is None:
+            die("请提供稿件存在的两个版本")
+
+    if action in ("freeze", "start-upgrade", "cancel-upgrade"):
+        command = {"designId": args.id}
+        if action == "cancel-upgrade":
+            command.update(type="implementation.cancel", upgradeId=args.upgrade, reason=args.reason)
+        else:
+            command["type"] = "design.freeze" if action == "freeze" else "implementation.start"
+            if args.version is not None:
+                command["version"] = args.version
+            if action == "freeze" and args.reason is not None:
+                command["reason"] = args.reason
+            if args.expected_baseline is not None:
+                command["expectedBaseline"] = args.expected_baseline or None
+        receipt = send(command)
+        result = receipt.get("result")
+        if (not isinstance(result, dict) or result.get("type") != command["type"] or result.get("designId") != args.id
+                or type(result.get("version")) is not int or result["version"] < 1
+                or ("version" in command and result["version"] != command["version"])
+                or (action == "start-upgrade" and (not isinstance(result.get("upgradeId"), str) or not result["upgradeId"]))
+                or (action == "cancel-upgrade" and result.get("upgradeId") != args.upgrade)):
+            die("CDS 返回的实施回执与稿件或指定版本不符")
+        ok(receipt)
+
     workspace = request("GET")
     designs = workspace["designs"]
     frameworks = workspace["frameworks"]
@@ -4594,13 +4765,6 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
     if args.cmd == "framework":
         if action == "list":
             ok({"projectId": project, "items": frameworks})
-        if action == "import":
-            document = read_input(args.file)
-            if not isinstance(document, dict) or not set(document) <= {"tokens", "rules", "components", "skeleton"}:
-                die("框架材料需包含令牌、规则、组件或骨架")
-            ok(send({"type": "framework.import", "frameworkId": args.id, "title": args.title,
-                     "expectedVersion": args.expected_version, "sourceCommit": args.source_commit,
-                     **({"sourcePath": args.source_path} if args.source_path else {}), "material": document}))
         entry = next((item for item in frameworks if item["id"] == args.id), None)
         if not entry:
             die("当前项目没有该框架")
@@ -4612,38 +4776,68 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
         framework = next((item for item in frameworks if item["id"] == args.framework), None)
         if not framework or not framework["versions"]:
             die("当前项目没有该框架版本")
-        latest = framework["versions"][-1]
-        material = latest["material"]
+        revision = framework["versions"][-1] if args.framework_version is None else next(
+            (item for item in framework["versions"] if item["version"] == args.framework_version), None)
+        if args.framework_version is None and revision and "adoption" in revision and revision["adoption"] is None:
+            revision = next((item for item in reversed(framework["versions"])
+                             if item.get("adoption", True) is not None
+                             and (not item.get("charter") or item["charter"].get("status") == "adopted")), None)
+            if revision is None:
+                die("这个框架尚无已采用版本。试用时请指定 --framework-version")
+        if revision is None:
+            die("当前项目没有指定的框架版本")
+        material = revision["material"]
         directory = Path(args.dir).resolve()
         if directory.exists():
             die("请为脚手架指定一个新目录")
         rules = _design_framework_checks(material.get("rules") or "")
         if len(rules) > 60:
             die("框架规则超过单份稿件的 60 条上限")
+        if not args.legacy_template and (not args.title.strip() or len(args.title) > 120 or re.search(r"[\r\n]", args.title)):
+            die("首稿标题须为一行且不超过 120 个字符")
         directory.mkdir(parents=True)
         spec = directory / "spec"
         spec.mkdir()
         (directory / "dist").mkdir()
         (directory / "checks").mkdir()
         screen = {"id": "home", "name": args.title, "route": "#home", "viewport": "desktop", "themes": ["light", "dark"], "impl": None}
-        manifest = {"project": project, "title": args.title, "framework": args.framework, "frameworkVersion": latest["version"],
+        manifest = {"project": project, "title": args.title, "framework": args.framework, "frameworkVersion": revision["version"],
                     "screens": [screen], "acceptance": rules}
-        (directory / "design.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n")
         checks = {"total": len(rules), "passed": 0, "items": [{**rule, "status": "unverified"} for rule in rules]}
-        (directory / "checks" / "result.json").write_text(json.dumps(checks, indent=2, ensure_ascii=False) + "\n")
-        (directory / "思路.md").write_text("## 目标\n\n## 关键取舍\n\n## 依据的规则\n\n## 待定问题\n")
+        rationale = "## 目标\n\n## 关键取舍\n\n## 依据的规则\n\n## 待定问题\n"
+        documents = {}
+        if not args.legacy_template:
+            screen.update(route="#/home", entryReadySelector="body" if material.get("skeleton") else "[data-cds-design-ready]")
+            manifest.update(rationale="思路.md", prototype="dist/index.html", checks="checks/result.json", docs=["交付说明.md"],
+                            prototypeVersion=1, date=time.strftime("%Y-%m-%d"), notes="首稿脚手架，尚无自检结果", acceptance=[])
+            entries = [{**rule, "name": f"{rule['id']} {rule['rule']}", "status": "unverified", "pass": False} for rule in rules]
+            if not entries:
+                entries = [{"name": "首画面打开并出现就绪标志", "status": "unverified", "pass": False}]
+            checks = {"total": len(entries), "passed": 0, "items": entries}
+            rationale = f"# {args.title} · 设计思路（V1）\n\n{rationale}"
+            guide = (f"# {args.title} · 交付说明（V1）\n\n"
+                     "打开 `dist/index.html` 预览首画面。使用原型内能确认实际渲染完成的就绪标志。\n\n"
+                     "撰写设计思路，按画面补充适用的验收项和检查预期，再将实际自检结果写入 `checks/result.json`。\n")
+            (directory / "changes").mkdir()
+            (directory / "交付说明.md").write_bytes(guide.encode("utf-8"))
+            documents = {"versions.json": {"versions": []}, "changes/index.json": {"to": 1, "from": []}}
+        for name, data in {"design.json": manifest, "checks/result.json": checks, **documents}.items():
+            (directory / name).write_bytes((json.dumps(data, indent=2, ensure_ascii=False) + "\n").encode("utf-8"))
+        (directory / "思路.md").write_bytes(rationale.encode("utf-8"))
         for field, name in (("rules", "rules.md"), ("components", "components.md"), ("skeleton", "skeleton.html")):
             if material.get(field):
-                (spec / name).write_text(material[field])
+                (spec / name).write_bytes(material[field].encode("utf-8"))
         if material.get("tokens"):
-            (spec / "tokens.json").write_text(json.dumps(material["tokens"], ensure_ascii=False, indent=2) + "\n")
+            (spec / "tokens.json").write_bytes((json.dumps(material["tokens"], ensure_ascii=False, indent=2) + "\n").encode("utf-8"))
+        ready_marker = "" if args.legacy_template else " data-cds-design-ready"
         template = material.get("skeleton") or (
             '<!doctype html><html lang="zh-CN"><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">'
             '<style>:root{color-scheme:light dark}body{margin:32px;font:15px system-ui}h1{font-size:20px}</style>'
-            '<main id="home"><h1>{{title}}</h1></main></html>'
+            f'<main id="home"{ready_marker}>' '<h1>{{title}}</h1></main></html>'
         )
-        (directory / "dist" / "index.html").write_text(template.replace("{{title}}", html.escape(args.title)))
-        ok({"projectId": project, "directory": str(directory), "framework": args.framework, "version": latest["version"]})
+        (directory / "dist" / "index.html").write_bytes(template.replace("{{title}}", html.escape(args.title)).encode("utf-8"))
+        ok({"projectId": project, "directory": str(directory), "framework": args.framework, "version": revision["version"]},
+           note=None if args.legacy_template else "已创建 V1 脚手架。补齐设计思路、验收预期和实际自检结果后发布。")
 
     design = next((item for item in designs if item["id"] == args.id), None)
     if not design:
@@ -4686,19 +4880,100 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
             die("此稿件没有对应验收运行")
         ok({"projectId": project, "run": run})
 
+    if action in ("coverage", "regress", "known-create"):
+        if workspace.get("permissions", {}).get("visual") is not True:
+            die("当前凭据没有验收回填权限，请使用项目写入凭据或以有权项目成员登录")
+        required, optional = {
+            "coverage": ({"dimension", "ruleIds"}, {"risk", "reason"}),
+            "regress": ({"issueId", "status", "evidence"}, set()),
+            "known-create": ({"problem", "how", "check", "sources", "screenIds"}, set()),
+        }[action]
+        record = read_input(args.file)
+        if not isinstance(record, dict) or not required <= set(record) <= required | optional:
+            die("验收 JSON 必须使用当前命令的字段，运行、提交和请求编号从命令参数填写")
+        command = {"type": "known.create" if action == "known-create" else f"acceptance.{action}",
+                   "designId": args.id, **record}
+        if action != "known-create":
+            command.update(runId=args.run, commit=args.commit)
+        receipt = send(command, use_flag=bool(args.request_id))
+        result = receipt.get("result")
+        if (not isinstance(result, dict) or not isinstance(result.get("id"), str) or not result["id"]
+                or any(result.get(field) != command.get(field) for field in ("type", "designId", "runId"))
+                or (action == "coverage" and result["id"] != record["dimension"])
+                or (action == "regress" and result["id"] != record["issueId"])):
+            die("CDS 返回的验收回执与当前运行或记录不符")
+        ok(receipt)
+
+    if action in ("flow", "smoke"):
+        if workspace.get("permissions", {}).get("visual") is not True:
+            die("当前凭据没有验收回填权限，请使用项目写入凭据或以有权项目成员登录")
+        record = read_input(args.file)
+        if not isinstance(record, dict) or not isinstance(record.get("id"), str) or not record["id"].strip():
+            die("请提供带验收编号 id 的 JSON 记录")
+        command = {"type": f"acceptance.{action}", "designId": args.id, "runId": args.run,
+                   "commit": args.commit, action: record}
+        receipt = send(command, use_flag=bool(args.request_id))
+        result = receipt.get("result") or {}
+        if result.get("id") != record["id"] or any(result.get(field) != command[field] for field in ("type", "designId", "runId")):
+            die("CDS 返回的验收回执与当前运行或结果不符")
+        ok(receipt)
+
+    if action in ("capture", "recheck"):
+        permission = workspace.get("permissions", {})
+        if not (permission.get("visual") or (action == "recheck" and permission.get("programRecheck"))):
+            die("当前凭据没有所需验收权限，请使用实施授权或设计复验授权")
+        command = {"type": f"acceptance.{action}", "designId": args.id, "runId": args.run,
+                   "screenId": args.screen, "slot": args.slot}
+        request_id = args.request_id or hashlib.sha256(json.dumps([project, command], sort_keys=True).encode()).hexdigest()
+        endpoint = "/commands" if action == "capture" else "/acceptance/recheck"
+        receipt = request("POST", endpoint, {**command, "requestId": request_id}, retry_id=request_id)
+        result = receipt.get("result") or {}
+        if any(result.get(field) != value for field, value in command.items()):
+            die("CDS 返回的程序取证回执与当前运行或画面不符")
+        ok(receipt)
+
+    if action == "visual":
+        if workspace.get("permissions", {}).get("visual") is not True:
+            die("当前凭据没有验收回填权限，请使用项目实现授权或以有权项目成员登录")
+        if bool(args.implementation) != bool(args.path):
+            die("实拍 --implementation 和预览内实现地址 --path 须一起提交")
+        checks = read_input(args.file)
+        if not isinstance(checks, dict):
+            die("请提供以 V-01 至 V-10 为键的检查结果 JSON 对象")
+        command = {"type": "acceptance.visual", "designId": args.id, "runId": args.run, "commit": args.commit,
+                   "screenId": args.screen, "slot": args.slot, "checks": checks}
+        if args.implementation:
+            viewport, theme = args.slot.split("-", 1)
+            width, height = (1280, 800) if viewport == "desktop" else (375, 812)
+            command.update(image=read_design_png(args.implementation), measured={"width": width, "height": height,
+                           "theme": theme, "path": args.path})
+        if args.reference:
+            command["referenceImage"] = read_design_png(args.reference)
+        receipt = send(command, use_flag=bool(args.request_id))
+        result = receipt.get("result") or {}
+        if any(result.get(field) != command[field] for field in ("type", "designId", "runId", "screenId", "slot")):
+            die("CDS 返回的逐画面对照回执与当前运行或画面不符")
+        ok(receipt)
+
     command = {"designId": args.id}
-    if action == "freeze":
-        command.update(type="design.freeze", version=args.version)
-    elif action == "request-review":
+    if action == "request-review":
         command.update(type="design.review", reviewerIds=sorted(set(args.reviewer)))
     elif action == "sign":
         command.update(type="acceptance.sign", runId=args.run)
     elif action == "accept":
-        command.update(type="acceptance.start", version=args.version or design.get("frozen"),
-                       pullRequest=args.pr or design.get("pullRequest"))
+        command.update(type="acceptance.start", version=args.version or design.get("frozen"))
+        if args.installed:
+            command["target"] = "installed"
+        else:
+            command["pullRequest"] = args.pr or design.get("pullRequest")
         if args.commit:
             command["commit"] = args.commit
         started = send(command)
+        if args.installed:
+            result = started.get("result")
+            if not isinstance(result, dict) or result.get("type") != command["type"] or result.get("designId") != args.id or not result.get("runId"):
+                die("CDS 返回的主用验收回执与当前稿件不符")
+            ok(started)
         if args.start_only:
             ok(started)
         current = next(item for item in request("GET")["designs"] if item["id"] == args.id)
@@ -4713,17 +4988,38 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
         command.update(type="acceptance.record", runId=args.run, commit=args.commit, cells=cells)
     elif action == "extract":
         framework = next((item for item in frameworks if item["id"] == args.into), None)
-        former = framework["versions"][-1]["material"] if framework and framework["versions"] else {}
-        version = versions.get(args.version or design.get("frozen"))
-        if not version:
+        current = framework["versions"][-1] if framework and framework["versions"] else None
+        former = current["material"] if current else {}
+        source_version = design.get("frozen") if args.version is None else args.version
+        version = versions.get(source_version)
+        if not version or version["version"] != design.get("frozen"):
             die("请选择要提取的定稿版本")
-        proposed = [key for key, value in version["spec"].items() if former.get(key) != value]
+
+        def comparable(value: Any) -> Any:
+            return value.replace("\r\n", "\n").strip() if isinstance(value, str) else value
+
+        proposed = [key for key, value in version["spec"].items()
+                    if value is not None and comparable(former.get(key)) != comparable(value)]
+        conflicts = [key for key in proposed if former.get(key) is not None]
+        expected_version = current["version"] if current else 0
         if not args.apply:
-            ok({"projectId": project, "candidates": proposed, "existing": [key for key in version["spec"] if key not in proposed]})
-        if not args.source_commit:
-            die("确认提取时请提供写入框架材料的完整 Git 提交")
+            ok({"projectId": project, "candidates": proposed, "conflicts": conflicts,
+                "sourceVersion": version["version"], "expectedVersion": expected_version,
+                "existing": [key for key in version["spec"] if key not in proposed]})
+        resolutions = {}
+        for value in args.resolve:
+            key, _, choice = value.partition("=")
+            if key not in conflicts or choice not in ("keep", "adopt") or key in resolutions:
+                die("请按每个冲突项指定 --resolve <类别>=keep 或 --resolve <类别>=adopt")
+            resolutions[key] = choice
+        if (resolutions or args.expected_version is not None) and (args.version is None or args.expected_version is None):
+            die("请按候选预览填写 --version 和 --expected-version")
         command.update(type="framework.extract", frameworkId=args.into, version=version["version"], keys=args.apply,
-                       sourceCommit=args.source_commit, expectedVersion=framework["versions"][-1]["version"] if framework else 0)
+                       expectedVersion=expected_version if args.expected_version is None else args.expected_version)
+        if resolutions:
+            command["resolutions"] = resolutions
+        if args.source_commit:
+            command["sourceCommit"] = args.source_commit
         if args.source_path:
             command["sourcePath"] = args.source_path
         if args.title:
@@ -4733,21 +5029,79 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
     ok(send(command))
 
 
+def cmd_design_preview(args: argparse.Namespace) -> None:
+    from design_preview import serve
+    if not 0 <= args.port <= 65535:
+        die("端口须为 0–65535")
+    try:
+        serve(args.dir, args.screen, args.theme, args.port)
+    except (OSError, ValueError, TypeError, KeyError) as error:
+        die(str(error) if type(error) is ValueError else "无法读取或启动本机预览，请检查稿件目录及监听端口")
+
+
 def _register_design_parser(sub: Any) -> None:
     design = sub.add_parser("design", help="设计稿件、版本、评论与做法验收").add_subparsers(dest="design_action", required=True)
+    preview = design.add_parser("preview", help="在本机按 CDS 真实宿主预览原型")
+    preview.set_defaults(func=cmd_design_preview)
+    preview.add_argument("--dir", required=True, help="含 design.json 的稿件目录")
+    preview.add_argument("--screen", help="画面编号，默认第一张")
+    preview.add_argument("--theme", choices=("light", "dark"), default="light")
+    preview.add_argument("--port", type=int, default=0, help="环回端口，默认自动选择")
     framework = sub.add_parser("framework", help="项目设计框架").add_subparsers(dest="design_action", required=True)
-    for routes, actions in ((design, ("intake", "publish", "list", "reviewers", "request-review", "comments", "diff", "accept", "record", "result", "freeze", "sign", "scaffold", "extract")),
-                            (framework, ("show", "list", "import"))):
+    for routes, actions in ((design, ("intake", "handoff", "brief-reply", "brief-claim", "brief-release", "feedback", "feedback-create", "feedback-reply", "feedback-resolve", "attach-evidence", "publish", "list", "reviewers", "request-review", "comments", "diff", "accept", "record", "visual", "capture", "recheck", "flow", "smoke", "coverage", "regress", "known-create", "result", "freeze", "start-upgrade", "cancel-upgrade", "sign", "scaffold", "extract", "enable-method", "disable-method")),
+                            (framework, ("show", "list", "publish", "import"))):
         for action in actions:
-            parser = routes.add_parser(action)
+            parser = routes.add_parser(action, help="发布项目框架版本" if action == "publish" and routes is framework else None)
             parser.set_defaults(func=cmd_design_workspace)
             parser.add_argument("--project", help="默认使用当前仓库绑定的项目")
             parser.add_argument("--as-user", help="由 CDS 成员在交互终端登录后执行")
-            if action not in ("intake", "list", "publish", "reviewers", "scaffold"):
+            if action not in ("intake", "list", "publish", "reviewers", "scaffold") or (routes is framework and action == "publish"):
                 parser.add_argument("id")
-            if action in ("publish", "request-review", "accept", "record", "freeze", "sign", "extract", "import"):
+            if action in ("publish", "request-review", "accept", "record", "visual", "capture", "recheck", "flow", "smoke", "coverage", "regress", "known-create", "freeze", "start-upgrade", "cancel-upgrade", "sign", "extract", "import"):
                 parser.add_argument("--request-id")
-            if action == "publish":
+            if action == "handoff":
+                parser.add_argument("--version", required=True, type=int, help="已发布的稿件版本")
+                parser.add_argument("--run", action="store_true", help="启动检查或重试未通过场景，默认只回读")
+                parser.add_argument("--request-id")
+            if action in ("enable-method", "disable-method"):
+                parser.add_argument("--request-id")
+                parser.add_argument("--version", type=int, required=True, help="当前实施基线")
+                parser.add_argument("--method", required=True, help="验收手段编号")
+                if action == "disable-method":
+                    parser.add_argument("--reason", required=True, help="停用理由")
+            if action in ("brief-reply", "brief-claim", "brief-release"):
+                parser.add_argument("--request-id")
+                parser.add_argument("--expected-version", type=int, required=True, help="接入清单中的 planVersion")
+                if action == "brief-reply":
+                    parser.add_argument("--body", required=True, help="对该已交接需求的回复")
+            if action == "feedback":
+                parser.add_argument("--version", type=int, help="按版本查看，仍包括前版未关闭的反馈")
+            if action in ("feedback-create", "feedback-reply", "feedback-resolve"):
+                parser.add_argument("--request-id")
+                parser.add_argument("--body", required=True)
+                if action == "feedback-create":
+                    parser.add_argument("--version", type=int, required=True)
+                    parser.add_argument("--category", choices=("reuse", "implementation", "gap", "constraint", "acceptance"), required=True)
+                    parser.add_argument("--title", required=True)
+                    parser.add_argument("--screen")
+                    parser.add_argument("--file-path")
+                    parser.add_argument("--evidence", action="append")
+                else:
+                    parser.add_argument("--feedback-id", required=True)
+                if action == "feedback-reply":
+                    parser.add_argument("--revision", type=int, help="由此回复发布的稿件版本")
+                    parser.add_argument("--supplement", action="store_true", help="为旧反馈补写诉求和完成标准")
+                if action == "feedback-resolve":
+                    parser.add_argument("--decision", choices=("close", "reopen"), required=True)
+            if action == "attach-evidence":
+                parser.add_argument("--request-id")
+                parser.add_argument("--feedback-id", required=True)
+                parser.add_argument("--title", required=True)
+                parser.add_argument("--file", required=True, help="可附到设计反馈的私有 PNG")
+                parser.add_argument("--version", type=int, help="证据所对应的稿件版本")
+                parser.add_argument("--screen", help="证据所对应的画面编号")
+                parser.add_argument("--slot", choices=("desktop-light", "desktop-dark", "phone-light", "phone-dark"))
+            if action == "publish" and routes is design:
                 parser.add_argument("id", nargs="?")
                 source = parser.add_mutually_exclusive_group(required=True)
                 source.add_argument("--dir")
@@ -4767,37 +5121,60 @@ def _register_design_parser(sub: Any) -> None:
             if action == "comments":
                 parser.add_argument("--open", action="store_true")
             if action == "diff":
-                parser.add_argument("left", type=int)
-                parser.add_argument("right", type=int)
-            if action in ("accept", "extract"):
+                parser.add_argument("left", type=int, nargs="?", help="旧版对比起点")
+                parser.add_argument("right", type=int, nargs="?", help="旧版对比终点")
+                parser.add_argument("--from", dest="from_version", type=int, help="净变化起点")
+                parser.add_argument("--to", dest="to_version", type=int, help="净变化终点")
+            if action in ("accept", "extract", "start-upgrade"):
                 parser.add_argument("--version", type=int)
             if action == "accept":
-                parser.add_argument("--pr", type=int)
+                target = parser.add_mutually_exclusive_group()
+                target.add_argument("--pr", type=int)
+                target.add_argument("--installed", action="store_true", help="锁定当前主用 CDS 构建，只创建验收运行")
                 parser.add_argument("--commit")
                 parser.add_argument("--start-only", action="store_true", help="只创建验收运行，后续由人工补充证据")
-            if action in ("record", "result", "sign"):
+            if action in ("record", "visual", "capture", "recheck", "flow", "smoke", "coverage", "regress", "result", "sign"):
                 parser.add_argument("--run", required=action != "result")
-            if action == "record":
-                parser.add_argument("--file", required=True)
+            if action in ("record", "visual", "flow", "smoke", "coverage", "regress"):
                 parser.add_argument("--commit", required=True)
+            if action in ("record", "visual", "flow", "smoke", "coverage", "regress", "known-create"):
+                parser.add_argument("--file", required=True)
+            if action in ("visual", "capture", "recheck"):
+                parser.add_argument("--screen", required=True, help="稿件画面编号")
+                parser.add_argument("--slot", required=True, choices=("desktop-light", "desktop-dark", "phone-light", "phone-dark"))
+            if action == "visual":
+                parser.add_argument("--implementation", help="当前验收提交的实拍 PNG")
+                parser.add_argument("--path", help="实拍所在预览内的相对地址")
+                parser.add_argument("--reference", help="随稿缺图时补交同版本的对照 PNG")
             if action == "freeze":
                 parser.add_argument("version", type=int)
+            if action in ("freeze", "start-upgrade"):
+                parser.add_argument("--expected-baseline", type=int, help="已读到的实施基线，0 表示没有基线")
+            if action in ("freeze", "cancel-upgrade"):
+                parser.add_argument("--reason", required=action == "cancel-upgrade", help="历史版本定稿或取消升级的原因")
+            if action == "cancel-upgrade":
+                parser.add_argument("--upgrade", required=True, help="正在进行的升级编号")
             if action == "scaffold":
                 parser.add_argument("--framework", required=True)
+                parser.add_argument("--framework-version", type=int, help="固定要复用的框架版本")
                 parser.add_argument("--dir", required=True)
                 parser.add_argument("--title", required=True)
+                parser.add_argument("--legacy-template", action="store_true", help="生成供旧工具读取的历史脚手架格式")
             if action == "extract":
                 parser.add_argument("--into", required=True)
                 parser.add_argument("--apply", choices=("tokens", "rules", "components", "skeleton"), action="append")
+                parser.add_argument("--expected-version", type=int, help="候选预览返回的目标框架版本")
+                parser.add_argument("--resolve", action="append", default=[], help="逐项选择，例如 rules=keep 或 tokens=adopt")
                 parser.add_argument("--source-commit")
                 parser.add_argument("--source-path")
                 parser.add_argument("--title")
-            if action == "import":
+            if routes is framework and action in ("publish", "import"):
                 parser.add_argument("--file", required=True)
                 parser.add_argument("--title", required=True)
                 parser.add_argument("--source-commit", required=True)
                 parser.add_argument("--source-path")
                 parser.add_argument("--expected-version", type=int, default=0)
+                parser.add_argument("--note")
 
 
 def cmd_dts(args: argparse.Namespace) -> None:
@@ -11014,8 +11391,8 @@ def cmd_update(args: argparse.Namespace) -> None:
     步骤：
       1. 定位当前技能根（cli/cdscli.py 的父父目录）
       2. 下载 tar.gz 到临时目录
-      3. 五个 CDS 技能目录统一备份到当前项目 .cds/skill-backups
-      4. 校验包内五个技能齐全后同步到当前 Agent Skills 根
+      3. 随包发布的 CDS 技能目录统一备份到当前项目 .cds/skill-backups
+      4. 校验包内六个技能齐全后同步到当前 Agent Skills 根
       5. 用户自定义的非 tracked 文件（如用户本地脚本）保留不动
 
     不动：项目凭据 / shell profile / 系统环境变量
@@ -11032,7 +11409,7 @@ def cmd_update(args: argparse.Namespace) -> None:
         die(f"cdscli.py 不在期望的 <skills>/cds/cli/ 位置（实际: {cli_path}）。"
             f"请用 Dashboard 的 (zip) 按钮重新下载完整包。", code=1)
     skills_root = os.path.dirname(skill_root)
-    bundle_skills = ["cds", "cds-project-scan", "cds-deploy-pipeline", "cds-release", "preview-url"]
+    bundle_skills = ["cds", "cds-design", "cds-project-scan", "cds-deploy-pipeline", "cds-release", "preview-url"]
 
     # 1. 下载
     url = _cds_base() + "/api/export-skill"
@@ -11075,7 +11452,7 @@ def cmd_update(args: argparse.Namespace) -> None:
                 safe_members.append(m)
             tar.extractall(tmp_dir, members=safe_members)
 
-        # 4. 找到解压内的通用 skills 根并校验五个目录齐全。
+        # 4. 找到解压内的通用 skills 根并校验技能目录齐全。
         src_skills_dir = None
         for root, dirs, _files in os.walk(tmp_dir):
             if os.path.basename(root) != "skills":
@@ -11087,7 +11464,7 @@ def cmd_update(args: argparse.Namespace) -> None:
             die("tar.gz 内找不到完整的五技能包。升级失败（已保留备份）。",
                 code=3, extra={"backupAt": bak_root})
 
-        # 5. 用内容同步：五个技能统一更新，保留用户自定义的额外文件。
+        # 5. 用内容同步：六个技能统一更新，保留用户自定义的额外文件。
         replaced_files: list[str] = []
         for skill_name in bundle_skills:
             src_skill_dir = os.path.join(src_skills_dir, skill_name)
@@ -11108,7 +11485,7 @@ def cmd_update(args: argparse.Namespace) -> None:
                 if os.path.isdir(backup_dir):
                     shutil.copytree(backup_dir, target_dir)
         except Exception as rollback_err:
-            die(f"升级失败且回滚也失败！请从 {bak_root} 恢复五个技能目录 "
+            die(f"升级失败且回滚也失败！请从 {bak_root} 恢复六个技能目录 "
                 f"（原错: {e}; 回滚错: {rollback_err}）", code=3)
         die(f"升级失败，已自动回滚: {e}", code=3)
     finally:
@@ -12855,6 +13232,16 @@ def _build_parser() -> argparse.ArgumentParser:
     sm.add_argument("id", help="branchId")
     sm.set_defaults(func=cmd_smoke)
 
+    account = sub.add_parser("account", help="提交及回读已授权项目范围的账号操作提案").add_subparsers(dest="account_action", required=True)
+    propose = account.add_parser("propose", help="登记待系统所有者逐次确认的请求")
+    propose.add_argument("action", choices=["reset-password", "disable-user", "revoke-sessions"])
+    propose.add_argument("--target", required=True, help="当前授权项目中成员的 CDS 账号编号")
+    propose.add_argument("--reason", required=True, help="变更原因，不包含任何凭据")
+    propose.set_defaults(func=cmd_account_proposal)
+    receipt = account.add_parser("receipt", help="回读由当前设备发起的提案")
+    receipt.add_argument("request_id", help="服务端申请编号")
+    receipt.set_defaults(func=cmd_account_proposal)
+
     ident = sub.add_parser("identity", help="身份层：用户级凭证 / 我是谁 / 凭据自愈").add_subparsers(dest="sub", required=True)
     isave = ident.add_parser("save", help="保存用户级凭证到用户目录（跟着人走，不跟着仓库走）")
     # 明文**不走命令行参数**：argv 对同机任何进程可见，还会留在 shell 历史里。
@@ -12945,6 +13332,28 @@ def cmd_identity_save(args: argparse.Namespace) -> None:
     ok({"host": host, "path": path}, note=f"用户级凭证已保存到 {path}（0600，不进仓库）")
 
 
+def cmd_account_proposal(args: argparse.Namespace) -> None:
+    credential = _load_user_credential(_cds_base())
+    if not credential.startswith("cdsu_"):
+        die("当前实例暂无设备授权。请通过 CDS 设备接入，获得账号提案权限。", code=2)
+        return
+    if args.account_action == "propose":
+        method, endpoint = "POST", "/api/auth/account-proposals"
+        body = {"action": args.action, "targetId": args.target.strip(), "reason": args.reason.strip()}
+    else:
+        if not re.fullmatch(r"[a-f0-9]{64}", args.request_id):
+            die("申请编号无效，请使用服务端回执。", code=2)
+            return
+        method, endpoint = "GET", f"/api/auth/account-proposals/{args.request_id}"
+        body = None
+    status, response, _ = _request(method, endpoint, body, extra_headers={"X-AI-Access-Key": credential},
+                                   fatal_network_errors=False, follow_redirects=False)
+    if status not in (200, 201):
+        error_code = response.get("code") if isinstance(response, dict) else None
+        die(f"账号提案请求失败（HTTP {status}）", code=2, extra={"serverCode": error_code})
+        return
+    ok(response, note="账号操作提案回执")
+
 def cmd_identity_whoami(args: argparse.Namespace) -> None:
     """我是谁 / 我对哪些项目有授权。"""
     host = os.environ.get("CDS_HOST", "").strip() or _default_user_credential_host()
@@ -13033,7 +13442,6 @@ def cmd_identity_heal(args: argparse.Namespace) -> None:
 def main(argv: list[str] | None = None) -> None:
     global _TRACE_ID, _HUMAN
     _LOAD_NOTICES.clear()
-    _load_local_credentials()
     parser = _build_parser()
     args = parser.parse_args(argv)
     _TRACE_ID = args.trace or secrets.token_hex(4)
@@ -13042,6 +13450,10 @@ def main(argv: list[str] | None = None) -> None:
     if func is None:
         parser.print_help()
         sys.exit(1)
+    if func is cmd_design_preview:
+        func(args)
+        return
+    _load_local_credentials()
     workspace_connection = func in (cmd_connect, cmd_init) and not getattr(args, "legacy_env", False)
     # Discovery and connection must work even if the selected host is unavailable or unconfigured.
     if args.cmd in ("instance", "connect") and args.instance:

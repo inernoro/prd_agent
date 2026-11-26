@@ -102,7 +102,7 @@ const sourceDir = String(B.source ?? A.source ?? 'src').replace(/\/+$/, '') + '/
 const area = f => f.startsWith(sourceDir) ? '源码' : f.startsWith('设计文档/') || /\.md$/.test(f) ? '文档'
   : f.startsWith('screens/') || f.startsWith('compare/') ? '截图' : f.startsWith('dist/') ? '原型' : f.startsWith('checks/') ? '自检' : f.startsWith('tools/') ? '工具' : '其他';
 const checksOf = dir => { const r = json(dir, 'checks/result.json'); return r ? { passed: r.passed, total: r.total, failed: (r.items ?? []).filter(x => !x.pass).map(x => x.name) } : undefined; };
-const ruleFields = ['rule', 'expected', 'how', 'screenId', 'priority', 'slots'];
+const ruleFields = ['rule', 'expected', 'how', 'screenId', 'priority', 'slots', 'interaction'];
 const summary = {
   from: { label: from.label, version: from.version ?? null, commit: from.commit ?? null, title: heading(path.join(from.dir, '交付说明.md')) },
   to: { label: to.label, version: to.version ?? null, commit: to.commit ?? null, title: heading(path.join(to.dir, '交付说明.md')) },
