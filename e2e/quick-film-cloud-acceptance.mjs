@@ -1,12 +1,10 @@
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
 import { chromium } from '@playwright/test';
 
 const origin = 'https://opendesign-sketchnote-film-codex-prd-agent.miduo.org';
 const deployedCommit = '31cdc15f00a2057ae5711ab5e49206c51660296d';
 assert.equal(process.env.E2E_BASE_URL, origin, 'Target must be the isolated MAP preview');
 assert.ok(process.env.E2E_USER && process.env.E2E_PASSWORD, 'Cloud acceptance credentials are missing');
-const digest = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const endpoint = (path) => new URL(path, origin);
 const responseData = async (response, operation) => {
   assert.ok(response.ok(), `${operation} returned HTTP ${response.status()}`);
@@ -65,13 +63,25 @@ try {
     dialog.getByRole('button', { name: '预览或取回成片', exact: true }).click(),
   ]);
   assert.ok(film.ok(), `Recover MP4 returned HTTP ${film.status()}`);
-  const media = await film.body();
-  assert.equal(media.length, 29_785_188);
-  assert.equal(digest(media), '192c5094efe19eea21e6039c628bcfe4d978158e45d2b2d8967a2313751f88e0');
-  await page.waitForFunction(() => {
-    const video = document.querySelector('video[aria-label="生成视频预览"]');
-    return video?.readyState >= 1 && Math.abs(video.duration - 90) < 0.15;
-  }, null, { timeout: 25_000 });
+  const video = dialog.locator('video[aria-label="生成视频预览"]');
+  await video.waitFor();
+  let playback;
+  try {
+    await page.waitForFunction(() => {
+      const movie = document.querySelector('video[aria-label="生成视频预览"]');
+      return movie?.readyState >= 1 && Math.abs(movie.duration - 90) < 0.15;
+    }, null, { timeout: 25_000 });
+  } finally {
+    playback = await video.evaluate((movie) => ({ ready: movie.readyState, error: movie.error?.code ?? null }));
+    console.log('Movie element readiness:', JSON.stringify(playback));
+  }
+  const blob = await video.evaluate(async (movie) => {
+    const buffer = await (await fetch(movie.currentSrc)).arrayBuffer();
+    const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', buffer));
+    return { length: buffer.byteLength, digest: Array.from(hash, (byte) => byte.toString(16).padStart(2, '0')).join('') };
+  });
+  assert.equal(blob.length, 29_785_188);
+  assert.equal(blob.digest, '192c5094efe19eea21e6039c628bcfe4d978158e45d2b2d8967a2313751f88e0');
   console.log('Original MP4 recovered in browser; bytes and duration match the original.');
 
   const saveButton = dialog.getByRole('button', { name: '保存到网页托管', exact: true });
@@ -87,7 +97,7 @@ try {
   const apiAuth = { headers: { Authorization: `Bearer ${token}` } };
   const site = await responseData(await page.request.get(endpoint(`/api/web-pages/${saved.siteId}`).href, apiAuth), 'Read saved site');
   assert.equal(site.wrappedAssetType, 'video');
-  assert.equal(site.files.find((file) => file.path === 'film.mp4')?.size, media.length);
+  assert.equal(site.files.find((file) => file.path === 'film.mp4')?.size, blob.length);
   await dialog.getByRole('button', { name: '打开分享设置', exact: true }).click();
   const share = page.getByRole('dialog', { name: /建一条分享链接/ });
   await share.waitFor();
