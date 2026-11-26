@@ -2198,6 +2198,7 @@ export function createServer(deps: ServerDeps): express.Express {
     ),
   );
   const deploymentRunService = new DeploymentRunService(deps.stateService, {
+    intentKeyDirectory: deps.stateFile ? path.dirname(deps.stateFile) : undefined,
     isExecutionWaiting: (run, now) => Boolean(run.operationId && run.operationGeneration !== undefined
       && (deploymentPhaseBudget.waitingOperation(run.operationId, run.operationGeneration)?.deadlineAt || 0) > now.getTime()),
   });
@@ -6058,6 +6059,32 @@ export function createServer(deps: ServerDeps): express.Express {
   if (deps.branchLifecycleService) app.use('/api', createBranchLifecycleRouter(deps.stateService, deps.branchLifecycleService));
   app.use('/api', createBranchRouter({
     selfMaintenanceRuntime: selfMaintenance,
+    revalidateSelfUpdate: async req => {
+      if (authMode === 'disabled' && !publicTicketSsoConfig(resolveSsoConfig()).enabled) return true;
+      const original = req as typeof req & {
+        cdsUser?: CdsUser;
+        cdsSession?: unknown;
+        _cdsBasicHumanAuth?: boolean;
+        cdsLegacyMachineAuth?: boolean;
+        _aiSession?: ApprovedAiSession;
+      };
+      if (original.cdsSession && authService) {
+        const token = readBrowserCookie(req.headers.cookie, sessionCookieName(GH_SESSION_COOKIE, hostSessionCookies));
+        const session = await authService.validateSession(token ?? null, { renew: false });
+        return Boolean(session && session.user.id === original.cdsUser?.id
+          && session.user.isSystemOwner === original.cdsUser?.isSystemOwner);
+      }
+      if (original._cdsBasicHumanAuth) {
+        const token = readBrowserCookie(req.headers.cookie, sessionCookieName(LEGACY_SESSION_COOKIE, hostSessionCookies));
+        return Boolean(authEnabled && verifyHumanSessionToken(token, cdsUser!, cdsPass!, sessionTtlMs));
+      }
+      if (original.cdsLegacyMachineAuth) {
+        return tokenMatches(typeof req.headers['x-cds-token'] === 'string' ? req.headers['x-cds-token'] : '', validToken);
+      }
+      const session = resolveAiSession(req, deps.stateService);
+      return Boolean(original._aiSession && session?.id === original._aiSession.id
+        && (!session.expiresAt || Date.parse(session.expiresAt) > Date.now()));
+    },
     stateService: deps.stateService,
     worktreeService: deps.worktreeService,
     containerService: deps.containerService,

@@ -39,6 +39,9 @@ describe('self-update cancels before replacing code when other work is active', 
     shell.addResponsePattern(/git rev-parse --abbrev-ref HEAD/, () => ({ stdout: 'main', stderr: '', exitCode: 0 }));
     shell.addResponsePattern(/git rev-parse --short HEAD/, () => ({ stdout: sha.slice(0, 8), stderr: '', exitCode: 0 }));
     shell.addResponsePattern(/git rev-parse HEAD/, () => ({ stdout: sha, stderr: '', exitCode: 0 }));
+    shell.addResponse("git ls-remote --exit-code --refs origin 'refs/heads/main'", {
+      stdout: `${sha}\trefs/heads/main\n`, stderr: '', exitCode: 0,
+    });
     state = new StateService(path.join(root, 'state.json')); state.load();
     state.addBranch({ id: 'other-project', projectId: 'app02', branch: 'main', worktreePath: root,
       createdAt: new Date().toISOString(), status: 'building', services: {} });
@@ -72,7 +75,7 @@ describe('self-update cancels before replacing code when other work is active', 
     it(`${endpoint}: timeout keeps the other deployment, files and process intact`, async () => {
       const other = await runs.begin({ projectId: 'app02', branchId: 'other-project', trigger: 'manual', initialStatus: 'verifying' });
       const response = await fetch(`${url}/api/${endpoint}`, { method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ branch: 'main', force: true, drainTimeoutMs: 5 }) });
+        body: JSON.stringify({ branch: 'main', force: true, drainTimeoutMs: 100 }) });
       const stream = await response.text();
       expect(stream).toContain('self_update_restart_cancelled');
       expect(stream).not.toContain('event: done');

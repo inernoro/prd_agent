@@ -5205,6 +5205,60 @@ describe('Branch Routes', () => {
       expect(mock.commands.filter(command => isAppLaunchCommand(command))).toEqual([]); inspect.mockRestore();
     });
 
+    it.each([
+      {
+        conclusion: 'failure', code: 'build_failed', title: 'CI 构建失败',
+        image: 'cds-preview', workflow: 'cds-prebuilt.yml', otherWorkflow: 'branch-image.yml',
+      },
+      {
+        conclusion: 'startup_failure', code: 'startup_failed', title: 'CI 启动失败',
+        image: 'prdagent-server', workflow: 'branch-image.yml', otherWorkflow: 'cds-prebuilt.yml',
+      },
+    ])('$title 时结束原部署等待，保留旧服务和上游证据', async ({ conclusion, code, title, image, workflow, otherWorkflow }) => {
+      const target = 'b'.repeat(40);
+      const id = 'artifact-ci-failed';
+      const branch = 'feature/artifact-ci-failed';
+      const repository = 'inernoro/prd_agent';
+      stateService.updateProject('default', { githubRepoFullName: repository });
+      await request(server, 'POST', '/api/build-profiles', { id: 'cds', name: 'CDS',
+        dockerImage: `ghcr.io/${repository}/${image}:sha-${target}`, workDir: '.', command: '', containerPort: 3000, prebuiltImage: true });
+      stateService.addBranch({ id, projectId: 'default', branch, worktreePath: path.join(tmpDir, 'worktrees', id),
+        status: 'running', createdAt: new Date().toISOString(), services: {
+          cds: { profileId: 'cds', containerName: 'old-cds', hostPort: 10031, status: 'running' },
+        } });
+      mock.addResponsePatternFirst(/docker info/, () => ({ stdout: JSON.stringify({ Architecture: 'x86_64', OSType: 'linux' }), stderr: '', exitCode: 0 }));
+      mock.addResponsePatternFirst(/docker pull /, () => ({ stdout: '', stderr: 'manifest unknown', exitCode: 1 }));
+      const fetchOriginal = globalThis.fetch;
+      const github = vi.spyOn(globalThis, 'fetch').mockImplementation((url, options) => {
+        if (!String(url).startsWith(`https://api.github.com/repos/${repository}/actions/runs?`)) return fetchOriginal(url, options);
+        return Promise.resolve(Response.json({ workflow_runs: [
+          { id: 10, path: `.github/workflows/${workflow}`, head_sha: target, head_branch: branch, status: 'completed', conclusion },
+          { id: 11, path: `.github/workflows/${otherWorkflow}`, head_sha: target, head_branch: branch, status: 'completed', conclusion: 'success' },
+        ] }));
+      });
+      try {
+        const response = await request(server, 'POST', `/api/branches/${id}/deploy`, { commitSha: target });
+        const { requestArtifactWaitRefresh } = await import('../../src/services/artifact-admission-wait.js');
+        await requestArtifactWaitRefresh(branchOperationCoordinator);
+        const runId = String(response.headers['x-cds-deployment-run-id']);
+        expect(response.status).toBe(200);
+        expect(deploymentRunService.get(runId)).toMatchObject({ status: 'failed', failure: {
+          code: `upstream.ci.${code}`, owner: 'external', summary: title,
+          evidenceRefs: [`https://github.com/${repository}/actions/runs/10`],
+        } });
+        expect(operationEvents).toContainEqual(expect.objectContaining({
+          action: 'github.ci-diagnosis.response', requestId: runId, commitSha: target,
+        }));
+        expect(branchOperationCoordinator.getArtifactWaiters()).toEqual([]);
+        expect(stateService.getBranch(id)?.services.cds).toMatchObject({ containerName: 'old-cds', status: 'running' });
+        const branchResponse = await request(server, 'GET', `/api/branches/${id}`);
+        expect(branchResponse.body.branch.lastDeploymentCiFailure).toMatchObject({
+          title, actionUrl: `https://github.com/${repository}/actions/runs/10`,
+        });
+        expect(mock.commands.filter(command => isAppLaunchCommand(command))).toEqual([]);
+      } finally { github.mockRestore(); }
+    });
+
     it('最后一个必需产物缺失时保留旧入口与孤儿服务，不初始化数据库或准备源码，原任务持久等待', async () => {
       const target = 'b'.repeat(40); const imageId = `sha256:${'c'.repeat(64)}`;
       for (const role of ['api', 'web']) await request(server, 'POST', '/api/build-profiles', { id: role, name: role,
