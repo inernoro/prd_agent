@@ -5205,14 +5205,23 @@ describe('Branch Routes', () => {
       expect(mock.commands.filter(command => isAppLaunchCommand(command))).toEqual([]); inspect.mockRestore();
     });
 
-    it('CDS 预览的匹配 CI 已失败时结束原等待，保留旧服务和上游证据', async () => {
+    it.each([
+      {
+        conclusion: 'failure', code: 'build_failed', title: 'CI 构建失败',
+        image: 'cds-preview', workflow: 'cds-prebuilt.yml', otherWorkflow: 'branch-image.yml',
+      },
+      {
+        conclusion: 'startup_failure', code: 'startup_failed', title: 'CI 启动失败',
+        image: 'prdagent-server', workflow: 'branch-image.yml', otherWorkflow: 'cds-prebuilt.yml',
+      },
+    ])('$title 时结束原部署等待，保留旧服务和上游证据', async ({ conclusion, code, title, image, workflow, otherWorkflow }) => {
       const target = 'b'.repeat(40);
       const id = 'artifact-ci-failed';
       const branch = 'feature/artifact-ci-failed';
       const repository = 'inernoro/prd_agent';
       stateService.updateProject('default', { githubRepoFullName: repository });
       await request(server, 'POST', '/api/build-profiles', { id: 'cds', name: 'CDS',
-        dockerImage: `ghcr.io/${repository}/cds-preview:sha-${target}`, workDir: '.', command: '', containerPort: 3000, prebuiltImage: true });
+        dockerImage: `ghcr.io/${repository}/${image}:sha-${target}`, workDir: '.', command: '', containerPort: 3000, prebuiltImage: true });
       stateService.addBranch({ id, projectId: 'default', branch, worktreePath: path.join(tmpDir, 'worktrees', id),
         status: 'running', createdAt: new Date().toISOString(), services: {
           cds: { profileId: 'cds', containerName: 'old-cds', hostPort: 10031, status: 'running' },
@@ -5223,8 +5232,8 @@ describe('Branch Routes', () => {
       const github = vi.spyOn(globalThis, 'fetch').mockImplementation((url, options) => {
         if (!String(url).startsWith(`https://api.github.com/repos/${repository}/actions/runs?`)) return fetchOriginal(url, options);
         return Promise.resolve(Response.json({ workflow_runs: [
-          { id: 10, path: '.github/workflows/cds-prebuilt.yml', head_sha: target, head_branch: branch, status: 'completed', conclusion: 'failure' },
-          { id: 11, path: '.github/workflows/branch-image.yml', head_sha: target, head_branch: branch, status: 'completed', conclusion: 'success' },
+          { id: 10, path: `.github/workflows/${workflow}`, head_sha: target, head_branch: branch, status: 'completed', conclusion },
+          { id: 11, path: `.github/workflows/${otherWorkflow}`, head_sha: target, head_branch: branch, status: 'completed', conclusion: 'success' },
         ] }));
       });
       try {
@@ -5234,7 +5243,7 @@ describe('Branch Routes', () => {
         const runId = String(response.headers['x-cds-deployment-run-id']);
         expect(response.status).toBe(200);
         expect(deploymentRunService.get(runId)).toMatchObject({ status: 'failed', failure: {
-          code: 'upstream.ci.build_failed', owner: 'external', summary: 'CI 构建失败',
+          code: `upstream.ci.${code}`, owner: 'external', summary: title,
           evidenceRefs: [`https://github.com/${repository}/actions/runs/10`],
         } });
         expect(operationEvents).toContainEqual(expect.objectContaining({
@@ -5244,7 +5253,7 @@ describe('Branch Routes', () => {
         expect(stateService.getBranch(id)?.services.cds).toMatchObject({ containerName: 'old-cds', status: 'running' });
         const branchResponse = await request(server, 'GET', `/api/branches/${id}`);
         expect(branchResponse.body.branch.lastDeploymentCiFailure).toMatchObject({
-          title: 'CI 构建失败', actionUrl: `https://github.com/${repository}/actions/runs/10`,
+          title, actionUrl: `https://github.com/${repository}/actions/runs/10`,
         });
         expect(mock.commands.filter(command => isAppLaunchCommand(command))).toEqual([]);
       } finally { github.mockRestore(); }

@@ -172,6 +172,7 @@ async function readCiImageDiagnosis(input: CiDiagnosisInput): Promise<CiDiagnosi
           ? result('building', 'CI 正在构建', '镜像正在构建，完成后自动部署。', '', true)
           : result('queued', 'CI 等待执行', '构建正在排队或等待批准，请查看构建运行记录。', '', true);
       }
+      if (run.conclusion === 'startup_failure') return result('startup_failed', 'CI 启动失败', '工作流在启动阶段失败，请查看 GitHub 运行页的诊断。', 'startup_failure');
       if (input.artifactProducer) {
         // Branch Image contains independent jobs. A workflow failing for a
         // different image is not proof this deployment's producer failed.
@@ -208,7 +209,6 @@ async function readCiImageDiagnosis(input: CiDiagnosisInput): Promise<CiDiagnosi
       }
       if (run.conclusion === 'success') return result('result_unsynced', 'CI 结果待同步', '镜像工作流已成功，但 CDS 尚未确认镜像可用。请重新认领该提交的镜像后部署。', 'success');
       if (run.conclusion === 'timed_out') return result('build_timed_out', 'CI 构建超时', 'GitHub 已终止超时构建，请查看耗时步骤后重试。', 'timed_out');
-      if (run.conclusion === 'startup_failure') return result('startup_failed', 'CI 启动失败', '工作流在启动阶段失败，请查看 GitHub 运行页的诊断。', 'startup_failure');
       return result('build_failed', 'CI 构建未成功', '镜像构建未成功，请查看失败步骤后重试。', run.conclusion || 'unknown');
     }
     if (input.artifactProducer) return result('not_triggered', '等待部署产物', '尚未找到与目标产物匹配的构建记录，请查看 GitHub Actions。', '', true);

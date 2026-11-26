@@ -3277,7 +3277,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
               || (entry.githubInstallationId || stateService.getProject(run.projectId)?.githubInstallationId) !== installationId) return result;
             const ci = diagnosis?.ciDiagnosis;
             if (ci && diagnosis?.ciWorkflowRunUrl
-              && ['build_failed', 'cancelled', 'build_timed_out'].includes(ci.code)) {
+              && ['startup_failed', 'build_failed', 'cancelled', 'build_timed_out'].includes(ci.code)) {
               await finishWait(`upstream.ci.${ci.code}`, 'external', ci.title, ci.message, [diagnosis.ciWorkflowRunUrl]);
               return result;
             }
