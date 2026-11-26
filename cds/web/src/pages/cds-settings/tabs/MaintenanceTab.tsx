@@ -1572,7 +1572,8 @@ function SelfUpdateStatusPanel({
             }`}
             title={`PID ${data.runningPid || '-'} · 启动于 ${data.pidStartedAt ? formatAbsoluteTime(data.pidStartedAt) : '-'}`}
           >
-            PID {data.runningPid || '-'} · 重启{data.restartStatus === 'completed' ? '已确认' : data.restartStatus === 'pending' ? '进行中' : '未确认'}
+            PID {data.runningPid || '-'} · {data.restartWait?.phase === 'draining-deploys' ? '等待安全重启'
+              : data.restartStatus === 'completed' ? '重启已确认' : data.restartStatus === 'pending' ? '重启进行中' : '重启未确认'}
           </span>
         ) : null}
 

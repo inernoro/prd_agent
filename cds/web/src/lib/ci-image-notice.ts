@@ -15,12 +15,14 @@ export interface CiImageNoticeInput {
   ciWorkflowRunUrl?: string;
   ciImageError?: string;
   ciDiagnosis?: CiDiagnosisView | null;
+  lastDeploymentCiFailure?: { title: string; message?: string; actionUrl?: string; checkedAt: string } | null;
   githubRepoFullName?: string;
   branch?: string;
 }
 
 export function ciImageNotice(branch: CiImageNoticeInput) {
   const diagnosis = branch.ciDiagnosis?.targetSha === branch.ciTargetSha ? branch.ciDiagnosis : null;
+  const deploymentFailure = branch.lastDeploymentCiFailure;
   const legacy: Record<string, [string, string]> = {
     cancelled: ['CI 已取消', '构建已取消；确认仍需预览后重新运行镜像构建。'],
     failure: ['CI 构建失败', '请查看失败步骤，修复后重新运行镜像构建。'],
@@ -32,14 +34,15 @@ export function ciImageNotice(branch: CiImageNoticeInput) {
   const fallback = legacy[branch.ciWorkflowConclusion || '']
     || (branch.ciImageStatus === 'waiting' ? ['等待 CI 镜像', '正在等待镜像构建结果。'] : ['CI 镜像未就绪', branch.ciImageError || '请查看 GitHub 镜像工作流。']);
   const repository = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(branch.githubRepoFullName || '') ? branch.githubRepoFullName : '';
-  const candidate = diagnosis?.actionUrl || branch.ciWorkflowRunUrl
+  const candidate = deploymentFailure?.actionUrl || diagnosis?.actionUrl || branch.ciWorkflowRunUrl
     || (repository ? `https://github.com/${repository}/actions?query=${encodeURIComponent(`branch:${branch.branch || ''}`)}` : '');
   let actionUrl = '';
   try {
     const url = new URL(candidate);
     if (url.protocol === 'https:' && url.hostname === 'github.com' && !url.username && !url.password) actionUrl = url.href;
   } catch { /* 没有关联仓库时不构造未知地址。 */ }
-  return { title: diagnosis?.title || fallback[0], message: diagnosis?.message || fallback[1], actionUrl,
-    actionLabel: diagnosis?.actionLabel || (branch.ciWorkflowRunUrl ? '查看构建' : '查看 Actions'),
-    checkedAt: diagnosis?.checkedAt };
+  return { title: deploymentFailure?.title || diagnosis?.title || fallback[0],
+    message: deploymentFailure?.message || diagnosis?.message || fallback[1], actionUrl,
+    actionLabel: deploymentFailure ? '查看构建' : diagnosis?.actionLabel || (branch.ciWorkflowRunUrl ? '查看构建' : '查看 Actions'),
+    checkedAt: deploymentFailure?.checkedAt || diagnosis?.checkedAt };
 }

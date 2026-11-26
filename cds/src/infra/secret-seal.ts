@@ -72,8 +72,7 @@ function resolveKey(): Buffer | null {
  *   - plain string unchanged if CDS_SECRET_KEY is not set
  *   - a {@link SealedSecret} object if the key is present
  */
-export function sealToken(plain: string): string | SealedSecret {
-  const key = resolveKey();
+export function sealToken(plain: string, key = resolveKey()): string | SealedSecret {
   if (!key) return plain;
   const iv = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
@@ -95,12 +94,11 @@ export function sealToken(plain: string): string | SealedSecret {
  * Throws if the input is sealed but the key isn't available — caller
  * must decide whether to drop the token or surface the error.
  */
-export function unsealToken(stored: unknown): string {
+export function unsealToken(stored: unknown, key = resolveKey()): string {
   if (typeof stored === 'string') return stored;
   if (!isSealedSecret(stored)) {
     throw new Error('Invalid sealed secret shape');
   }
-  const key = resolveKey();
   if (!key) {
     throw new Error(
       'Sealed token cannot be unsealed: CDS_SECRET_KEY is not set. ' +

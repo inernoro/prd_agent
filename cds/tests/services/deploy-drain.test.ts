@@ -115,7 +115,7 @@ describe('排空流程', () => {
       [run('a', 'building')],
       [run('a', 'running')],
     ]);
-    await drainInFlightDeploys({ ...deps, onWait: (p) => seen.push(p.map((r) => r.id)) });
+    await drainInFlightDeploys({ ...deps, onWait: (p) => { seen.push(p.map((r) => r.id)); } });
     expect(seen[0]).toEqual(['a']);
   });
 
@@ -124,7 +124,7 @@ describe('排空流程', () => {
     const { deps, waits } = mkDeps([[stale], [stale], [{ ...stale, status: 'running' }]]);
     const observed: Array<{ ids: string[]; now: number }> = [];
     const out = await drainInFlightDeploys({ ...deps,
-      onWait: pending => observed.push({ ids: pending.map(item => item.id), now: deps.now() }),
+      onWait: pending => { observed.push({ ids: pending.map(item => item.id), now: deps.now() }); },
     });
     expect(out).toMatchObject({ drained: true, skipped: false, waitedMs: 2000 });
     expect(observed).toEqual([{ ids: ['waiter'], now: T0 }, { ids: ['waiter'], now: T0 + 1000 }]);
