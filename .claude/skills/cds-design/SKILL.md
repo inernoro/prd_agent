@@ -14,9 +14,11 @@ description: CDS 设计（精准技能）。用户说「/cds-design」、「发�
    - 退出码 1 表示过期：按返回的新版路径加载文件。有归档地址时，按接入说明下载并核对摘要，在当前工作区更新后复用已有授权自检。
    - 通过「接入 CDS」安装的技能不在 git 里时，它对照 CDS 上的技能包版本。
    - 仓库里的 CLI 比线上 CDS 旧时也会报出来（设计发布自检会拒绝）：先改用仓库里更新的技能（main 或技能 PR 分支，用 `git archive` 取到仓库外的临时目录，不改当前分支）；需要更新技能包时，使用当前 CDS 接入说明提供的公开归档。
-2. **有设计发布授权**：`cdscli setup-check --host <CDS 地址> --project <项目 ID> --design-access publish`。
-   - 没有授权时，第一步只能是申请授权（`design-intake.md`），等用户在 CDS 里批准。
-   - 不复制、不打印凭据。不知道 CDS 地址时问用户一次。
+2. **核对工作区的设计发布授权**。运行 `cdscli --workspace-credential setup-check --host <CDS 地址> --project <项目 ID> --design-access publish`。
+   - 自检通过后复用同一工作区授权。每次用项目凭据执行设计读取、同稿发布、反馈或框架命令时，把 `--workspace-credential` 放在子命令前。MCP 已核对绑定同一项目凭据时可复用。
+   - 已有设计授权仅来自进程环境时，用默认 CLI 自检，通过后在同一环境继续使用该凭据。
+   - 缺少权限时按 [设计接入](../cds/reference/design-intake.md#开工前) 在同一工作区申请。已有原申请时，用原接入命令继续领取。已有可用的普通项目绑定时，在独立工作区接入设计。
+   - 用脱敏回执核对项目、角色和凭据编号。CDS 地址以接入页面为准。
 
 ## 二、硬规则：这一轮的结果是 CDS 稿件地址
 
@@ -32,7 +34,7 @@ description: CDS 设计（精准技能）。用户说「/cds-design」、「发�
 ## 发布框架
 
 1. 回读接入清单，确认项目中的框架编号和最新版。首发的 `expectedVersion` 为 0，续版沿用原框架编号。
-2. 用现有设计发布授权调用 `cdscli framework publish` 或 MCP `cds_design_framework_publish`。回读框架版本、材料和来源。
+2. 用现有设计发布授权调用 `cdscli --workspace-credential framework publish` 或 MCP `cds_design_framework_publish`。回读框架版本、材料和来源。
 3. 试用时在稿件中指定框架版本。项目默认版本按[框架采用流程](../cds/reference/design-intake.md#发布框架)切换。
 
 ## 三、设计（设计方）
@@ -49,9 +51,9 @@ description: CDS 设计（精准技能）。用户说「/cds-design」、「发�
 4. **门禁**：`node <技能根>/cds/scripts/design/release.mjs check --dir design/<目录>`。
    - 跑门禁 G-01 到 G-11，同时生成 `交接清单.md`；
    - G-11 回执给出缺项字段和规则编号。按业务依据补齐后重新预检，随后用同一稿件身份发布。
-5. **私有发布**：`cdscli design publish --private`，回读核对版本和来源提交。
-6. **登记**：`release.mjs register --dir design/<目录> --commit <来源提交>`。它会打印稿件地址。
-7. **程序交接检查**：`cdscli design handoff <稿件编号> --version <版号>`。记录固定版本回执，失败的入口和关键交互在同稿修正后重验。设计库封面由 CDS 从原型生成，交付包省略封面截图。
+5. **私有发布**：`cdscli --workspace-credential design publish --private`，回读核对版本和来源提交。
+6. **登记**：`release.mjs register --workspace-credential --dir design/<目录> --commit <来源提交>`。用自检通过的主机和项目核对稿件地址。使用已通过默认 CLI 自检的环境授权时，在同一环境省略该标志。
+7. **程序交接检查**：`cdscli --workspace-credential design handoff <稿件编号> --version <版号>`。记录固定版本回执，失败的入口和关键交互在同稿修正后重验。设计库封面由 CDS 从原型生成，交付包省略封面截图。
 8. **交接**：在实施反馈线程回复，指向 `交接清单.md`，请实现方按验收项编号逐条回复。交接只走 CDS，不让用户转述。
 
 ## 四、交给实现方

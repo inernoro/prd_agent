@@ -4,13 +4,15 @@
 
 ## 开工前
 
-1. 在当前工作区用 `cdscli setup-check --host <CDS 地址> --project <项目 ID> --design-access publish` 自检。设计发布用 `publish`，实施反馈用 `feedback`，读取资料用 `read`。缺权限时，保持同一项目和角色，用 `cdscli connect --host <CDS 地址> --project <项目 ID> --design-access publish --agent <智能体名称>` 发起申请。系统所有者到「项目」页右下角的「授权申请」核对项目和角色后批准。智能体自动领取凭据，保存在本工作区，并再次自检。等待中断时继续原命令。MCP 从同一工作区以 `node <CDS 源码>/cds/mcp/src/server.mjs --design` 启动。
-2. 调 `cds_design_read`，传 `{"view":"intake"}`。核对项目、框架和稿件，并从 `requirements` 按约定的 `designKey` 读取已确认需求原文、来源计划和对话。CLI 的同等入口是 `cdscli design intake`。接口为 `GET /api/projects/:projectId/design/intake`，当前协议版本为 `1`。已授权的设计凭据可直接读取项目中交给设计的单条需求，工程规划接口继续按现有范围控制。
+1. 在当前工作区运行 `cdscli --workspace-credential setup-check --host <CDS 地址> --project <项目 ID> --design-access publish`。设计发布用 `publish`，实施反馈用 `feedback`，读取资料用 `read`。自检通过即复用授权。当前工作区缺少所需权限时，保持原主机、项目和角色，运行 `cdscli --workspace-credential connect --host <CDS 地址> --project <项目 ID> --design-access publish --agent <智能体名称>`。系统所有者到「项目」页右下角的「授权申请」核对项目和角色后批准。等待中断时，在同一工作区重跑原接入命令继续领取，保存后再次自检。已有可用普通项目绑定且缺设计权限时，从同一仓库的独立工作区接入设计。
+2. 用 `cdscli --workspace-credential design intake` 核对项目、框架和稿件。每条读稿、同稿发布、反馈回填或框架命令均带 `--workspace-credential`，复用本次自检核对的工作区绑定。可以在命令中带上 `--host` 和 `--project` 进一步校对目标。MCP 从同一工作区以 `node <CDS 源码>/cds/mcp/src/server.mjs --design` 启动。确认 MCP 绑定的是自检通过的同一项目凭据时，可以调用 `cds_design_read` 并传入 `{"view":"intake"}`。无法确认时，使用已通过自检的 CLI 工作区模式。接口为 `GET /api/projects/:projectId/design/intake`，当前协议版本为 `1`。从 `requirements` 按约定的 `designKey` 读取已确认需求原文、来源计划和对话。
 
 交给设计的需求以系统所有者确认的原计划为来源。接入清单同时提供 `designs`。相同标识已有稿件时用原稿 ID 和读到的最新版续版，尚未有稿件时才用该标识发布首稿。指定的需求查不到时先核对项目与标识，请项目管理者从原计划交给设计。开工前有问题时，用 `cds_design_feedback` 的 `brief.reply`，提供 `designKey`、回读的 `expectedVersion`（即需求的 `planVersion`）、`requestId` 与 `body`。CLI 用 `cdscli design brief-reply <designKey> --expected-version <planVersion> --body <说明>`。服务端把澄清与需求原文一起回读，人和设计智能体可在同一处回复。
 3. 先从清单定位与用户目标有关的稿件。按 `designId` 与 `latestVersion` 固定原稿，按框架 ID 与版本读取规则。目标项目、原稿、基线、改动范围或权限依然不明确时，在修改和发布前一次提清问题。已读到的信息直接采用。不同项目或已存在的历史相似稿件均按实际 ID 与授权范围处理。
 
-同一工作区的设计凭据到期时，使用原接入口令续接。CDS 会核对原凭据，获批后保留原稿作者身份。
+同一工作区的设计凭据到期时，使用原接入口令续接。CDS 会核对原凭据，获批后保留原稿作者身份。自检失败时保留脱敏的凭据类型、项目、已确认的权限和请求编号，按回执核对绑定。
+
+已有设计授权仅来自进程环境时，可使用未带 `--workspace-credential` 的命令自检。通过后在同一环境继续使用该凭据读稿、发布和回填。
 
 技能需要更新时，从接入说明提供的 `/api/skills/cds-pack/download` 匿名下载归档。用本机工具解压并核对 manifest，将清单中的全部技能装到当前工作区，再以原来的设计授权自检。Windows 检出的技能文本只有 CRLF 与 LF 的差异时可以通过自检。
 
@@ -32,9 +34,9 @@
 
 1. 从接入清单的 `frameworks` 查重。首发选一个稳定的框架编号，`expectedVersion` 填 `0`。后续沿用原编号，`expectedVersion` 填刚回读的 `latestVersion`。
 2. 准备 JSON 材料，包含 `tokens`、`components`、`rules` 或 `skeleton`。可附 `charter` 说明初衷、适用范围、维护人及示意稿编号和版本。材料来自稿件时，先按固定版号读取规范与素材。
-3. 运行 `cdscli framework publish <框架编号> --title <名称> --file <材料.json> --source-commit <提交> --expected-version <版本>`。提供仓库相对 `--source-path` 后，CDS 在已同步项目 Git 中能找到对应提交和目录时会核验材料。
+3. 运行 `cdscli --workspace-credential framework publish <框架编号> --title <名称> --file <材料.json> --source-commit <提交> --expected-version <版本>`。提供仓库相对 `--source-path` 后，CDS 在已同步项目 Git 中能找到对应提交和目录时会核验材料。
 4. MCP 使用 `cds_design_framework_publish`，提交 `frameworkId`、`title`、`material`、`sourceCommit`、`expectedVersion` 和 `requestId`，可另附 `sourcePath`、`charter` 和 `note`。接口为 `POST /api/projects/:projectId/design/frameworks/publish`，额外传 `type: "framework.publish"`。
-5. 用 `cdscli framework show <框架编号>` 或 `cds_design_read` 的 `framework` 固定版回读，核对项目、版本和来源提交。网络中断时复用同一请求编号和内容。版本冲突时回读最新框架再提交。
+5. 用 `cdscli --workspace-credential framework show <框架编号>` 或 `cds_design_read` 的 `framework` 固定版回读，核对项目、版本和来源提交。网络中断时复用同一请求编号和内容。版本冲突时回读最新框架再提交。
 
 新版本发布后可在「设计 › 框架」预览。试用时在稿件里明确填写 `frameworkVersion`。项目成员在框架页「采用」中确认切换，已配置该默认框架的模块会为新稿选用新版本。
 
@@ -289,7 +291,7 @@ node <技能根>/cds/scripts/design/release.mjs register --dir design/<目录> -
 ## 提交与交付
 
 - `design.json.project` 等于绑定的项目 ID。保留适用的固定框架和画面编号，包含 `design.json`、`思路.md` 与清单声明的单文件 HTML。标准新建由服务器分配 ID，清单和请求均省略稿件 ID。续版可沿用清单中的同稿 ID。
-- 在工作区仅提交获授权的稿件子目录。若没有 Git 作者配置，可为本次提交指定智能体自己的作者身份。CDS 根据获授权的身份记录发布者。使用 `cdscli design publish --private --dir <稿件目录>`，按新稿或续版附上相应参数。提交保留在本地，稿件及归档摘要存入已获授权的 CDS 项目。
+- 在工作区仅提交获授权的稿件子目录。若没有 Git 作者配置，可为本次提交指定智能体自己的作者身份。CDS 根据获授权的身份记录发布者。使用 `cdscli --workspace-credential design publish --private --dir <稿件目录>`，按新稿或续版附上相应参数。提交保留在本地，稿件及归档摘要存入已获授权的 CDS 项目。
 - MCP 通过 `cds_design_publish` 传 `sourceMode: "private"`、`zipPath`、本地 `sourceCommit`、仓库相对 `sourcePath`、`requestId` 和意图字段。用本地提交导出稿件目录的 ZIP，放在项目工作区内，避开 `.cds` 和 `.git`，稿件门禁上限 3.8 MiB。HTTP 使用同一项目的 `/design/packages`，内容为 ZIP，其余字段通过查询参数传递。
 - 已获授权并已存在于项目 Git 的材料可以沿用 Git 核验方式。CDS 分别显示 Git 核验证据和私有归档。
 - 在 `note` 记录原版、改动画面、原因和待核验项。发布后按回执的 `designId` 与 `version` 回读，核对项目、源提交和归档摘要。响应不确定时以原 `requestId`、来源、意图和稿件内容重试。设计接入按 ZIP 内的文件内容识别重试。接收者从同一项目回读固定的新旧版，定位差异后复拍受影响画面。缺实拍仍标待核验。

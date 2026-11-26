@@ -23,6 +23,7 @@ DESIGN_SETUP = "/api/agent/setup.json?target=existing&project=proj-a&mission=des
 BUILD_SETUP = "/api/agent/setup.json?target=existing&project=proj-a&skills=cds-build"
 FRESH_SETUP = "/api/agent/setup.json?target=system&skills=cds"
 DESIGN_INTAKE = "/api/projects/proj-a/design/intake"
+DESIGN_PACKAGES = "/api/projects/proj-a/design/packages"
 DESIGN_REQUEST = "/api/projects/proj-a/access-requests"
 DESIGN_POLL = DESIGN_REQUEST + "/design-request-fixture"
 SKILLS = ("cds", "cds-design", "cds-build", "cds-project-scan", "cds-deploy-pipeline", "cds-release", "preview-url")
@@ -44,6 +45,8 @@ class SetupCheckTests(unittest.TestCase):
         self.redirects = {}
         self.status = "active"
         self.kind = "project"
+        self.identity_metadata = {}
+        self.request_ids = {}
         self.global_projects = "all"
         self.version = re.search(r'^VERSION = "([^"]+)"', self.cli.read_text(), re.MULTILINE)[1]
         self.minimum_version = self.version
@@ -73,6 +76,8 @@ class SetupCheckTests(unittest.TestCase):
             def respond(self, status, body):
                 self.send_response(status)
                 self.send_header("Content-Type", "application/json")
+                if self.path in test.request_ids:
+                    self.send_header("X-CDS-Request-Id", test.request_ids[self.path])
                 self.end_headers()
                 self.wfile.write(json.dumps(body).encode())
 
@@ -105,6 +110,7 @@ class SetupCheckTests(unittest.TestCase):
                         body["keyId"] = "global-current"
                     if test.kind == "project":
                         body["projectId"] = "proj-a"
+                    body.update(test.identity_metadata)
                 elif self.path == DESIGN_INTAKE:
                     key = self.headers.get("X-AI-Access-Key")
                     if key in (DESIGN_APPROVAL_KEYS["read"], DESIGN_APPROVAL_KEYS["feedback"]):
@@ -140,6 +146,16 @@ class SetupCheckTests(unittest.TestCase):
 
             def do_POST(self):
                 test.requests.append((self.path, self.headers.get("X-AI-Access-Key")))
+                redirect = test.redirects.get(self.path.partition("?")[0])
+                if redirect:
+                    self.send_response(307)
+                    self.send_header("Location", redirect)
+                    self.end_headers()
+                    return
+                if self.path.startswith(DESIGN_PACKAGES + "?"):
+                    self.rfile.read(int(self.headers["Content-Length"]))
+                    self.respond(201, {"projectId": "proj-a", "result": {"designId": "DSN-fixture"}, "reused": False})
+                    return
                 if self.path != DESIGN_REQUEST:
                     self.respond(404, {"error": "unexpected_write"})
                     return
@@ -262,9 +278,11 @@ class SetupCheckTests(unittest.TestCase):
         return self.run_cli_result("setup-check", "--host", self.host, "--project", "proj-a",
                                    "--skills", "cds", "--design-access", "publish")
 
-    def run_design_connect(self, *options, scope="publish"):
-        return self.run_cli_result("connect", "--host", self.host, "--project", "proj-a",
-                                   "--design-access", scope, "--agent", "Fixture designer", "--interval", "1", *options)
+    def run_design_connect(self, *options, scope="publish", workspace=False, credential_env=None):
+        return self.run_cli_result(*(["--workspace-credential"] if workspace else []),
+                                   "connect", "--host", self.host, "--project", "proj-a",
+                                   "--design-access", scope, "--agent", "Fixture designer", "--interval", "1", *options,
+                                   credential_env=credential_env)
 
     def run_build_check(self, scope="read", skills="cds-build"):
         return self.run_cli("setup-check", "--host", self.host, "--project", "proj-a",
@@ -280,6 +298,120 @@ class SetupCheckTests(unittest.TestCase):
         self.assertEqual([path for path, _ in self.requests], [
             DESIGN_SETUP, "/api/credentials/self-check", DESIGN_INTAKE])
         self.assertTrue(all(key == SECRET for _, key in self.requests[1:]))
+        self.assertEqual(self.credentials.read_bytes(), before)
+        self.assertEqual(self.design_requests, [])
+
+    def test_workspace_credential_binds_self_check_intake_and_publish_to_the_same_key(self):
+        inherited = {"CDS_HOST": self.host, "CDS_PROJECT_ID": "proj-a", "CDS_PROJECT_KEY": "cdsp_other_inherited",
+                     "AI_ACCESS_KEY": "static-inherited"}
+        check = ("setup-check", "--host", self.host, "--project", "proj-a", "--design-access", "publish")
+        default, failure = self.run_cli(*check, credential_env=inherited)
+        self.assertNotEqual(default.returncode, 0)
+        self.assertEqual(failure["data"]["checks"][-1]["reason"], "credential_conflict")
+        self.assertEqual(self.requests, [])
+        before = self.credentials.read_bytes()
+        active_instance = self.credentials.with_name("active-instance.json")
+        active_instance.write_text(json.dumps({"id": "formerly-selected-instance"}))
+        previous_instance = active_instance.read_bytes()
+        package = self.root / "artifact.zip"
+        package.write_bytes(b"simulated-package")
+        for command in (check, ("design", "intake", "--host", self.host, "--project", "proj-a"),
+                        ("design", "publish", "--host", self.host, "--project", "proj-a", "--zip", str(package),
+                         "--source-commit", "a" * 40)):
+            result, payload = self.run_cli("--workspace-credential", *command, credential_env=inherited)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            if command[0] == "setup-check":
+                self.assertEqual(payload["data"]["credential"],
+                                 {"source": "workspace", "kind": "project", "projectId": "proj-a", "designAccess": "publish"})
+        self.assertEqual([path.split("?")[0] for path, _ in self.requests],
+                         [DESIGN_SETUP.split("?")[0], "/api/credentials/self-check", DESIGN_INTAKE,
+                          DESIGN_INTAKE, DESIGN_PACKAGES])
+        self.assertTrue(all(key == SECRET for _, key in self.requests))
+        self.assertEqual(self.credentials.read_bytes(), before)
+        self.assertEqual(active_instance.read_bytes(), previous_instance)
+
+    def test_workspace_credential_mismatches_send_no_requests(self):
+        for host, project, reason in ((self.host.replace("127.0.0.1", "localhost"), "proj-a", "host_mismatch"),
+                                      (self.host, "proj-other", "project_mismatch")):
+            with self.subTest(reason=reason):
+                for command in (("setup-check", "--design-access", "publish"), ("design", "intake"),
+                                ("connect", "--design-access", "publish")):
+                    result, payload = self.run_cli("--workspace-credential", *command, "--host", host, "--project", project)
+                    self.assertNotEqual(result.returncode, 0)
+                    details = payload["data"]["checks"][-1] if command[0] == "setup-check" else payload
+                    self.assertEqual(details["reason"], reason)
+        self.assertEqual(self.requests, [])
+
+    def test_workspace_credential_does_not_fall_back_to_environment_when_binding_is_missing(self):
+        self.credentials.unlink()
+        result, payload = self.run_cli("--workspace-credential", "setup-check", "--host", self.host, "--project", "proj-a",
+                                       "--design-access", "publish",
+                                       credential_env={"CDS_HOST": self.host, "AI_ACCESS_KEY": "static-inherited"})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(payload["data"]["checks"][-1]["reason"], "missing_workspace_credential")
+        self.assertEqual(self.requests, [])
+
+    def test_existing_environment_only_design_binding_still_works_with_default_cli(self):
+        self.credentials.unlink()
+        inherited = {"CDS_HOST": self.host, "CDS_PROJECT_ID": "proj-a", "CDS_PROJECT_KEY": SECRET}
+        check, payload = self.run_cli("setup-check", "--host", self.host, "--project", "proj-a",
+                                      "--design-access", "publish", credential_env=inherited)
+        self.assertEqual(check.returncode, 0, check.stderr)
+        self.assertEqual(payload["data"]["credential"]["source"], "explicit-env")
+        read, _ = self.run_cli("design", "intake", credential_env=inherited)
+        self.assertEqual(read.returncode, 0, read.stderr)
+        self.assertEqual([path for path, _ in self.requests],
+                         [DESIGN_SETUP, "/api/credentials/self-check", DESIGN_INTAKE, DESIGN_INTAKE])
+        self.assertTrue(all(key == SECRET for _, key in self.requests))
+
+    def test_workspace_credential_design_requests_never_follow_cross_host_redirects(self):
+        other_host = self.host.replace("127.0.0.1", "localhost")
+        self.redirects = {path: other_host + "/unexpected-redirect" for path in (DESIGN_INTAKE, DESIGN_PACKAGES)}
+        package = self.root / "artifact.zip"
+        package.write_bytes(b"simulated-package")
+        for command in (("intake",), ("publish", "--zip", str(package), "--source-commit", "a" * 40)):
+            result, _ = self.run_cli("--workspace-credential", "design", *command)
+            self.assertNotEqual(result.returncode, 0)
+        self.assertEqual([path.partition("?")[0] for path, _ in self.requests], [DESIGN_INTAKE, DESIGN_PACKAGES])
+        self.assertTrue(all(key == SECRET for _, key in self.requests))
+
+    def test_workspace_credential_rejects_the_wrong_target_of_a_pending_design_approval_without_requests(self):
+        self.credentials.unlink()
+        self.credentials.with_name("design-approval.json").write_text(json.dumps({
+            "host": self.host, "projectId": "proj-a", "designAccess": "publish",
+            "requestId": "design-request-fixture", "pollToken": POLL_TOKEN,
+        }))
+        for host, project, reason in ((self.host.replace("127.0.0.1", "localhost"), "proj-a", "host_mismatch"),
+                                      (self.host, "proj-other", "project_mismatch")):
+            with self.subTest(reason=reason):
+                result, payload = self.run_cli("--workspace-credential", "connect", "--design-access", "publish",
+                                               "--host", host, "--project", project)
+                self.assertEqual(result.returncode, 2)
+                self.assertEqual(payload["reason"], reason)
+        self.assertEqual(self.requests, [])
+
+    def test_design_setup_failure_reports_the_checked_credential_and_request_without_payload(self):
+        self.identity_metadata.update(keyId="a1b2c3d4", designAccess="read", label=SECRET)
+        self.request_ids[DESIGN_INTAKE] = "eeb3d12e"
+        self.design_intake_status = 404
+        self.design_result = {"error": "design_not_found", "detail": SECRET}
+        result = self.run_design_check()
+        self.assertEqual(result.returncode, 2)
+        failure = json.loads(result.stdout)["data"]["checks"][-1]
+        self.assertEqual(failure["reason"], "design_scope_required")
+        self.assertEqual(failure["requestId"], "eeb3d12e")
+        self.assertEqual(failure["credential"], {"source": "workspace", "kind": "project", "projectId": "proj-a",
+                                                "keyId": "a1b2c3d4", "designAccess": "read"})
+
+    def test_workspace_design_connect_preserves_existing_ordinary_binding_for_publish(self):
+        self.design_intake_status = 403
+        before = self.credentials.read_bytes()
+        result = self.run_design_connect(workspace=True, credential_env={
+            "CDS_HOST": self.host, "CDS_PROJECT_KEY": "cdsp_other_inherited",
+        })
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(json.loads(result.stdout)["reason"], "existing_project_binding")
+        self.assertEqual(self.requests, [(DESIGN_INTAKE, SECRET), ("/api/projects/proj-a", SECRET)])
         self.assertEqual(self.credentials.read_bytes(), before)
         self.assertEqual(self.design_requests, [])
 
@@ -428,12 +560,16 @@ class SetupCheckTests(unittest.TestCase):
 
         self.hold_design_approval = False
         self.requests.clear()
-        resumed = self.run_design_connect("--timeout", "10")
+        resumed = self.run_design_connect("--timeout", "10", workspace=True, credential_env={
+            "CDS_HOST": self.host, "CDS_PROJECT_ID": "proj-a", "CDS_PROJECT_KEY": "cdsp_other_inherited",
+        })
         self.assertEqual(resumed.returncode, 0, resumed.stderr)
         paths = [url for url, _ in self.requests]
         self.assertEqual(paths[:2], [DESIGN_SETUP, DESIGN_POLL])
         self.assertEqual(paths[-1], DESIGN_INTAKE)
         self.assertEqual(len(self.design_requests), 1)
+        self.assertTrue(all(key is None for _, key in self.requests[:-1]))
+        self.assertEqual(self.requests[-1], (DESIGN_INTAKE, SECRET))
         self.assertFalse(receipt.exists())
         self.assertTrue(json.loads(self.credentials.read_text()).get("projectKey") == SECRET)
 

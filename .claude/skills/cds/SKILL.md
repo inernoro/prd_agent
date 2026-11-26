@@ -448,9 +448,9 @@ $CLI debt stats
 
 自检通过不代表稿件可用，问题要在用户发现之前由设计方找出。
 
-从 CDS「设计」页的「接入 Agent」复制设计发布口令。新工作区先用 `cdscli setup-check --host <CDS 地址> --project <项目 ID> --design-access publish` 验证设计接入清单。缺少权限时，由智能体用 `cdscli connect --host <CDS 地址> --project <项目 ID> --design-access publish --agent <智能体名称>` 发起申请。系统所有者在「项目」页右下角「授权申请」核对项目和智能体，点击「批准设计发布」。智能体领取凭据并在当前工作区重新自检。等待超时用同一命令继续领取。实施反馈和只读任务可分别申请 `feedback` 与 `read`。
+从 CDS「设计」页的「接入 Agent」复制设计发布口令。用 `cdscli --workspace-credential setup-check --host <CDS 地址> --project <项目 ID> --design-access publish` 验证并复用当前工作区的设计发布授权。缺少权限时，由智能体用 `cdscli --workspace-credential connect --host <CDS 地址> --project <项目 ID> --design-access publish --agent <智能体名称>` 发起申请。系统所有者在「项目」页右下角「授权申请」核对项目和智能体，点击「批准设计发布」。等待中断时，在同一工作区用原命令继续领取。保存后再次自检。已有普通项目绑定且需要设计授权时，在独立工作区接入。实施反馈和只读任务可分别申请 `feedback` 与 `read`。
 
-从已接入目录启动 `node <CDS 源码>/cds/mcp/src/server.mjs --design`，也可直接使用 CLI。不同 Agent 在稿件的「交付」标签和专用 MCP 上交换资料、实施反馈与修订回执。定稿、签收和固定版本分享由获授权成员处理。
+在同一工作区读稿、续发或回填反馈时，每条 CLI 命令均带 `--workspace-credential`。MCP 可从已接入目录启动 `node <CDS 源码>/cds/mcp/src/server.mjs --design`，核对它使用自检通过的同一项目凭据后复用。定稿、签收和固定版本分享由获授权成员处理。
 
 脚手架把框架版本、规则类别和自检待办写进稿件。从本地提交的稿件子目录用 `design publish --private --dir <目录>` 或 MCP 的 `sourceMode: "private"` 私有归档。项目内已同步的授权材料可沿用 Git 核验。稿件可在 `screens/<画面编号>.<light|dark>.png` 附浏览器截图，桌面为 1280×800，手机为 375×812。
 

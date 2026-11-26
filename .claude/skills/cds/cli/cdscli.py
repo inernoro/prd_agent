@@ -56,7 +56,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Optional
 
-VERSION = "0.26.30"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.26.31"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 CDS_SKILLS = ("cds", "cds-design", "cds-build", "cds-project-scan", "cds-deploy-pipeline", "cds-release", "preview-url")
 
@@ -727,15 +727,20 @@ def cmd_auth_check(args: argparse.Namespace) -> None:
     die(f"认证失败: {status} {body}", code=2)
 
 
-def _credential_summary(selection: str | None = None) -> dict[str, Any]:
+def _credential_summary(selection: str | None = None, *, workspace: dict[str, Any] | None = None) -> dict[str, Any]:
     """共享的脱敏凭据来源判据；接入自检与 auth inspect 必须一致。"""
-    selected = selection or _read_instance_private("active-instance.json", {}).get("id")
-    # main 已应用目标实例；不得再次从旧指针注入另一站的项目密钥。
-    local = (_instance_credentials(_instance_entry(selected)) or {}) if selected else _load_local_credentials()
+    selected = None
+    if workspace is None:
+        selected = selection or _read_instance_private("active-instance.json", {}).get("id")
+        # main 已应用目标实例，避免从旧指针重新注入另一站的项目密钥。
+        local = (_instance_credentials(_instance_entry(selected)) or {}) if selected else _load_local_credentials()
+    else:
+        local = workspace
+    explicit = _EXPLICIT_CREDENTIAL_ENV if workspace is None else {}
     local_host = str(local.get("host") or "").strip()
     local_project = str(local.get("projectId") or "").strip()
-    explicit_host = _EXPLICIT_CREDENTIAL_ENV["CDS_HOST"]
-    explicit_project = _EXPLICIT_CREDENTIAL_ENV["CDS_PROJECT_ID"]
+    explicit_host = explicit.get("CDS_HOST", "")
+    explicit_project = explicit.get("CDS_PROJECT_ID", "")
     effective_host = os.environ.get("CDS_HOST", "").strip()
     effective_project = os.environ.get("CDS_PROJECT_ID", "").strip()
     effective_key = os.environ.get("CDS_PROJECT_KEY", "").strip() or os.environ.get("AI_ACCESS_KEY", "").strip()
@@ -768,8 +773,8 @@ def _credential_summary(selection: str | None = None) -> dict[str, Any]:
         conflicts.append("host")
     if explicit_project and local_project and explicit_project != local_project:
         conflicts.append("project")
-    explicit_project_key = _EXPLICIT_CREDENTIAL_ENV["CDS_PROJECT_KEY"]
-    explicit_access_key = _EXPLICIT_CREDENTIAL_ENV["AI_ACCESS_KEY"]
+    explicit_project_key = explicit.get("CDS_PROJECT_KEY", "")
+    explicit_access_key = explicit.get("AI_ACCESS_KEY", "")
     local_project_key = str(local.get("projectKey") or "").strip()
     local_bootstrap_key = str(local.get("bootstrapKey") or "").strip()
     if (
@@ -786,7 +791,9 @@ def _credential_summary(selection: str | None = None) -> dict[str, Any]:
         and not secrets.compare_digest(explicit_access_key, local_effective_key)
     ):
         conflicts.append("accessKeySource")
-    source = "workspace" if selected else "explicit-env" if any(_EXPLICIT_CREDENTIAL_ENV.values()) else "workspace" if local else "none"
+    source = "workspace" if selected or local else "none"
+    if not selected and any(explicit.values()):
+        source = "explicit-env"
     summary = {
         "source": source,
         "host": effective_host or None,
@@ -871,17 +878,36 @@ def _design_scope_available(body: dict[str, Any], scope: str) -> bool:
     return scope == "read" or body["permissions"].get("write" if scope == "publish" else "feedback") is True
 
 
+def _fail_setup_check(checks: list[dict[str, Any]], stage: str, reason: str, action: str, **diagnostics: Any) -> None:
+    checks.append({"stage": stage, "passed": False, "reason": reason, "nextStep": action, **diagnostics})
+    if _HUMAN:
+        credential = diagnostics.get("credential", {})
+        facts = [str(credential[field]) for field in ("kind", "projectId", "keyId", "designAccess") if field in credential]
+        if facts:
+            action += "\n凭据摘要 " + " / ".join(facts)
+        if diagnostics.get("requestId"):
+            action += f"\n请求编号 {diagnostics['requestId']}"
+    die("接入自检未通过：" + action, code=2, extra={"data": {"connected": False, "checks": checks}})
+
+
 def cmd_setup_check(args: argparse.Namespace) -> None:
     """接入验收：只读实测，不因配置存在就声称连接成功，绝不打印响应原文。"""
     checks: list[dict[str, Any]] = []
+    credential: dict[str, str] = {}
+    request_id = None
 
     def fail(stage: str, reason: str, action: str) -> None:
-        checks.append({"stage": stage, "passed": False, "reason": reason, "nextStep": action})
-        die("接入自检未通过：" + action, code=2,
-            extra={"data": {"connected": False, "checks": checks}})
+        diagnostics = {"credential": credential} if credential else {}
+        if request_id:
+            diagnostics["requestId"] = request_id
+        _fail_setup_check(checks, stage, reason, action, **diagnostics)
 
     def request(path: str) -> tuple[int, Any, dict[str, str]]:
+        nonlocal request_id
         response = _request("GET", path, timeout=10, fatal_network_errors=False, follow_redirects=False)
+        request_id = next((value for name, value in response[2].items()
+                           if name.lower() == "x-cds-request-id" and isinstance(value, str)
+                           and re.fullmatch(r"[0-9a-fA-F]{8}", value)), None)
         if response[0] in (301, 302, 303, 307, 308):
             fail("host", "unexpected_redirect", "目标接口发生重定向，已停止继续发送凭据；先核对 CDS 主机与代理配置，不重新授权。")
         return response
@@ -889,10 +915,12 @@ def cmd_setup_check(args: argparse.Namespace) -> None:
     design_access = getattr(args, "design_access", None)
     if design_access and not getattr(args, "project", None):
         fail("project", "invalid_project", "设计接入需要已有项目的 ID。")
-    summary = _credential_summary(getattr(args, "instance", None))
+    summary = _credential_summary(getattr(args, "instance", None), workspace=getattr(args, "workspace_binding", None))
     if summary["conflicts"]:
-        fail("credentials", "credential_conflict", "先解决环境与仓库的凭据来源冲突，不要重新授权。")
-    if not _auth_headers().get("X-AI-Access-Key"):
+        fail("credentials", "credential_conflict", "环境和工作区的凭据来源冲突。已有工作区设计授权时，使用 --workspace-credential 重跑同一自检。"
+             if design_access else "先解决环境与仓库的凭据来源冲突，不要重新授权。")
+    effective_key = _auth_headers().get("X-AI-Access-Key")
+    if not effective_key:
         fail("credentials", "missing_credentials",
              "系统 CLI 没有可复用凭据，请由人类在已登录的 CDS 页面处理，不申请项目权限或自行提权。"
              if getattr(args, "system", False) else "当前没有可复用凭据；按接入说明发起 CDS 页面授权。")
@@ -995,6 +1023,18 @@ def cmd_setup_check(args: argparse.Namespace) -> None:
 
     print("接入自检：验证凭据与目标的真实只读访问。", file=sys.stderr)
     status, identity, _ = request("/api/credentials/self-check")
+    if status == 200 and isinstance(identity, dict):
+        if identity.get("kind") in ("project", "user", "global", "static", "connection", "unrecognized"):
+            credential["kind"] = identity["kind"]
+            credential["source"] = summary["source"]
+        for field in ("projectId", "keyId"):
+            value = identity.get(field)
+            if (isinstance(value, str) and value != effective_key
+                    and not value.startswith(("cdsp_", "cdsu_", "cdsg_", "ct_"))
+                    and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", value)):
+                credential[field] = value
+        if identity.get("designAccess") in ("read", "feedback", "publish"):
+            credential["designAccess"] = identity["designAccess"]
     if status != 200 or not isinstance(identity, dict):
         fail("authorization", "check_unavailable", "凭据自检不可用，请确认网络后重试。")
     if identity.get("status") != "active":
@@ -1033,22 +1073,26 @@ def cmd_setup_check(args: argparse.Namespace) -> None:
         path += "/design/intake"
     status, body, _ = request(path)
     if design_access and status in (401, 403, 404):
-        fail("access", "design_scope_required", "当前没有所需设计权限，按接入说明发起页面授权。")
+        fail("access", "design_scope_required", "当前凭据无法访问所需设计范围。按接入说明核对工作区绑定或继续原授权申请。")
     if status != 200 or not isinstance(body, dict):
         fail("access", "access_denied" if status in (401, 403) else "target_unavailable",
              "目标只读访问未通过，请确认目标存在且当前凭据具有权限。")
     if design_access:
         if not _design_intake_matches(body, project):
             fail("access", "target_mismatch", "设计接入清单的项目或协议不匹配。")
+        permissions = body["permissions"]
+        credential["designAccess"] = "publish" if permissions.get("write") is True else (
+            "feedback" if permissions.get("feedback") is True else "read")
         if not _design_scope_available(body, design_access):
-            fail("access", "design_scope_required", "当前设计权限不足，按接入说明发起页面授权。")
+            fail("access", "design_scope_required", "当前设计权限不足，按接入说明复用匹配的工作区授权或继续原申请。")
     elif project:
         resolved = body.get("project", body)
         if not isinstance(resolved, dict) or resolved.get("id") != project:
             fail("access", "target_mismatch", "服务端返回的项目与目标不一致，停止当前操作。")
     checks.append({"stage": "access", "passed": True, "status": status})
     ok({"connected": True, "host": expected_host, "projectId": project or None,
-        "scope": f"design-{design_access}" if design_access else "project" if project else "system-read", "checks": checks},
+        "scope": f"design-{design_access}" if design_access else "project" if project else "system-read", "checks": checks,
+        **({"credential": credential} if design_access else {})},
        note="接入自检通过。设计稿是否发布以实际提交回执为准。" if design_access
        else "接入自检通过；只证明当前目标的只读访问，业务执行仍需独立验收。")
 
@@ -5209,6 +5253,7 @@ def _register_design_parser(sub: Any) -> None:
             parser = routes.add_parser(action, help="发布项目框架版本" if action == "publish" and routes is framework else None)
             parser.set_defaults(func=cmd_design_workspace)
             parser.add_argument("--project", help="默认使用当前仓库绑定的项目")
+            parser.add_argument("--host", help="使用 --workspace-credential 时核对已绑定的 CDS 主机")
             parser.add_argument("--as-user", help="由 CDS 成员在交互终端登录后执行")
             if action not in ("intake", "list", "publish", "reviewers", "scaffold") or (routes is framework and action == "publish"):
                 parser.add_argument("id")
@@ -6448,7 +6493,7 @@ def cmd_connect(args: argparse.Namespace) -> None:
             die("设计接入需要已存在项目的真实 ID。", code=1)
         try:
             host = _setup_origin(host)
-            summary = _credential_summary(getattr(args, "instance", None))
+            summary = _credential_summary(getattr(args, "instance", None), workspace=getattr(args, "workspace_binding", None))
             known_host = summary["host"] or _connection_context().get("host")
             known_project = summary["projectId"] or _connection_context().get("projectId")
             if (summary["conflicts"] or (known_host and _setup_origin(known_host) != host)
@@ -6640,6 +6685,7 @@ def cmd_connect(args: argparse.Namespace) -> None:
     approval_url = host + "/project-list"
     safe_transport = {"follow_redirects": False, "fatal_network_errors": False} if design_access else {}
     read_or_feedback = design_access in ("read", "feedback")
+    preserve_binding = read_or_feedback or getattr(args, "workspace_credential", False)
     pending_path = ""
     pending: dict[str, Any] = {}
     design_scope = f"design-{design_access}" if design_access else ""
@@ -6663,7 +6709,7 @@ def cmd_connect(args: argparse.Namespace) -> None:
             if current_key.startswith(("cdsp_", "cdsu_")):
                 saved_user_cred = current_key
         workspace_key = str(local.get("projectKey") or local.get("bootstrapKey") or "").strip()
-        if read_or_feedback and workspace_key:
+        if preserve_binding and workspace_key:
             project_status, project_access = 0, None
             if current_key == workspace_key:
                 project_status, project_access, _ = _request(
@@ -6873,7 +6919,7 @@ def cmd_connect(args: argparse.Namespace) -> None:
         verification_path = "/api/projects"
         auth_scope = "create-project-once"
     else:
-        if read_or_feedback and (_read_local_credentials_file() != local or _connection_context() != context):
+        if preserve_binding and (_read_local_credentials_file() != local or _connection_context() != context):
             _restore_auth_env(previous)
             die("等待批准期间当前工作区的项目绑定已变化。请保留此绑定，在独立工作区重新自检。",
                 code=2, extra={"reason": "existing_project_binding"})
@@ -12797,6 +12843,8 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--trace", help="链路 ID (默认随机 8 hex)")
     p.add_argument("--version", action="version", version=f"cdscli {VERSION}")
     p.add_argument("--instance", help="仅本次命令使用指定 CDS 节点；已注册集群成员复用统一授权")
+    p.add_argument("--workspace-credential", action="store_true",
+                   help="项目自检或设计操作使用当前工作区保存的授权，忽略进程传入的凭据")
     sub = p.add_subparsers(dest="cmd", required=True)
     release_targets = sub.add_parser("release-target", help="Agent 接入发布环境，供分支卡片选择").add_subparsers(dest="release_target_cmd", required=True)
     for command, handler in (("list", cmd_release_target_list), ("register", cmd_release_target_register)):
@@ -13625,6 +13673,46 @@ def cmd_identity_heal(args: argparse.Namespace) -> None:
                     f"（授权来源：{'创建' if result.get('grantOrigin') == 'created' else '批准'}）")
 
 
+def _bind_workspace_credential(args: argparse.Namespace) -> dict[str, Any]:
+    def fail(stage: str, reason: str, message: str) -> None:
+        if args.func is cmd_setup_check:
+            _fail_setup_check([], stage, reason, message)
+        die(message, code=2, extra={"reason": reason})
+
+    connecting = args.func is cmd_connect
+    local = _read_local_credentials_file()
+    pending = _read_instance_private("design-approval.json", {}) if connecting else {}
+
+    expected_host = getattr(args, "host", None)
+    expected_project = getattr(args, "project", None)
+    try:
+        expected_host = _setup_origin(expected_host) if expected_host is not None else None
+        host = _setup_origin(local["host"]) if local.get("host") else None
+        pending_host = _setup_origin(pending["host"]) if pending.get("host") else None
+    except (AttributeError, TypeError, ValueError):
+        fail("host", "invalid_host", "请核对接入页面指定的 CDS 地址和工作区保存的主机。")
+        return {}
+    project = str(local.get("projectId") or "").strip()
+    project_key = str(local.get("projectKey") or "").strip()
+    if expected_host and any(bound and expected_host != bound for bound in (host, pending_host)):
+        fail("host", "host_mismatch", "命令指定的主机与工作区绑定不同，请在目标主机的工作区重试。")
+    if expected_project is not None and any(bound and expected_project.strip() != bound for bound in (project, pending.get("projectId"))):
+        fail("project", "project_mismatch", "命令指定的项目与工作区绑定不同，请在目标项目的工作区重试。")
+    if pending and pending.get("designAccess") != args.design_access:
+        fail("credentials", "design_scope_mismatch", "当前工作区已有其他设计范围的申请，请用原接入命令继续领取。")
+    if not (host and project and project_key.startswith("cdsp_")):
+        if not connecting or local or os.path.lexists(_credentials_path()):
+            fail("credentials", "missing_workspace_credential",
+                 "当前工作区没有完整的项目凭据。若已有环境来源的设计授权，用默认 CLI 自检并复用。也可以在原工作区继续领取授权。")
+    for field in _EXPLICIT_CREDENTIAL_ENV:
+        os.environ.pop(field, None)
+    if host:
+        os.environ["CDS_HOST"] = host
+        os.environ["CDS_PROJECT_ID"] = project
+        os.environ["CDS_PROJECT_KEY"] = project_key
+    return local
+
+
 def main(argv: list[str] | None = None) -> None:
     global _TRACE_ID, _HUMAN
     _LOAD_NOTICES.clear()
@@ -13636,31 +13724,44 @@ def main(argv: list[str] | None = None) -> None:
     if func is None:
         parser.print_help()
         sys.exit(1)
-    if func is cmd_design_preview:
-        func(args)
-        return
-    _load_local_credentials()
     workspace_connection = func in (cmd_connect, cmd_init) and not getattr(args, "legacy_env", False)
     # Discovery and connection must work even if the selected host is unavailable or unconfigured.
     if args.cmd in ("instance", "connect") and args.instance:
         parser.error("接入请用 instance connect <实例ID> 或 connect --host <站点>，不与全局 --instance 混用")
-    if args.cmd == "instance" and args.instance_cmd in ("sync", "recommend"):
-        selected = _read_instance_private("active-instance.json", {}).get("id")
-        if selected:
-            _apply_instance(_instance_entry(selected), require_project=False)
-    if args.cmd not in ("instance", "connect"):
-        selected = args.instance or (None if workspace_connection else _read_instance_private("active-instance.json", {}).get("id"))
-        if selected:
-            entry = _instance_entry(selected)
-            _apply_instance(entry, require_project=False)
-            if args.instance:
-                # Scoped selection must prove project identity before any existing command can mutate.
-                _check_instance(entry)
-            # Auth inspection reflects the selected host, not a superseded inherited env.
-            for key in _EXPLICIT_CREDENTIAL_ENV:
-                _EXPLICIT_CREDENTIAL_ENV[key] = os.environ.get(key, "")
-    _deployment_load_preflight(func)
+    previous = None
+    if args.workspace_credential:
+        if args.instance:
+            parser.error("--workspace-credential 使用当前工作区绑定，不能同时指定其他 --instance")
+        if not ((func is cmd_setup_check and args.project is not None)
+                or (func is cmd_connect and args.design_access)
+                or (func is cmd_design_workspace and not args.as_user)):
+            parser.error("--workspace-credential 用于项目接入自检、设计接入或使用项目凭据的设计操作")
+        previous = {key: os.environ.get(key) for key in _EXPLICIT_CREDENTIAL_ENV}
+        args.workspace_binding = _bind_workspace_credential(args)
+    else:
+        if func is cmd_design_preview:
+            func(args)
+            return
+        if func is cmd_design_workspace and args.host is not None:
+            parser.error("设计操作的 --host 须与 --workspace-credential 一起使用")
+        _load_local_credentials()
+        if args.cmd == "instance" and args.instance_cmd in ("sync", "recommend"):
+            selected = _read_instance_private("active-instance.json", {}).get("id")
+            if selected:
+                _apply_instance(_instance_entry(selected), require_project=False)
+        if args.cmd not in ("instance", "connect"):
+            selected = args.instance or (None if workspace_connection else _read_instance_private("active-instance.json", {}).get("id"))
+            if selected:
+                entry = _instance_entry(selected)
+                _apply_instance(entry, require_project=False)
+                if args.instance:
+                    # Scoped selection must prove project identity before any existing command can mutate.
+                    _check_instance(entry)
+                # Auth inspection reflects the selected host, not a superseded inherited env.
+                for key in _EXPLICIT_CREDENTIAL_ENV:
+                    _EXPLICIT_CREDENTIAL_ENV[key] = os.environ.get(key, "")
     try:
+        _deployment_load_preflight(func)
         func(args)
     except SystemExit as exc:
         if workspace_connection and not args.instance and exc.code in (None, 0):
@@ -13668,6 +13769,9 @@ def main(argv: list[str] | None = None) -> None:
             # instance choice must not override that newly reported connection.
             _private_instance_file("active-instance.json").unlink(missing_ok=True)
         raise
+    finally:
+        if previous is not None:
+            _restore_auth_env(previous)
 
 
 if __name__ == "__main__":
