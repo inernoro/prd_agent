@@ -49,6 +49,10 @@ it('表单直出和规则兜底不会把上一轮或尝试失败的模型显示�
       events?.onStage?.('fallback', '模型整理失败，已使用规则兜底生成草稿');
       events?.onDraft?.(draft);
       return draft;
+    })
+    .mockImplementationOnce(async (_input, events) => {
+      events?.onModel?.('interrupted-model-c', '测试平台');
+      throw new Error('连接中断');
     });
   try {
     await act(async () => root.render(<TapdBugReportPage />));
@@ -74,6 +78,9 @@ it('表单直出和规则兜底不会把上一轮或尝试失败的模型显示�
     await act(async () => button.click());
     expect(rootElement.textContent).toContain('已使用规则兜底生成草稿');
     expect(rootElement.textContent).not.toContain('模型：failed-model-b');
+    await act(async () => button.click());
+    expect(rootElement.textContent).toContain('连接中断');
+    expect(rootElement.textContent).not.toContain('模型：interrupted-model-c');
   } finally {
     await act(async () => root.unmount());
     rootElement.remove();

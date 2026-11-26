@@ -70,7 +70,8 @@ public sealed class TapdModelAdvisoryWorker(
         try
         {
             var gateway = services.GetRequiredService<HttpLlmGatewayClient>();
-            var result = await gateway.GetModelAdvisoryAsync(caller, ModelTypes.Chat, configuration[TapdBugAgentService.ModelPublicIdKey], ct);
+            var modelPublicId = configuration[TapdBugAgentService.ModelPublicIdKey]?.Trim();
+            var result = await gateway.GetModelAdvisoryAsync(caller, ModelTypes.Chat, modelPublicId, ct);
             update = update.Set("Status", result.Status).Set("LastSuccessfulCheckAt", result.CheckedAt.UtcDateTime)
                 .Set("ActualModel", BsonValue.Create(result.ActualModel)).Set("DefaultPublicId", BsonValue.Create(result.DefaultPublicId))
                 .Set("DefaultAvailable", result.DefaultAvailable)

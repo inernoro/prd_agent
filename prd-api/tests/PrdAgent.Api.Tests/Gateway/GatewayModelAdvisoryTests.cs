@@ -151,7 +151,7 @@ public sealed class GatewayModelAdvisoryTests
         {
             ["LlmGateway:ServeBaseUrl"] = "http://gateway.test",
             ["LlmGwServe:ApiKey"] = "gateway-test-key",
-            ["TapdBugAgent:ModelPublicId"] = "fixed-model",
+            ["TapdBugAgent:ModelPublicId"] = "  fixed-model  ",
             ["TapdBugAgent:ModelAdvisory:NotifyUserIds:0"] = "configured-owner",
         }).Build();
         using var services = new ServiceCollection()

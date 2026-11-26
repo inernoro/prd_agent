@@ -175,6 +175,7 @@ export function TapdBugReportPage() {
       toast.success('草稿已生成', '请核对后再提交到 TAPD');
     } catch (e) {
       const message = e instanceof Error ? e.message : '生成草稿失败';
+      setModelLabel('');
       setError(message);
       toast.error('生成草稿失败', message);
     } finally {

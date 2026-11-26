@@ -7,3 +7,5 @@
 | test | prd-api | TAPD 预览分支独立验证淘汰检查且不发送通知 |
 | fix | prd-api | TAPD 模型淘汰检查遇到临时失败时一小时后重试 |
 | fix | llmgw | 每日模型清单按视频用途展示匹配的上游建议 |
+| fix | prd-admin | TAPD 草稿连接中断时清除本轮模型名称 |
+| fix | prd-api | TAPD 日常淘汰检查与草稿生成使用相同的模型标识 |
