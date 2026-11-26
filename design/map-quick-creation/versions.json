@@ -30,6 +30,13 @@
    "tag": "design/DSN-1400E277/v4",
    "committedAt": "2026-11-26T12:18:45+00:00",
    "subject": "docs(design): 快速创作设计稿 V4：单幕重做场景改为检查恢复的即时结果"
+  },
+  {
+   "version": 5,
+   "commit": "bde80f3964419d802b6250e146a32f952278a56c",
+   "tag": "design/DSN-1400E277/v5",
+   "committedAt": "2026-11-26T12:47:54+00:00",
+   "subject": "docs(design): 快速创作设计稿 V5：按设计反馈打磨对话、输入框、附件与生成中"
   }
  ]
 }
