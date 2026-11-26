@@ -58,6 +58,7 @@ describe('Agent public bootstrap through the real auth gate', () => {
     expect(guide).toContain('安装后按任务读取所需的 SKILL.md');
     expect(guide).toContain('成功时直接复用权限');
     expect(guide).toContain('主机、项目或凭据来源冲突时停止');
+    expect(guide).not.toContain('--design-access');
     expect(guide).toContain('prebuiltCoverage=all');
     expect(guide).toContain('previewUrl / previewUrls');
     expect(guide).not.toContain('sk-ak-');
@@ -70,6 +71,7 @@ describe('Agent public bootstrap through the real auth gate', () => {
     expect(body).toMatchObject({ version: 'cds-agent-setup.v1', target: { kind: 'existing', projectId: 'does-not-exist' }, skills: ['preview-url'], minCliVersion: '0.17.5', cliVersion: shippedCliVersion, authentication: 'existing-page-approval' });
     expect([...body.installedSkills].sort()).toEqual([...distributedSkills].sort());
     expect(body.project).toBeUndefined();
+    expect(body.designAccess).toBeUndefined();
     expect(body.authorizationKey).toBeUndefined();
     expect((await fetch(`${origin}/api/private`)).status).toBe(401);
   });
@@ -79,7 +81,7 @@ describe('Agent public bootstrap through the real auth gate', () => {
     const response = await fetch(`${origin}/api/agent/setup.md?${query}`);
     expect(response.status).toBe(200);
     const guide = await response.text();
-    expect(guide).toMatch(/setup-check[^\n]*--project 'proj-a'/);
+    expect(guide).toMatch(/setup-check[^\n]*--project 'proj-a'[^\n]*--design-access publish/);
     const command = guide.split('\n').find(line => line.includes('cdscli.py connect') && line.includes('--design-access'));
     expect(command).toContain("--project 'proj-a'");
     expect(command).toMatch(/--design-access (?:publish|'publish'|"publish")(?=\s|$)/);
@@ -96,7 +98,7 @@ describe('Agent public bootstrap through the real auth gate', () => {
     expect(manifest.status).toBe(200);
     const body = await manifest.json();
     expect(body).toMatchObject({ target: { kind: 'existing', projectId: 'proj-a' }, mission: 'design-publish',
-      minCliVersion: '0.26.27', cliVersion: shippedCliVersion, authentication: 'existing-page-approval' });
+      designAccess: 'publish', minCliVersion: '0.26.27', cliVersion: shippedCliVersion, authentication: 'existing-page-approval' });
     expect(body.skills).toEqual(['cds-design']);
     expect(body).not.toHaveProperty('authorizationKey');
 
@@ -114,22 +116,37 @@ describe('Agent public bootstrap through the real auth gate', () => {
     expect(instructions).not.toMatch(/git push|推送[^。]*稿件/);
   });
 
-  it('已有项目可单独选择实施技能并使用普通项目接入', async () => {
+  it('已有项目的实施技能先验证设计只读权限，仅缺权限时申请同范围授权', async () => {
     const query = 'target=existing&project=proj-a&skills=cds-build';
     const response = await fetch(`${origin}/api/agent/setup.md?${query}`);
     expect(response.status).toBe(200);
     const guide = await response.text();
-    expect(guide).toMatch(/setup-check[^\n]*--project 'proj-a'[^\n]*--skills 'cds-build'/);
+    expect(guide).toContain(`setup-check --host '${origin}' --project 'proj-a' --skills 'cds-build' --design-access read`);
+    expect(guide).toContain(`connect --host '${origin}' --project 'proj-a' --design-access read`);
     expect(guide).toContain(`${origin}/api/skills/cds-pack/download`);
+    expect(guide).not.toContain('/api/bootstrap/cds-only');
+    expect(guide).toContain('已有该项目的设计只读权限时直接复用');
+    expect(guide).toContain('仅在自检明确报告当前没有可复用凭据或缺少设计只读权限时');
+    expect(guide).toContain('批准设计只读');
+    expect(guide).toContain('等待中断时，运行同一条命令继续领取原申请');
+    expect(guide).toContain('auth inspect --strict');
+    expect(guide).toContain('保留原绑定');
+    expect(guide).toContain('独立工作区');
+    expect(guide).toContain('凭据已吊销时停止申请');
+    expect(guide).toContain('已签发密钥');
+    expect(guide).toContain('交付 → 反馈');
+    expect(guide).toContain('读取已获准的实施版本、该版本的交付资料和交接回执');
+    expect(guide).not.toContain('branch set-mode');
+    expect(guide).not.toContain('previewUrl / previewUrls');
     expect(guide).not.toContain('--design-access publish');
+    expect(guide).not.toContain('--design-access feedback');
 
     const metadata = await fetch(`${origin}/api/agent/setup.json?${query}`);
     expect(metadata.status).toBe(200);
     const receipt = await metadata.json();
-    expect(receipt).toMatchObject({ target: { kind: 'existing', projectId: 'proj-a' },
-      minCliVersion: '0.26.28', cliVersion: shippedCliVersion, skills: ['cds-build'] });
+    expect(receipt).toMatchObject({ target: { kind: 'existing', projectId: 'proj-a' }, designAccess: 'read',
+      minCliVersion: '0.26.30', cliVersion: shippedCliVersion, skills: ['cds-build'] });
     expect([...receipt.installedSkills].sort()).toEqual([...distributedSkills].sort());
-    expect(receipt).not.toHaveProperty('designAccess');
     expect(receipt).not.toHaveProperty('authorizationKey');
   });
 
@@ -168,7 +185,21 @@ describe('Agent public bootstrap through the real auth gate', () => {
     expect(manifest.files['cds/cli/cds-skill-manifest.json']).toBeUndefined();
     const implementation = execFileSync('tar', ['-xzOf', '-', 'skills/cds-build/SKILL.md'], { input: archive });
     expect(manifest.files['cds-build/SKILL.md']).toBe(createHash('sha256').update(implementation).digest('hex'));
-    expect(implementation.toString('utf8')).toMatch(/^name: cds-build\r?$/m);
+    const instructions = implementation.toString('utf8');
+    expect(instructions).toMatch(/^name: cds-build\r?$/m);
+    expect(instructions).toContain('/api/agent/setup.md?target=existing&project=<项目 ID>&skills=cds-build');
+    expect(instructions).toMatch(/setup-check[^\n]*--skills cds-build --design-access read/);
+    expect(instructions).toMatch(/connect[^\n]*--design-access read/);
+    expect(instructions).toMatch(/setup-check[^\n]*--skills cds-build --design-access feedback/);
+    expect(instructions).toMatch(/connect[^\n]*--design-access feedback/);
+    expect(instructions).toContain('批准实施反馈');
+    expect(instructions).toContain('design_scope_required');
+    expect(instructions).toContain('凭据已吊销时停止申请');
+    expect(instructions).toContain('验收写权限');
+    const dispatcher = execFileSync('tar', ['-xzOf', '-', 'skills/cds/SKILL.md'], { input: archive, encoding: 'utf8' });
+    expect(dispatcher.split('<!-- cds-menu:start')[0]).toMatch(
+      /\/cds 帮我实现 DSN-xxx[^。\n]*\[cds-build\]\(\.\.\/cds-build\/SKILL\.md\)/,
+    );
   });
 
   it.each(Object.values(AGENT_MISSION_DEFINITIONS))('retains every required skill for mission $id', async mission => {
@@ -239,6 +270,16 @@ describe('Agent public bootstrap through the real auth gate', () => {
     expect(guide).not.toContain('connect --host');
     expect(guide).toContain('不执行项目 connect');
   });
+
+  it.each([['new', '--new-project --create-project'], ['system', '--system']])(
+    '选择实施技能时仍保留 %s 的原接入范围', async (target, scope) => {
+      const response = await fetch(`${origin}/api/agent/setup.md?target=${target}&skills=cds-build`);
+      expect(response.status).toBe(200);
+      const guide = await response.text();
+      expect(guide).toContain(scope);
+      expect(guide).not.toContain('--design-access');
+    },
+  );
 
   it('loads a single mission after connection without losing its registered safety and acceptance rules', async () => {
     const initial = await (await fetch(`${origin}/api/agent/setup.md?target=existing&project=proj-a&mission=startup-diagnostics`)).text();
@@ -411,16 +452,16 @@ describe('setup version follows the actual distributed skill bundle', () => {
     expect(await scoped.json()).toMatchObject({ error: 'skill_bundle_incompatible', minCliVersion: '0.26.27', cliVersion: '0.26.26' });
   });
 
-  it('0.26.27 回源包保留设计发布接入，直到加入实施技能才满足实施任务', async () => {
+  it.each(['0.26.27', '0.26.28', '0.26.29'])('%s 回源包仍可设计发布，同项目实施接入要求更新包', async version => {
     const root = tempRoot();
-    for (const skill of distributedSkills.filter(skill => skill !== 'cds-build')) {
+    for (const skill of distributedSkills.filter(skill => version !== '0.26.27' || skill !== 'cds-build')) {
       const directory = path.join(root, 'skills', skill);
       fs.mkdirSync(directory, { recursive: true });
       fs.writeFileSync(path.join(directory, 'SKILL.md'), `name: ${skill}\n`);
     }
     const cliDir = path.join(root, 'skills/cds/cli');
     fs.mkdirSync(cliDir);
-    fs.writeFileSync(path.join(cliDir, 'cds-skill-manifest.json'), JSON.stringify({ version: '0.26.27' }));
+    fs.writeFileSync(path.join(cliDir, 'cds-skill-manifest.json'), JSON.stringify({ version }));
     const archive = execFileSync('tar', ['-czf', '-', '-C', root, 'skills']);
     const upstreamApp = express();
     upstreamApp.get('/api/skills/cds-pack/download', (_req, res) => res.type('application/gzip').send(archive));
@@ -430,9 +471,9 @@ describe('setup version follows the actual distributed skill bundle', () => {
 
     const publish = await fetch(`${entry}&mission=design-publish`);
     expect(publish.status).toBe(200);
-    expect(await publish.json()).toMatchObject({ minCliVersion: '0.26.27', cliVersion: '0.26.27' });
+    expect(await publish.json()).toMatchObject({ minCliVersion: '0.26.27', cliVersion: version });
     const build = await fetch(`${entry}&skills=cds-build`);
     expect(build.status).toBe(503);
-    expect(await build.json()).toMatchObject({ error: 'skill_bundle_incompatible', minCliVersion: '0.26.28', cliVersion: '0.26.27' });
+    expect(await build.json()).toMatchObject({ error: 'skill_bundle_incompatible', minCliVersion: '0.26.30', cliVersion: version });
   });
 });

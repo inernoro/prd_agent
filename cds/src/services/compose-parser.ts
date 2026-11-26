@@ -21,6 +21,7 @@ import { parseWebEntryLabels } from './web-entry.js';
 import { isProbePrefix } from './topology-lint.js';
 import { normalizeBuildScope } from './prebuilt-reuse.js';
 import { isReservedPersistentTarget, UnsafeDeploymentStorageError } from './deployment-storage-boundary.js';
+import { dockerRuntimeResourceFlags } from './runtime-resource-limits.js';
 
 /** Invalid static declarations fail closed instead of silently starting an application container. */
 export function parseStaticWeb(value: unknown): StaticWebConfig {
@@ -147,8 +148,8 @@ interface ComposeServiceEntry {
   labels?: Record<string, string> | string[];
   entrypoint?: string | string[];
   /**
-   * Standard compose v3+ deploy block. CDS reads `resources.limits` for
-   * cgroup enforcement. `deploy.replicas` etc. are ignored — CDS is not Swarm.
+   * Standard compose v3+ deploy block. CDS reads `resources.limits` as
+   * scheduling estimates. `deploy.replicas` and other Swarm settings are ignored.
    */
   deploy?: {
     resources?: {
@@ -159,10 +160,7 @@ interface ComposeServiceEntry {
     };
   };
   /** CDS extension: simpler alternative to deploy.resources.limits */
-  'x-cds-resources'?: {
-    memoryMB?: number;
-    cpus?: number;
-  };
+  'x-cds-resources'?: ResourceLimits;
 }
 
 /**
@@ -176,13 +174,16 @@ interface ComposeServiceEntry {
  * Memory string parsing: "512M" → 512, "2G" → 2048, "1024" → 1024 (bytes → MB rounded).
  * CPU string parsing: "1.5" → 1.5, "0.5" → 0.5.
  *
- * Returns undefined when neither source is present so the downstream
- * code can skip adding cgroup flags entirely (backward compat).
+ * Runtime enforcement requires explicit opt-in via `x-cds-resources`.
  */
 export function parseResourceLimits(entry: ComposeServiceEntry): ResourceLimits | undefined {
   // Preferred: x-cds-resources (numeric, unambiguous)
   if (entry['x-cds-resources']) {
     const r = entry['x-cds-resources'];
+    if (r.enforceRuntime != null) {
+      dockerRuntimeResourceFlags(r);
+      if (r.enforceRuntime) return { memoryMB: r.memoryMB, cpus: r.cpus, enforceRuntime: true };
+    }
     const result: ResourceLimits = {};
     if (typeof r.memoryMB === 'number' && r.memoryMB > 0) result.memoryMB = Math.floor(r.memoryMB);
     if (typeof r.cpus === 'number' && r.cpus > 0) result.cpus = r.cpus;

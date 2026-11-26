@@ -1,6 +1,6 @@
 {
   "format": "agent-skills",
-  "version": "0.26.28",
+  "version": "0.26.30",
   "skills": [
     "cds",
     "cds-design",
@@ -18,7 +18,7 @@
     "cds/cli/acceptance/design-browser.mjs": "1d2e474d5d4a6f93e34f78b52bae070b174a5cbb793871bf4be6e475dc997c97",
     "cds/cli/acceptance/driver.template.mjs": "8da890248268ecb8a578cb37bc3e8c645b916487690f7706d59f9965c38e8dd3",
     "cds/cli/acceptance/proxyroute.mjs": "9800de2267fa8c02aa34350c5c1fbc5652caaa77c65d4b789ec865c40022f8fb",
-    "cds/cli/cdscli.py": "ba7af68037131f31ac84ac622622f158b60cc297bb10749e47eb559fc02d8a8c",
+    "cds/cli/cdscli.py": "2e0d73bca1b2e8dd11436c4f5bc3fa0c8ebdcfc8ce21e76a4d49a2aea6b1a9ed",
     "cds/cli/design_preview.py": "64bff0257bb9fa1bacaacc13460341671b621e09cc0b6a9758ff8b603a31207e",
     "cds/cli/design-acceptance-policy.json": "b69c9a397a679b7738d8a3addef4fbd1571ed6bbfd0957eee359be9040eb899c",
     "cds/cli/design-acceptance-standard.mjs": "8d9bd9ff954afeac44c0ddfd548cdd8935c8bb389cb163450c535e6121a69ba2",
@@ -32,8 +32,8 @@
     "cds/reference/drop-in.md": "f4cde6d2f3705d3bea763ffc33f01dbafd48e04afdd52da4e29f3eccd98fcbb4",
     "cds/reference/instance-catalog.json": "ba7e9fe58f72fc6eddd2a016ee15ff4cf09d57b588e017d7e99be2f8272fbb92",
     "cds/reference/maintainer.md": "bc2058e1fcff73be9e0561cd506f7968a3c78cd262cb27c29a81c3dc3955df2e",
-    "cds/reference/menu-intents.json": "7393e67823d56bfac13d21bb296a4a185e5834c1c3813edbc98fe22cfe8bcb12",
-    "cds/reference/menu.md": "fb65054f0040a6ca690c339a552e9bc262059fe18436d7baa98262c59ad07dc0",
+    "cds/reference/menu-intents.json": "4b83aa168d7686ad3d9f66214681f10621a55010c0ca5827becba9dc3786b407",
+    "cds/reference/menu.md": "071d00421c14af8365dbd78653a6a02913040c81087c3a4dcd3476b0d7a2daee",
     "cds/reference/scan.md": "caac675caeb87cfa06dd7767926d87a5ba657a9e4739067c889393c8b293b95d",
     "cds/reference/smoke.md": "5bf8b1642555d87ccca5525df7f6250c7848c5a64d1b5c2f5b07b562d8326d44",
     "cds/reference/test-loop.md": "39068274d8a2a2bfd47387867c87f45c347a464eebdf7c587ded6c314a59ea81",
@@ -45,7 +45,7 @@
     "cds/scripts/design/version-diff.mjs": "8c20ff8e54981a7321d3709afbb3f47897304bc648c2cbbdd82f90f5e5ad4bca",
     "cds/scripts/refresh_manifest.py": "48913d12887e76b01f564f7439a53b1326abed070a547101f8f97ddbf458252f",
     "cds/scripts/skill-fresh.mjs": "c992eae49eeeb442da344b7097c3cf5ee9d0bf492d5b928dd2fcc2e693997968",
-    "cds/SKILL.md": "af27789085ac77431476e31a73dedcaf2e25cca54070e1d0a43c8d304b95cfc7",
+    "cds/SKILL.md": "41d90c04feb6c8e531f1074bba656f224009278a1069a0d6e2a10445a66bfffa",
     "cds/tests/test_cdscli_acceptance_standard.py": "4f3ed5e4b890142287843b098b3b3e4d87e53dd2e1a794018abb331c4ba3692c",
     "cds/tests/test_cdscli_agent_identity.py": "706e9c146eab1fef080a79380cd8c03b2a5e0a90384ded4587754b77be293434",
     "cds/tests/test_cdscli_code_review.py": "9f4b73be9b267351d0588e96d61c90ebe0b9f5fb742739213d4633eee38b53dd",
@@ -71,7 +71,7 @@
     "cds/tests/test_cdscli_release_target.py": "99f956ef04882e32a2a49f4456092b48a9713e4792ca7bb7b1254f6a7d3d91d6",
     "cds/tests/test_cdscli_schedule_prompt.py": "69c2dfe74b6813604b7e90e6c2e1c5b22ac374c6f1a07cb52d68adc84306e711",
     "cds/tests/test_cdscli_self_action_completion.py": "86a8742594badc73cefaa57eef858f4f2050cdfe2d57b02ae6f7316dd909a056",
-    "cds/tests/test_cdscli_setup_check.py": "77ef845bd6f8e26122ffd6c561b48c04d818115042bf2c7e71e77e991e85ee7e",
+    "cds/tests/test_cdscli_setup_check.py": "2439f2f7b315449602c9adca6ad1dcd2ef99416708cda98628c667ce3129073c",
     "cds/tests/test_cdscli_verify_runtime_env.py": "3a56bb496a5d02bd4fabbe7ce21d162117ece1483933caa4cf920d0421426719",
     "cds/tests/test_env_meta_phase8.py": "ca4192bf4ae5da0511b6dd0f4e4a5abaceda8d3436c998b62c5811bba390852c",
     "cds/tests/test_init_script_phase17.py": "61097a32ed23e2856befa73203a9bd0f7a1f123efd98586cbb4e68106840066e",
@@ -85,7 +85,7 @@
     "cds/tests/test_verify_selfheal.py": "c7ea5a0ac11a2d6bbf35fc435029475fc778b31fb4e844dcc2cdc714140c3acc",
     "cds/tests/test_web_entry_contract.py": "f08f361478b6e3232d73090c1edc7616bd34df0823b88958852741374c203636",
     "cds-design/SKILL.md": "b4c432a3c064225cb446391cb332ee4e0e4ae7ad91b5215c662a3aa778f0bcb8",
-    "cds-build/SKILL.md": "0db5efe5327bf1faf7508eb976b7c58c934dacfe85aa6c9e73943ea12367553c",
+    "cds-build/SKILL.md": "037851af1f51e9bcfac34746891ab94e18e65ddb90013509f2786b8fa6d758da",
     "cds-project-scan/reference/cds-pending-import.md": "a071bae76e9bf6ed792af2b0697fad19f62544b38062dce864db8f4ede054cda",
     "cds-project-scan/reference/infra-init.md": "367af0506e5f8418d37cc9483602f6bc34747ed84cba4e6d11f49be1b7b31015",
     "cds-project-scan/reference/tech-detection.md": "20d88a38a278bc65dd2f7f8c9e09e2a5e39e5ef33584af585980249604df7a64",
@@ -95,5 +95,5 @@
     "cds-release/SKILL.md": "7a80c34792d75c327d360f5c84963de33b78e43b818465cfbe6213db6b70ee90",
     "preview-url/SKILL.md": "cba546b198bc1e0bad384d447078663d0e6906f1d080722dd29db7b14a33f65b"
   },
-  "generatedAt": "2026-11-26T15:54:04.673Z"
+  "generatedAt": "2026-11-26T17:11:23.491Z"
 }

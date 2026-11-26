@@ -27,7 +27,6 @@ const scenes = JSON.parse(await fs.readFile(path.join(here, '../web/src/componen
 const selectors = {
   projects: '[aria-label="加载项目列表"]', branches: '[aria-label="加载项目与本地分支列表"]',
   'branch-detail': '[aria-label^="加载分支详情"]', relations: '[data-branch-relations-skeleton]',
-  overview: '[aria-label="读取项目关系总览"]',
   'agent-table': '[data-agent-requests-skeleton]', 'topology': '[data-topology-page-skeleton]', 'release-center': '[data-release-center-skeleton]', monitor: '[aria-label="正在读取监控数据"]',
   settings: '[data-settings-content-skeleton]', 'project-settings': '[data-settings-page-skeleton]',
   'personal-settings': '[data-personal-settings-skeleton]',
@@ -126,7 +125,7 @@ try {
         assert(result.sameShape, `${route}: code/data shape mismatch`);
         // 复杂页面内有固定筛选/说明区；这里只对整页专用轮廓断言无位移。
         if (['settings', 'project-settings', 'personal-settings', 'release-console', 'release-approval', 'project-monitor', 'projects',
-          'branches', 'topology', 'overview', 'release-center', 'agent-table', 'monitor', 'relations', 'rows', 'branch-detail',
+          'branches', 'topology', 'release-center', 'agent-table', 'monitor', 'relations', 'rows', 'branch-detail',
           'code-reviews', 'engineering-planning', 'design', 'dts'].includes(scene.kind)) {
           assert(result.maxGeometryDelta < 1, `${route}: initial skeleton moved ${result.maxGeometryDelta}`);
         }
@@ -154,10 +153,6 @@ try {
         await page.getByRole('heading', { name: '登录方式', exact: true }).waitFor();
         const localMethod = page.getByRole('listitem').filter({ hasText: '个人口令' });
         assert(await localMethod.getByText('可用', { exact: true }).isVisible(), 'older basic mode must still show password login as available');
-      }
-      if (!before && scene.kind === 'overview') {
-        const graph = page.getByRole('region', { name: '跨项目关系画布' });
-        await graph.getByText('fixture-project', { exact: true }).waitFor();
       }
       if (!before && scene.kind === 'release-center') {
         await page.getByRole('heading', { name: '还没有站点发布目标', exact: true }).waitFor();

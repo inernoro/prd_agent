@@ -241,7 +241,6 @@ export function pageSkeletonForPath(pathname: string, capabilities: { canManageP
     case 'projects': return <ProjectListSkeleton canManageProjects={capabilities.canManageProjects} />;
     case 'branches': return <BranchListSkeleton />;
     case 'relations': return <BranchRelationsSkeleton />;
-    case 'overview': return <ContentLoading label="读取项目关系总览" variant="panel" />;
     case 'agent-table': return <AgentRequestsSkeleton />;
     case 'topology': return <TopologyPageSkeleton />;
     case 'release-center': return <ReleaseCenterSkeleton section={releaseCenterSection(new URLSearchParams(capabilities.search))} />;
