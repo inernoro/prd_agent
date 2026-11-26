@@ -194,12 +194,17 @@ describe('human project grants through the production server', () => {
     expect(list.status).toBe(200);
     expect(list.body.runs.map((run: any) => run.id)).toEqual([a.id]);
     expect(JSON.stringify(list.body)).not.toContain('fake-run-secret');
+    const queue = await call('GET', '/api/deployment-runs?view=active&project=project-a', member);
+    expect(queue.status).toBe(200);
+    expect(queue.body.runs.map((run: any) => run.id)).toEqual([a.id]);
+    expect(queue.body.buildCapacity).toBeNull();
+    expect(JSON.stringify(queue.body)).not.toContain('fake-run-secret');
     for (const url of [`/api/deployment-runs/${a.id}`, `/api/deployment-runs/${a.id}/diagnosis`]) {
       const result = await call('GET', url, member);
       expect(result.status).toBe(200);
       expect(JSON.stringify(result.body)).not.toContain('fake-run-secret');
     }
-    for (const url of ['/api/deployment-runs', '/api/deployment-runs?project=project-b',
+    for (const url of ['/api/deployment-runs', '/api/deployment-runs?view=active', '/api/deployment-runs?project=project-b',
       `/api/deployment-runs/${b.id}`, `/api/deployment-runs/${b.id}/diagnosis`, `/api/deployment-runs/${b.id}/stream`]) {
       expect((await call('GET', url, member)).status).toBe(403);
     }
@@ -215,6 +220,14 @@ describe('human project grants through the production server', () => {
     expect(next.done).toBe(true);
     abort.abort();
     expect(JSON.stringify((await call('GET', `/api/deployment-runs/${a.id}`)).body)).toContain('fake-run-secret');
+  });
+
+  it('allows project members to change avatar settings only within their grants', async () => {
+    await grant(['project-a']);
+    expect((await call('DELETE', '/api/projects/project-a/avatar', member)).status).toBe(200);
+    expect((await call('DELETE', '/api/projects/project-b/avatar', member)).status).toBe(403);
+    await grant([]);
+    expect((await call('DELETE', '/api/projects/project-a/avatar', member)).status).toBe(403);
   });
 
   it('bounds a stalled grant response and restores late writes before releasing the gate', async () => {

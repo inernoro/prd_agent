@@ -1654,6 +1654,9 @@ export function resolveApiLabel(method: string, path: string): string {
     // 「查询项目 / 更新项目」。必须在通配条目之前给出 segment-safe pattern。
     [/^GET \/projects\/[^/]+\/agent-profile$/, '获取项目 Agent 角色'],
     [/^PUT \/projects\/[^/]+\/agent-profile$/, '更新项目 Agent 角色'],
+    [/^(GET|HEAD) \/projects\/[^/]+\/avatar$/, '读取项目头像'],
+    [/^PUT \/projects\/[^/]+\/avatar$/, '更换项目头像'],
+    [/^DELETE \/projects\/[^/]+\/avatar$/, '恢复默认项目头像'],
     [/^GET \/projects\/[^/]+\/db-isolation$/, '查看数据库隔离'],
     [/^PUT \/projects\/[^/]+\/db-isolation$/, '设置数据库隔离'],
     [/^GET \/branches\/[^/]+\/db-probe$/, '实测数据库连接'],
@@ -5955,6 +5958,7 @@ export function createServer(deps: ServerDeps): express.Express {
   app.use('/api', createDeploymentRunsRouter({
     deploymentRunService,
     deploymentDiagnosisService,
+    stateService: deps.stateService,
     assertProjectAccess: assertProjectAccess as any,
   }));
 

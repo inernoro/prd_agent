@@ -4117,6 +4117,18 @@ html select:not([multiple]):not([size]):not(.appearance-none):dir(rtl) {
   .cds-project-card-link:focus-visible { outline: 2px solid hsl(var(--ring)); outline-offset: -2px; border-radius: inherit; }
   .cds-project-card-heading { display: flex; align-items: center; gap: 0.625rem; min-width: 0; padding: 1rem 3.25rem 0 1rem; }
   .cds-project-monogram { display: grid; place-items: center; width: 2.125rem; height: 2.125rem; flex-shrink: 0; border: 1px solid hsl(var(--hairline-strong) / 0.65); border-radius: 0.3125rem; background: hsl(var(--muted)); color: hsl(var(--foreground-muted)); font-size: 0.6875rem; font-weight: 600; }
+  .cds-project-avatar-img { overflow: hidden; }
+  .cds-project-avatar-img img { width: 100%; height: 100%; object-fit: cover; }
+  .cds-project-avatar-edit { position: absolute; top: 0.6875rem; left: 0.6875rem; z-index: 1; padding: 0.3125rem; border-radius: 0.5rem; }
+  .cds-project-avatar-edit:focus-visible { outline: 2px solid hsl(var(--ring)); outline-offset: -1px; }
+  .cds-project-avatar-edit-icon { position: absolute; right: 0.125rem; bottom: 0.125rem; display: grid; padding: 0.125rem; border-radius: 0.25rem; background: hsl(var(--surface-raised)); color: hsl(var(--foreground)); }
+  .cds-project-avatar-edit-icon svg { width: 0.75rem; height: 0.75rem; }
+  @media (hover: hover) {
+    .cds-project-avatar-edit-icon { opacity: 0; }
+    .cds-project-avatar-edit:hover .cds-project-avatar-edit-icon,
+    .cds-project-avatar-edit:focus-visible .cds-project-avatar-edit-icon { opacity: 1; }
+  }
+  .cds-project-avatar-preview .cds-project-avatar-img { width: 4rem; height: 4rem; font-size: 1.25rem; }
   .cds-project-card-heading h2 { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 1rem; font-weight: 600; letter-spacing: -0.015em; }
   .cds-project-pin { width: 0.875rem; height: 0.875rem; flex-shrink: 0; color: hsl(var(--muted-foreground)); }
   .cds-project-state { display: inline-flex; align-items: center; gap: 0.3125rem; flex-shrink: 0; white-space: nowrap; font-size: 0.6875rem; }

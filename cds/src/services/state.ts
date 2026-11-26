@@ -2857,6 +2857,7 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
         Project,
         | 'name'
         | 'aliasName'
+        | 'avatar'
         | 'previewAddresses'
         | 'previewAddressAudit'
         | 'monitoringInspections'

@@ -53,6 +53,7 @@ describe('Deployment runs router', () => {
     });
     app.use('/api', createDeploymentRunsRouter({
       deploymentRunService: runService,
+      stateService,
       deploymentDiagnosisService: new DeploymentDiagnosisService(
         runService,
         new DeploymentVersionService(stateService),
@@ -95,6 +96,31 @@ describe('Deployment runs router', () => {
     const response = await request(server, 'GET', '/api/deployment-runs?status=unknown');
     expect(response.status).toBe(400);
     expect(response.body.error).toContain('状态无效');
+  });
+
+  it('shows every in-flight run and distinct CI waits within the caller’s project', async () => {
+    const sha = 'a'.repeat(40);
+    const branch = stateService.getBranch('b-p1')!;
+    branch.ciImageStatus = 'waiting';
+    branch.ciTargetSha = sha;
+    branch.buildQueue = { queuedAt: '2026-07-10T01:00:00.000Z', ahead: 2, active: 1, max: 1, serviceIds: ['web'] };
+    const other = stateService.getBranch('b-p2')!;
+    other.ciImageStatus = 'waiting';
+    await runService.begin({ projectId: 'p1', branchId: branch.id, trigger: 'webhook', initialStatus: 'queued', phase: 'artifact-wait', commitSha: sha });
+    await runService.begin({ projectId: 'p1', branchId: branch.id, trigger: 'manual' });
+    await runService.begin({ projectId: 'p2', branchId: other.id, trigger: 'manual' });
+    runService.cancel('dr_3', 'test');
+    const scoped = await request(server, 'GET', '/api/deployment-runs?view=active&limit=1', undefined, { 'x-test-project': 'p1' });
+    expect(scoped.status).toBe(200);
+    expect(scoped.body.runs.map((run: any) => run.id).sort()).toEqual(['dr_1', 'dr_2']);
+    expect(scoped.body.recent).toEqual([]);
+    expect(scoped.body.ci).toEqual([]);
+    expect(scoped.body.buildQueue).toMatchObject([{ branchId: branch.id, ahead: 2, serviceIds: ['web'] }]);
+    expect(scoped.body.buildCapacity).toBeNull();
+    const global = await request(server, 'GET', '/api/deployment-runs?view=active');
+    expect(global.body.runs).toHaveLength(2);
+    expect(global.body.ci).toMatchObject([{ branchId: other.id }]);
+    expect(global.body.recent).toMatchObject([{ id: 'dr_3', status: 'cancelled' }]);
   });
 
   it('enforces project access for run detail', async () => {

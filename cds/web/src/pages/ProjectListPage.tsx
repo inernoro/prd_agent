@@ -19,6 +19,7 @@ import {
   FileText,
   Gauge,
   GitBranch,
+  ImagePlus,
   MoreHorizontal,
   Box,
   FolderGit2,
@@ -57,6 +58,7 @@ import { ProjectInventorySections } from '@/components/project/ProjectInventoryS
 import { INITIAL_PROJECT_SELECTION, ProjectInventoryHeader, projectEnvironmentNames, selectInventoryProjects, type ProjectEnvironmentStatus, type ProjectEnvironmentTarget, type ProjectInventorySelection } from '@/components/project/ProjectInventoryHeader';
 import { Button } from '@/components/ui/button';
 import { AgentKeyPanel } from '@/components/project/AgentKeyPanel';
+import { ProjectAvatar, ProjectAvatarEditor } from '@/components/project/ProjectAvatar';
 import { DropdownDivider, DropdownItem, DropdownMenu } from '@/components/ui/dropdown-menu';
 import {
   Dialog,
@@ -81,6 +83,8 @@ export interface ProjectSummary {
   slug: string;
   name: string;
   aliasName?: string;
+  avatarVersion?: string;
+  avatarEditable?: boolean;
   description?: string;
   kind?: string;
   legacyFlag?: boolean;
@@ -458,6 +462,8 @@ export function ProjectListPage(): JSX.Element {
   const [agentKeyProject, setAgentKeyProject] = useState<ProjectSummary | null>(null);
   const [globalAgentKeyOpen, setGlobalAgentKeyOpen] = useState(false);
   const [monitoringOpen, setMonitoringOpen] = useState(false);
+  const [avatarTarget, setAvatarTarget] = useState<ProjectSummary | null>(null);
+  const listReadVersion = useRef(0);
   const [legacyDialogOpen, setLegacyDialogOpen] = useState(false);
   const [pendingImportOpen, setPendingImportOpen] = useState(false);
   const [pendingImportFocusId, setPendingImportFocusId] = useState<string | null>(null);
@@ -567,6 +573,7 @@ export function ProjectListPage(): JSX.Element {
   }, []);
 
   const refresh = useCallback(async (showLoading = false) => {
+    const readVersion = ++listReadVersion.current;
     if (showLoading) setState((previous) => previous.status === 'ok' ? previous : { status: 'loading' });
     try {
       const projectsRes = await apiRequest<ProjectsResponse>('/api/projects');
@@ -576,6 +583,7 @@ export function ProjectListPage(): JSX.Element {
       const legacyRes = canManageProjects
         ? await apiRequest<LegacyCleanupStatus>('/api/legacy-cleanup/status').catch(() => null)
         : null;
+      if (readVersion !== listReadVersion.current) return;
       if (nextProjects.length > 0 || !canManageProjects) {
         lastKnownGoodProjectsRef.current = nextProjects;
       }
@@ -594,6 +602,7 @@ export function ProjectListPage(): JSX.Element {
       }
       if (canManageProjects) void loadPendingImports();
     } catch (err) {
+      if (readVersion !== listReadVersion.current) return;
       const message = err instanceof ApiError ? err.message : String(err);
       setState({ status: 'error', message });
     }
@@ -699,6 +708,7 @@ export function ProjectListPage(): JSX.Element {
         pinned={inventoryPreferences.pinnedProjectIds.includes(project.id)}
         onTogglePin={() => toggleProjectPin(project)}
         onCopyName={() => void copyProjectName(project)}
+        onEditAvatar={project.avatarEditable ? () => setAvatarTarget(project) : undefined}
         environments={environmentStatus === 'ready' ? projectEnvironmentNames(project.id, environmentTargets) : undefined}
         onClone={() => setCloneTarget(project)}
         onAgentKeys={() => setAgentKeyProject(project)}
@@ -774,7 +784,7 @@ export function ProjectListPage(): JSX.Element {
                 variant="ghost"
                 size="sm"
                 onClick={() => setMonitoringOpen(true)}
-                title="运维（性能 / 执行器 / 活动）"
+                title="运维（部署队列 / 性能 / 执行器 / 活动）"
               >
                 <Gauge />
                 运维
@@ -1058,6 +1068,16 @@ export function ProjectListPage(): JSX.Element {
           open={monitoringOpen}
           onOpenChange={setMonitoringOpen}
         />
+        {avatarTarget && <ProjectAvatarEditor key={avatarTarget.id} project={avatarTarget} title={displayName(avatarTarget)}
+          onClose={() => setAvatarTarget(null)} onSaved={version => {
+            const updateAvatar = (project: ProjectSummary) => project.id === avatarTarget.id
+              ? { ...project, avatarVersion: version ?? undefined } : project;
+            lastKnownGoodProjectsRef.current = lastKnownGoodProjectsRef.current.map(updateAvatar);
+            setState(previous => previous.status === 'ok' ? { ...previous, projects: previous.projects.map(updateAvatar) } : previous);
+            setAvatarTarget(null);
+            setToast(version ? '项目头像已更新' : '已恢复默认项目头像');
+            void refresh(false);
+          }} />}
         <PendingImportDialog
           open={canManageProjects && pendingImportOpen}
           onOpenChange={(open) => {
@@ -1947,13 +1967,14 @@ function ProjectServiceModules({ project, brands }: { project: ProjectSummary; b
 
 export function ProjectCard({
   project, canManageProjects, onClone, onAgentKeys, onAgentSessions, onDelete, onTogglePause,
-  pinned = false, onTogglePin, onCopyName, environments,
+  pinned = false, onTogglePin, onCopyName, onEditAvatar, environments,
 }: {
   project: ProjectSummary;
   canManageProjects: boolean;
   pinned?: boolean;
   onTogglePin?: () => void;
   onCopyName?: () => void;
+  onEditAvatar?: () => void;
   environments?: readonly string[];
   onClone: () => void;
   onAgentKeys: () => void;
@@ -1981,14 +2002,13 @@ export function ProjectCard({
   const stateLabel = paused ? '已暂停' : cloneLabel || (totalOnline > 0 ? '运行中' : '已就绪');
   const stateTone = paused ? 'text-muted-foreground' : project.cloneStatus === 'error' ? 'text-bad'
     : !isReady ? 'text-warn' : totalOnline > 0 ? 'text-ok' : 'text-muted-foreground';
-  const monogram = (project.slug || project.name || project.id).slice(0, 2).toLocaleUpperCase();
 
   return (
     <article className="cds-project-card cds-cv-auto" data-project-id={project.id} data-paused={paused || undefined} data-pinned={pinned || undefined}>
       <a data-surface-route href={projectHref(project)}
         aria-label={project.kind === 'shared-service' ? `管理 ${title} 共享服务` : `查看 ${title} 的分支`} className="cds-project-card-link">
         <header className="cds-project-card-heading">
-          <span className="cds-project-monogram" aria-hidden>{monogram}</span>
+          {onEditAvatar ? <span className="cds-project-monogram invisible" aria-hidden="true" /> : <ProjectAvatar project={project} />}
           <h2 title={project.description ? `${title} · ${project.description}` : title}>{title}</h2>
           {pinned ? <Pin className="cds-project-pin" aria-label="已置顶" /> : null}
           <span className={`cds-project-state ${stateTone}`}><i aria-hidden />{stateLabel}</span>
@@ -2020,6 +2040,11 @@ export function ProjectCard({
           <div className="cds-project-clone-error">{project.cloneError}</div>
         ) : null}
       </a>
+      {onEditAvatar && <button type="button" className="cds-project-avatar-edit" onClick={onEditAvatar}
+        aria-label={`更换 ${title} 的项目头像`} title="更换项目头像">
+        <ProjectAvatar project={project} />
+        <span className="cds-project-avatar-edit-icon" aria-hidden="true"><ImagePlus /></span>
+      </button>}
       {project.repoSharing ? (
         <div className="border-t border-[hsl(var(--hairline))] px-4 py-2">
           <RepoSharingInline sharing={project.repoSharing} selfId={project.id} />
@@ -2031,6 +2056,7 @@ export function ProjectCard({
             <DropdownItem asChild href={projectHref(project)}>{project.kind === 'shared-service' ? <><Settings />管理共享服务</> : <><GitBranch />查看分支</>}</DropdownItem>
             {onTogglePin ? <DropdownItem onSelect={onTogglePin}><Pin />{pinned ? '取消置顶' : '置顶项目'}</DropdownItem> : null}
             {onCopyName ? <DropdownItem onSelect={onCopyName}><Copy />复制项目名称</DropdownItem> : null}
+            {onEditAvatar ? <DropdownItem onSelect={onEditAvatar}><ImagePlus />更换头像</DropdownItem> : null}
             <DropdownDivider />
             <DropdownItem onSelect={onTogglePause}>{paused ? <Play /> : <Pause />}{paused ? '恢复项目' : '暂停项目'}</DropdownItem>
             {cloneAction ? (

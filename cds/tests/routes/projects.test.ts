@@ -158,6 +158,8 @@ describe('Projects router (P4 Part 2)', () => {
   let stateService: StateService;
   let shell: MockShellExecutor;
   let server: http.Server;
+  let avatarObjects: Map<string, Buffer>;
+  let avatarUploadFails: boolean;
   let projectConfig: CdsConfig;
 
   beforeEach(async () => {
@@ -185,7 +187,16 @@ describe('Projects router (P4 Part 2)', () => {
       getInstallationToken: async () => 'github-app-installation-token',
     } as GitHubAppClient;
     projectConfig = { rootDomains: ['preview.test', 'secondary.test'] } as CdsConfig;
-    app.use('/api', createProjectsRouter({ stateService, shell, githubApp, config: projectConfig }));
+    avatarObjects = new Map();
+    avatarUploadFails = false;
+    app.use('/api', createProjectsRouter({ stateService, shell, githubApp, config: projectConfig, projectAvatarStore: {
+      put: async (id, avatar, bytes) => {
+        if (avatarUploadFails) throw new Error('storage unavailable');
+        avatarObjects.set(id + '/' + avatar.version, bytes);
+      },
+      get: async (id, avatar) => avatarObjects.get(id + '/' + avatar.version) || null,
+      remove: async (id, avatar) => { avatarObjects.delete(id + '/' + avatar.version); },
+    } }));
 
     server = listenLoopbackFixture(app);
     if (!server.address()) await once(server, 'listening');
@@ -195,6 +206,44 @@ describe('Projects router (P4 Part 2)', () => {
     await flushAllJsonStateStores();
     await new Promise<void>((resolve) => server.close(() => resolve()));
     fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  it('persists a confirmed raster avatar, preserves it on failure, and supports reset', async () => {
+    const project: Project = { id: 'avatar-project', slug: 'avatar-project', name: 'Avatar project',
+      kind: 'manual', createdAt: NOW, updatedAt: NOW };
+    stateService.addProject(project);
+    const port = (server.address() as { port: number }).port;
+    const url = `http://127.0.0.1:${port}/api/projects/${project.id}/avatar`;
+    const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAwAAAAMCAIAAADZF8uwAAAAF0lEQVR4nGOUS/zPQAgwEVQxqmgAFAEAqVUBlh90K2kAAAAASUVORK5CYII=', 'base64');
+    const upload = (body: BodyInit, headers: Record<string, string> = {}) => fetch(url, { method: 'PUT', body, headers: { 'Content-Type': 'image/png', ...headers } });
+
+    expect((await upload(new Uint8Array(png), { 'x-test-project-key': 'another-project' })).status).toBe(403);
+    expect((await upload('<svg/>')).status).toBe(415);
+    expect((await upload(new Uint8Array(2 * 1024 * 1024 + 1))).status).toBe(413);
+    expect(avatarObjects.size).toBe(0);
+    const saved = await upload(new Uint8Array(png));
+    expect(saved.status).toBe(200);
+    const { avatarVersion } = await saved.json();
+    const stored = await fetch(url + '?v=' + avatarVersion);
+    expect(stored.status).toBe(200);
+    expect(stored.headers.get('content-type')).toBe('image/png');
+    expect(Buffer.from(await stored.arrayBuffer())).toEqual(png);
+    expect((await request(server, 'GET', '/api/projects')).body.projects[0]).toMatchObject({ avatarVersion, avatarEditable: true });
+    const restarted = new StateService(path.join(tmpDir, 'state.json'), tmpDir);
+    restarted.load();
+    expect(restarted.getProject(project.id)?.avatar?.version).toBe(avatarVersion);
+    expect(avatarObjects.get(project.id + '/' + avatarVersion)).toEqual(png);
+    const saveFailure = vi.spyOn(stateService, 'save').mockImplementationOnce(() => { throw new Error('save failed'); });
+    try {
+      expect((await upload(new Uint8Array(png))).status).toBe(503);
+      expect(stateService.getProject(project.id)?.avatar?.version).toBe(avatarVersion);
+    } finally { saveFailure.mockRestore(); }
+    avatarUploadFails = true;
+    expect((await upload(new Uint8Array(png))).status).toBe(503);
+    expect(stateService.getProject(project.id)?.avatar?.version).toBe(avatarVersion);
+    expect((await fetch(url, { method: 'DELETE' })).status).toBe(200);
+    expect((await fetch(url)).status).toBe(404);
+    expect(avatarObjects.size).toBe(0);
   });
 
   describe('GET /api/projects', () => {

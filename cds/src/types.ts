@@ -4104,6 +4104,11 @@ export interface OpenDesignWorkspaceVersionState {
   runImages: Record<string, string>;
 }
 
+export interface ProjectAvatar {
+  version: string;
+  contentType: 'image/png' | 'image/jpeg' | 'image/webp';
+}
+
 export interface Project {
   /** Server-owned OpenDesign versions, keyed by the hash of the paired MAP origin. */
   openDesignWorkspaceVersions?: Record<string, OpenDesignWorkspaceVersionState>;
@@ -4143,6 +4148,7 @@ export interface Project {
   slug: string;
   /** Human-friendly display name shown on the projects list card. */
   name: string;
+  avatar?: ProjectAvatar;
   /**
    * 显式允许把 `_global` 环境变量注入本项目。缺省 false；全局变量默认只属于
    * CDS 控制面，避免一个项目的数据库、队列或第三方凭据扩散到其他项目。

@@ -116,6 +116,7 @@ export function createHumanProjectAccessMiddleware(state: StateService) {
       if (!id && method === 'GET') { next(); return; }
       // Credentials and cross-project migration remain system-owner actions.
       if (!id || /^(agent-keys|migration|migrate|github)$/i.test(action || '') || !checkProject(id)) { deny(); return; }
+      if (action === 'avatar' && segments.length === 3 && ['GET', 'HEAD', 'PUT', 'DELETE'].includes(method)) { next(); return; }
       // Project settings/creation/deletion require the owner; members operate its branches.
       if (method !== 'GET') { deny(); return; }
       // Raw compose, storage, status-page tokens and Agent/system read routes

@@ -33,6 +33,7 @@ import {
 } from 'lucide-react';
 
 import { apiRequest, ApiError } from '@/lib/api';
+import { DeploymentQueueTab } from './DeploymentQueueTab';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ErrorBlock, LoadingBlock, MetricTile } from '@/pages/cds-settings/components';
@@ -181,6 +182,7 @@ export function MonitoringDialog({
 }: MonitoringDialogProps): JSX.Element {
   const { state, activity, reload } = useMonitoringData(open, projectId);
   const [tab, setTab] = useState('performance');
+  const [deploymentRefresh, setDeploymentRefresh] = useState(0);
   const ops = opsTabs || [];
 
   const title = projectName ? `运维 · ${projectName}` : '运维';
@@ -220,7 +222,7 @@ export function MonitoringDialog({
             <p className="mt-1.5 text-sm text-muted-foreground">{description}</p>
           </div>
           <div className="flex shrink-0 items-center gap-2">
-            <Button type="button" variant="outline" size="sm" onClick={() => void reload()}>
+            <Button type="button" variant="outline" size="sm" onClick={() => tab === 'deployment-queue' ? setDeploymentRefresh(value => value + 1) : void reload()}>
               <RefreshCw />
               刷新
             </Button>
@@ -235,6 +237,10 @@ export function MonitoringDialog({
             <TabsTrigger value="performance" className={TAB_TRIGGER_CLASS}>
               <Gauge className="h-4 w-4 shrink-0" />
               性能
+            </TabsTrigger>
+            <TabsTrigger value="deployment-queue" className={TAB_TRIGGER_CLASS}>
+              <Layers className="h-4 w-4 shrink-0" />
+              部署队列
             </TabsTrigger>
             <TabsTrigger value="executors" className={TAB_TRIGGER_CLASS}>
               <Server className="h-4 w-4 shrink-0" />
@@ -279,6 +285,9 @@ export function MonitoringDialog({
                 </TabsContent>
               </>
             ) : null}
+            <TabsContent value="deployment-queue">
+              {tab === 'deployment-queue' && <DeploymentQueueTab key={projectId} projectId={projectId} refreshKey={deploymentRefresh} />}
+            </TabsContent>
             <TabsContent value="logs">
               <LogCenterTab projectId={projectId} />
             </TabsContent>

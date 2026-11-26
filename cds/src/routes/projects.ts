@@ -88,6 +88,7 @@ import { combinedOutput } from '../types.js';
 import { workloadCgroupFlags } from '../services/workload-cgroup.js';
 import { isAuthenticatedHuman, isHumanSystemOwner, type HumanAuthContext } from '../services/human-auth.js';
 import { canHumanAccessProject, isScopedHuman } from '../services/human-project-access.js';
+import { registerProjectAvatarRoutes, type ProjectAvatarStore } from './project-avatars.js';
 
 type OnboardingRuntime = NonNullable<Project['onboardingRuntime']>;
 type OnboardingService = NonNullable<Project['onboardingServices']>[number];
@@ -115,6 +116,7 @@ function requestUserId(req: unknown): string | undefined {
 
 export interface ProjectsRouterDeps {
   stateService: StateService;
+  projectAvatarStore?: ProjectAvatarStore;
   /** Shell for docker network create/inspect/rm. Injectable for tests. */
   shell: IShellExecutor;
   /** Root CDS config — unused in Part 2 but reserved for Part 3 when we derive per-project paths. */
@@ -586,6 +588,8 @@ interface RepoSiblingRef {
 
 interface ProjectSummary extends Project, ProjectStats {
   identityVersion: string;
+  avatarVersion?: string;
+  avatarEditable: boolean;
   /** 2026-06-23：项目级实时资源占用（CPU/内存/构建频次），由采样器周期写入。 */
   resourceUsage?: ProjectResourceUsage | null;
   /**
@@ -609,8 +613,8 @@ interface ProjectSummary extends Project, ProjectStats {
 function toSummary(project: Project, stats: ProjectStats, usage?: ProjectResourceUsage | null): ProjectSummary {
   // 分组只走专门的 /branch-groups 接口：项目列表被许多不相干的选择器、页面拉取，带上整份规则与钉入
   // 会让多项目列表膨胀到几 MB（Codex P2，PR #1647）。
-  const { branchGroups: _branchGroups, ...rest } = projectIdentityResponse(project);
-  return { ...rest, ...stats, resourceUsage: usage ?? null };
+  const { branchGroups: _branchGroups, avatar, ...rest } = projectIdentityResponse(project);
+  return { ...rest, ...stats, avatarVersion: avatar?.version, avatarEditable: !project.mirror, resourceUsage: usage ?? null };
 }
 
 /** 把最近一次资源采样快照转成 projectId → usage 的查找表（无快照时空表）。 */
@@ -759,6 +763,8 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     }
     next();
   });
+
+  const removeProjectAvatar = registerProjectAvatarRoutes(router, stateService, deps.projectAvatarStore);
 
   /**
    * 这个项目和谁共用一个仓库。同仓项目少于两个时返回 null（界面据此什么都不显示）。
@@ -4473,6 +4479,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       return;
     }
 
+    removeProjectAvatar(project);
     cdsEventsBus.publish('access-request.progress', { projectId: project.id, stage: 'project-deleted' });
 
     // 容器 + 网络的物理清理放后台异步跑（不拖慢 DELETE 响应到多秒级）。
