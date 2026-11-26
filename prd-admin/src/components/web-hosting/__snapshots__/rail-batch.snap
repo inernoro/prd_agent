@@ -7,7 +7,7 @@ aside .flex-col.hidden.overflow-y-auto.shrink-0.xl:flex {gap:10px;overscroll-beh
       "个站点已选"
   button .gap-2.inline-flex.items-center.justify-center {height:38px} [type=button]
     svg
-    "分享成一个合集"
+    "创建合集"
   button .gap-2.inline-flex.items-center.justify-center {height:36px} [type=button]
     svg
     "删除（危险 · 需二次确认）"

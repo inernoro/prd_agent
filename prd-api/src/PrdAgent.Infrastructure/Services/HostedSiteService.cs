@@ -1532,15 +1532,32 @@ public class HostedSiteService : IHostedSiteService
         var fb = Builders<HostedSite>.Filter;
         var filter = fb.And(fb.Eq(x => x.Id, siteId), OwnerOrMemberFilter(userId, myTeamIds));
         var site = await _db.HostedSites.Find(filter).FirstOrDefaultAsync(ct);
-        if (site == null) return null;
+        return site != null && await CanReadQueriedSiteAsync(site, userId, ct) ? AttachDerivedFields(site) : null;
+    }
 
+    public async Task<IReadOnlyDictionary<string, HostedSite>> GetAccessibleByIdsAsync(IEnumerable<string> siteIds, string userId, CancellationToken ct)
+    {
+        var ids = siteIds.Distinct(StringComparer.Ordinal).ToArray();
+        var result = new Dictionary<string, HostedSite>(StringComparer.Ordinal);
+        if (ids.Length == 0) return result;
+        var myTeamIds = await _teams.GetMyTeamIdsAsync(userId, ct);
+        var filter = Builders<HostedSite>.Filter.In(x => x.Id, ids) & OwnerOrMemberFilter(userId, myTeamIds);
+        using var cursor = await _db.HostedSites.Find(filter).ToCursorAsync(ct);
+        while (await cursor.MoveNextAsync(ct))
+            foreach (var site in cursor.Current)
+            {
+                if (!await CanReadQueriedSiteAsync(site, userId, ct)) continue;
+                AttachDerivedFields(site);
+                result.Add(site.Id, site);
+            }
+        return result;
+    }
+
+    private async Task<bool> CanReadQueriedSiteAsync(HostedSite site, string userId, CancellationToken ct)
+    {
         // 受限分组隔离：站点挂在我无权访问的受限分组下时，直查单站点同样不可见
-        if (site.OwnerUserId != userId && !string.IsNullOrWhiteSpace(site.GroupId))
-        {
-            var role = await ResolveSiteRoleAsync(site, userId, ct);
-            if (role == null) return null;
-        }
-        return AttachDerivedFields(site);
+        return site.OwnerUserId == userId || string.IsNullOrWhiteSpace(site.GroupId)
+            || await ResolveSiteRoleAsync(site, userId, ct) != null;
     }
 
     public async Task<(List<HostedSite> Items, long Total)> ListAsync(

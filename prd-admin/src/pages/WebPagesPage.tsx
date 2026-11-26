@@ -1,6 +1,6 @@
 import '@/components/workspace/workspace.css';
 import '@/components/web-hosting/web-hosting-toolbar.css';
-import { HostedCollectionEditor, HostedCollectionLibrary } from '@/components/web-hosting/HostedCollectionManager';
+import { HostedCollectionEditor, HostedCollectionLibrary, type CollectionArrival } from '@/components/web-hosting/HostedCollectionManager';
 import { getWebHostingUploadError, WEB_HOSTING_UPLOAD_ACCEPT, WEB_HOSTING_UPLOAD_EXTENSIONS } from '@/lib/webHostingUploadLimits';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useHostedSiteSelection } from '@/components/web-hosting/useHostedSiteSelection';
@@ -468,8 +468,46 @@ export default function WebPagesPage() {
   // 转知识库目标站点（非 null 时弹出选择文档空间的对话框）
   const [libraryTargetSite, setLibraryTargetSite] = useState<HostedSite | null>(null);
   const [collectionInitialSites, setCollectionInitialSites] = useState<Array<{ id: string; title: string }> | null>(null);
-  const [showCollectionLibrary, setShowCollectionLibrary] = useState(false);
+  const recentCollectionKey = currentUserId ? `web-hosting:recent-collection:${currentUserId}` : null;
+  const [recentCollection, setRecentCollection] = useState<{ key: string; id: string } | null>(null);
+  useEffect(() => {
+    try {
+      const id = recentCollectionKey && sessionStorage.getItem(recentCollectionKey);
+      if (id) setRecentCollection({ key: recentCollectionKey, id });
+    } catch { /* Keep the current-tab state when storage is unavailable. */ }
+  }, [recentCollectionKey]);
+  const collectionEntry = useRef<HTMLButtonElement>(null);
+  const finishCollectionArrival = useCallback(({ id, title, bounds }: CollectionArrival) => {
+    if (recentCollectionKey) {
+      setRecentCollection({ key: recentCollectionKey, id });
+      try { sessionStorage.setItem(recentCollectionKey, id); } catch { /* The current-tab state still works. */ }
+    }
+    const entry = collectionEntry.current;
+    if (!entry || !bounds || !bounds.width || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const destination = entry.getBoundingClientRect();
+    if (!destination.width || !destination.height) return;
+    const tile = document.createElement('div');
+    tile.className = 'collection-flight';
+    tile.setAttribute('aria-hidden', 'true');
+    Object.assign(tile.style, { left: `${bounds.left}px`, top: `${bounds.top}px`, width: `${bounds.width}px`, height: `${bounds.height}px` });
+    const name = document.createElement('span');
+    name.textContent = title;
+    tile.append(name);
+    document.body.append(tile);
+    const targetX = destination.left + destination.width / 2 - bounds.left - bounds.width / 2;
+    const targetY = destination.top + destination.height / 2 - bounds.top - bounds.height / 2;
+    const flight = tile.animate([
+      { transform: 'translate(0,0) scale(1)', opacity: 1, offset: 0 },
+      { transform: 'translate(10px, -16px) scale(.76) rotate(3deg)', opacity: 1, offset: .2 },
+      { transform: `translate(${targetX * .62}px, ${targetY * .7 - 30}px) scale(.38) rotate(-9deg)`, opacity: .95, offset: .65 },
+      { transform: `translate(${targetX}px, ${targetY}px) scale(.12) rotate(-14deg)`, opacity: 0, offset: 1 },
+    ], { duration: 590, easing: 'cubic-bezier(.2,.6,.35,1)' });
+    void flight.finished.then(() => {
+      if (entry.isConnected) entry.animate([{ transform: 'scale(1)' }, { transform: 'scale(1.12)' }, { transform: 'scale(1)' }], { duration: 220 });
+    }, () => undefined).finally(() => tile.remove());
+  }, [recentCollectionKey]);
   const [showShareDialog, setShowShareDialog] = useState(false);
+  const [collectionShareTarget, setCollectionShareTarget] = useState<HostedSite | null>(null);
   const [shareTargetId, setShareTargetId] = useState<string | null>(null);
   const [showSharesPanel, setShowSharesPanel] = useState(false);
   /** 分享下拉的锚点（非 null = 下拉打开）。锚的是被点的那枚按钮，下拉就地展开在它下方 */
@@ -517,7 +555,7 @@ export default function WebPagesPage() {
    * 访客阅读页**不是**第三档 —— 它在独立域名 /s/wp/{token} 上，访客根本不进后台；
    * 后台只保留一个「以访客身份预览」的动作。
    */
-  const [workspaceTab, setWorkspaceTab] = useState<'library' | 'shares'>('library');
+  const [workspaceTab, setWorkspaceTab] = useState<'library' | 'shares' | 'collections'>('library');
 
   useEffect(() => {
     if (checkedRecentDelivery.current || location.search || !seenDeliveryKey) return;
@@ -839,7 +877,7 @@ export default function WebPagesPage() {
 
   const handleBatchShare = () => {
     if (selectedIds.size === 0) return;
-    setCollectionInitialSites(sites.filter(site => selectedIds.has(site.id)).map(site => ({ id: site.id, title: site.title })));
+    setCollectionInitialSites(sites.filter(site => selectedIds.has(site.id)));
   };
 
   const toggleSelect = (id: string) => {
@@ -1257,8 +1295,8 @@ export default function WebPagesPage() {
   }, [moveSiteIntoPersonalFolder, moveSiteIntoTeamGroup]);
 
   // 单组内的卡片/列表渲染，按 viewMode 复用
-  const renderGroupItems = (items: HostedSite[]) =>
-    viewMode === 'grid' ? (
+  const renderGroupItems = (items: HostedSite[], inCollection = false) =>
+    inCollection || viewMode === 'grid' ? (
       <div
         className="grid"
         style={{
@@ -1276,8 +1314,8 @@ export default function WebPagesPage() {
             <SiteCard
               site={site}
               size={cardSize}
-              selected={selectedIds.has(site.id)}
-              selectionMode={selectionMode}
+              selected={!inCollection && selectedIds.has(site.id)}
+              selectionMode={!inCollection && selectionMode}
               fresh={freshIds.has(site.id)}
               shared={sharedSiteIds.has(site.id)}
               shareStats={siteShareStats.get(site.id)}
@@ -1288,11 +1326,15 @@ export default function WebPagesPage() {
               relatedSummary={relatedSummaries[site.id]}
               onNavigateRelated={openRelatedSite}
               onVisit={() => handleVisitSite(site)}
-              onSelect={() => toggleSelect(site.id)}
+              onSelect={() => {
+                if (!inCollection) { toggleSelect(site.id); return; }
+                setWorkspaceTab('library');
+                navigate({ pathname: location.pathname, search: new URLSearchParams({ focusSite: site.id }).toString() }, { state: { webPagesEntry: 'library' } });
+              }}
               onTogglePublic={() => handleMakePublic(site)}
               onEdit={() => { setEditItem(site); setShowUploadDialog(true); }}
               onDelete={() => handleDelete(site.id)}
-              onShare={(anchor) => handleShare(site.id, anchor)}
+              onShare={(anchor) => { if (inCollection) setCollectionShareTarget(site); handleShare(site.id, anchor); }}
               onQrCode={() => setQrSite(site)}
               onTransferToLibrary={() => setLibraryTargetSite(site)}
               onReplaceFile={(file) => setReplaceTarget({ site, file })}
@@ -1349,7 +1391,7 @@ export default function WebPagesPage() {
           网页托管
         </span>
       </div>
-      <Button size="sm" variant="ghost" onClick={() => setShowCollectionLibrary(true)}><FolderOpen size={14} />我的合集</Button>
+      <Button ref={collectionEntry} size="sm" variant="ghost" aria-pressed={workspaceTab === 'collections'} onClick={() => setWorkspaceTab('collections')}><FolderOpen size={14} />我的合集</Button>
                 {/* 语境两档：资产库 / 分享。分享档按钮上的数字与分享档结论句同口径（未过期且未撤销） */}
                 <div className="surface-choice-group" role="group" aria-label="工作区">
                   <button
@@ -1674,6 +1716,7 @@ export default function WebPagesPage() {
         {isMobile ? (
           <div className="px-2 pt-1 flex flex-col gap-2">
             <div className="flex items-center gap-2">
+              <Button ref={collectionEntry} size="sm" variant="ghost" onClick={() => setWorkspaceTab('collections')}><FolderOpen size={14} />我的合集</Button>
               <div className="relative min-w-0 flex-1">
                 <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-token-muted" />
                 <input
@@ -1957,7 +2000,7 @@ export default function WebPagesPage() {
                     >
                       <Link2 size={15} /> 分享管理
                     </button>
-                    <button type="button" onClick={() => { setShowMobileFilters(false); setShowCollectionLibrary(true); }} className="h-11 rounded-[12px] inline-flex items-center justify-center gap-1.5 text-[13px] font-semibold bg-token-nested text-token-primary border border-token-subtle"><FolderOpen size={15} />我的合集</button>
+                    <button type="button" onClick={() => { setShowMobileFilters(false); setWorkspaceTab('collections'); }} className="h-11 rounded-[12px] inline-flex items-center justify-center gap-1.5 text-[13px] font-semibold bg-token-nested text-token-primary border border-token-subtle"><FolderOpen size={15} />我的合集</button>
                     {currentSpace.kind === 'team' && canEditInWebHosting(myWebHostingRole) && (
                       <button
                         type="button"
@@ -2006,6 +2049,9 @@ export default function WebPagesPage() {
         style={!isMobile ? { border: '1px solid var(--border-default)', borderRadius: 'var(--radius-xl)', background: 'var(--bg-base)' } : undefined}
       >
       {!isMobile && desktopTopBar}
+      {workspaceTab === 'collections' && <HostedCollectionLibrary onBack={() => setWorkspaceTab('library')}
+        recentId={recentCollection && recentCollection.key === recentCollectionKey ? recentCollection.id : null}
+        onArrival={finishCollectionArrival} renderCards={items => renderGroupItems(items, true)} />}
       {workspaceTab === 'library' && <nav className="workspace-facets px-3 pt-2" aria-label="网页可见范围筛选">
         <span>当前范围</span>{([{key:'all',label:'全部网页',count:scopedSites.length},{key:'public',label:'已公开',count:scopedSites.filter(site=>site.visibility==='public').length},{key:'restricted',label:'未公开',count:scopedSites.filter(site=>site.visibility!=='public').length}] as const).map(filter=><button type="button" key={filter.key} aria-pressed={visibilityFilter===filter.key} onClick={()=>setVisibilityFilter(filter.key)}>{filter.label} {loading ? '—' : filter.count}</button>)}<span>已载入范围 · 保留原分享权限</span>
       </nav>}
@@ -2311,7 +2357,7 @@ export default function WebPagesPage() {
 
       {/* 分享下拉：点卡片「分享」的主入口。一步生成 + 就地改两项设置，不开弹窗 */}
       {quickShareAnchor && shareTargetId && (() => {
-        const target = sites.find((s) => s.id === shareTargetId);
+        const target = sites.find((s) => s.id === shareTargetId) ?? (collectionShareTarget?.id === shareTargetId ? collectionShareTarget : null);
         if (!target) return null;
         return (
           <QuickSharePopover
@@ -2325,13 +2371,13 @@ export default function WebPagesPage() {
         );
       })()}
 
-      {collectionInitialSites && <HostedCollectionEditor initialSites={collectionInitialSites} onClose={() => { setCollectionInitialSites(null); void loadShares(); }} />}
-      {showCollectionLibrary && <HostedCollectionLibrary onClose={() => { setShowCollectionLibrary(false); void loadShares(); }} />}
+      {collectionInitialSites && <HostedCollectionEditor initialSites={collectionInitialSites} onArrival={finishCollectionArrival}
+        onClose={() => { setCollectionInitialSites(null); setSelectedIds(new Set()); void loadShares(); }} />}
 
       {/* Share Dialog（高级设置 + 拖拽快速分享等非下拉路径） */}
       {showShareDialog && (
         <ShareDialog
-          site={shareTargetId ? (sites.find(x => x.id === shareTargetId) ?? null) : null}
+          site={shareTargetId ? (sites.find(x => x.id === shareTargetId) ?? (collectionShareTarget?.id === shareTargetId ? collectionShareTarget : null)) : null}
           existingShareCount={shareTargetId ? shareLinks.filter(l => isLinkActive(l) && (l.siteId === shareTargetId || l.siteIds?.includes(shareTargetId))).length : 0}
           siteId={shareTargetId}
           siteIds={shareTargetId ? undefined : [...selectedIds]}

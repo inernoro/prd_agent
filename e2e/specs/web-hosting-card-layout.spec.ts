@@ -808,3 +808,150 @@ for (const theme of ['light', 'dark'] as const) {
     await expect(page.locator('.ledger-directory .hosted-share-member')).toHaveCount(4);
   });
 }
+
+// 从资产库入口验证批量创建、保存、分享和回读，测试数据不写入运行环境。
+for (const mobile of [false, true]) test.describe(mobile ? '手机合集' : '桌面合集', () => {
+  const viewport = mobile ? { width: 390, height: 844 } : { width: 1440, height: 960 };
+  test.use({ viewport, isMobile: mobile, hasTouch: mobile });
+
+  test('批量创建合集可直接保存，分享后收进我的合集并分组回读', async ({ page }, testInfo) => {
+    const errors: string[] = [];
+    page.on('pageerror', error => {
+      // Playwright 的 service-worker 拦截脚本也会注入安全隔离的网页缩略图。
+      if (!error.message.startsWith("Failed to read the 'serviceWorker' property from 'Navigator': Service worker is disabled because the context is sandboxed")) {
+        errors.push(error.message);
+      }
+    });
+    await page.emulateMedia({ reducedMotion: mobile ? 'reduce' : 'no-preference' });
+    await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+    const date = new Date().toISOString();
+    const titles = ['架构决策记录', '读书会参考资料', '关于技术决策的参考资料与现有工程实践说明'.repeat(4)];
+    const sites = titles.map((title, index) => ({
+      id: `collection-site-${index}`, title, sourceType: 'upload', cosPrefix: '', entryFile: 'index.html',
+      siteUrl: `https://hosting.example/collection-${index}/index.html`, contentShape: 'self-contained-html',
+      files: [], totalSize: 400, tags: [], folderCanonicalName: '', visibility: 'private',
+      ownerUserId: 'collection-qa', viewCount: 0, createdAt: date, updatedAt: date,
+    }));
+    const compat = '/api/web-pages/collections/compat';
+    const proposed = ['架构实践合集', '决策参考合集', '技术共读合集'];
+    let namesRequested = 0;
+    let payload: { title: string; mainSiteId: string; siteIds: string[] } | undefined;
+    let shares: Record<string, unknown>[] = [];
+    await page.addInitScript(() => {
+      if (window.top !== window.self) return;
+      localStorage.setItem('prd-admin-auth', JSON.stringify({ state: {
+        isAuthenticated: true, user: { userId: 'collection-qa', username: 'collection-qa', role: 'ADMIN' },
+        token: 'collection-qa-session', permissions: ['access', 'web-pages.read', 'web-pages.write'],
+        permissionsLoaded: true, menuCatalog: [], menuCatalogLoaded: true,
+      }, version: 0 }));
+    });
+    const documentHtml = (index: number) => `<!doctype html><body style="background:${['#ebe2d3', '#14241f', '#e6eef4'][index]};color:${index === 1 ? '#e6eeeb' : '#1e2833'};padding:58px;font:32px system-ui"><p>技术笔记</p><h1>${titles[index].slice(0, 24)}</h1><hr><p>阅读资料 · 应用实例与讨论</p></body>`;
+    await page.route('https://hosting.example/**', route => {
+      const index = Number(/collection-(\d)/.exec(new URL(route.request().url()).pathname)?.[1] ?? 0);
+      return route.fulfill({ contentType: 'text/html', body: documentHtml(index) });
+    });
+    const details = () => ({
+      collection: payload ? { ...payload, id: 'collection-qa', ownerUserId: 'collection-qa', version: 1, shareGeneration: 1, isDissolved: false, updatedAt: date } : null,
+      sites, shares,
+    });
+    await page.route('**/api/**', async route => {
+      const req = route.request();
+      const path = new URL(req.url()).pathname;
+      let data: unknown = { items: [], total: 0, folders: [], tags: [], teams: [] };
+      if (path === '/api/authz/me') data = { effectivePermissions: ['access', 'web-pages.read', 'web-pages.write'], menuCatalog: [], isRoot: false };
+      if (path === '/api/web-pages') data = { items: sites, total: sites.length };
+      if (path === '/api/changelog/current-week') data = { weekStart: date, weekEnd: date, fetchedAt: date,
+        dataSourceAvailable: true, source: 'local', totalDays: 0, totalEntries: 0, daysOffset: 0, hasMore: false, fragments: [] };
+      const documentIndex = sites.findIndex(site => path === `/api/web-pages/${site.id}/content`);
+      if (documentIndex !== -1) data = { html: documentHtml(documentIndex) };
+      if (path === `${compat}/candidates`) data = { items: sites, total: 3 };
+      if (path === `${compat}/name-suggestions`) {
+        namesRequested++;
+        expect(req.postDataJSON()).toEqual({ siteIds: sites.map(site => site.id) });
+        data = { names: proposed };
+      }
+      if (path === compat && req.method() === 'POST') { payload = req.postDataJSON(); data = details(); }
+      if (path === compat && req.method() === 'GET') data = {
+        items: payload ? [details().collection] : [], total: payload ? 1 : 0,
+        members: Object.fromEntries(sites.map(site => [site.id, site])),
+      };
+      if (path === `${compat}/collection-qa`) data = details();
+      if (path === `${compat}/collection-qa/sharing-preview`) data = { fingerprint: 'proof', version: 1, canShare: true, items: [], notice: '' };
+      if (path.includes('private-sources')) data = { requiresConfirmation: false, items: [] };
+      if (path === `${compat}/collection-qa/shares`) {
+        expect(req.postDataJSON()).toMatchObject({ collectionVersion: 1, permissionFingerprint: 'proof', visibility: 'logged-in', expiresInDays: 7 });
+        const share = { id: 'share-qa', token: 'collection-token', shareUrl: '/s/wp/collection-token', visibility: 'logged-in', expiresAt: new Date(Date.now() + 7 * 86400000).toISOString() };
+        data = share;
+        shares = [{ ...share, siteIds: payload?.siteIds, active: true, isRevoked: false, needsUpdate: false, collectionVersion: 1, memberCount: 3 }];
+      }
+      await route.fulfill({ json: { success: true, data, error: null } });
+    });
+    await page.goto('/web-pages');
+    await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, mobile ? 'light' : 'dark');
+    const cards = page.locator('[data-tour-id="webpages-card"]');
+    await expect(cards).toHaveCount(3);
+    if (!mobile) await page.getByLabel('批量选择', { exact: true }).click();
+    for (const card of await cards.all()) await card.getByRole('button', { name: '选择', exact: true }).click();
+    await page.getByRole('button', { name: '创建合集', exact: true }).click();
+    const editor = page.getByRole('dialog', { name: '创建合集' });
+    await expect(editor.getByRole('textbox', { name: '合集名称', exact: true })).toHaveValue(proposed[0]);
+    expect(namesRequested).toBe(1);
+    await expect(editor.getByRole('article')).toHaveCount(3);
+    await expect(editor.getByRole('article').first()).toContainText('主文档');
+    const candidate = editor.getByRole('button', { name: titles[2], exact: true }).locator('span');
+    expect(await candidate.evaluate(el => getComputedStyle(el).whiteSpace === 'nowrap' && el.scrollWidth > el.clientWidth)).toBe(true);
+    await expect(editor.locator('iframe')).toHaveCount(3);
+    await page.screenshot({ path: testInfo.outputPath('collection-create.png') });
+    await editor.getByRole('textbox', { name: '合集名称', exact: true }).fill('arc');
+    await editor.getByRole('button', { name: '保存合集' }).click();
+    await expect.poll(() => payload).toMatchObject({ title: 'arc', mainSiteId: sites[0].id, siteIds: sites.map(site => site.id) });
+    expect(shares).toHaveLength(0);
+    const manager = page.getByRole('dialog', { name: '管理合集' });
+    await expect(manager.getByRole('button', { name: '撤销合集' })).toBeVisible();
+    await manager.getByRole('button', { name: '生成分享链接' }).click();
+    const panel = page.getByRole('dialog', { name: '分享', exact: true });
+    await expect(panel.getByRole('textbox', { name: '分享链接' })).toHaveValue(/\/s\/wp\/collection-token$/);
+    expect(await panel.evaluate(el => getComputedStyle(el.parentElement!).backgroundColor)).toBe('rgba(0, 0, 0, 0)');
+    await panel.getByRole('button', { name: '复制', exact: true }).click();
+    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toMatch(/\/s\/wp\/collection-token$/);
+    const box = (await panel.boundingBox())!;
+    expect(box.x + box.width).toBeGreaterThan(viewport.width - 31);
+    expect(box.y + box.height).toBeGreaterThan(viewport.height - 31);
+    await page.screenshot({ path: testInfo.outputPath('collection-share.png') });
+    if (mobile) await page.touchscreen.tap(10, 32);
+    else {
+      await page.evaluate(() => {
+        const observer = new MutationObserver(records => {
+          const flight = records.some(record => [...record.addedNodes].some(node => node instanceof Element && node.matches('.collection-flight')));
+          if (flight) {
+            document.documentElement.dataset.collectionFlightObserved = 'true';
+            observer.disconnect();
+          }
+        });
+        observer.observe(document.body, { childList: true });
+      });
+      await page.mouse.click(40, 300);
+      await expect(page.locator('html')).toHaveAttribute('data-collection-flight-observed', 'true');
+    }
+    await expect(panel).toHaveCount(0);
+    await expect(manager).toHaveCount(0);
+    await page.getByRole('button', { name: '我的合集', exact: true }).click();
+    const group = page.getByRole('region', { name: 'arc' });
+    await expect(group).toBeVisible();
+    await expect(group.getByText('刚收入')).toBeVisible();
+    await expect(group.locator('[data-tour-id="webpages-card"]')).toHaveCount(3);
+    await expect(page.locator('.collection-flight')).toHaveCount(0);
+    await page.screenshot({ path: testInfo.outputPath('collection-library.png') });
+    await page.reload();
+    await page.getByRole('button', { name: '我的合集', exact: true }).click();
+    await group.getByRole('button', { name: '管理合集：arc' }).click();
+    await expect(manager.getByRole('textbox', { name: '合集名称', exact: true })).toHaveValue('arc');
+    await expect(manager.getByRole('article').first()).toContainText(titles[0]);
+    await manager.getByRole('button', { name: '生成分享链接' }).click();
+    await expect(panel.getByRole('textbox', { name: '分享链接' })).toHaveValue(/\/s\/wp\/collection-token$/);
+    await panel.getByRole('button', { name: '关闭', exact: true }).click();
+    await expect(manager).toHaveCount(0);
+    expect(namesRequested).toBe(1);
+    expect(errors).toEqual([]);
+  });
+});

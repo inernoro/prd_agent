@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Check, ChevronRight, Copy, Eye, Globe, Lock, QrCode, Settings2, Share2, Timer, Trash2, Users } from 'lucide-react';
 
 // 加载态一律走 MapSpinner（frontend-architecture 的强制规则）：品牌色与动效语言要统一，
@@ -10,6 +10,7 @@ import { AnchoredMenu } from '@/components/ui/AnchoredMenu';
 import { toast } from '@/lib/toast';
 import { createSiteShareLink, getSitesPrivateSources, listSiteShares, revokeSiteShare, updateSiteShareSettings } from '@/services';
 import type { ShareLinkItem } from '@/services/real/webPages';
+import type { ApiResponse } from '@/types/api';
 import {
   EXPIRY_OPTIONS,
   QUICK_SHARE_DEFAULTS,
@@ -42,6 +43,8 @@ export function QuickSharePopover({
   onClose,
   onLinksChanged,
   onOpenAdvanced,
+  collection,
+  onBusyChange,
 }: {
   anchorEl: HTMLElement | null;
   site: { id: string; title: string };
@@ -52,6 +55,14 @@ export function QuickSharePopover({
   onLinksChanged: () => void;
   /** 「高级设置」：交给原来的完整配置弹窗 */
   onOpenAdvanced: () => void;
+  collection?: {
+    link: ShareLinkItem | null;
+    memberIds: string[];
+    create: (fingerprint?: string) => Promise<ApiResponse<ShareLinkItem>>;
+    findCurrent: () => Promise<ApiResponse<ShareLinkItem | null>>;
+    autoCreate: boolean;
+  };
+  onBusyChange?: (busy: boolean) => void;
 }) {
   const origin = typeof window === 'undefined' ? '' : window.location.origin;
   // 本地那份链接：生成/改完之后先在面板里就地生效，不等外层列表重拉回来
@@ -60,9 +71,15 @@ export function QuickSharePopover({
   const [busy, setBusy] = useState<null | 'create' | 'visibility' | 'expiry' | 'revoke'>(null);
   const [openRow, setOpenRow] = useState<null | 'visibility' | 'expiry'>(null);
   const [showQr, setShowQr] = useState(false);
+  const autoStarted = useRef(false);
+  const creating = useRef(false);
 
-  const fromList = useMemo(() => pickQuickShareLink(links, site.id), [links, site.id]);
-  const link = localLink ?? fromList;
+  const siteLink = useMemo(() => pickQuickShareLink(links, site.id), [links, site.id]);
+  const fromList = collection ? collection.link : siteLink;
+  const shownLink = localLink ?? fromList;
+  const link = shownLink?.isRevoked ? null : shownLink;
+
+  useEffect(() => { onBusyChange?.(busy !== null); }, [busy, onBusyChange]);
 
   // 外层重拉回来之后就以列表为准：本地那份是过渡态，留着会盖住别处（如分享档）做的改动
   useEffect(() => {
@@ -80,9 +97,33 @@ export function QuickSharePopover({
     }
   };
 
-  const handleCreate = async () => {
+  const handleCreate = async (copyOnSuccess = true) => {
+    if (creating.current) return;
+    creating.current = true;
     setBusy('create');
     try {
+      if (collection) {
+        const existing = await collection.findCurrent();
+        if (!existing.success) {
+          toast.error('暂时无法核对已有链接', existing.error?.message ?? '请稍后重试');
+          return;
+        }
+        if (existing.data) { setLocalLink(existing.data); return; }
+        const gated = await runWithPrivateSourceGate({
+          inspect: () => getSitesPrivateSources(collection.memberIds),
+          run: collection.create,
+          actionLabel: '生成合集分享链接',
+        });
+        if (gated.status !== 'done') return;
+        if (!gated.res.success) {
+          toast.error('生成失败', gated.res.error?.message ?? '请稍后重试');
+          return;
+        }
+        setLocalLink(gated.res.data);
+        if (copyOnSuccess) await copy(quickShareUrl(origin, gated.res.data));
+        onLinksChanged();
+        return;
+      }
       // 建之前按站点再问一次服务端。外层那份 links 是全局最近 100 条，这个站点的链接
       // 落在窗口外时它是空的，直接 forceNew 就会给一个其实已经分享过的站点再建一条，
       // 而卡片上还一直显示未分享。带 siteId 的查询不受那个窗口影响。
@@ -143,7 +184,10 @@ export function QuickSharePopover({
       });
       await copy(`${origin}${res.data.shareUrl}`);
       onLinksChanged();
+    } catch {
+      toast.error('生成结果暂时无法确认', '请重新打开分享面板核对已生成的链接');
     } finally {
+      creating.current = false;
       setBusy(null);
     }
   };
@@ -203,24 +247,27 @@ export function QuickSharePopover({
     }
   };
 
+  useEffect(() => {
+    if (!collection?.autoCreate || link || autoStarted.current) return;
+    const timer = window.setTimeout(() => {
+      autoStarted.current = true;
+      void handleCreate(false);
+    }, 0);
+    return () => window.clearTimeout(timer);
+    // Opening the collection panel is the explicit generation action. A failed attempt stays retryable in the panel.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [!!collection]);
+
   const url = link ? quickShareUrl(origin, link) : '';
   // 存量链接没有这个字段，按后端读路径的口径当 public——不是当 owner-only（见 resolveVisibility）
   const visibility: ShareVisibility = link ? resolveVisibility(link) : 'public';
 
-  return (
-    <AnchoredMenu
-      open
-      onClose={onClose}
-      anchorEl={anchorEl}
-      align="left"
-      minWidth={330}
-      style={{ padding: 12, maxWidth: 'min(360px, calc(100vw - 24px))' }}
-    >
-      <div className="flex items-center gap-2 pb-2.5">
+  const contents = <>
+      {!collection && <div className="flex items-center gap-2 pb-2.5">
         <Share2 size={13} style={{ color: 'var(--text-secondary)' }} />
         <span className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>分享</span>
         <span className="ml-auto truncate text-[11px]" style={{ color: 'var(--text-muted)', maxWidth: 170 }}>{site.title}</span>
-      </div>
+      </div>}
 
       {link ? (
         <>
@@ -232,6 +279,7 @@ export function QuickSharePopover({
           <div className="rounded-[10px] p-2.5" style={{ background: 'var(--selection-bg)', border: '1px solid var(--selection-border)' }}>
             <div className="flex items-center gap-1.5">
               <input
+                aria-label="分享链接"
                 value={url}
                 readOnly
                 onFocus={(e) => e.currentTarget.select()}
@@ -362,7 +410,7 @@ export function QuickSharePopover({
           </p>
           <button
             type="button"
-            onClick={handleCreate}
+            onClick={() => void handleCreate()}
             disabled={busy === 'create'}
             className="flex h-9 w-full cursor-pointer items-center justify-center gap-1.5 rounded-[9px] text-[12.5px] font-semibold disabled:opacity-70"
             style={{ background: 'var(--accent-primary)', color: 'var(--accent-on-solid)' }}
@@ -380,7 +428,17 @@ export function QuickSharePopover({
           </button>
         </>
       )}
-    </AnchoredMenu>
+    </>;
+
+  return collection ? contents : (
+    <AnchoredMenu
+      open
+      onClose={onClose}
+      anchorEl={anchorEl}
+      align="left"
+      minWidth={330}
+      style={{ padding: 12, maxWidth: 'min(360px, calc(100vw - 24px))' }}
+    >{contents}</AnchoredMenu>
   );
 }
 

@@ -160,6 +160,8 @@ public interface IHostedSiteService
 
     Task<HostedSite?> GetByIdAsync(string siteId, string userId, CancellationToken ct = default);
 
+    Task<IReadOnlyDictionary<string, HostedSite>> GetAccessibleByIdsAsync(IEnumerable<string> siteIds, string userId, CancellationToken ct = default);
+
     Task<(List<HostedSite> Items, long Total)> ListAsync(
         string userId, string? keyword, string? folder,
         string? tag, string? sourceType, string sort,

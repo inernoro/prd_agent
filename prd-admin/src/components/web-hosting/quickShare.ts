@@ -139,13 +139,14 @@ export function expiryLabel(expiresAt: string | undefined, now: number = Date.no
  */
 export function describeQuickShare(link: ShareLinkItem, now: number = Date.now()): string {
   const v = resolveVisibility(link);
+  const isCollection = link.shareType === 'collection';
   // 三档的措辞必须与 ./shareVisibility 的 SSOT 同义。owner-only 这一档尤其不能写成
   // 「只有你自己」——后端放行的是「创建者 + 站点已共享团队的成员」。上一轮改标签时
   // 漏了这一句，同一个面板于是自相矛盾：选项写「我和协作者」，上面这句写「只有你自己」。
   const who = v === 'public'
     ? '任何拿到链接的人（含未登录）'
     : v === 'owner-only'
-      ? '你自己和这个站点的协作者'
+      ? isCollection ? '你自己和有权访问的协作者' : '你自己和这个站点的协作者'
       : '任何登录的人';
   // 密码这句要看档：owner-only 能进来的人（创建者 + 站点已共享团队的成员）在后端
   // 都走 IsTeamInsiderForShareAsync 免密，进不来的人则在密码之前就被可见性挡掉——
@@ -153,5 +154,5 @@ export function describeQuickShare(link: ShareLinkItem, now: number = Date.now()
   // 与 SharePreviewPane 那六种门同一口径（那边刚修过，这里是同一个错的第二份）。
   const pwd = link.accessLevel === 'password' && v !== 'owner-only' ? '，还需要输密码' : '';
   const life = link.expiresAt ? expiryLabel(link.expiresAt, now) : '永不过期';
-  return `${who}都能打开这个站点${pwd}；${life}。`;
+  return `${who}都能打开${isCollection ? '这个合集' : '这个站点'}${pwd}；${life}。`;
 }

@@ -1176,6 +1176,14 @@ public static class Admin
     public static class WebHosting
     {
         [AppCallerMetadata(
+            "网页托管-合集命名",
+            "根据选中网页的标题一次建议三个合集名称",
+            ModelTypes = new[] { ModelTypes.Intent },
+            Category = "Document"
+        )]
+        public const string CollectionNames = "prd-agent-web.web-hosting.collection-names::intent";
+
+        [AppCallerMetadata(
             "网页托管-向我提问",
             "访客在托管页面右下角提问，模型只依据该页面正文回答",
             ModelTypes = new[] { ModelTypes.Chat },

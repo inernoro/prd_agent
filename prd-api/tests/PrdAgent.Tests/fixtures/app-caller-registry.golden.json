@@ -618,6 +618,12 @@
     ]
   },
   {
+    "code": "prd-agent-web.web-hosting.collection-names::intent",
+    "modelTypes": [
+      "intent"
+    ]
+  },
+  {
     "code": "prd-agent-web.web-hosting.edit-html::chat",
     "modelTypes": [
       "chat"

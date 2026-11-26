@@ -302,7 +302,7 @@ export function SiteBatchPanel({
             color: 'var(--accent-on-primary)',
           }}
         >
-          <Share2 size={14} /> 分享成一个合集
+          <Share2 size={14} /> 创建合集
         </button>
       )}
 

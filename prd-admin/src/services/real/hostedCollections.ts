@@ -30,19 +30,24 @@ export async function readHostedCollectionShare(token: string, password?: string
 
 // 已有目录记录保持独立存储与原分享凭证；主分支接口继续使用原有契约。
 import type { RelatedDocuments, RelatedPermissionPreview, RelatedSyncResult } from './relatedDocuments';
-import type { createShareLink } from './webPages';
+import type { createShareLink, HostedSite, ShareLinkItem } from './webPages';
 type CreateShareLinkRequest = Parameters<typeof createShareLink>[0];
 
 export interface HostedCollection {
   id: string; ownerUserId: string; title: string; siteIds: string[]; mainSiteId: string;
   version: number; shareGeneration: number; isDissolved: boolean; updatedAt: string;
 }
-export interface CollectionMember { id: string; title: string; available?: boolean }
+export interface CollectionMember extends Partial<Pick<HostedSite,
+  'coverImageUrl' | 'siteUrl' | 'entryFile' | 'wrappedAssetType' | 'contentShape' | 'requiresPreviewBridge' | 'totalSize'>> {
+  id: string; title: string; available?: boolean;
+}
 export interface CollectionDetails {
   collection: HostedCollection | null;
   sites: CollectionMember[];
   legacyShare?: { id: string; title?: string; siteIds: string[] };
-  shares: { id: string; token: string; visibility: string; expiresAt?: string; active: boolean; isRevoked: boolean; needsUpdate: boolean; memberCount: number; collectionVersion: number }[];
+  shares: (Pick<ShareLinkItem, 'id' | 'token' | 'visibility' | 'expiresAt' | 'isRevoked'> &
+    Partial<Pick<ShareLinkItem, 'siteIds' | 'createdAt' | 'viewCount' | 'accessLevel'>> &
+    { active: boolean; needsUpdate: boolean; memberCount: number; collectionVersion: number })[];
 }
 export interface CollectionDraft { title: string; siteIds: string[]; mainSiteId: string; version: number }
 export interface CollectionSharingPreview {
@@ -65,7 +70,10 @@ const contextPath = (siteId: string, contextId?: string) => `/api/web-pages/${en
 export const getCollectionContexts = (siteId: string, page = 1, keyword = '') => apiRequest<CollectionContextPage>(`${contextPath(siteId)}?${new URLSearchParams({ page: String(page), keyword })}`);
 export const getCollectionContextDocuments = (siteId: string, contextId: string) => apiRequest<RelatedDocuments>(`${contextPath(siteId, contextId)}/documents`);
 export const getCollectionContextLinks = (siteId: string, contextId: string, page = 1) => apiRequest<{ items: CollectionHistoryItem[]; total: number; page: number; pageSize: number }>(`${contextPath(siteId, contextId)}/links?${new URLSearchParams({ page: String(page) })}`);
-export const listCollections = (keyword = '', page = 1) => apiRequest<{ items: HostedCollection[]; total: number; page: number; pageSize: number }>(`${legacyRoot}?${new URLSearchParams({ keyword, page: String(page) })}`);
+export const listCollections = (keyword = '', page = 1, recentId?: string) => apiRequest<{
+  items: HostedCollection[]; recent?: HostedCollection; members: Record<string, HostedSite>; total: number; page: number; pageSize: number;
+}>(`${legacyRoot}?${new URLSearchParams({ keyword, page: String(page), includeMembers: 'true', ...(recentId ? { recentId } : {}) })}`);
+export const suggestCollectionNames = (siteIds: string[], signal: AbortSignal) => apiRequest<{ names: string[] }>(`${legacyRoot}/name-suggestions`, { method: 'POST', body: { siteIds: siteIds.slice(0, 12) }, signal, timeoutMs: 1800 });
 export const getCollection = (id: string) => apiRequest<CollectionDetails>(path(id));
 export const getCollectionByShare = (token: string) => apiRequest<CollectionDetails>(`${legacyRoot}/by-share/${encodeURIComponent(token)}`);
 export const createCollection = (body: CollectionDraft) => apiRequest<CollectionDetails>(legacyRoot, { method: 'POST', body });
@@ -77,4 +85,4 @@ export const dissolveCollection = (id: string, version: number) => apiRequest(pa
 export const previewCollectionPermissions = (id: string) => apiRequest<RelatedPermissionPreview>(path(id) + '/permissions');
 export const syncCollectionPermissions = (id: string, fingerprint: string, revokeTargetShares: boolean) => apiRequest<RelatedSyncResult>(path(id) + '/permissions/sync', { method: 'POST', body: { fingerprint, revokeTargetShares } });
 export const previewCollectionSharing = (id: string) => apiRequest<CollectionSharingPreview>(path(id) + '/sharing-preview');
-export const createCollectionShare = (id: string, body: CreateShareLinkRequest & { collectionVersion: number; permissionFingerprint: string }) => apiRequest<{ id: string; token: string; shareUrl: string; password?: string }>(path(id) + '/shares', { method: 'POST', body });
+export const createCollectionShare = (id: string, body: CreateShareLinkRequest & { collectionVersion: number; permissionFingerprint: string }) => apiRequest<{ id: string; token: string; shareUrl: string; password?: string; expiresAt?: string; visibility: ShareLinkItem['visibility']; shortSeq?: number }>(path(id) + '/shares', { method: 'POST', body });

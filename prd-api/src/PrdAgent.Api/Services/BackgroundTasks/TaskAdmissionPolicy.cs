@@ -42,6 +42,8 @@ public static class TaskAdmissionPolicies
         Add("ChatRunsController", "CreateRun", new[] { "prd-agent-desktop.", "prd-agent.guide", "prd-agent.skill-gen" }, root: true);
         Register("IntentController", "SuggestGroupName",
             new[] { AppCallerRegistry.Desktop.GroupName.SuggestIntent }, true, 128);
+        Register("WebPagesController", "SuggestCollectionNames",
+            new[] { AppCallerRegistry.Admin.WebHosting.CollectionNames }, false, 1, 1);
         Register("GroupsController", "Create",
             new[] { AppCallerRegistry.Desktop.GroupName.SuggestIntent }, true, 1, 1,
             timing: TaskAdmissionTiming.AuthenticatedPaidBranch);

@@ -284,6 +284,8 @@ public sealed class WebPagesCollectionHistoryTests
         typeof(MongoDbContext).GetField("_database", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(context, db.Object);
         var service = new Mock<IHostedSiteService>(MockBehavior.Strict);
         service.Setup(x => x.GetByIdAsync("site-a", "owner-user", CancellationToken.None)).ReturnsAsync(new HostedSite { Id = "site-a" });
+        service.Setup(x => x.GetAccessibleByIdsAsync(It.Is<IEnumerable<string>>(ids => ids.SequenceEqual(new[] { "site-a" })), "owner-user", CancellationToken.None))
+            .ReturnsAsync(new Dictionary<string, HostedSite> { ["site-a"] = new HostedSite { Id = "site-a" } });
         return Build(service.Object, context);
     }
 

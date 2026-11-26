@@ -191,7 +191,8 @@ describe('确认层文案与宿主', () => {
     const popover = read('QuickSharePopover.tsx');
     const page = read('../../pages/WebPagesPage.tsx');
     expect(session).toMatch(/runWithPrivateSourceGate\(\{\s*inspect: \(\) => getRevisionPrivateSources/);
-    expect(popover.match(/runWithPrivateSourceGate\(/g)?.length).toBe(2);
+    expect(popover.match(/runWithPrivateSourceGate\(/g)?.length).toBe(3);
+    expect(popover).toMatch(/runWithPrivateSourceGate\(\{\s*inspect: \(\) => getSitesPrivateSources\(collection\.memberIds\),\s*run: collection\.create/);
     // 改可见性那一处必须按「当前 → 目标」判放宽，不能只看目标档位（否则公开改登录可见也会弹确认）。
     expect(popover).toContain('isWideningBeyondCollaborators(link.visibility, body.visibility)');
     expect(page.match(/runWithPrivateSourceGate\(/g)?.length).toBe(3);
