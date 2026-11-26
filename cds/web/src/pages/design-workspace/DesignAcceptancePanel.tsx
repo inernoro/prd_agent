@@ -56,14 +56,22 @@ export function DesignAcceptancePanel({ entry, version, busy, canWrite, canRevie
   requirement?: DesignRequirement; onOpen?: OpenAcceptance; onOpenPrototype?: () => void; installedAcceptance?: boolean; actorId?: string;
 }) {
   const [params, setParams] = useSearchParams();
-  const [runId, setRunId] = useState(params.get('run') ?? '');
+  const runId = params.get('run');
+  const selectRun = (id: string) => setParams(former => {
+    const next = new URLSearchParams(former);
+    if (id) next.set('run', id);
+    else next.delete('run');
+    return next;
+  });
   const [pr, setPr] = useState(String(entry.pullRequest ?? ''));
-  const [selected, setSelected] = useState<DesignCell>();
+  const [selection, setSelection] = useState<{ runId: string; cell: DesignCell }>();
   const [binding, setBinding] = useState(false);
   const [disableReason, setDisableReason] = useState('');
   const [previewRevision, refreshPreview] = useState(0);
   const runs = entry.runs.filter(row => row.version === version.version);
   const run = runs.find(row => row.id === runId) ?? runs.at(-1);
+  const selected = selection?.runId === run?.id ? selection?.cell : undefined;
+  const setSelected = (cell?: DesignCell) => setSelection(cell && run ? { runId: run.id, cell } : undefined);
   const installed = run?.target === 'installed';
   const [source, chooseSource] = useState(installedAcceptance && (installed || !entry.pullRequest) ? 'installed' : 'preview');
   const targetInstalled = installedAcceptance && source === 'installed';
@@ -91,17 +99,17 @@ export function DesignAcceptancePanel({ entry, version, busy, canWrite, canRevie
     ['待补证据', pending.length],
     ['已记债', new Set(cells.flatMap(cell => cell.debtId ? [cell.debtId] : [])).size],
   ] as const;
-  const methodData = designMethodPlanEnabled(version) ? designMethodsState(version, run, entry) : undefined;
+  const allMethods = designMethodsState(version, run, entry);
+  const methodData = designMethodPlanEnabled(version) ? allMethods : undefined;
   const objective = methodData?.objective === true;
   const structuredOverview = Boolean(methodData || version.goals?.length);
   const programRequired = designProgramEvidenceRequired(version);
   const proof = designProgramStatus(version, run);
-  const activeMethod = methodData?.methods.find(method => method.id === params.get('check'));
+  const activeMethod = allMethods.displayMethods.find(method => method.id === params.get('check'));
   const methodOpen = activeMethod?.status !== 'not_applicable' && activeMethod?.status !== 'disabled';
   const requestedCheck = params.get('check');
   const fallbackComparison = !methodData && version.screens.length > 0;
-  const check: AcceptanceCheck = requestedCheck === 'rules' && items.length ? 'rules'
-    : requestedCheck === 'compare' && fallbackComparison ? 'compare' : activeMethod?.id ?? 'overview';
+  const check: AcceptanceCheck = requestedCheck === 'rules' && items.length ? 'rules' : activeMethod?.id ?? 'overview';
   const video = version.videos?.find(item => item.page === 'accept');
   const generateDemo = programRequired || (objective && !video && Boolean(version.goals?.length));
   const animation = generateDemo && methodData
@@ -143,7 +151,7 @@ export function DesignAcceptancePanel({ entry, version, busy, canWrite, canRevie
   const staleSignature = stale && !!run && entry.currentSignoffRunId === run.id;
   useEffect(() => { if (staleSignature) onPreviewStale(); }, [staleSignature, onPreviewStale]);
   const isBaseline = entry.frozen === version.version;
-  const canSetMethods = canReview && isBaseline && !run?.signed;
+  const canSetMethods = objective && canReview && isBaseline && !run?.signed;
   const setDisablePanel = (open: boolean) => {
     setDisableReason('');
     setParams(former => {
@@ -167,7 +175,7 @@ export function DesignAcceptancePanel({ entry, version, busy, canWrite, canRevie
     ? send(action, { runId: run.id, commit: run.commit, ...fields }) : Promise.resolve(false);
   const start = async () => {
     if (await send('acceptance.start', { version: version.version, ...(targetInstalled ? { target: 'installed' } : { pullRequest: Number(pr) }) })) {
-      setRunId('');
+      selectRun('');
       refreshPreview(value => value + 1);
     }
   };
@@ -320,10 +328,10 @@ export function DesignAcceptancePanel({ entry, version, busy, canWrite, canRevie
     }
   }
   return <section className="dw-acceptance dw-ac" data-objective={objective || undefined}>
-    {(methodData || items.length > 0 || fallbackComparison) && <AcceptanceMethodTabs active={check} methods={methodData?.methods ?? []}
-      overall={overall} objective={objective} ruleCount={items.length} fallbackComparison={fallbackComparison} go={go} />}
-    <div id={methodData || items.length || fallbackComparison ? 'dw-ac-method-panel' : undefined} role={methodData || items.length || fallbackComparison ? 'tabpanel' : undefined}
-      aria-labelledby={methodData || items.length || fallbackComparison ? `dw-ac-tab-${check}` : undefined}>
+    <AcceptanceMethodTabs active={check} methods={allMethods.displayMethods}
+      overall={overall} objective={objective} ruleCount={items.length} go={go} />
+    <div id="dw-ac-method-panel" role="tabpanel" aria-labelledby={`dw-ac-tab-${check}`}>
+    {!methodData && <p className="dw-dl-missing dw-acceptance-plan-missing" role="status"><strong>验收计划待配置</strong> · 可查看本版已有的规则和运行记录。在续版中补齐验收计划。</p>}
     <ol className="dw-dl-items dw-surface dw-ac-items">
       {activeMethod && animation.length > 0 && <li data-item="method-video">
         <DesignAcceptanceAnimation key={activeMethod.id} title={activeMethod.name} compact chapters={animation.filter(chapter => chapter.key === activeMethod.id)} /></li>}
@@ -335,10 +343,10 @@ export function DesignAcceptancePanel({ entry, version, busy, canWrite, canRevie
         enable={() => void send('acceptance.enable', { version: version.version, method: activeMethod.id })} /> : <AcceptanceMethodIntro method={activeMethod} />)}
       {objective && methodData && check === 'mece' && methodOpen && <ObjectiveCoverage data={methodData} version={version}
         executable={canReview && canWrite && activeRun} send={sendEvidence} busy={busy} />}
-      {objective && check === 'regress' && methodOpen && <HistoricalAcceptance entry={entry} version={version} run={run} busy={busy}
-        canRegister={canWrite && isBaseline} executable={evidenceWritable} command={command} send={sendEvidence} />}
-      {activeMethod && methodData && methodOpen && (!objective || (check !== 'mece' && check !== 'regress')) && <AcceptanceMethodDetails
-        method={activeMethod} data={methodData} version={version} run={run} entry={entry} busy={busy} writable={evidenceWritable}
+      {check === 'regress' && methodOpen && <HistoricalAcceptance entry={entry} version={version} run={run} busy={busy}
+        canRegister={objective && canWrite && isBaseline} executable={objective && evidenceWritable} command={command} send={sendEvidence} />}
+      {activeMethod && methodOpen && check !== 'regress' && (!objective || check !== 'mece') && <AcceptanceMethodDetails
+        method={activeMethod} data={allMethods} version={version} run={run} entry={entry} busy={busy} writable={Boolean(methodData) && evidenceWritable}
         onRule={setSelected} onDebt={itemId => { if (run) void send('acceptance.debt', { runId: run.id, itemId }); }}
         savedCompare={comparisonSkipped ? undefined : () => go('compare')} />}
       {showOverview && <li data-item="verdict"><h4><b>1</b>结论{structuredOverview && causes.length > 0 && <small>还不能签收的原因和处理入口</small>}</h4>
@@ -356,7 +364,7 @@ export function DesignAcceptancePanel({ entry, version, busy, canWrite, canRevie
           {run && <a className="ep-link" href={run.previewUrl} target="_blank" rel="noreferrer">打开真实预览</a>}
           {handoff && <Link className="ep-link" to={'/design?' + new URLSearchParams({ project: entry.projectId, design: entry.id,
             version: String(version.version), tab: 'delivery', part: 'files', file: handoff.id })}>查看交接清单</Link>}
-          {runs.length > 1 && <select aria-label="查看历史运行" value={run?.id ?? ''} onChange={event => setRunId(event.target.value)}>
+          {runs.length > 1 && <select aria-label="查看历史运行" value={run?.id ?? ''} onChange={event => selectRun(event.target.value)}>
             {[...runs].reverse().map(row => <option key={row.id} value={row.id}>{row.commit.slice(0, 8)}{row.signed ? row.id === runs.at(-1)?.id ? ' · 已签收' : ' · 历史签收' : ' · ' + verdictNames[row.verdict]}</option>)}
           </select>}
         </p>
@@ -378,8 +386,9 @@ export function DesignAcceptancePanel({ entry, version, busy, canWrite, canRevie
         onOpen={onOpen} openRules={() => go('rules')} />}
       {showOverview && structuredOverview && <AcceptanceScreens version={version} statusOf={statusOf} onOpen={onOpen}
         thumbnailProject={hasDemo ? entry.projectId : undefined} />}
-      {showOverview && methodData && <li data-item="methods"><h4><b>4</b>验收手段<small>{objective ? '按执行顺序排列，已启用的在前' : '每种手段的状态及不适用理由'}</small></h4>
-        {objective ? <ObjectiveMethodTable methods={methodData.methods} go={go} cards={hasDemo} /> : <AcceptanceMethodOverview methods={methodData.methods} go={go} />}</li>}
+      {showOverview && <li data-item="methods"><h4>{methodData && <b>4</b>}验收手段<small>{objective ? '按执行顺序排列，已启用的在前' : '每种手段的状态及不适用理由'}</small></h4>
+        {objective ? <ObjectiveMethodTable methods={allMethods.displayMethods} go={go} cards={hasDemo} />
+          : <AcceptanceMethodOverview methods={allMethods.displayMethods} go={go} />}</li>}
       {showOverview && hasDemo && <li data-item="videos"><h4><b>5</b>验收方式演示</h4>
         {animation.length ? <DesignAcceptanceAnimation title="全部验收手段" chapters={animation} />
           : video && <DesignAcceptanceVideo projectId={entry.projectId} video={video} />}

@@ -592,6 +592,7 @@ export const AGENT_MISSION_DEFINITIONS: Record<AgentPageContextId, AgentMissionD
       '发布框架时使用已有本项目设计发布授权，调用 cds_design_framework_publish 或 cdscli framework publish，按最新版本续发并回读回执',
       '以接入清单 requirements 中指定标识的已确认原文为输入；需要补充时，在同一需求内回复并提出具体问题',
       '读取所属系统、模块、已采用的框架版本及该稿的未关闭反馈；有歧义先在原处澄清，再按稳定稿件键查重',
+      '按接入清单 acceptancePolicy 补齐各项验收手段、覆盖维度和不适用理由',
       '用 cdscli design preview --dir 在与 CDS 相同的沙箱中检查画面，再把窗口尺寸、变更和待核对项写进交付资料',
       '核对当前工作树，只在本地提交用户授权的稿件目录',
       '发布前运行 CDS 技能的 scripts/design/release.mjs check，门禁不通过不发布',

@@ -13,6 +13,7 @@ import type { ProjectRevisionStore } from '../../src/services/project-revision-s
 import { designMethodsState } from '../../src/shared/design-methods.js';
 import type { DesignEntry, DesignRun, DesignVersion, DesignWorkspace } from '../../src/shared/design-workspace.js';
 import { buildZip, crc32 } from '../../src/utils/zip.js';
+import { withAcceptanceStandard } from '../helpers/versioned-design-fixture.js';
 
 const project = 'design-v20-fixture';
 const designId = 'DSN-v20';
@@ -256,7 +257,7 @@ const video = {
 };
 
 function demoBundle(overrides: Record<string, unknown> = {}, media: Buffer | null = mp4,
-  extraFiles: { name: string; data: Buffer }[] = []) {
+  extraFiles: { name: string; data: Buffer }[] = [], format: 'publication' | 'historical' = 'publication') {
   const manifest = {
     project, title: '合成演示稿', prototypeVersion: 1, date: '2026-11-25',
     prototype: 'dist/index.html', rationale: '思路.md', checks: 'checks/result.json', docs: [], notes: '使用合成画面。',
@@ -267,7 +268,7 @@ function demoBundle(overrides: Record<string, unknown> = {}, media: Buffer | nul
     demo, videos: [video], ...overrides,
   };
   return buildZip([
-    { name: 'design.json', data: JSON.stringify(manifest) },
+    { name: 'design.json', data: JSON.stringify(format === 'publication' ? withAcceptanceStandard(manifest) : manifest) },
     { name: '思路.md', data: '# 思路（V1）\n按照合成画面核对。' },
     { name: '交付说明.md', data: '# 交付（V1）\n在验收页打开受保护视频。' },
     { name: 'dist/index.html', data: '<!doctype html><html><body><main>合成画面</main></body></html>' },
@@ -304,7 +305,7 @@ describe('V20 演示流程和视频归档', () => {
   });
 
   it('只在打开版本后从旧签发归档加载流程和视频，保留原始记录', async () => {
-    const bytes = demoBundle();
+    const bytes = demoBundle({}, mp4, [], 'historical');
     const parsed = await readDesignPackage(bytes);
     const archiveId = 'legacy-v20-archive';
     const record: DesignWorkspaceCommit = {

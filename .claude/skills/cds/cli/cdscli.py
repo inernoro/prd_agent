@@ -56,7 +56,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Optional
 
-VERSION = "0.26.26"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.26.27"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -4365,6 +4365,36 @@ def _design_git_package(directory: Path, *, allow_root: bool = True) -> tuple[st
         die("无法读取已提交的稿件，请核对目录和 Git 提交")
 
 
+_DESIGN_ACCEPTANCE_ISSUE_CODES = {
+    "missing_acceptance_plan", "missing_method", "invalid_method", "required_method", "missing_reason",
+    "missing_rule", "invalid_dimension", "missing_coverage", "invalid_risk", "coverage_conflict",
+}
+_DESIGN_ACCEPTANCE_ISSUE_FIELD = re.compile(
+    r"acceptancePlan(?:\.(?:mece|compare|visual|regress|flow|human|smoke|debt)(?:\.reason)?)?"
+    r"|acceptance(?:\[[0-5]?[0-9]\]\.dimension)?"
+    r"|risks(?:\.(?:correctness|compatibility|performance|security|operations|experience)"
+    r"|\[[0-5]?[0-9]\](?:\.ruleIds)?)?"
+)
+
+
+def _design_acceptance_issues(value: Any) -> list[dict[str, str]]:
+    if not isinstance(value, list):
+        return []
+    safe = []
+    for issue in value[:100]:
+        if not isinstance(issue, dict):
+            continue
+        field, kind, rule_id = issue.get("field"), issue.get("code"), issue.get("ruleId")
+        if not isinstance(field, str) or not _DESIGN_ACCEPTANCE_ISSUE_FIELD.fullmatch(field):
+            continue
+        if not isinstance(kind, str) or kind not in _DESIGN_ACCEPTANCE_ISSUE_CODES:
+            continue
+        if "ruleId" in issue and (not isinstance(rule_id, str) or not re.fullmatch(r"A-[0-9]{2,3}", rule_id)):
+            continue
+        safe.append({"field": field, "code": kind, **({"ruleId": rule_id} if rule_id else {})})
+    return safe
+
+
 def _human_session_headers(username: str) -> dict[str, str]:
     if not sys.stdin.isatty():
         die("--as-user 需要交互终端，由操作者本人输入密码")
@@ -4511,7 +4541,13 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
             message = result.get("message") if isinstance(result, dict) else None
             retry = {"retry": {"requestId": retry_id}} if retry_id and (status == 0 or status >= 500) else None
             error = result.get("error") if isinstance(result, dict) else None
-            if status in (400, 413) and isinstance(error, str) and re.fullmatch(r"G-0[1-9]", error):
+            if status == 400 and error == "G-11":
+                issues = _design_acceptance_issues(result.get("issues"))
+                fields = "、".join(row["field"] for row in issues[:6])
+                suffix = f"。请检查 {fields}" if fields else ""
+                die("稿件门禁 G-11 未通过，请补齐验收计划与覆盖维度" + suffix + "。", code=2,
+                    extra={"gate": "G-11", "issues": issues})
+            if status in (400, 413) and isinstance(error, str) and re.fullmatch(r"G-(?:0[1-9]|10)", error):
                 die(f"稿件门禁 {error} 未通过。请按设计接入规则修正后重试。", code=2, extra={"gate": error})
             message = message or "CDS 暂未确认本次操作，请检查连接并保留原请求编号"
             if retry and _HUMAN:
@@ -4795,6 +4831,12 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
             die("框架规则超过单份稿件的 60 条上限")
         if not args.legacy_template and (not args.title.strip() or len(args.title) > 120 or re.search(r"[\r\n]", args.title)):
             die("首稿标题须为一行且不超过 120 个字符")
+        policy = None
+        if not args.legacy_template:
+            try:
+                policy = json.loads(Path(__file__).with_name("design-acceptance-policy.json").read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                die("找不到设计验收契约，请更新完整 CDS 技能包。")
         directory.mkdir(parents=True)
         spec = directory / "spec"
         spec.mkdir()
@@ -4833,13 +4875,22 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
             if not entries:
                 entries = [{"name": "首画面打开并出现就绪标志", "status": "unverified", "pass": False}]
 
-            scaffold_manifest.update(prototypeVersion=1, date=time.strftime("%Y-%m-%d"),
+            required_methods = {"mece", "compare", "visual"}
+            if any(rule["how"] == "human" for rule in acceptance):
+                required_methods.add("human")
+            if any(rule.get("interaction") for rule in acceptance):
+                required_methods.add("flow")
+            acceptance_plan = {method["id"]: {"applicable": True if method["id"] in required_methods else None}
+                               for method in policy["methods"]}
+            scaffold_manifest.update(acceptanceMode="objective", acceptancePlan=acceptance_plan,
+                                     prototypeVersion=1, date=time.strftime("%Y-%m-%d"),
                                      prototype=prototype_entry, rationale="思路.md", checks="checks/result.json",
                                      docs=["交付说明.md"], notes="首稿脚手架，尚无自检结果")
             rationale = f"# {args.title} · 设计思路（V1）\n\n{rationale}"
             guide = (f"# {args.title} · 交付说明（V1）\n\n"
                      "在正式前端壳内挂载页面，使用 prototype-build.mjs 生成原型后打开 `dist/index.html` 核对首画面。\n\n"
-                     "撰写设计思路，按画面补充适用的验收项和检查预期，再将实际自检结果写入 `checks/result.json`。\n")
+                     "撰写设计思路，按画面补充验收项的预期与覆盖维度，完成验收计划。"
+                     "不适用的手段和未覆盖的维度须说明原因，再将实际自检结果写入 `checks/result.json`。\n")
             (directory / "changes").mkdir()
             (directory / "交付说明.md").write_text(guide, encoding="utf-8", newline="\n")
             (directory / "src" / "overrides").mkdir(parents=True)

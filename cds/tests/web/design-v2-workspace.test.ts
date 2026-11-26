@@ -6,7 +6,7 @@ import { createElement, type ComponentType } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { chromium, type Browser, type BrowserContextOptions, type Locator, type Page } from 'playwright';
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
-import type { DesignComment, DesignEntry, DesignFeedback, DesignRequirement, DesignScreen, DesignThumbnailStatus, DesignVersion, DesignViewerState, DesignWorkspace } from '../../src/shared/design-workspace';
+import type { DesignComment, DesignEntry, DesignFeedback, DesignRequirement, DesignRun, DesignScreen, DesignThumbnailStatus, DesignVersion, DesignViewerState, DesignWorkspace } from '../../src/shared/design-workspace';
 import type { PlanningBoard } from '../../src/shared/engineering-planning';
 import { measureDesignPage } from '../../src/services/design-acceptance-observations';
 import { decorateDesignPrototype } from '../../src/services/design-prototype';
@@ -122,6 +122,242 @@ const guidedVersion: DesignVersion = {
 };
 const guidedDraft = { ...historyDraft, versions: [...historyDraft.versions, guidedVersion] };
 const guidedWorkspace = { ...historyWorkspace, designs: [guidedDraft] };
+
+const acceptanceScreen: DesignScreen = { ...historyScreen('acceptance-list', '交接列表'), themes: ['light'], impl: '/fixture-list' };
+const legacyAcceptanceVersion: DesignVersion = {
+  ...unbound.versions[0], version: 5, title: '交接列表旧稿', screens: [acceptanceScreen],
+  acceptance: [
+    { id: 'A-01', rule: '交接备注完整可读', how: 'human', priority: 'normal', slots: ['desktop-light'], screenId: acceptanceScreen.id },
+    { id: 'A-02', rule: '列表在一秒内可交互', how: 'measure', priority: 'normal', slots: ['desktop-light'], screenId: acceptanceScreen.id },
+  ],
+};
+const legacyAcceptanceDraft: DesignEntry = {
+  ...unbound, id: 'DSN-fixture-legacy-acceptance', versions: [legacyAcceptanceVersion], frozen: 5, pullRequest: 52,
+};
+const standardMethods = ['人工', 'MECE 覆盖', '对照图', '视觉', '历史易错', '流程', '冒烟', '验收债务'];
+
+describe('稿件通用验收手段', () => {
+  it('V5 无分手段计划的稿件从设计库进入后显示完整目录、未运行状态和键盘导航', async () => {
+    const input = { ...workspace, designs: [legacyAcceptanceDraft] };
+    const css = await layoutStyles(design(`&design=${legacyAcceptanceDraft.id}&version=5&tab=accept`, input), acceptanceStyles);
+    await withDesignBrowser(() => input, async (page, commands) => {
+      await page.goto(browserDesignUrl());
+      await applyFixtureStyles(page, css);
+      await page.getByRole('link', { name: legacyAcceptanceVersion.title, exact: true }).click();
+      await page.getByRole('navigation', { name: '稿件标签' }).getByRole('button', { name: /^验收/ }).click();
+      const tablist = page.getByRole('tablist', { name: '验收手段' });
+      await tablist.waitFor();
+      expect(await tablist.getByRole('tab').count()).toBe(10);
+      for (const name of standardMethods) {
+        const tab = tablist.getByRole('tab', { name: new RegExp(`^${name}`) });
+        expect(await tab.getByRole('img', { name: '未运行', exact: true }).count(), name).toBe(1);
+      }
+      await page.getByText('验收计划待配置', { exact: false }).first().waitFor();
+      expect(await page.locator('html').getAttribute('data-theme')).toBe('light');
+      await checkAcceptanceLayout(page, 'acceptance-v5-desktop-overview');
+      const overview = tablist.getByRole('tab', { name: /^总览/ });
+      const debt = tablist.getByRole('tab', { name: /^验收债务/ });
+      await overview.focus();
+      await page.keyboard.press('End');
+      await page.waitForURL(url => url.searchParams.get('check') === 'debt' && url.searchParams.get('design') === legacyAcceptanceDraft.id);
+      expect(await page.getByRole('combobox', { name: '稿件版本' }).inputValue()).toBe('5');
+      expect(await debt.getAttribute('aria-selected')).toBe('true');
+      expect(await debt.evaluate(node => node === document.activeElement)).toBe(true);
+      await page.getByRole('tabpanel', { name: /^验收债务/ }).getByText('未运行', { exact: true }).waitFor();
+      await page.keyboard.press('Home');
+      await page.waitForURL(url => !url.searchParams.has('check'));
+      expect(await overview.getAttribute('aria-selected')).toBe('true');
+      expect(await overview.evaluate(node => node === document.activeElement)).toBe(true);
+      await page.goBack();
+      await page.getByRole('tabpanel', { name: /^验收债务/ }).waitFor();
+      await page.reload();
+      await applyFixtureStyles(page, css);
+      await page.getByRole('tabpanel', { name: /^验收债务/ }).waitFor();
+      expect(await tablist.locator('[tabindex="0"]').count()).toBe(1);
+      await tablist.getByRole('tab', { name: /^MECE 覆盖/ }).click();
+      const coverage = page.getByRole('tabpanel', { name: /^MECE 覆盖/ });
+      for (const dimension of ['正确性', '兼容性', '性能容量', '安全合规', '运维部署', '用户体验']) {
+        await coverage.getByText(dimension, { exact: true }).waitFor();
+      }
+      await tablist.getByRole('tab', { name: /^视觉/ }).click();
+      const visual = page.getByRole('tabpanel', { name: /^视觉/ });
+      for (let check = 1; check <= 10; check++) {
+        const id = `V-${String(check).padStart(2, '0')}`;
+        await visual.getByText(new RegExp('^' + id + '\\b')).waitFor();
+      }
+      expect(commands).toHaveLength(0);
+    }, { viewport: { width: 1280, height: 800 }, colorScheme: 'light', reducedMotion: 'reduce' });
+  }, 20_000);
+
+  it('375px 触屏从设计库打开旧稿的流程和验收债务，页面没有横向溢出', async () => {
+    const input = { ...workspace, designs: [legacyAcceptanceDraft] };
+    const css = await layoutStyles(design(`&design=${legacyAcceptanceDraft.id}&version=5&tab=accept`, input), acceptanceStyles);
+    await withDesignBrowser(() => input, async (page, commands) => {
+      await page.goto(browserDesignUrl());
+      await applyFixtureStyles(page, css);
+      expect(await page.evaluate(() => ({ width: innerWidth, points: navigator.maxTouchPoints }))).toEqual({ width: 375, points: 1 });
+      await page.getByRole('link', { name: legacyAcceptanceVersion.title, exact: true }).tap();
+      await page.getByRole('navigation', { name: '稿件标签' }).getByRole('button', { name: /^验收/ }).tap();
+      expect(await page.locator('html').getAttribute('data-theme')).toBe('dark');
+      const tablist = page.getByRole('tablist', { name: '验收手段' });
+      await tablist.getByRole('tab', { name: /^流程/ }).tap();
+      const flow = page.getByRole('tabpanel', { name: /^流程/ });
+      await flow.getByText('未运行', { exact: true }).waitFor();
+      await checkAcceptanceLayout(page, 'acceptance-v5-phone-flow');
+      await tablist.getByRole('tab', { name: /^验收债务/ }).tap();
+      const debt = page.getByRole('tabpanel', { name: /^验收债务/ });
+      await debt.getByText(/列表在一秒内可交互/).waitFor();
+      await checkAcceptanceLayout(page, 'acceptance-v5-phone-debt');
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(376);
+      expect(commands).toHaveLength(0);
+    }, { viewport: { width: 375, height: 812 }, hasTouch: true, isMobile: true, colorScheme: 'dark', reducedMotion: 'reduce' });
+  }, 25_000);
+
+  it('旧稿历史运行深链保留签收和各方法的真实证据，只读成员不能修改', async () => {
+    const historicalRun: DesignRun = {
+      id: 'RUN-fixture-archived', version: 5, pullRequest: 52, commit: 'c'.repeat(40), createdAt: at,
+      previewUrl: `${browserDesignOrigin}/fixture-preview`, verdict: 'conditional',
+      signed: { by: author.id, at, verdict: 'conditional' },
+      cells: [
+        { itemId: 'A-01', slot: 'desktop-light', status: 'passed', actual: '已逐字复核旧稿的交接说明', recordedBy: author.label },
+        { itemId: 'A-02', slot: 'desktop-light', status: 'missing', actual: '暂无可重复的计时探针', debtId: 'DEBT-fixture-5' },
+      ],
+      flows: [{ id: 'F-05', title: '维护者完成交接', role: '维护者', dimension: 'correctness', by: author.label, at, status: 'passed',
+        steps: [{ action: '提交交接', expected: '显示回执', actual: '旧稿交接回执已显示', status: 'passed' }] }],
+      smoke: [{ id: 'S-05', title: '交接列表 API', dimension: 'operations', by: author.label, at, status: 'passed',
+        target: 'api', path: '/api/fixture-handoff', expected: 'HTTP 200', actual: '旧稿接口返回 200，耗时 90 ms' }],
+      regress: { 'K-05': { status: 'passed', evidence: '旧稿复查后首行未被遮住', by: author.label, at } },
+      issues: { 'A-02': { id: 'DEBT-fixture-5', pending: false } },
+    };
+    const recentRun: DesignRun = {
+      id: 'RUN-fixture-recent', version: 5, pullRequest: 52, commit: 'd'.repeat(40), createdAt: '2026-11-21T00:00:00Z',
+      previewUrl: historicalRun.previewUrl, verdict: 'needs_evidence', cells: [], issues: {},
+    };
+    const draft: DesignEntry = { ...legacyAcceptanceDraft, runs: [historicalRun, recentRun], knownIssues: [
+      { id: 'K-05', problem: '交接输入框遮住首行', sources: [{ kind: 'defect', ref: 'BUG-fixture-5', count: 2 }],
+        how: '查看页面首行', check: '首行完整可见', screenIds: [acceptanceScreen.id], at, by: author.id },
+      { id: 'K-06', problem: '后续才登记的历史问题', sources: [{ kind: 'feedback', ref: 'FDB-fixture-6', count: 1 }],
+        how: '打开列表', check: '出现搜索框', screenIds: [], at: recentRun.createdAt, by: author.id },
+    ] };
+    const input: DesignWorkspace = { ...workspace, designs: [draft], permissions: {
+      ...workspace.permissions, write: false, review: false, sign: false, steward: false,
+    } };
+    await withDesignBrowser(() => input, async (page, commands) => {
+      const overview = { design: draft.id, version: '5', tab: 'accept' };
+      await page.goto(browserDesignUrl({ ...overview, run: historicalRun.id }));
+      const tablist = page.getByRole('tablist', { name: '验收手段' });
+      const signed = page.locator('.dw-acceptance').getByText('已签收', { exact: true }).first();
+      const history = page.getByRole('combobox', { name: '查看历史运行' });
+      await signed.waitFor();
+      expect(await history.inputValue()).toBe(historicalRun.id);
+      await history.selectOption(recentRun.id);
+      await page.waitForURL(url => url.searchParams.get('run') === recentRun.id);
+      await signed.waitFor({ state: 'hidden' });
+      await page.goBack();
+      await signed.waitFor();
+      expect(await history.inputValue()).toBe(historicalRun.id);
+      expect(await page.getByRole('button', { name: '签收', exact: true }).count()).toBe(0);
+      for (const [method, evidence] of [
+        ['历史易错', '旧稿复查后首行未被遮住'], ['流程', '旧稿交接回执已显示'], ['冒烟', '旧稿接口返回 200，耗时 90 ms'],
+      ]) {
+        await tablist.getByRole('tab', { name: new RegExp(`^${method}`) }).click();
+        const panel = page.getByRole('tabpanel', { name: new RegExp(`^${method}`) });
+        await panel.getByText(evidence, { exact: false }).waitFor();
+        expect(new URL(page.url()).searchParams.get('run')).toBe(historicalRun.id);
+        if (method === '历史易错') {
+          expect(await panel.getByText('缺陷 BUG-fixture-5 · 2 次', { exact: true }).isVisible()).toBe(true);
+          expect(await panel.getByText('后续才登记的历史问题', { exact: true }).count()).toBe(0);
+          expect(await panel.getByRole('button', { name: /登记易错项|记录复查/ }).count()).toBe(0);
+        }
+      }
+      await tablist.getByRole('tab', { name: /^人工/ }).click();
+      const manual = page.getByRole('tabpanel', { name: /^人工/ });
+      await manual.getByRole('button', { name: /桌面.*通过/ }).click();
+      const proof = page.getByRole('dialog', { name: /^A-01/ });
+      await proof.getByText('已逐字复核旧稿的交接说明', { exact: false }).waitFor();
+      expect(await proof.getByRole('button', { name: /我看过/ }).count()).toBe(0);
+      await page.keyboard.press('Escape');
+      await tablist.getByRole('tab', { name: /^验收债务/ }).click();
+      const debt = page.getByRole('tabpanel', { name: /^验收债务/ }).getByRole('link', { name: /DEBT-fixture-5/ });
+      await debt.waitFor();
+      expect(new URL((await debt.getAttribute('href'))!, browserDesignOrigin).searchParams.get('item')).toBe('DEBT-fixture-5');
+      await page.reload();
+      await debt.waitFor();
+      await page.goto(browserDesignUrl({ ...overview, check: 'flow' }));
+      const recentFlow = page.getByRole('tabpanel', { name: /^流程/ });
+      await recentFlow.getByText('未运行', { exact: true }).waitFor();
+      expect(await recentFlow.getByText('旧稿交接回执已显示', { exact: false }).count()).toBe(0);
+      expect(commands).toHaveLength(0);
+    }, { viewport: { width: 1280, height: 800 }, reducedMotion: 'reduce' });
+  }, 25_000);
+
+  it('旧稿仅按原验收判据和签收权限送出当前运行编号', async () => {
+    const version: DesignVersion = { ...legacyAcceptanceVersion, acceptance: legacyAcceptanceVersion.acceptance.slice(0, 1) };
+    const run: DesignRun = {
+      id: 'RUN-fixture-signable', version: 5, pullRequest: 52, commit: 'e'.repeat(40), createdAt: at,
+      previewUrl: `${browserDesignOrigin}/fixture-preview`, verdict: 'passed', issues: {},
+      cells: [{ itemId: 'A-01', slot: 'desktop-light', status: 'passed', actual: '交接说明可读', recordedBy: author.label }],
+    };
+    const draft = { ...legacyAcceptanceDraft, versions: [version], runs: [run] };
+    let canSign = false;
+    await withDesignBrowser(() => ({ ...workspace, designs: [draft], permissions: { ...workspace.permissions, sign: canSign } }),
+      async (page, commands) => {
+        await page.route(`${browserDesignOrigin}/api/projects/${projectId}/planning/preview/${run.pullRequest}`,
+          route => route.fulfill({ json: { projectId, commit: run.commit, url: run.previewUrl } }));
+        await page.goto(browserDesignUrl({ design: draft.id, version: '5', tab: 'accept' }));
+        const panel = page.getByRole('tabpanel', { name: /^总览/ });
+        await panel.getByText('签收', { exact: true }).first().waitFor();
+        const sign = panel.getByRole('button', { name: '签收', exact: true });
+        expect(await sign.count()).toBe(0);
+        expect(commands).toHaveLength(0);
+
+        canSign = true;
+        await page.reload();
+        await sign.waitFor();
+        await expect.poll(() => sign.isEnabled()).toBe(true);
+        await sign.click();
+        await expect.poll(() => commands.length).toBe(1);
+        expect(commands[0]).toMatchObject({ type: 'acceptance.sign', designId: draft.id, runId: run.id });
+      });
+  }, 20_000);
+
+  it('新稿保留未启用和不适用的理由，无运行时没有完成徽标', async () => {
+    const disabledReason = '本轮只核对静态的交接界面';
+    const skippedReason = '本稿没有新增页面或接口';
+    const version: DesignVersion = {
+      ...legacyAcceptanceVersion, version: 6, title: '交接列表新稿', acceptanceMode: 'objective',
+      acceptancePlan: { flow: { enabled: false, reason: disabledReason }, smoke: { applicable: false, reason: skippedReason } },
+      acceptance: legacyAcceptanceVersion.acceptance.map(rule => ({ ...rule, dimension: rule.how === 'measure' ? 'performance' : 'experience' })),
+      risks: [
+        { dimension: 'performance', risk: '列表响应超时', ruleIds: ['A-02'] },
+        ...(['correctness', 'compatibility', 'security', 'operations', 'experience'] as const).map(dimension =>
+          ({ dimension, risk: '无新增风险', ruleIds: [], reason: '沿用现有交接流程' })),
+      ],
+    };
+    const draft = { ...legacyAcceptanceDraft, versions: [version], frozen: 6 };
+    const input = { ...workspace, designs: [draft], permissions: { ...workspace.permissions, review: false, write: false, sign: false } };
+    await withDesignBrowser(() => input, async (page, commands) => {
+      await page.goto(browserDesignUrl({ design: draft.id, version: '6', tab: 'accept' }));
+      const tablist = page.getByRole('tablist', { name: '验收手段' });
+      await tablist.waitFor();
+      expect(await tablist.getByRole('tab').count()).toBe(10);
+      expect(await tablist.getByRole('img', { name: '已完成', exact: true }).count()).toBe(0);
+      await tablist.getByRole('tab', { name: /MECE 覆盖/ }).click();
+      const coverage = page.getByRole('tabpanel', { name: /MECE 覆盖/ });
+      await coverage.getByRole('table', { name: 'MECE 风险覆盖' }).waitFor();
+      expect(await coverage.getByText('已完成', { exact: true }).count()).toBe(0);
+      expect(await coverage.getByText('完成 6/6', { exact: true }).count()).toBe(0);
+      for (const [method, reason, state] of [['流程', disabledReason, '未启用'], ['冒烟', skippedReason, '不适用']]) {
+        await tablist.getByRole('tab', { name: new RegExp(method) }).click();
+        const panel = page.getByRole('tabpanel', { name: new RegExp(method) });
+        await panel.getByText(reason, { exact: true }).waitFor();
+        await panel.getByText(state, { exact: true }).waitFor();
+        expect(await panel.getByRole('button', { name: '启用', exact: true }).count()).toBe(0);
+      }
+      expect(commands).toHaveLength(0);
+    });
+  }, 20_000);
+});
 
 describe('V17 交付工作区', () => {
   it('打开稿件先看画面和这一屏，同时保留旧链接的全文入口', () => {
@@ -927,6 +1163,7 @@ function browserDesignUrl(params: Record<string, string> = {}) {
 
 const draftStyles = ['web/src/pages/engineering-planning/planning.css', 'web/src/pages/design-workspace/design.css',
   'web/src/pages/design-workspace/design-v17-delivery.css'];
+const acceptanceStyles = [...draftStyles, 'web/src/pages/design-workspace/design-v17-acceptance.css'];
 const desktopSizes = [[1280, 800], [1024, 640], [853, 533]] as const;
 const infoSizes = [...desktopSizes, [375, 812]] as const;
 const longTitle = '帮助中心搜索：按产品线、文档类型和更新时间筛选结果';
@@ -1321,7 +1558,8 @@ describe('工程规划与设计 V2 前端回归', () => {
         await page.waitForURL(url => url.searchParams.get('design') === failedDraft.id && url.searchParams.get('tab') === 'accept');
         expect(new URL(page.url()).searchParams.get('version')).toBe('2');
         expect(await page.getByRole('combobox', { name: '稿件版本' }).inputValue()).toBe('2');
-        expect(await page.getByRole('button', { name: /^验收/ }).getAttribute('aria-current')).toBe('true');
+        const acceptanceTab = page.getByRole('navigation', { name: '稿件标签' }).getByRole('button', { name: /^验收/ });
+        expect(await acceptanceTab.getAttribute('aria-current')).toBe('true');
         expect(await page.locator('.dw-ac-steps').getByText(/PR #41 · 提交/).isVisible()).toBe(true);
       }
 

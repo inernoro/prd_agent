@@ -59,13 +59,12 @@ describe('V17 项目验收界面', () => {
     expect(html).not.toContain('data-item="smoke-details"');
   });
 
-  it('历史版本保留八个 V11 入口和深链，并可独立打开全部验收项', () => {
+  it('V11 历史稿可直接打开总览、全部验收项和八种验收手段', () => {
     const historical = { ...version, version: 11, acceptanceMode: undefined, acceptancePlan: {} };
     const draft = { ...entry, versions: [historical, version], frozen: 11 };
     const html = page('', draft, historical);
     const ids = [...html.matchAll(/role="tab"[^>]*data-check="([^"]+)"/g)].map(match => match[1]);
-    expect(ids).toEqual(['overview', 'rules', 'mece', 'compare', 'visual', 'flow', 'human', 'smoke', 'debt']);
-    expect(html).not.toContain('data-check="regress"');
+    expect(ids).toEqual(['overview', 'rules', 'mece', 'compare', 'visual', 'regress', 'flow', 'human', 'smoke', 'debt']);
     for (const id of ids.slice(1)) {
       expect(page(id, draft, historical)).toMatch(new RegExp(`data-check="${id}"[^>]*aria-selected="true"`));
     }

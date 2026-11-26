@@ -98,9 +98,11 @@ describe('CDS V2 feedback contract', () => {
       ? { id: 'revised-phone', name: 'Fixture phone', route: '#/revised', viewport: 'phone', themes: ['dark'], impl: '/revised/' }
       : { id: 'initial-desktop', name: 'Fixture desktop', route: '#/initial', viewport: 'desktop', themes: ['light'], impl: '/initial/' };
     const manifest = { project: projectId, title: 'Fixture feedback draft',
-      screens: [{ ...screen, entryReadySelector: 'h1' }], acceptance: [], docs: [filePath],
+      screens: [{ ...screen, entryReadySelector: 'h1' }], docs: [filePath],
+      acceptance: [{ id: 'A-01', how: 'measure', screenId: screen.id, rule: 'The feedback example opens', expected: '检查：标题可见。' }],
       ...(options.prior ? { id: options.prior } : {}) };
-    const previous = options.prior ? { commit: 'a'.repeat(40), addedScreens: ['revised-phone'], removedScreens: ['initial-desktop'] } : undefined;
+    const previous = options.prior ? { commit: 'a'.repeat(40), addedScreens: ['revised-phone'], removedScreens: ['initial-desktop'],
+      changedRules: ['A-01'] } : undefined;
     const archive = versionedDesignFixture(manifest, 'Compare revision evidence.', [
       { name: 'dist/index.html', data: '<!doctype html><html><body><h1>Fixture feedback</h1></body></html>' },
       { name: filePath, data: '# Fixture delivery file\nOnly this exact revision contains the file.' },

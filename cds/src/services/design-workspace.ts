@@ -7,6 +7,7 @@ import type {
 } from '../shared/design-workspace.js';
 import type { PlanningActor, PlanningDesignLink } from '../shared/engineering-planning.js';
 import { adoptedFrameworkVersion, currentDesignRun, designAcceptanceTarget, designDatasetRequired, designDemoImplementationPath, designFeedbackCategories, designMaterialKeys, designProgramEvidenceRequired, designSlots, designVersionGap, designViewports, frameworkInUse, frameworkMaterialCandidates, latestDesignFeedbackAt } from '../shared/design-workspace.js';
+import { designAcceptancePolicy } from '../shared/design-acceptance-standard.mjs';
 import { completeFeedback, feedbackParts } from '../shared/design-feedback.js';
 import { concreteVisualEvidence, designProgramStatus, designVisualKey, designVisualSlots, designVisualStandard, designVisualRequired, designVisualRuleShot, designVisualSummary,
   visualSlotTheme, type DesignVisualChecks, type DesignVisualRow } from '../shared/design-visual.js';
@@ -733,7 +734,7 @@ export class DesignWorkspaceService {
     const canWrite = actor.permissions.includes('write');
     return {
       protocolVersion: 1, projectId, permissions: { write: canWrite, feedback: canLeaveFeedback(actor), frameworkPublish: canWrite },
-      keyFormat: 'module/draft', intents: ['create', 'revise'],
+      keyFormat: 'module/draft', intents: ['create', 'revise'], acceptancePolicy: designAcceptancePolicy,
       ...(this.deps.handoff ? { handoffPolicy: designHandoffPolicy } : {}),
       requirements: visibleRequirements(state),
       ...(state.systems.size ? { systems: structuredClone([...state.systems.values()]) } : {}),
@@ -905,7 +906,7 @@ export class DesignWorkspaceService {
     if (privateUpload && params.requireGit === 'true') invalidDesign('私有归档和 Git 来源校验请选择一种');
     const requireGit = !privateUpload && Boolean(intent || actor.gitPublishOnly || params.requireGit === 'true');
     const note = optionalText(params.note, '发布说明', 1000);
-    const loaded = await readDesignPackage(bytes);
+    const loaded = await readDesignPackage(bytes, { publication: true });
     if (loaded.project !== projectId) invalidDesign('稿件包项目与当前 CDS 项目不符');
     if (intent === 'create' && loaded.packageId) invalidDesign('新稿的清单须省略稿件 id，由 CDS 分配');
     const selectedId = targetId ?? loaded.packageId;
@@ -1019,6 +1020,8 @@ export class DesignWorkspaceService {
           const themes = renders[capture.screenId] ??= {};
           themes[capture.theme] = { id, sha256: capture.sha256 };
         }
+        const acceptanceMode = loaded.acceptanceMode ?? (designAcceptancePolicy.methods.every(method =>
+          loaded.acceptancePlan?.[method.id] !== undefined) ? 'objective' : undefined);
         const version: DesignVersion = { version: (previous?.version ?? 0) + 1, title, sourceCommit, sha256, prototypeId,
           prototypeSha256: byPath.get(prototype)!.sha256, delivery,
           sourcePath, sourceVerification: privateUpload ? 'private-upload' : source ? 'git' : 'declared',
@@ -1026,7 +1029,7 @@ export class DesignWorkspaceService {
           ...(scope ? { scope } : {}),
           ...(loaded.frameworkCharter ? { frameworkCharter: loaded.frameworkCharter } : {}),
           ...(loaded.acceptancePlan ? { acceptancePlan: loaded.acceptancePlan } : {}),
-          ...(loaded.acceptanceMode ? { acceptanceMode: loaded.acceptanceMode } : {}),
+          ...(acceptanceMode ? { acceptanceMode } : {}),
           ...(programEvidence ? { evidenceProtocol: 'program-v1' as const } : {}),
           ...(loaded.goals ? { goals: loaded.goals } : {}),
           ...(loaded.demoData ? { demoData: loaded.demoData } : {}),
