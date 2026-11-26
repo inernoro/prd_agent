@@ -285,10 +285,13 @@ public class TapdBugAgentService
         normalized = AutoFillRequiredFields(normalized, naturalText);
         if (normalized.ExpectedResult.Count == 0 && !string.IsNullOrWhiteSpace(naturalText))
         {
-            var statedResults = ExplicitExpectedResult.Matches(naturalText)
-                .Select(match => match.Groups["result"].Value.Trim().TrimStart('：', ':').Trim())
-                .Where(result => result is not ("待补充" or "待确认" or "未提供" or "不详"));
-            normalized = normalized with { ExpectedResult = NormalizeLines(statedResults) };
+            var statedResults = ReadExpectedResultSection(naturalText) ?? ExplicitExpectedResult.Matches(naturalText)
+                .Select(match => match.Groups["result"].Value.Trim().TrimStart('：', ':').Trim());
+            normalized = normalized with
+            {
+                ExpectedResult = NormalizeLines(statedResults.Where(result =>
+                    result.TrimEnd('。', '！', '!', '？', '?').TrimEnd() is not ("待补充" or "待确认" or "未提供" or "不详")))
+            };
         }
 
         var missing = new List<string>();
@@ -469,6 +472,31 @@ public class TapdBugAgentService
         {
             trimmed.Length > 0 ? trimmed : "执行操作后出现异常现象"
         };
+    }
+
+    private static IEnumerable<string>? ReadExpectedResultSection(string description)
+    {
+        // 只把单独一行的显式字段标题视为多行表单，避免从普通描述中猜测预期。
+        using var reader = new StringReader(description);
+        while (reader.ReadLine() is { } heading)
+        {
+            if (heading.Trim() is not ("预期结果：" or "预期结果:")) continue;
+
+            var results = new List<string>();
+            while (reader.ReadLine() is { } value)
+            {
+                var line = value.Trim();
+                if (line.Length == 0) break;
+                var delimiter = line.IndexOfAny(['：', ':']);
+                if (delimiter >= 0 && line[..delimiter].Trim() is
+                    "标题" or "所属模块" or "所属版本" or "严重程度" or "优先级" or "缺陷类型" or "处理人"
+                    or "前置条件" or "复现步骤" or "实际结果" or "预期结果")
+                    break;
+                results.Add(line);
+            }
+            return results;
+        }
+        return null;
     }
 
     private static List<string> NormalizeLines(IEnumerable<string>? lines)

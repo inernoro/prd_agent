@@ -64,6 +64,11 @@ public class TapdBugAgentServiceTests
     [InlineData("列表返回后为空。", null)]
     [InlineData("列表返回后为空。预期结果：", null)]
     [InlineData("列表返回后为空。预期结果：待确认。", null)]
+    [InlineData("列表返回后为空。\n预期结果：\n显示该记录。\n实际结果：列表为空", "显示该记录。")]
+    [InlineData("列表返回后为空。\r\n预期结果:\r\n显示该记录", "显示该记录")]
+    [InlineData("列表返回后为空。\n预期结果：\n实际结果：列表为空", null)]
+    [InlineData("列表返回后为空。\n预期结果：\n待确认。", null)]
+    [InlineData("预期结果：\n显示该记录。\n保留原筛选。\n复现步骤：返回列表", "显示该记录。\n保留原筛选。")]
     [InlineData("选东区后仍显示西区。预期只显示东区门店。", "只显示东区门店")]
     [InlineData("列表为空，正确应该显示该记录。", "显示该记录")]
     public async Task StreamPreview_ExpectedResultComesFromUserInsteadOfModel(string naturalText, string? expected)
@@ -95,7 +100,7 @@ public class TapdBugAgentServiceTests
         }
         else
         {
-            Assert.Equal(expected, Assert.Single(result.ExpectedResult));
+            Assert.Equal(expected.Split('\n'), result.ExpectedResult);
             Assert.DoesNotContain("预期结果", result.MissingFields);
         }
 
