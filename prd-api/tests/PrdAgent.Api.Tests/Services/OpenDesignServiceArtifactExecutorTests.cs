@@ -62,12 +62,10 @@ public sealed class OpenDesignServiceArtifactExecutorTests
     }
 
     [Fact]
-    public void CodeFilmQueue_IsIsolatedFromWebDesignAndFromOtherRevisions()
+    public void CodeFilmQueue_IsIsolatedFromWebDesign()
     {
         var queue = RunKinds.DesignArtifactQueue(DesignArtifactTypes.CodeFilm);
         queue.ShouldNotBe(RunKinds.DesignArtifactQueue(DesignArtifactTypes.HtmlPpt));
-        RedisRunQueue.BuildKey(queue, "film-test::revision::first")
-            .ShouldNotBe(RedisRunQueue.BuildKey(queue, "film-test::revision::second"));
     }
 
     [Fact]

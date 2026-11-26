@@ -140,18 +140,23 @@ public sealed class RedisRunQueueKeyTests
     [InlineData(null, "unscoped")]
     public void DesignKeys_IsolateScopesAndNeverUseLegacyQueue(string? first, string? second)
     {
-        var firstKey = RedisRunQueue.BuildKey(RunKinds.DesignArtifact, first);
-        Assert.NotEqual(firstKey, RedisRunQueue.BuildKey(RunKinds.DesignArtifact, second));
-        Assert.NotEqual("run:designArtifact:queue", firstKey);
-        Assert.StartsWith("run:v2:designArtifact:", firstKey);
-        Assert.Equal(firstKey, RedisRunQueue.BuildKey($" {RunKinds.DesignArtifact} ", first));
+        foreach (var kind in new[] { RunKinds.DesignArtifact, RunKinds.CodeFilm })
+        {
+            var firstKey = RedisRunQueue.BuildKey(kind, first);
+            Assert.NotEqual(firstKey, RedisRunQueue.BuildKey(kind, second));
+            Assert.NotEqual($"run:{kind}:queue", firstKey);
+            Assert.StartsWith($"run:v2:{kind}:", firstKey);
+            Assert.Equal(firstKey, RedisRunQueue.BuildKey($" {kind} ", first));
+        }
     }
 
     [Fact]
     public void EveryOtherAndFutureKind_UsesStableDeploymentNamespace()
     {
         foreach (var kind in typeof(RunKinds).GetFields().Where(field => field.IsLiteral)
-                     .Select(field => (string)field.GetRawConstantValue()!).Where(kind => kind != RunKinds.DesignArtifact).Append("future-unregistered-business"))
+                     .Select(field => (string)field.GetRawConstantValue()!)
+                     .Where(kind => kind is not (RunKinds.DesignArtifact or RunKinds.CodeFilm))
+                     .Append("future-unregistered-business"))
         {
             var key = RedisRunQueue.BuildKey($" {kind} ", "project::branch");
             Assert.StartsWith($"run:v3:{kind}:", key);
