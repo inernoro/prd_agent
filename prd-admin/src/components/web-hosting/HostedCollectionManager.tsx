@@ -262,7 +262,7 @@ export function HostedCollectionEditor({ collectionId, shareToken, initialSites 
         abort.abort();
         setNaming(false);
         setSuggestions(collectionNames(input));
-      }, 1850);
+      }, 1975);
       void (async () => {
         let names = collectionNames(input);
         try {

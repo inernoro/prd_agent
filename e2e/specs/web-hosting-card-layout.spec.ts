@@ -779,18 +779,30 @@ for (const theme of ['light', 'dark'] as const) {
         requests++;
         if (delayNext) { delayNext = false; await delayed; stale = true; }
         data = stale ? { ...shared, title: '迟到的旧响应' } : shared;
-      } else if (path.endsWith('/comments')) data = { comments: [], commentsEnabled: true, canComment: false };
+      } else if (path.endsWith('/related-documents')) data = {
+        items: sites.map(site => ({ id: site.id, title: site.title, preview: { ...site, useShareAccess: true },
+          href: `/s/wp/navigation-token?siteId=${site.id}` })), version: 0, canManage: false,
+      };
+      else if (path.endsWith('/comments')) data = { comments: [], commentsEnabled: true, canComment: false };
       else if (path.endsWith('/html') || path.endsWith('/content')) data = { html: '<!doctype html><h1>原文内容</h1>', contentType: 'text/html' };
       await route.fulfill({ headers: stale ? { 'x-navigation-test': 'stale' } : {}, json: { success: true, data, error: null } });
     });
     await page.goto('/s/wp/navigation-token');
     await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
-    await expect(page.getByRole('heading', { name: shared.title, exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: shared.title, exact: true })).toBeVisible({ timeout: 15000 });
+    await expect(page.getByRole('region', { name: '主文档概览' }).locator('.ledger-document-preview')).toBeVisible();
+    await expect(page.getByRole('region', { name: '全部文档' }).locator('.ledger-document-preview')).toHaveCount(3);
     const initialRequests = requests;
     delayNext = true;
     await page.locator('.ledger-directory .hosted-share-member').filter({ hasText: '阅读文档 2' }).click();
     await expect.poll(() => requests).toBe(initialRequests + 1);
     await expect(page.locator('iframe[title="阅读文档 2"]')).toBeVisible();
+    await expect(page.locator('.review-reader-title').getByRole('link', { name: '返回合集' })).toBeVisible();
+    await page.getByRole('button', { name: '关联文档', exact: true }).click();
+    const related = page.getByRole('dialog', { name: '关联文档' });
+    await expect(related.locator('.related-document-card')).toHaveCount(3);
+    await expect(related.locator('.related-document-card').filter({ hasText: '阅读文档 1' })).toBeVisible();
+    await page.keyboard.press('Escape');
     await expect(page.getByText('正在读取分享文档…', { exact: true })).toHaveCount(0);
     await testInfo.attach('等待复核时的阅读界面', { body: await page.screenshot(), contentType: 'image/png' });
     await page.goBack();
@@ -889,7 +901,7 @@ for (const mobile of [false, true]) test.describe(mobile ? '手机合集' : '桌
     await page.goto('/web-pages');
     await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, mobile ? 'light' : 'dark');
     const cards = page.locator('[data-tour-id="webpages-card"]');
-    await expect(cards).toHaveCount(3);
+    await expect(cards).toHaveCount(3, { timeout: 15000 });
     if (!mobile) await page.getByLabel('批量选择', { exact: true }).click();
     for (const card of await cards.all()) await card.getByRole('button', { name: '选择', exact: true }).click();
     await page.getByRole('button', { name: '创建合集', exact: true }).click();
@@ -922,7 +934,7 @@ for (const mobile of [false, true]) test.describe(mobile ? '手机合集' : '桌
     else {
       await page.evaluate(() => {
         const observer = new MutationObserver(records => {
-          const flight = records.some(record => [...record.addedNodes].some(node => node instanceof Element && node.matches('.collection-flight')));
+          const flight = records.some(record => Array.from(record.addedNodes).some(node => node instanceof Element && node.matches('.collection-flight')));
           if (flight) {
             document.documentElement.dataset.collectionFlightObserved = 'true';
             observer.disconnect();

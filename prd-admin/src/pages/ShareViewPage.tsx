@@ -868,7 +868,7 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
 
   if (!embedded && data.shareType === 'collection' && !requestedRelatedSiteId) {
   // Keep the original share token: member pages use the same authorization scope.
-  return <HostedShareCollection data={data} collectionPath={`/s/wp/${encodeURIComponent(token!)}`}
+  return <HostedShareCollection data={data} shareAccess={token ? { token, password: password || undefined } : undefined} collectionPath={`/s/wp/${encodeURIComponent(token!)}`}
     selectedSiteId={requestedRelatedSiteId} onSelect={id => navigate(id ? `/s/wp/${encodeURIComponent(token!)}?${new URLSearchParams({ siteId: id })}` : `/s/wp/${encodeURIComponent(token!)}`)}
     action={isOwner ? <><button className="hosted-share-save" onClick={() => openCollectionManager(true)}>分享</button><button className="hosted-share-save" onClick={() => openCollectionManager()}>管理合集</button>
       {collectionManagerOpen && <HostedCollectionEditor shareToken={token} initialSharing={collectionShareFirst} onClose={() => { setCollectionManagerOpen(false); void fetchShare(password || undefined); }} />}</> : <button className="hosted-share-save" onClick={handleSave} disabled={saving || saveStatus !== 'idle'}>
@@ -960,7 +960,11 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
         <div style={{ display: isFullscreen ? 'none' : 'block', gridColumn: '1 / -1' }}>
           <div className="share-topbar review-reader-toolbar border-b border-b-token-subtle" style={reviewReaderTint(annotations.headerTints)}>
             <div className="review-reader-title">
-              <span className="review-reader-icon" aria-hidden="true"><BookOpen size={16} /></span>
+              {!embedded && data.shareType === 'collection' && requestedRelatedSiteId
+                ? <a className="review-reader-back" aria-label="返回合集" title="返回合集" href={`/s/wp/${encodeURIComponent(token!)}`}>
+                  <ArrowLeft size={17} /><span>合集</span>
+                </a>
+                : <span className="review-reader-icon" aria-hidden="true"><BookOpen size={16} /></span>}
               <div className="review-reader-identity">
                 <div className="review-reader-identity-line">
                   <SharePageTitle key={site.id} site={site} rename={{ open: renameOpen, onOpenChange: setRenameOpen, menuOnly: isMobile }} onRenamed={(title) => setData((current) => current ? {
@@ -975,8 +979,6 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
             {/* 常用操作用图标直达；低频操作收进更多，避免挤压网页标题。 */}
             <div className="share-topbar-actions">
               {!isMobile && historyHint && !review.historical && <ReviewHistoryHint value={historyHint} onOpen={id => review.setVersionPreview({ id })} />}
-              {!isMobile && !embedded && data.shareType === 'collection' && requestedRelatedSiteId && <a className="share-topbar-btn" href={`/s/wp/${encodeURIComponent(token!)}`}>返回合集</a>}
-              {!isMobile && !embedded && isOwner && data.shareType === 'collection' && <button className="share-topbar-btn" onClick={() => openCollectionManager()}>管理合集</button>}
               {collectionManagerOpen && <HostedCollectionEditor shareToken={token} initialSharing={collectionShareFirst} onClose={() => { setCollectionManagerOpen(false); void fetchShare(password || undefined); }} />}
               <RelatedDocumentsBar siteId={liveSite.id} variant="toolbar" reviewReader source={{ token, password: password || undefined }}
                 onNavigate={openRelatedDocument} />
@@ -1004,10 +1006,7 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
               {isMobile && site.viewerIsOwner && <button type="button" role="menuitem" className="share-topbar-btn" onClick={() => setRenameOpen(true)}>
                 <Pencil size={15} />修改标题
               </button>}
-              {isMobile && !embedded && data.shareType === 'collection' && requestedRelatedSiteId && <a role="menuitem" className="share-topbar-btn" href={`/s/wp/${encodeURIComponent(token!)}`}>
-                <ArrowLeft size={15} />返回合集
-              </a>}
-              {isMobile && !embedded && isOwner && data.shareType === 'collection' && <button type="button" role="menuitem" className="share-topbar-btn" onClick={() => openCollectionManager()}>
+              {!embedded && isOwner && data.shareType === 'collection' && <button type="button" role="menuitem" className="share-topbar-btn" onClick={() => openCollectionManager()}>
                 <Settings2 size={15} />管理合集
               </button>}
               {isMobile && historyHint && !review.historical && <ReviewHistoryHint menu value={historyHint} onOpen={id => review.setVersionPreview({ id })} />}

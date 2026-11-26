@@ -78,6 +78,22 @@ it('创建时仍可显式更换主文档并保存顺序', async () => {
   expect(api.createCollectionShare).not.toHaveBeenCalled();
 });
 
+it('在新截止时间内接收网关结果并且只请求一次', async () => {
+  vi.useFakeTimers();
+  try {
+    vi.mocked(api.suggestCollectionNames).mockImplementation(() => new Promise(resolve => {
+      setTimeout(() => resolve({ success: true, data: { names: ['发布资料合集', '交付合集', '方案合集'] }, error: null }), 1850);
+    }));
+    await act(async () => root.render(<HostedCollectionEditor initialSites={sites} onClose={vi.fn()} />));
+    await act(async () => { await vi.advanceTimersByTimeAsync(1851); });
+    expect(element.querySelector<HTMLInputElement>('[aria-label="合集名称"]')?.value).toBe('发布资料合集');
+    expect(element.querySelectorAll('.collection-name-suggestions button')).toHaveLength(3);
+    expect(api.suggestCollectionNames).toHaveBeenCalledOnce();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it('模型超时前可手动输入，超时后提供三个备用名称且不重复请求', async () => {
   vi.useFakeTimers();
   try {
@@ -88,7 +104,7 @@ it('模型超时前可手动输入，超时后提供三个备用名称且不重�
     await act(async () => { await vi.advanceTimersByTimeAsync(1); });
     expect(api.suggestCollectionNames).toHaveBeenCalledOnce();
     await input('我的自定义名称');
-    await act(async () => { await vi.advanceTimersByTimeAsync(1850); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(1975); });
     expect(element.querySelector<HTMLInputElement>('[aria-label="合集名称"]')?.value).toBe('我的自定义名称');
     expect(element.querySelectorAll('.collection-name-suggestions button')).toHaveLength(3);
     expect(api.suggestCollectionNames).toHaveBeenCalledOnce();

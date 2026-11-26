@@ -73,7 +73,7 @@ export const getCollectionContextLinks = (siteId: string, contextId: string, pag
 export const listCollections = (keyword = '', page = 1, recentId?: string) => apiRequest<{
   items: HostedCollection[]; recent?: HostedCollection; members: Record<string, HostedSite>; total: number; page: number; pageSize: number;
 }>(`${legacyRoot}?${new URLSearchParams({ keyword, page: String(page), includeMembers: 'true', ...(recentId ? { recentId } : {}) })}`);
-export const suggestCollectionNames = (siteIds: string[], signal: AbortSignal) => apiRequest<{ names: string[] }>(`${legacyRoot}/name-suggestions`, { method: 'POST', body: { siteIds: siteIds.slice(0, 12) }, signal, timeoutMs: 1800 });
+export const suggestCollectionNames = (siteIds: string[], signal: AbortSignal) => apiRequest<{ names: string[] }>(`${legacyRoot}/name-suggestions`, { method: 'POST', body: { siteIds: siteIds.slice(0, 12) }, signal });
 export const getCollection = (id: string) => apiRequest<CollectionDetails>(path(id));
 export const getCollectionByShare = (token: string) => apiRequest<CollectionDetails>(`${legacyRoot}/by-share/${encodeURIComponent(token)}`);
 export const createCollection = (body: CollectionDraft) => apiRequest<CollectionDetails>(legacyRoot, { method: 'POST', body });

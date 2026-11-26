@@ -16,6 +16,9 @@
   background: var(--review-b-paper);
   box-shadow: 0 1px 0 var(--review-b-line);
 }
+.review-workbench .review-reader-toolbar:has(.review-reader-back) {
+  grid-template-columns: minmax(0, 1fr) auto max-content;
+}
 @supports (backdrop-filter: blur(18px)) {
   .review-workbench .review-reader-toolbar {
     background: linear-gradient(101deg,
@@ -33,6 +36,14 @@
 }
 .review-workbench .review-reader-toolbar > .review-version-control { justify-self: center; }
 .review-workbench .review-reader-title { min-width: 0; gap: 12px; }
+.review-reader-back {
+  display: inline-flex; flex-shrink: 0; align-items: center; gap: 6px; min-height: 36px; padding: 0 8px;
+  border: 1px solid var(--review-b-line); border-radius: 7px; color: var(--review-b-ink);
+  font-size: 12px; white-space: nowrap;
+}
+.review-reader-back:hover { background: var(--review-b-line); }
+.review-workbench[data-review-layout="mobile"] .review-reader-back { justify-content: center; width: 44px; min-height: 44px; padding: 0; }
+.review-workbench[data-review-layout="mobile"] .review-reader-back > span { display: none; }
 .review-workbench .review-reader-identity { min-width: 0; }
 .review-reader-identity-line {
   display: flex; align-items: center; gap: 4px; min-width: 0;

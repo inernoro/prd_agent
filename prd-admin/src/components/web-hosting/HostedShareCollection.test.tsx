@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import HostedShareCollection from './HostedShareCollection';
 
 vi.mock('@/components/reactbits/Threads', () => ({ default: () => <canvas /> }));
+vi.mock('@/components/SitePreview', () => ({ SitePreview: () => <div data-website-preview /> }));
 vi.mock('@/hooks/useDataTheme', () => ({ useDataTheme: () => 'dark' }));
 
 afterEach(() => vi.unstubAllGlobals());
@@ -41,7 +42,7 @@ describe('合集目录与设计样例', () => {
     const root = createRoot(element);
     try {
       act(() => root.render(<HostedShareCollection collectionPath="/s/wp/snapshot" data={{ title: '90 份资料', mainSiteId: '1', sites: Array.from({ length: 90 }, (_, i) => ({ id: String(i + 1), title: `资料 ${i + 1}`, siteUrl: 'https://cos.example/index.html', entryFile: 'index.html', entrySize: 1, fileCount: 1, totalSize: 1 })) }} />));
-      const links = () => [...element.querySelectorAll<HTMLAnchorElement>('.hosted-share-member')];
+      const links = () => [...element.querySelectorAll<HTMLAnchorElement>('.ledger-directory .hosted-share-member')];
       expect(links()).toHaveLength(30);
       expect(element.querySelector('.is-main')?.textContent).toContain('主文档');
       act(() => [...element.querySelectorAll('button')].find(x => x.getAttribute('aria-label') === '下一页目录')!.click());
@@ -104,6 +105,7 @@ describe('合集目录与设计样例', () => {
         })) }} />));
       const links = [...element.querySelectorAll<HTMLAnchorElement>('.hosted-share-member')];
       expect(links).toHaveLength(2);
+      expect(element.querySelectorAll('[data-website-preview]')).toHaveLength(2);
       for (const [index, link] of links.entries()) {
         const url = new URL(link.href, 'https://map.example');
         expect(url.pathname).toBe('/s/wp/existing-token');

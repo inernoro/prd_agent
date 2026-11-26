@@ -238,24 +238,4 @@
   box-shadow: 0 12px 24px #0003, 0 2px 5px #0002;
   color: var(--review-b-popover-ink);
 }
-.related-reader-list { display: flex; flex-direction: column; padding: 5px 6px 4px; }
-.related-reader-heading, .related-reader-list footer {
-  padding: 7px 11px;
-  color: var(--review-b-popover-muted);
-  font-size: 11px;
-  line-height: 17px;
-}
-.related-reader-heading { display: flex; align-items: center; justify-content: space-between; }
-.related-reader-list footer { border-top: 1px solid var(--review-b-popover-line); }
-.related-reader-list ul { list-style: none; min-height: 0; overflow-y: auto; overscroll-behavior: contain; margin: 0 0 4px; padding: 0; }
-.related-reader-link {
-  width: 100%; display: grid; gap: 3px; align-content: center; min-height: 56px;
-  padding: 7px 11px; border-radius: 7px; text-align: left;
-  color: var(--review-b-popover-ink); font-size: 13px; line-height: 17px;
-}
-.related-reader-link:hover, .related-reader-actions button:hover { background: var(--review-b-popover-hover); }
-.related-reader-link > span, .related-reader-link > small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.related-reader-link > small { color: var(--review-b-popover-muted); font-size: 12px; }
-.related-reader-actions { display: flex; gap: 4px; }
-.related-reader-actions button { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 5px; }
-.related-reader-error { display: flex; align-items: center; gap: 6px; padding: 8px 11px; }
+.related-reader-popover .related-document-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }

@@ -1,5 +1,8 @@
 import { Component, useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react';
-import { ArrowLeft, BookOpen, ChevronLeft, ChevronRight, Moon, Search, Waves } from 'lucide-react';
+import { ArrowLeft, BookOpen, ChevronLeft, ChevronRight, FileText, Moon, Search, Waves } from 'lucide-react';
+import { PdfThumbnail } from '@/components/PdfThumbnail';
+import { SitePreview } from '@/components/SitePreview';
+import type { SitePreviewHtmlSite } from './useSitePreviewHtml';
 import Threads from '@/components/reactbits/Threads';
 import { useDataTheme } from '@/hooks/useDataTheme';
 import type { SharedSiteInfo, ShareViewData } from '@/services/real/webPages';
@@ -51,10 +54,10 @@ function formatSize(bytes: number) {
   return bytes < 1024 ? `${bytes} B` : bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 export default function HostedShareCollection({ data, collectionPath, action, controls, paused: initialPaused = false, footer,
-  selectedSiteId, onSelect, reader, related, sample = false }: {
+  selectedSiteId, onSelect, reader, related, shareAccess, sample = false }: {
   data: LedgerCollectionData; collectionPath: string; action?: ReactNode; controls?: ReactNode;
   paused?: boolean; footer?: ReactNode; selectedSiteId?: string | null;
-  onSelect?: (id: string | null) => void; reader?: ReactNode | ((render: CollectionReaderRenderer) => ReactNode); related?: ReactNode; sample?: boolean;
+  onSelect?: (id: string | null) => void; reader?: ReactNode | ((render: CollectionReaderRenderer) => ReactNode); related?: ReactNode; shareAccess?: SitePreviewHtmlSite['shareAccess']; sample?: boolean;
 }) {
   const theme = useDataTheme();
   const [paused, setPaused] = useState(initialPaused);
@@ -79,11 +82,22 @@ export default function HostedShareCollection({ data, collectionPath, action, co
     event.preventDefault(); onSelect(id);
   };
   const meta = (site: LedgerSite) => site.displayMeta || `${site.fileCount} 个文件 · ${formatSize(site.totalSize)}`;
+  const preview = (site: LedgerSite) => <div className="ledger-document-preview" aria-hidden="true">
+    {site.unavailable ? <FileText size={25} />
+      : site.coverImageUrl ? <img src={site.coverImageUrl} alt="" loading="lazy" />
+      : site.wrappedAssetType === 'pdf' ? <PdfThumbnail className="h-full w-full" sizeBytes={site.totalSize} compact />
+      : site.siteUrl ? <SitePreview decorative url={site.siteUrl} site={{ ...site, shareAccess }} className="h-full w-full" />
+      : <FileText size={25} />}
+  </div>;
+  const mainPreview = main && <a className="ledger-main-preview" href={href(main.id)}
+    aria-label={`打开主文档：${main.title}`} onClick={event => navigate(event, main.id)}>{preview(main)}</a>;
+
   useEffect(() => { mainRef.current?.scrollTo?.({ top: 0 }); }, [selectedSiteId]);
   const search = <label className="ledger-search"><Search size={14} /><input aria-label="查找合集文档" placeholder={sample ? '查找标题、作者、摘要' : '查找标题或摘要'} value={keyword} onChange={event => { setKeyword(event.target.value); setPage(1); }} />{query && <button onClick={() => { setKeyword(''); setPage(1); }} aria-label="清除查找">清除</button>}</label>;
   const mainLink = main && <a className="ledger-button is-primary" href={href(main.id)} onClick={event => navigate(event, main.id)}><BookOpen size={14} />从主文档开始阅读</a>;
   const member = (site: LedgerSite, summary = false) => <a key={site.id} className={`hosted-share-member ledger-row${site.id === main?.id ? ' is-main' : ''}${selected?.id === site.id ? ' is-current' : ''}${site.unavailable ? ' is-unavailable' : ''}${summary ? ' is-summary' : ''}`}
     href={href(site.id)} onClick={event => navigate(event, site.id)} aria-current={selected?.id === site.id ? 'page' : undefined}>
+    {summary && preview(site)}
     <span className="ledger-number">{site.id === main?.id ? '主' : String(positions.get(site.id)).padStart(2, '0')}</span>
     <span className="ledger-row-content"><span className="ledger-row-title">{site.title}</span>{summary && site.description && <span className="ledger-row-description">{site.description}</span>}<span className="ledger-row-meta">{meta(site)}</span></span>
     {site.unavailable ? <span className="ledger-tag is-danger">不可用</span> : site.id === main?.id ? <span className="ledger-tag">主文档</span> : summary ? <ChevronRight size={16} /> : null}
@@ -118,11 +132,11 @@ export default function HostedShareCollection({ data, collectionPath, action, co
       {selectedSiteId ? selected && !selected.unavailable ? <>{typeof reader === 'function' ? reader(renderReader) : renderReader({ content: reader, metadata: meta(selected) })}</>
           : <div className="ledger-empty" role="alert"><strong>{selected?.unavailable ? '文档暂不可用，请联系分享者' : '文档不存在或不在这条分享中'}</strong><a href={collectionPath} onClick={event => navigate(event, null)}>返回合集目录</a></div>
         : <><section className="ledger-intro"><div className="ledger-meta"><span>合集</span><span>{data.sites.length} 份文档</span>{data.createdByName && <span>作者 {data.createdByName}</span>}{data.updatedLabel ? <span>更新于 {data.updatedLabel}</span> : data.createdAt && <span>分享于 {new Date(data.createdAt).toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })}</span>}</div><h1>{data.title || `${data.sites.length} 个站点合集`}</h1>{data.description && <p className={data.mobileDescription ? 'ledger-desktop-description' : undefined}>{data.description}</p>}{data.mobileDescription && <p className="ledger-mobile-description">{data.mobileDescription}</p>}<div className="ledger-desktop-start">{mainLink}</div></section>
-          {main ? <section className={`ledger-main-document${main.toc?.length ? ' has-toc' : ''}`} aria-label="主文档概览"><div><div className="ledger-reading-meta"><span className="ledger-tag">主文档</span><span>{meta(main)}</span></div><h2><a href={href(main.id)} onClick={event => navigate(event, main.id)}>{main.title}</a></h2>{main.description && <p>{main.description}</p>}{main.readingMeta && <div className="ledger-mono">{main.readingMeta}</div>}<div className="ledger-mobile-start">{mainLink}</div></div>{main.toc && <div className="ledger-main-toc"><span>主文档目录</span>{main.toc.map((title, index) => <a key={title} href={href(main.id)} onClick={event => navigate(event, main.id)}><span className="ledger-number">{String(index + 1).padStart(2, '0')}</span>{title}</a>)}</div>}</section>
+          {main ? <section className={`ledger-main-document${main.toc?.length ? ' has-toc' : ''}`} aria-label="主文档概览"><div><div className="ledger-reading-meta"><span className="ledger-tag">主文档</span><span>{meta(main)}</span></div><h2><a href={href(main.id)} onClick={event => navigate(event, main.id)}>{main.title}</a></h2>{main.description && <p>{main.description}</p>}{main.readingMeta && <div className="ledger-mono">{main.readingMeta}</div>}<div className="ledger-mobile-start">{mainLink}</div>{main.toc?.length ? mainPreview : null}</div>{!main.toc?.length && mainPreview}{main.toc && <div className="ledger-main-toc"><span>主文档目录</span>{main.toc.map((title, index) => <a key={title} href={href(main.id)} onClick={event => navigate(event, main.id)}><span className="ledger-number">{String(index + 1).padStart(2, '0')}</span>{title}</a>)}</div>}</section>
             : <div className="ledger-unset-main"><BookOpen size={18} /><p>尚未指定可用的主文档，请按目录阅读；作者可在管理中设置。</p></div>}
           {!large && <div className="ledger-small-search">{search}</div>}
           {remainder.length > 0 && <section className={`ledger-overview-lists${large ? ' is-large' : ''}`} aria-label="全部文档"><div className="ledger-section-heading"><h2>{sections.length ? '章节' : '继续阅读'}</h2><span>{sections.length ? `${sections.length} 个章节 · 由作者划分` : '按作者顺序'}</span></div>
-            {large ? <div className="ledger-section-grid">{groups.map(label => { const items = sections.length ? remainder.filter(site => site.section === label) : remainder; return <section key={label}><div className="ledger-section-heading"><h3>{label}</h3><button onClick={() => { setSection(sections.length ? label : ''); setPage(1); setKeyword(''); }}>{sections.length ? `全部 ${items.length} 篇` : `${items.length} 篇`}</button></div>{items.slice(0, sections.length ? 4 : 12).map(site => <a key={site.id} href={href(site.id)} onClick={event => navigate(event, site.id)}><span className="ledger-number">{String(positions.get(site.id)).padStart(2, '0')}</span><span>{site.title}{site.unavailable && '（不可用）'}</span></a>)}</section>; })}</div>
+            {large ? <div className="ledger-section-grid">{groups.map(label => { const items = sections.length ? remainder.filter(site => site.section === label) : remainder; return <section key={label}><div className="ledger-section-heading"><h3>{label}</h3><button onClick={() => { setSection(sections.length ? label : ''); setPage(1); setKeyword(''); }}>{sections.length ? `全部 ${items.length} 篇` : `${items.length} 篇`}</button></div><div className="ledger-small-members">{items.slice(0, sections.length ? 4 : 12).map(site => member(site, true))}</div></section>; })}</div>
               : <div className="ledger-small-members">{filtered.filter(site => site.id !== main?.id).map(site => member(site, true))}{!filtered.length && <div className="ledger-empty" role="status">没有找到匹配文档，试试其他关键词。</div>}</div>}
           </section>}{related && <section className="ledger-related"><div className="ledger-section-heading"><h2>{sample ? '合集之外的关联' : '关联与引用'}</h2><span>{sample ? '不属于本合集 · 仅供参考' : '按现有访问权限查看'}</span></div>{related}</section>}
           {!data.sites.length && <div className="ledger-empty"><BookOpen size={24} /><strong>还没有可阅读的文档</strong><span>请联系分享者补充内容。</span></div>}
