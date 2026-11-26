@@ -71,7 +71,7 @@
 .collection-library-group-heading .collection-recent-label { color: var(--accent-primary); }
 .collection-library-group-heading > button { margin-left: auto; flex-shrink: 0; }
 .collection-library-group > p { font-size: 12px; color: var(--text-muted); }
-.collection-flight { pointer-events: none; position: fixed; z-index: 10000; display: grid; justify-items: center; align-content: center; gap: 10px; overflow: hidden; padding: 14px; border-radius: 10px; border: 1px solid var(--accent-primary); background: var(--bg-elevated); color: var(--text-primary); box-shadow: var(--shadow-glass-dropdown); }
+.collection-flight { display: grid; place-items: center; min-width: 104px; max-width: min(260px, 75vw); min-height: 48px; overflow: hidden; padding: 10px 14px; border-radius: 10px; border: 1px solid var(--accent-primary); background: var(--bg-elevated); color: var(--text-primary); box-shadow: var(--shadow-glass-dropdown); }
 .collection-flight > span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
 .collection-share-row small { display: block; color: var(--text-secondary); font-size: 12px; margin-top: 4px; }
 .collection-share-row, .collection-preflight-list > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--border-subtle); }

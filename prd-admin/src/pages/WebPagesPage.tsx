@@ -12,6 +12,7 @@ import { useRelatedSiteOpener } from '@/components/web-hosting/useRelatedSiteOpe
 import { useRelatedSummaries } from '@/components/web-hosting/useRelatedSummaries';
 import { HOSTED_SITE_PERMISSIONS_CHANGED, type RelatedSummary } from '@/services/real/relatedDocuments';
 import { Badge } from '@/components/design/Badge';
+import { captureGatherMotion, GatherMotion, type GatherMotionGeometry } from '@/components/effects/GatherMotion';
 import { toast } from '@/lib/toast';
 import { SitePreview } from '@/components/SitePreview';
 import { PdfThumbnail, isPdfSite } from '@/components/PdfThumbnail';
@@ -477,34 +478,14 @@ export default function WebPagesPage() {
     } catch { /* Keep the current-tab state when storage is unavailable. */ }
   }, [recentCollectionKey]);
   const collectionEntry = useRef<HTMLButtonElement>(null);
+  const [collectionGather, setCollectionGather] = useState<{ geometry: GatherMotionGeometry; title: string } | null>(null);
   const finishCollectionArrival = useCallback(({ id, title, bounds }: CollectionArrival) => {
     if (recentCollectionKey) {
       setRecentCollection({ key: recentCollectionKey, id });
       try { sessionStorage.setItem(recentCollectionKey, id); } catch { /* The current-tab state still works. */ }
     }
-    const entry = collectionEntry.current;
-    if (!entry || !bounds || !bounds.width || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-    const destination = entry.getBoundingClientRect();
-    if (!destination.width || !destination.height) return;
-    const tile = document.createElement('div');
-    tile.className = 'collection-flight';
-    tile.setAttribute('aria-hidden', 'true');
-    Object.assign(tile.style, { left: `${bounds.left}px`, top: `${bounds.top}px`, width: `${bounds.width}px`, height: `${bounds.height}px` });
-    const name = document.createElement('span');
-    name.textContent = title;
-    tile.append(name);
-    document.body.append(tile);
-    const targetX = destination.left + destination.width / 2 - bounds.left - bounds.width / 2;
-    const targetY = destination.top + destination.height / 2 - bounds.top - bounds.height / 2;
-    const flight = tile.animate([
-      { transform: 'translate(0,0) scale(1)', opacity: 1, offset: 0 },
-      { transform: 'translate(10px, -16px) scale(.76) rotate(3deg)', opacity: 1, offset: .2 },
-      { transform: `translate(${targetX * .62}px, ${targetY * .7 - 30}px) scale(.38) rotate(-9deg)`, opacity: .95, offset: .65 },
-      { transform: `translate(${targetX}px, ${targetY}px) scale(.12) rotate(-14deg)`, opacity: 0, offset: 1 },
-    ], { duration: 590, easing: 'cubic-bezier(.2,.6,.35,1)' });
-    void flight.finished.then(() => {
-      if (entry.isConnected) entry.animate([{ transform: 'scale(1)' }, { transform: 'scale(1.12)' }, { transform: 'scale(1)' }], { duration: 220 });
-    }, () => undefined).finally(() => tile.remove());
+    const geometry = bounds && captureGatherMotion(bounds, collectionEntry.current);
+    if (geometry) setCollectionGather({ geometry, title });
   }, [recentCollectionKey]);
   const [showShareDialog, setShowShareDialog] = useState(false);
   const [collectionShareTarget, setCollectionShareTarget] = useState<HostedSite | null>(null);
@@ -2371,6 +2352,9 @@ export default function WebPagesPage() {
         );
       })()}
 
+      {collectionGather && <GatherMotion geometry={collectionGather.geometry} className="collection-flight" onDone={() => setCollectionGather(null)}>
+        <span title={collectionGather.title}>{collectionGather.title}</span>
+      </GatherMotion>}
       {collectionInitialSites && <HostedCollectionEditor initialSites={collectionInitialSites} onArrival={finishCollectionArrival}
         onClose={() => { setCollectionInitialSites(null); setSelectedIds(new Set()); void loadShares(); }} />}
 

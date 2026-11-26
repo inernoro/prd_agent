@@ -934,19 +934,24 @@ for (const mobile of [false, true]) test.describe(mobile ? '手机合集' : '桌
     else {
       await page.evaluate(() => {
         const observer = new MutationObserver(records => {
-          const flight = records.some(record => Array.from(record.addedNodes).some(node => node instanceof Element && node.matches('.collection-flight')));
-          if (flight) {
-            document.documentElement.dataset.collectionFlightObserved = 'true';
+          const flight = records.flatMap(record => Array.from(record.addedNodes)).find(node => node instanceof Element && node.matches('.collection-flight'));
+          if (flight instanceof Element) {
+            const halo = document.querySelector('[data-gather-motion="halo"]');
+            document.documentElement.dataset.collectionFlightObserved = JSON.stringify({
+              flight: flight.getAnimations()[0]?.effect?.getTiming().duration,
+              landing: halo?.getAnimations()[0]?.effect?.getTiming().delay,
+            });
             observer.disconnect();
           }
         });
         observer.observe(document.body, { childList: true });
       });
       await page.mouse.click(40, 300);
-      await expect(page.locator('html')).toHaveAttribute('data-collection-flight-observed', 'true');
+      await expect(page.locator('html')).toHaveAttribute('data-collection-flight-observed', '{"flight":1440,"landing":1320}');
     }
     await expect(panel).toHaveCount(0);
     await expect(manager).toHaveCount(0);
+    if (mobile) await expect(page.locator('[data-gather-motion]')).toHaveCount(0);
     await page.getByRole('button', { name: '我的合集', exact: true }).click();
     const group = page.getByRole('region', { name: 'arc' });
     await expect(group).toBeVisible();
