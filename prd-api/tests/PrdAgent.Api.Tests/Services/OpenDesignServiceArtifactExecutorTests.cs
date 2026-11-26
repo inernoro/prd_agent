@@ -95,13 +95,19 @@ public sealed class OpenDesignServiceArtifactExecutorTests
 
         service.OnCapabilities(() => Json(HttpStatusCode.OK, new JsonObject
         {
-            ["protocol"] = "other-executor", ["healthy"] = true,
+            ["protocol"] = "other-executor", ["healthy"] = true, ["acceptingTasks"] = true,
         }));
         (await HostedSiteEditRunWorker.ProbeCodeFilmSlotAsync(client, slot, CancellationToken.None)).ShouldBeFalse();
 
         service.OnCapabilities(() => Json(HttpStatusCode.OK, new JsonObject
         {
-            ["protocol"] = "map-design-executor-v1", ["healthy"] = true,
+            ["protocol"] = "map-design-executor-v1", ["healthy"] = true, ["acceptingTasks"] = false,
+        }));
+        (await HostedSiteEditRunWorker.ProbeCodeFilmSlotAsync(client, slot, CancellationToken.None)).ShouldBeFalse();
+
+        service.OnCapabilities(() => Json(HttpStatusCode.OK, new JsonObject
+        {
+            ["protocol"] = "map-design-executor-v1", ["healthy"] = true, ["acceptingTasks"] = true,
         }));
         (await HostedSiteEditRunWorker.ProbeCodeFilmSlotAsync(client, slot, CancellationToken.None)).ShouldBeTrue();
         service.CapabilityAuthorization.ShouldBeNull();

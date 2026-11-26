@@ -111,7 +111,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             using var response = await client.GetAsync(new Uri(slot, "/v1/capabilities"), timeout.Token);
             if (!response.IsSuccessStatusCode) return false;
             var body = await response.Content.ReadAsStringAsync(timeout.Token);
-            return OpenDesignServiceArtifactExecutor.MapCapabilities(body, slot).Result.Enabled;
+            return OpenDesignServiceArtifactExecutor.MapCapabilities(body, slot).AcceptingTasks;
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {

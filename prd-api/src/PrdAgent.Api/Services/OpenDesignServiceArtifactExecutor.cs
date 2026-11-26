@@ -173,7 +173,8 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
     /// 探针结论：<see cref="Result"/> 的 Reason 会经公开能力接口与 RUNTIME_NOT_READY 交给普通用户，
     /// 只写结果与下一步；HTTP 状态、协议名、服务原文、内部地址放 <see cref="Diagnostic"/>，只进日志。
     /// </summary>
-    internal sealed record ProbeVerdict(DesignArtifactProviderProbeResult Result, string? Diagnostic);
+    internal sealed record ProbeVerdict(
+        DesignArtifactProviderProbeResult Result, string? Diagnostic, bool AcceptingTasks = false);
 
     private static ProbeVerdict Unavailable(string userReason, string diagnostic) =>
         new(new DesignArtifactProviderProbeResult(Configured: true, Healthy: false, Enabled: false, Reason: userReason), diagnostic);
@@ -230,7 +231,10 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
                 $"unhealthy code={code ?? "unknown"} message={serviceMessage ?? "none"} baseUrl={baseUrl}");
         }
 
-        return new ProbeVerdict(new DesignArtifactProviderProbeResult(Configured: true, Healthy: true, Enabled: true, Reason: null), null);
+        return new ProbeVerdict(
+            new DesignArtifactProviderProbeResult(Configured: true, Healthy: true, Enabled: true, Reason: null),
+            null,
+            AcceptingTasks: capabilities["acceptingTasks"]?.GetValueKind() == JsonValueKind.True);
     }
 
     // ───────────────────────── 执行 ─────────────────────────
