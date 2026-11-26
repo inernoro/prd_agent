@@ -45,7 +45,7 @@
     "cds/scripts/design/version-diff.mjs": "8c20ff8e54981a7321d3709afbb3f47897304bc648c2cbbdd82f90f5e5ad4bca",
     "cds/scripts/refresh_manifest.py": "48913d12887e76b01f564f7439a53b1326abed070a547101f8f97ddbf458252f",
     "cds/scripts/skill-fresh.mjs": "c992eae49eeeb442da344b7097c3cf5ee9d0bf492d5b928dd2fcc2e693997968",
-    "cds/SKILL.md": "16847683edf6eb900194a6d3c99a9352721af2fe96c2e0701c7bae614bf286c3",
+    "cds/SKILL.md": "037cf4ada560c01693e44c0e417e836e07f7a9578b8737a315f3d519fe45d455",
     "cds/tests/test_cdscli_acceptance_standard.py": "4c04b213da30ccc64be92cbe3559dfbcf72ccf04801c83d9c4c186b24274211f",
     "cds/tests/test_cdscli_agent_identity.py": "706e9c146eab1fef080a79380cd8c03b2a5e0a90384ded4587754b77be293434",
     "cds/tests/test_cdscli_code_review.py": "9f4b73be9b267351d0588e96d61c90ebe0b9f5fb742739213d4633eee38b53dd",
@@ -85,7 +85,7 @@
     "cds/tests/test_verify_selfheal.py": "c7ea5a0ac11a2d6bbf35fc435029475fc778b31fb4e844dcc2cdc714140c3acc",
     "cds/tests/test_web_entry_contract.py": "f08f361478b6e3232d73090c1edc7616bd34df0823b88958852741374c203636",
     "cds-design/SKILL.md": "dc905a44ecf3adf84b3a9f9ff2590dffe7228cb628296be2623b1c7259c2004c",
-    "cds-build/SKILL.md": "67598cd04d6b8b2b77af714883a4164935b37ca43fad74640f95f3151f15ea33",
+    "cds-build/SKILL.md": "4ab2eca79cf6ae289804fe00283623561e282b41aacad88ff2298fadd36601b9",
     "cds-project-scan/reference/cds-pending-import.md": "a071bae76e9bf6ed792af2b0697fad19f62544b38062dce864db8f4ede054cda",
     "cds-project-scan/reference/infra-init.md": "367af0506e5f8418d37cc9483602f6bc34747ed84cba4e6d11f49be1b7b31015",
     "cds-project-scan/reference/tech-detection.md": "20d88a38a278bc65dd2f7f8c9e09e2a5e39e5ef33584af585980249604df7a64",
@@ -95,5 +95,5 @@
     "cds-release/SKILL.md": "7a80c34792d75c327d360f5c84963de33b78e43b818465cfbe6213db6b70ee90",
     "preview-url/SKILL.md": "cba546b198bc1e0bad384d447078663d0e6906f1d080722dd29db7b14a33f65b"
   },
-  "generatedAt": "2026-11-26T21:45:53.814Z"
+  "generatedAt": "2026-11-26T21:58:01.674Z"
 }

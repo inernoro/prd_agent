@@ -1,7 +1,7 @@
 ---
 name: cds
 metadata:
-  version: 0.26.31
+  version: 0.26.32
 description: CDS (Cloud Dev Space) 的唯一入口：用户说「/cds <一句话>」，按 CDS 左侧菜单路由到对应任务，例如 /cds 建项目、/cds 部署这个分支、/cds 发布到 xx 环境、/cds 回滚、/cds 添加一个任务调度、/cds 加一个 xx 的监控、/cds 审查这次改动、/cds 记下这个决策、/cds 记一笔债、/cds 改 xx 模块的设计、/cds 领一个验收任务、/cds 给智能体授权、/cds 更新 CDS。也用于 CDS 授权接入、cdscli 命令、预览地址、部署记录和版本回滚。页面验收和验收报告的取证仍用 create-visual-test-to-kb；报告上传只是传输，不等于验收执行。
 ---
 
