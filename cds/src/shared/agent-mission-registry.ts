@@ -98,7 +98,7 @@ export type CdsCapabilityAccess = 'public' | 'project' | 'system' | 'human-only'
 export type CdsMcpExposure = 'read-only-candidate' | 'approval-required' | 'not-exposed' | 'available';
 
 export interface CdsAgentSkillDefinition {
-  id: 'cds' | 'cds-project-scan' | 'cds-deploy-pipeline' | 'cds-release' | 'preview-url';
+  id: 'cds' | 'cds-design' | 'cds-project-scan' | 'cds-deploy-pipeline' | 'cds-release' | 'preview-url';
   label: string;
   role: string;
   required: boolean;
@@ -139,6 +139,7 @@ export const AGENT_MISSION_CATEGORY_DEFINITIONS: readonly AgentMissionCategoryDe
 
 export const CDS_AGENT_SKILL_DEFINITIONS: readonly CdsAgentSkillDefinition[] = [
   { id: 'cds', label: 'CDS 核心技能', role: '认证、能力分诊、环境变量、系统维护和共享 CLI', required: true },
+  { id: 'cds-design', label: '设计技能', role: '接入设计需求，发布框架和私有稿件，回读版本与交付回执', required: true },
   { id: 'cds-project-scan', label: '项目扫描技能', role: '扫描仓库、生成和校验 Compose、提交项目接入', required: true },
   { id: 'cds-deploy-pipeline', label: '部署排障技能', role: '部署、日志、诊断、冒烟和灰度状态', required: true },
   { id: 'cds-release', label: '正式发布技能', role: '生产目标发现、预检、发布、回滚和证据归档', required: true },
@@ -226,7 +227,7 @@ const CDS_AGENT_CAPABILITY_SEEDS = [
   ['reports', '报告、资产、分享与 PR 回写', 'reports.ts', 'mixed', 'project', 'write', 'direct', 'cds', 'report / report-folder', '分享和推送 PR 前检查脱敏与目标项目'],
   ['acceptance-tasks', '结构化功能清单、领取任务与历史矩阵', 'acceptance-tasks.ts', 'project', 'project', 'write', 'direct', 'cds', 'acceptance', '先读冻结清单再领取，按真实业务路径回填断言、线上证据与清理；正式环境无需发布分支，报告绑定不等于线上验真通过'],
   ['engineering-planning', '工程规划与债务', 'engineering-planning.ts', 'project', 'project', 'write', 'guided', 'cds', 'planning / debt', 'MCP 读取当前项目并提交提案或明确授权的直接登记。项目成员确认提案及处理债务。'],
-  ['design-workspace', '项目设计稿件', 'design-workspace.ts', 'project', 'project', 'write', 'guided', 'cds', 'design / framework', '读取和发布授权项目稿件。定稿、评论核对和签收由项目成员确认。'],
+  ['design-workspace', '项目设计稿件', 'design-workspace.ts', 'project', 'project', 'write', 'guided', 'cds-design', 'design / framework', '读取和发布授权项目的稿件及框架版本。定稿、框架采用和签收由项目成员确认。'],
   ['planning-preview-access', '分支预览进入票据', 'planning-preview-access.ts', 'system', 'protocol-token', 'write', 'protocol-only', 'cds', '', '票据只用于当前分支的登录。访问申请由项目授权流程审批。'],
   ['scheduled-jobs', '定时任务与运行记录', 'scheduled-jobs.ts', 'project', 'project', 'write', 'direct', 'cds', 'schedule', '先 parse 和 test，默认不直接创建或执行危险命令'],
   ['snapshots', '配置快照、回滚与撤销', 'snapshots.ts', 'system', 'system', 'destructive', 'guided', 'cds', '', '破坏性操作前建立快照，优先使用 undo 而不是再次修改'],
@@ -261,7 +262,7 @@ const MCP_TOOLS_BY_CAPABILITY: Readonly<Partial<Record<string, readonly string[]
   'code-reviews': CODE_REVIEW_MCP_TOOLS,
   dts: DTS_TOOLS,
   'engineering-planning': PLANNING_MCP_TOOLS,
-  'design-workspace': ['cds_design_read', 'cds_design_publish', 'cds_design_feedback', 'cds_design_acceptance'],
+  'design-workspace': ['cds_design_read', 'cds_design_publish', 'cds_design_framework_publish', 'cds_design_feedback', 'cds_design_acceptance'],
   'account-proposals': ['cds_account_propose', 'cds_account_receipt'],
 };
 
@@ -582,11 +583,13 @@ export const AGENT_MISSION_DEFINITIONS: Record<AgentPageContextId, AgentMissionD
     connectTargets: ['existing'],
     icon: 'code',
     shortLabel: '设计发布',
-    cardDescription: '提交设计稿件或更新已有版本',
-    title: '发布或修订设计稿',
+    cardDescription: '提交设计稿件、框架或更新已有版本',
+    title: '发布设计稿件和框架',
     summary: '把工作区的设计交付内容归档到当前 CDS 项目，保留可追溯版本。',
-    goal: '交付新稿或修订同稿，返回稿件编号、版本和服务端回执。',
-    steps: ['读取 CDS 技能的 reference/design-intake.md 和当前项目设计接入清单',
+    goal: '交付设计稿件或框架版本，返回编号、版本和服务端回执。',
+    requiredSkills: ['cds-design'],
+    steps: ['读取 cds-design 技能，运行 cds/scripts/skill-fresh.mjs 检查版本，读取当前项目设计接入清单',
+      '发布框架时使用已有本项目设计发布授权，调用 cds_design_framework_publish 或 cdscli framework publish，按最新版本续发并回读回执',
       '以接入清单 requirements 中指定标识的已确认原文为输入；需要补充时，在同一需求内回复并提出具体问题',
       '读取所属系统、模块、已采用的框架版本及该稿的未关闭反馈；有歧义先在原处澄清，再按稳定稿件键查重',
       '用 cdscli design preview --dir 在与 CDS 相同的沙箱中检查画面，再把窗口尺寸、变更和待核对项写进交付资料',

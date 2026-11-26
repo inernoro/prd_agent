@@ -259,12 +259,19 @@ export type FrameworkRevision = {
   from?: { designId: string; version: number }; material: DesignMaterial; note?: string;
   charter?: DesignFrameworkCharter;
   resolutions?: FrameworkResolutions;
+  /** Omitted for legacy revisions. Null means published and awaiting adoption. */
+  adoption?: { at: string; by: string } | null;
 };
 export type DesignFramework = { id: string; projectId: string; versions: FrameworkRevision[] };
 
+export function adoptedFrameworkVersion(framework?: DesignFramework): number | undefined {
+  return framework?.versions.filter(revision => revision.adoption !== null
+    && (!revision.charter || revision.charter.status === 'adopted')).at(-1)?.version;
+}
+
 export function frameworkInUse(id: string, revision: FrameworkRevision | undefined, designs: Iterable<DesignEntry>) {
   if (!revision) return false;
-  if (revision.charter?.status === 'adopted') return true;
+  if (revision.adoption || revision.charter?.status === 'adopted') return true;
   for (const design of designs) {
     if (design.versions.at(-1)?.framework === id
       || design.versions.find(version => version.version === design.frozen)?.framework === id
@@ -282,7 +289,7 @@ export type DesignRequirement = {
 export type DesignIntake = {
   protocolVersion: 1;
   projectId: string;
-  permissions: { write: boolean; feedback?: boolean };
+  permissions: { write: boolean; feedback?: boolean; frameworkPublish?: boolean };
   systems?: DesignSystem[];
   keyFormat: 'module/draft';
   intents: readonly ['create', 'revise'];
@@ -324,6 +331,6 @@ export type DesignWorkspace = {
   requirements?: DesignRequirement[];
   systems?: DesignSystem[];
   viewer?: DesignViewerState;
-  permissions: { write: boolean; feedback?: boolean; feedbackSupplement?: boolean; visual?: boolean; review: boolean; sign?: boolean;
+  permissions: { write: boolean; feedback?: boolean; feedbackSupplement?: boolean; frameworkPublish?: boolean; visual?: boolean; review: boolean; sign?: boolean;
     installedAcceptance?: boolean; programRecheck?: boolean; steward: boolean; actorId: string };
 };

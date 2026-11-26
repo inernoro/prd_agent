@@ -11,6 +11,54 @@ import pytest
 from test_cdscli_instances import cli, run, save, workspace  # noqa: F401
 
 
+def test_framework_publish_reuses_project_authorization_and_validates_receipt(workspace, monkeypatch):
+    root, _ = workspace
+    save('https://cds.example', 'fixture', 'cdsp_fixture')
+    source = root / 'framework.json'
+    source.write_text(json.dumps({'rules': '# Shared'}), encoding='utf-8')
+    commands = []
+
+    def request(method, path, body, **kwargs):
+        assert method == 'POST' and path == '/api/projects/fixture/design/frameworks/publish'
+        assert kwargs['extra_headers'] == {}
+        commands.append(body)
+        return 201, {'projectId': 'fixture', 'reused': False, 'result': {
+            'type': 'framework.publish', 'frameworkId': 'FW-shared', 'version': 1,
+        }}, {}
+
+    monkeypatch.setattr(cli, '_request', request)
+    args = ('FW-shared', '--file', str(source), '--title', 'Shared', '--source-commit', 'a' * 40, '--expected-version', '0')
+    for action in ('publish', 'import'):
+        code, output = run('framework', action, *args)
+        assert code == 0, output
+        assert json.loads(output)['data']['result']['version'] == 1
+    assert commands[0] == commands[1]
+    assert commands[0] == {'type': 'framework.publish', 'frameworkId': 'FW-shared', 'title': 'Shared',
+                           'expectedVersion': 0, 'sourceCommit': 'a' * 40, 'material': {'rules': '# Shared'},
+                           'requestId': commands[0]['requestId']}
+    code, output = run('framework', 'publish', *args, '--expected-version', '1')
+    assert code == 2 and '回执' in output
+
+
+def test_scaffold_keeps_adopted_default_and_allows_an_explicit_trial(workspace, monkeypatch):
+    root, _ = workspace
+    save('https://cds.example', 'fixture', 'cdsp_fixture')
+    framework = {'id': 'FW-01', 'projectId': 'fixture', 'versions': [
+        {'version': 1, 'material': {'rules': '# Adopted'}},
+        {'version': 2, 'adoption': None, 'material': {'rules': '# Trial'}},
+    ]}
+    monkeypatch.setattr(cli, '_request', lambda *_args, **_kwargs: (
+        200, {'projectId': 'fixture', 'frameworks': [framework], 'designs': []}, {}))
+    for label, expected, flags in [('default', 1, []), ('explicit', 2, ['--framework-version', '2'])]:
+        destination = root / label
+        code, output = run('design', 'scaffold', '--framework', 'FW-01', '--title', 'Fixture', '--dir', str(destination), *flags)
+        assert code == 0, output
+        assert json.loads((destination / 'design.json').read_text())['frameworkVersion'] == expected
+    framework['versions'].pop(0)
+    code, output = run('design', 'scaffold', '--framework', 'FW-01', '--title', 'Fixture', '--dir', str(root / 'missing'))
+    assert code == 1 and '--framework-version' in output
+
+
 def test_scaffold_pins_framework_and_preserves_rule_check_modes(workspace, monkeypatch):
     root, _ = workspace
     save('https://cds.example', 'fixture', 'cdsp_fixture')

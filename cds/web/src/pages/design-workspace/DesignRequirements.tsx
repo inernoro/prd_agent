@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import type { DesignRequirement, DesignViewerState, DesignWorkspace } from '../../../../src/shared/design-workspace';
+import { adoptedFrameworkVersion } from '../../../../src/shared/design-workspace';
 import { ReadableNotes } from './DesignMarkdown';
 import { designDate, isNewDesignRequirement, latestDesign, legacyRequirementGroup, scopePath, type DesignCommand } from './design-ui';
 
@@ -35,11 +36,11 @@ function StartDesign({ project, requirement, workspace, command, busy, open }: {
   const module = system?.modules.find(row => row.id === requirement.scope?.moduleId);
   const frameId = module?.framework ?? system?.framework;
   const frame = workspace.frameworks.find(row => row.id === frameId);
-  const revision = frame?.versions.filter(row => !row.charter || row.charter.status === 'adopted').at(-1);
+  const version = adoptedFrameworkVersion(frame);
   const folder = 'design/' + requirement.designKey.split('/').at(-1);
   const title = "'" + requirement.title.replaceAll("'", "'\"'\"'") + "'";
-  const draftCommand = frame && revision
-    ? `cdscli design scaffold --framework ${frame.id} --framework-version ${revision.version} --dir ${folder} --title ${title}`
+  const draftCommand = frame && version !== undefined
+    ? `cdscli design scaffold --framework ${frame.id} --framework-version ${version} --dir ${folder} --title ${title}`
     : undefined;
   const scope = { designKey: requirement.designKey, expectedVersion: requirement.planVersion };
   const assigned = requirement.assignee?.id;

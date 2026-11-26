@@ -3,6 +3,7 @@ import { createProjectApiClient, localFile } from './bridge.mjs';
 
 const readTool = 'cds_design_read';
 const publishTool = 'cds_design_publish';
+const frameworkPublishTool = 'cds_design_framework_publish';
 const feedbackTool = 'cds_design_feedback';
 const acceptanceTool = 'cds_design_acceptance';
 const fileLimit = 4 * 1024 * 1024;
@@ -28,7 +29,9 @@ function implementationState(entry) {
     .filter(([, value]) => value !== undefined));
 }
 const intakeResult = z.object({
-  protocolVersion: z.literal(1), projectId: z.string(), permissions: z.object({ write: z.boolean(), feedback: z.boolean().optional() }),
+  protocolVersion: z.literal(1), projectId: z.string(),
+  permissions: z.object({ write: z.boolean(), feedback: z.boolean().optional(), frameworkPublish: z.boolean().optional() }),
+  frameworks: z.array(z.object({ id, title: z.string(), latestVersion: positiveVersion, adoptedVersion: version })).optional(),
   designs: z.array(z.object({ designId: id, designKey: designKey.optional(), latestVersion: positiveVersion,
     sourceCommit, sourcePaths: z.array(z.string()), canRevise: z.boolean(), scope: scope.optional() })),
   systems: z.array(z.object({ id: scopeId, name: z.string(), framework: id.optional(),
@@ -103,6 +106,13 @@ const schemas = {
       sources: z.array(z.object({ kind: z.enum(['defect', 'ticket', 'feedback']), ref: id,
         count: z.number().int().min(1).max(10_000) }).strict()).min(1).max(50) }).strict(),
   ]),
+  [frameworkPublishTool]: z.object({
+    requestId: id, frameworkId: id, title: z.string().trim().min(1).max(150), expectedVersion: z.number().int().nonnegative(),
+    sourceCommit, sourcePath: z.string().trim().min(1).max(400).optional(),
+    note: z.string().trim().min(1).max(1000).optional(), charter: z.record(z.string(), z.unknown()).optional(),
+    material: z.object({ tokens: z.record(z.string(), z.unknown()).optional(), rules: z.string().max(65_536).optional(),
+      components: z.string().max(65_536).optional(), skeleton: z.string().max(65_536).optional() }).strict(),
+  }).strict(),
   [publishTool]: z.object({
     requestId: id, designId: id.optional(), zipPath: z.string().trim().min(1).max(1200),
     sourceCommit, sourcePath: z.string().trim().min(1).max(400), sourceMode: z.literal('private').optional(),
@@ -131,6 +141,7 @@ const descriptions = {
   [feedbackTool]: '稿件发布前用 brief.claim 认领需求，brief.reply 在原需求下澄清，brief.release 交回未出稿需求。在原稿登记实施反馈并回复，可以用 feedback.attach 提交当前工作区的私有 PNG。原反馈者或项目管理者核对处理结果。重试沿用 requestId。',
   [acceptanceTool]: '先回读运行和提交。程序证据稿件用 acceptance.capture 同条件取证，稿件作者用 acceptance.recheck 独立重跑。旧稿沿用 visual、flow、smoke 和 regress 回填。coverage 关联维度风险与验收项，known.create 登记历史易错。重试沿用 requestId。',
   [publishTool]: '先查询 intake。新稿或新模块用 intent=create、独立的 module/draft 标识和 Git 目录。同稿用 intent=revise、原 designId 和读到的 expectedVersion。续版权限或基线不清楚时先澄清。本地稿件用 sourceMode=private 进入项目私有归档。已获授权且已同步的稿件可以核验项目 Git。重试沿用 requestId 和相同内容。',
+  [frameworkPublishTool]: '用当前项目的设计发布授权提交框架材料。先读 intake。同一框架沿用 frameworkId，首发 expectedVersion 为 0，续版填写 latestVersion。回执可回读固定版。新版本可预览与试用，项目采用版本由成员在框架页切换。重试沿用 requestId。',
 };
 const tools = Object.entries(schemas).map(([name, schema]) => ({
   name, description: descriptions[name], inputSchema: { ...z.toJSONSchema(schema), type: 'object' },
@@ -164,6 +175,7 @@ export function createDesignBridge(credentials, options = {}) {
     async listTools() {
       const result = await workspace();
       return tools.filter(tool => tool.name === readTool || (tool.name === publishTool && result.permissions.write)
+        || (tool.name === frameworkPublishTool && result.permissions.write && result.permissions.frameworkPublish === true)
         || (tool.name === feedbackTool && result.permissions.feedback === true)
         || (tool.name === acceptanceTool && (result.permissions.visual === true || result.permissions.programRecheck === true)));
     },
@@ -293,6 +305,19 @@ export function createDesignBridge(credentials, options = {}) {
           || (args.type === 'known.create' && !id.safeParse(result?.id).success)
           || Object.entries(expected).some(([key, value]) => result?.[key] !== value)) {
           throw new Error('CDS 返回的验收回执与当前运行、画面或记录不符');
+        }
+        return receipt;
+      }
+      if (name === frameworkPublishTool) {
+        const data = await intake();
+        if (!data.permissions.write || data.permissions.frameworkPublish !== true) {
+          throw new Error('当前项目未开放框架发布权限，请核对设计发布授权与 CDS 服务版本');
+        }
+        const type = 'framework.publish';
+        const receipt = await client.request('POST', path + '/frameworks/publish', { ...args, type });
+        if (receipt.projectId !== projectId || typeof receipt.reused !== 'boolean' || receipt.result?.type !== type
+          || receipt.result.frameworkId !== args.frameworkId || receipt.result.version !== args.expectedVersion + 1) {
+          throw new Error('CDS 框架发布回执与当前项目、框架或版本不符');
         }
         return receipt;
       }

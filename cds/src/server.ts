@@ -1418,6 +1418,7 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^POST \/projects\/[^/]+\/design\/viewed$/, '记录设计已读'],
     [/^POST \/projects\/[^/]+\/design\/packages$/, '发布设计稿件'],
     [/^POST \/projects\/[^/]+\/design\/commands$/, '保存设计操作'],
+    [/^POST \/projects\/[^/]+\/design\/frameworks\/publish$/, '发布设计框架'],
     [/^POST \/projects\/[^/]+\/design\/acceptance\/recheck$/, '独立复验设计'],
     [/^POST \/projects\/[^/]+\/design\/feedback$/, '保存实施反馈'],
     [/^POST \/projects\/[^/]+\/design\/feedback\/attachments$/, '保存实施反馈对照图'],
@@ -1921,7 +1922,7 @@ function projectKeyAllowsRequest(req: express.Request, key: NonNullable<ReturnTy
       || ((key.designAccess === 'feedback' || key.designAccess === 'publish') && req.method === 'POST'
         && (path === `${route}/feedback` || path === `${route}/feedback/attachments`))
       || (key.designAccess === 'publish' && req.method === 'POST'
-        && (path === `${route}/packages` || path === `${route}/acceptance/recheck`));
+        && (path === `${route}/packages` || path === `${route}/frameworks/publish` || path === `${route}/acceptance/recheck`));
   }
   const path = normalizedPlanningPath(req.path);
   if (!path) return false;
