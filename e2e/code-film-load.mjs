@@ -6,6 +6,7 @@ const map = 'https://opendesign-sketchnote-film-codex-prd-agent.miduo.org';
 const gateway = 'https://opendesign-sketchnote-film-codex-prd-agent-llmgw.miduo.org';
 const lanes = Number(process.env.FILM_LANES);
 const commit = process.env.FILM_COMMIT;
+const batchWaitMinutes = Number(process.env.FILM_BATCH_WAIT_MINUTES || 180);
 const terminal = new Set(['Done', 'Error', 'Cancelled']);
 const sourceRun = 'db44117c9ec441789bc9bc0845ace02c';
 const identity = process.env.GITHUB_RUN_ID;
@@ -13,6 +14,8 @@ assert.match(identity, /^\d+$/);
 assert.equal(process.env.GITHUB_RUN_ATTEMPT, '1', 'Review the original batch before starting another.');
 assert.equal(process.env.E2E_BASE_URL, map);
 assert.ok([1, 10, 30].includes(lanes));
+assert.ok(Number.isInteger(batchWaitMinutes) && batchWaitMinutes >= 57 && batchWaitMinutes <= 300,
+  'FILM_BATCH_WAIT_MINUTES must be between 57 and 300 minutes.');
 assert.match(commit, /^[a-f0-9]{40}$/);
 assert.ok(process.env.E2E_USER && process.env.E2E_PASSWORD);
 const hash = (text) => createHash('sha256').update(text).digest('hex');
@@ -55,12 +58,12 @@ const gatewayLogin = await request(gateway, '/gw/auth/map-sso', {body:{code:tick
 assert.ok(gatewayLogin.token);
 
 const started = Date.now();
-const deadline = started + 57 * 60_000;
+const deadline = started + batchWaitMinutes * 60_000;
 const prefix = 'ADR 视觉笔记 CDS 压测 ' + identity;
 const cases = Array.from({length:lanes}, (_, index) => ({lane:index+1, title:prefix+'-'+(index+1)}));
 const sameAttachment = run => run?.uploadedSources?.[0]?.attachmentId===baselineSource.attachmentId
   && run.uploadedSources[0].contentHash===baselineSource.contentHash;
-console.log(JSON.stringify({event:'batch-start',lanes,commit,at:new Date(started).toISOString(),originalInstruction,
+console.log(JSON.stringify({event:'batch-start',lanes,commit,batchWaitMinutes,at:new Date(started).toISOString(),originalInstruction,
   expectedRawSourceHash:originalSource,attachmentTextHash:baselineSource.contentHash}));
 await Promise.all(cases.map(async item => {
   const began = performance.now();
@@ -161,6 +164,7 @@ for (const item of cases) {
     } catch { row.outputValid=false; }
   } else if (item.id && !terminal.has(run.status)) {
     row.status='Timeout';
+    row.timeoutPhase=run.status==='Queued'?'Queue':'Execution';
     row.cancelAccepted=item.cancelAccepted;
   }
   if (item.id) {
@@ -177,7 +181,7 @@ for (const item of cases) {
 const completed=rows.filter(row=>row.passed);
 const timings=completed.map(row=>row.finalSeconds).filter(Number.isFinite).sort((a,b)=>a-b);
 const percentile=(fraction)=>timings.length?timings[Math.ceil(timings.length*fraction)-1]:null;
-console.log(JSON.stringify({event:'batch-result',lanes,admitted:ids.length,passed:completed.length,
+console.log(JSON.stringify({event:'batch-result',lanes,batchWaitMinutes,admitted:ids.length,passed:completed.length,
   timedOut:rows.filter(row=>row.status==='Timeout').length,maxRunning,p50Seconds:percentile(.50),
   p95Seconds:percentile(.95),elapsedSeconds:Math.round((Date.now()-started)/1000)}));
 if (completed.length!==lanes) process.exitCode=1;

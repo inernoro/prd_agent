@@ -30,13 +30,17 @@ on:
         required: false
         default: ''
       film_lanes:
-        description: '代码视频隔离压测路数（1、10、30），留空跳过'
+        description: '代码视频隔离压测路数（1、10、30），queue 只验证 Redis，留空跳过'
         required: false
         default: ''
       film_commit:
         description: '代码视频压测或浏览器复验的目标 API 提交'
         required: false
         default: ''
+      film_batch_wait_minutes:
+        description: '代码视频整批观察时间，包含排队与出片（57–300 分钟）'
+        required: false
+        default: '180'
       film_browser_only:
         description: '只验证新部署上的旧片播放、恢复、保存和分享'
         type: boolean
@@ -268,9 +272,9 @@ jobs:
 
   code-film-load:
     name: Code film load (CDS preview)
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.film_lanes != ''
+    if: github.event_name == 'workflow_dispatch' && inputs.film_lanes != '' && inputs.film_lanes != 'queue'
     runs-on: ubuntu-24.04
-    timeout-minutes: 65
+    timeout-minutes: 320
     concurrency:
       group: cds-isolated-code-film-load
       cancel-in-progress: false
@@ -284,6 +288,33 @@ jobs:
           E2E_BASE_URL: ${{ github.event.inputs.e2e_base_url }}
           FILM_LANES: ${{ github.event.inputs.film_lanes }}
           FILM_COMMIT: ${{ github.event.inputs.film_commit }}
+          FILM_BATCH_WAIT_MINUTES: ${{ github.event.inputs.film_batch_wait_minutes }}
           E2E_USER: ${{ secrets.E2E_USER }}
           E2E_PASSWORD: ${{ secrets.E2E_PASSWORD }}
         run: node e2e/code-film-load.mjs
+
+  code-film-queue:
+    name: Code film queue (isolated Redis)
+    if: github.event_name == 'workflow_dispatch' && inputs.film_lanes == 'queue'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 16388:6379
+        options: --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 6
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.film_commit }}
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Check candidate and Redis queue behavior
+        env:
+          CANDIDATE_SHA: ${{ inputs.film_commit }}
+          DESIGN_QUEUE_REDIS_TEST_CONNECTION: 127.0.0.1:16388
+        run: |
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          dotnet test prd-api/tests/PrdAgent.Tests/PrdAgent.Tests.csproj --filter 'FullyQualifiedName~RedisRunQueueIsolationTests'
