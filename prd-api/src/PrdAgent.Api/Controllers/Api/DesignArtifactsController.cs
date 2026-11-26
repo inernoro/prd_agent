@@ -739,18 +739,39 @@ public sealed class DesignArtifactsController : ControllerBase
         && Environment.GetEnvironmentVariable("VITE_GIT_BRANCH") == "codex/opendesign-sketchnote-film";
 
     [HttpGet("runs/{runId}/film.mp4")]
-    public async Task<IActionResult> GetCodeFilm(string runId, [FromServices] IDesignArtifactWorkspaceBroker workspace, CancellationToken ct)
+    public async Task<IActionResult> GetCodeFilm(
+        string runId,
+        [FromServices] IDesignArtifactWorkspaceBroker workspace,
+        [FromServices] OpenDesignServiceArtifactExecutor recovery,
+        CancellationToken ct)
     {
         if (!CodeFilmEnabled()) return NotFound();
         var userId = this.GetRequiredUserId();
         var run = await _db.DesignArtifactRuns.Find(item => item.DeploymentSlug == DeploymentScope.Current
-            && item.Id == runId && item.UserId == userId && item.ArtifactType == DesignArtifactTypes.CodeFilm
-            && item.Status == RunStatuses.Done).FirstOrDefaultAsync(ct);
-        if (run == null) return NotFound();
-        var package = await workspace.ReadResultAsync(run.Id, ct);
-        var film = package.Files.Single(file => file.Path == "film.mp4");
+            && item.Id == runId && item.UserId == userId && item.ArtifactType == DesignArtifactTypes.CodeFilm)
+            .FirstOrDefaultAsync(ct);
+        if (run == null || run.Status == RunStatuses.Cancelled) return NotFound();
+        byte[]? bytes;
+        if (!string.IsNullOrWhiteSpace(run.WorkspaceResultAssetKey))
+        {
+            var package = await workspace.ReadResultAsync(run.Id, ct);
+            bytes = Convert.FromBase64String(package.Files.Single(file => file.Path == "film.mp4").ContentBase64);
+        }
+        else
+        {
+            try
+            {
+                bytes = await recovery.ReadRetainedFilmAsync(run.Id, ct);
+            }
+            catch (Exception error) when (error is HttpRequestException or InvalidDataException
+                || (error is OperationCanceledException && !ct.IsCancellationRequested))
+            {
+                return StatusCode(503, ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, "影片暂时无法取回，请稍后再次打开这条任务"));
+            }
+        }
+        if (bytes == null) return NotFound();
         Response.Headers.CacheControl = "private, no-store";
-        return File(Convert.FromBase64String(film.ContentBase64), "video/mp4", enableRangeProcessing: true);
+        return File(bytes, "video/mp4", enableRangeProcessing: true);
     }
 
     [HttpPost("runs/{runId}/cancel")]

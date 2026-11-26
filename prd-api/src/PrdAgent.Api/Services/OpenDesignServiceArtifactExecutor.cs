@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Runtime.CompilerServices;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -88,6 +89,36 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
             ? operation == DesignArtifactOperations.Generate
             : artifactType is DesignArtifactTypes.WebPage or DesignArtifactTypes.HtmlPpt
               && operation is DesignArtifactOperations.Generate or DesignArtifactOperations.Edit;
+
+    internal async Task<byte[]?> ReadRetainedFilmAsync(string runId, CancellationToken ct)
+    {
+        var transport = OpenDesignTransportResolver.Resolve(_configuration);
+        if (transport.Transport != OpenDesignTransport.Service || transport.Problem != null
+            || transport.BaseUrl == null || transport.ApiKey == null)
+            return null;
+
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeout.CancelAfter(RequestTimeout);
+        using var request = new HttpRequestMessage(
+            HttpMethod.Get, Endpoint(transport, $"v1/tasks/{Uri.EscapeDataString(runId)}/film-recovery"));
+        Authorize(request, transport);
+        using var response = await CreateClient().SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
+        if (response.StatusCode == HttpStatusCode.NotFound) return null;
+        response.EnsureSuccessStatusCode();
+
+        var length = response.Content.Headers.ContentLength;
+        if (length == null || length < 32 || length > DesignArtifactWorkspaceBroker.MaxCodeFilmOutputBytes * 3 / 4
+            || response.Content.Headers.ContentType?.MediaType != "video/mp4"
+            || !response.Headers.TryGetValues("X-Content-Sha256", out var values))
+            throw new InvalidDataException("设计服务返回的影片大小、类型或校验值不符合约定");
+        var expected = values.FirstOrDefault();
+        var bytes = await response.Content.ReadAsByteArrayAsync(timeout.Token);
+        var actual = Convert.ToHexString(SHA256.HashData(bytes));
+        if (bytes.LongLength != length || !string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("设计服务返回的影片校验失败");
+        _logger.LogInformation("已恢复 OpenDesign 影片 run={RunId} bytes={Length} sha256={Sha256}", runId, length, actual);
+        return bytes;
+    }
 
     // ───────────────────────── 能力探针 ─────────────────────────
 

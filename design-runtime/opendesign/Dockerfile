@@ -71,10 +71,11 @@ COPY scripts/image-browser-smoke.mjs /opt/map-design-runtime/scripts/image-brows
 # 产物导出目录仍只归本服务（root），引擎与浏览器子进程读不到也写不进。
 RUN mkdir -p /home/open-design /workspace /app/design-templates /app/.od \
         /var/lib/map-design-runtime/output /var/lib/map-design-runtime/browser-quality \
+        /var/lib/map-design-runtime/film-recovery \
     && chown open-design:open-design /home/open-design /workspace /app/design-templates /app/.od \
         /var/lib/map-design-runtime/browser-quality \
     && chmod 0711 /var/lib/map-design-runtime \
-    && chmod 0700 /home/open-design /var/lib/map-design-runtime/output /var/lib/map-design-runtime/browser-quality
+    && chmod 0700 /home/open-design /var/lib/map-design-runtime/output /var/lib/map-design-runtime/browser-quality /var/lib/map-design-runtime/film-recovery
 
 # 构建产物只有在降权用户能真实拉起固定版本 Chromium，并分别创建桌面与移动视口时才可发布。
 # 这条零模型自检会在 Alpine 包、Playwright 协议或沙箱权限漂移时直接让镜像构建失败。

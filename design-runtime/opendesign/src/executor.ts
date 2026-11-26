@@ -33,6 +33,7 @@ import {
 import { runtimeDiagnosticPreview } from './diagnostics.js';
 import { OpenDesignClient, signalForDeadline, type OpenDesignRunOutcome } from './engine/client.js';
 import { codeFilmDefaultAnswers, collectCodeFilm, registerCodeFilmSkill, verifyCodeFilmInput } from './engine/code-film.js';
+import type { FilmRecoveryStore } from './engine/film-recovery.js';
 import type { EngineDaemon } from './engine/daemon.js';
 import { startEgressRelay, type EgressRelay, type EgressRelayOptions } from './engine/egress-relay.js';
 import { registerPresentationSkill } from './engine/presentation-skill.js';
@@ -172,6 +173,8 @@ export interface ExecutorOptions {
   startRelay?: (options: EgressRelayOptions) => Promise<EgressRelay>;
   /** 浏览器检查在独立子进程执行；测试注入确定性 runner。 */
   browserQualityRunner?: BrowserQualityRunner;
+  filmRecovery?: FilmRecoveryStore;
+  log?: (message: string) => void;
 }
 
 export interface DesignTaskInput {
@@ -212,6 +215,7 @@ export class DesignTaskExecutor {
   private readonly pollIntervalMs: number;
   private readonly startRelay: (options: EgressRelayOptions) => Promise<EgressRelay>;
   private readonly browserQualityRunner: BrowserQualityRunner;
+  private captureInterruptedFilm?: () => void;
 
   constructor(private readonly options: ExecutorOptions) {
     this.fetchImpl = options.fetchImpl || fetch;
@@ -219,6 +223,14 @@ export class DesignTaskExecutor {
     this.startRelay = options.startRelay || startEgressRelay;
     this.browserQualityRunner = options.browserQualityRunner
       || new SubprocessBrowserQualityRunner(options.engineUid, options.engineGid);
+  }
+
+  retainInterruptedFilm(): void {
+    try {
+      this.captureInterruptedFilm?.();
+    } catch {
+      this.options.log?.('[code-film] interrupted film could not be retained');
+    }
   }
 
   async run(
@@ -555,6 +567,19 @@ export class DesignTaskExecutor {
         const assistantMessageId = randomUUID();
         const firstRunId = await startFilmTurn(instruction, assistantMessageId, [source.path]);
         onStage('code_film_input_verified', { ...proof, runId: firstRunId, instructionSha256: sha256(instruction) });
+        const retainFilm = (film: WorkspacePackageFile) => {
+          try {
+            if (this.options.filmRecovery?.retain(sessionId, film)) {
+              onStage('code_film_retained', { sha256: film.sha256, bytes: film.size });
+            }
+          } catch {
+            this.options.log?.(`[code-film] failed to retain task ${sessionId}`);
+          }
+        };
+        this.captureInterruptedFilm = () => {
+          const film = getFilm();
+          if (film) retainFilm(film);
+        };
         let finalRunId = firstRunId;
         try {
           await client.waitForRun(firstRunId, budget.finalizationDeadline, signal, onStage);
@@ -578,11 +603,16 @@ export class DesignTaskExecutor {
           if (!film) {
             throw new AgentWorkspaceRuntimeError('design_output_missing', 'OpenDesign completed its conversation without a final MP4');
           }
+          retainFilm(film);
+          this.captureInterruptedFilm = undefined;
           return await this.commitOutputs(task, prepared, [film], finalRunId, executionDeadline, signal, onStage);
         } catch (error) {
+          this.retainInterruptedFilm();
           onStage('code_film_run_diagnostic',
             await client.captureRunTranscriptDigest([firstRunId, finalRunId], () => Math.max(0, executionDeadline - Date.now())));
           throw error;
+        } finally {
+          this.captureInterruptedFilm = undefined;
         }
       }
       const designDirection = designContext.direction;

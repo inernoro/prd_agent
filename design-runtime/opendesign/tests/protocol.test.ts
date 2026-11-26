@@ -5,6 +5,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { codeFilmDefaultAnswers } from '../src/engine/code-film.js';
+import { FilmRecoveryStore } from '../src/engine/film-recovery.js';
 import { normalizeTaskRequest } from '../src/protocol.js';
 import { sha256 } from '../src/workspace/primitives.js';
 import { MAP_DESIGN_WORKSPACE_SCHEMA, parseWorkspacePackage } from '../src/workspace/transfer.js';
@@ -58,6 +59,45 @@ async function cleanedUp(h: Harness, taskId: string) {
     return response.body.task?.cleanup === 'completed' && h.runtime.tasks.slotState() === 'idle' ? response.body.task : undefined;
   }, `task ${taskId} cleanup`);
 }
+
+describe('film recovery', () => {
+  it('serves only a complete retained MP4 after the OpenDesign workspace has been reset', async () => {
+    harness = await startHarness();
+    const recovery = new FilmRecoveryStore(path.join(harness.root, 'film-recovery'));
+    const box = (type: string) => {
+      const bytes = Buffer.alloc(12);
+      bytes.writeUInt32BE(bytes.length);
+      bytes.write(type, 4, 'ascii');
+      return bytes;
+    };
+    const movie = Buffer.concat([box('ftyp'), box('mdat'), box('moov')]);
+    const retain = (bytes: Buffer) => recovery.retain('film-recovery-test', {
+      path: 'film.mp4',
+      mediaType: 'video/mp4',
+      size: bytes.length,
+      sha256: sha256(bytes),
+      contentBase64: bytes.toString('base64'),
+    });
+    expect(retain(movie.subarray(0, -1))).toBe(false);
+    expect(retain(movie)).toBe(true);
+
+    await harness.runtime.lifecycle.reset();
+    expect(taskDirectoriesAreEmpty(harness)).toBe(true);
+    expect(harness.runtime.tasks.get('film-recovery-test')).toBeUndefined();
+    const url = harness.baseUrl + '/v1/tasks/film-recovery-test/film-recovery';
+    expect((await fetch(url)).status).toBe(401);
+    const response = await fetch(url, { headers: auth });
+    expect(response.status).toBe(200);
+    expect(response.headers.get('x-content-sha256')).toBe(sha256(movie));
+    expect(Buffer.from(await response.arrayBuffer())).toEqual(movie);
+
+    const persisted = path.join(recovery.directory, 'film-recovery-test.film');
+    const corrupted = fs.readFileSync(persisted);
+    corrupted[corrupted.length - 1] ^= 1;
+    fs.writeFileSync(persisted, corrupted);
+    expect((await fetch(url, { headers: auth })).status).toBe(404);
+  });
+});
 
 describe('GET /v1/capabilities', () => {
   it('reports protocol, engine, versions, design systems and a live healthy engine', async () => {
