@@ -29,6 +29,14 @@ on:
         description: 'Playwright E2E 目标 URL；留空则跳过 e2e'
         required: false
         default: ''
+      film_lanes:
+        description: '代码视频隔离压测路数（1、10、30），留空跳过'
+        required: false
+        default: ''
+      film_commit:
+        description: '代码视频压测目标 API 提交'
+        required: false
+        default: ''
       perf_ref:
         description: '隔离性能回归的候选提交或 ref；留空跳过，不接受 URL'
         required: false
@@ -177,7 +185,7 @@ jobs:
 
   e2e-preview:
     name: Playwright E2E (Preview)
-    if: github.event.inputs.e2e_base_url != ''
+    if: github.event.inputs.e2e_base_url != '' && github.event.inputs.film_lanes == ''
     # e2e 锁定的 Playwright 1.59 不支持 Ubuntu 26.04，固定受支持的 LTS。
     runs-on: ubuntu-24.04
     defaults:
@@ -250,3 +258,25 @@ jobs:
           name: playwright-results-json
           path: e2e/results.json
           retention-days: 14
+
+  code-film-load:
+    name: Code film load (CDS preview)
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.film_lanes != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 65
+    concurrency:
+      group: cds-isolated-code-film-load
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Submit and measure code films in CDS
+        env:
+          E2E_BASE_URL: ${{ github.event.inputs.e2e_base_url }}
+          FILM_LANES: ${{ github.event.inputs.film_lanes }}
+          FILM_COMMIT: ${{ github.event.inputs.film_commit }}
+          E2E_USER: ${{ secrets.E2E_USER }}
+          E2E_PASSWORD: ${{ secrets.E2E_PASSWORD }}
+        run: node e2e/code-film-load.mjs
