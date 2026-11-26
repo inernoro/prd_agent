@@ -51,7 +51,8 @@ public sealed class BackgroundTaskAdmissionRegistry
             ? BackgroundTaskKind.Framework : BackgroundTaskKind.Unregistered);
         var allowed = kind switch
         {
-            BackgroundTaskKind.SharedAutomatic => SharedAutomaticEnabled,
+            BackgroundTaskKind.SharedAutomatic => SharedAutomaticEnabled
+                || (type == typeof(TapdModelAdvisoryWorker) && TapdModelAdvisoryWorker.CanCheckPreview(_configuration)),
             // 已批准的只读公开镜像仅保留原有 main 例外，不授予其它自动任务权限。
             BackgroundTaskKind.ModelLeaderboardMirror => DeploymentAuthority.CanRunModelLeaderboardSync(_configuration),
             BackgroundTaskKind.Unregistered => false,

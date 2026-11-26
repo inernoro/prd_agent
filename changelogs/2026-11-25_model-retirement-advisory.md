@@ -4,3 +4,4 @@
 | test | prd-api | 将 TAPD 淘汰检查状态接入现有 48 小时稳测 |
 | test | prd-api | 在 48 小时稳测中单独记录 TAPD 淘汰检查结果 |
 | fix | prd-api | TAPD 草稿仅保留明确给出的预期结果并使用受控模型调用 |
+| test | prd-api | TAPD 预览分支独立验证淘汰检查且不发送通知 |

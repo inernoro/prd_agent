@@ -1968,8 +1968,7 @@ static async Task<IResult> DeepHealth(
     {
         try
         {
-            tapdAdvisoryHealthy = await TapdModelAdvisoryWorker.IsCheckHealthyAsync(db, now,
-                requiresDefault: string.IsNullOrWhiteSpace(configuration[TapdBugAgentService.ModelPublicIdKey]), cancellationToken);
+            tapdAdvisoryHealthy = await TapdModelAdvisoryWorker.IsCheckHealthyAsync(db, now, configuration, cancellationToken);
         }
         catch (Exception) when (!cancellationToken.IsCancellationRequested) { tapdAdvisoryHealthy = false; }
     }

@@ -66,6 +66,29 @@ public class BackgroundTaskAdmissionTests
     }
 
     [Fact]
+    public void TapdPreviewCheckUsesOnlyItsBranchAndModelState()
+    {
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["CDS_PROJECT_ID"] = "prd-agent",
+            ["VITE_GIT_BRANCH"] = "codex/tapd-test",
+            ["TapdBugAgent:ModelAdvisory:Enabled"] = "true",
+            [TapdBugAgentService.ModelPublicIdKey] = "tapd-test-model",
+        }).Build();
+        var registry = new BackgroundTaskAdmissionRegistry(config);
+
+        registry.Check(typeof(TapdModelAdvisoryWorker)).Allowed.ShouldBeTrue();
+        registry.Check(typeof(WorkflowScheduleWorker)).Allowed.ShouldBeFalse();
+        var first = TapdModelAdvisoryWorker.StateId(config);
+        first.ShouldEndWith("prd-agent::codex/tapd-test:tapd-test-model");
+        config[TapdBugAgentService.ModelPublicIdKey] = "other-test-model";
+        TapdModelAdvisoryWorker.StateId(config).ShouldNotBe(first);
+        config["VITE_GIT_BRANCH"] = "main";
+        registry.Check(typeof(TapdModelAdvisoryWorker)).Allowed.ShouldBeFalse();
+        TapdModelAdvisoryWorker.StateId(config).ShouldBe(PrdAgent.Core.Models.AppCallerRegistry.TapdBugAgent.Extract.Chat);
+    }
+
+    [Fact]
     public async Task AuthorizedAutomaticOrigin_FlowsIntoWorkerAndDoesNotLeakToOtherWork()
     {
         var probe = new Probe();

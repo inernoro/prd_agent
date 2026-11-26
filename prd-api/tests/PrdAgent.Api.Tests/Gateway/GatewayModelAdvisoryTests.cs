@@ -176,7 +176,7 @@ public sealed class GatewayModelAdvisoryTests
             var notification = await database.AdminNotifications.Find(_ => true).SingleAsync();
             Assert.Equal("configured-owner", notification.TargetUserId);
             Assert.Contains(NoticeUrl, notification.Message);
-            Assert.True(await TapdModelAdvisoryWorker.IsCheckHealthyAsync(database, DateTime.UtcNow, false, default));
+            Assert.True(await TapdModelAdvisoryWorker.IsCheckHealthyAsync(database, DateTime.UtcNow, config, default));
 
             await states.UpdateOneAsync(_ => true, Builders<BsonDocument>.Update.Set("NextCheckAt", DateTime.UnixEpoch));
             await worker.CheckDueAsync(default);
@@ -189,7 +189,7 @@ public sealed class GatewayModelAdvisoryTests
             var persisted = await states.Find(_ => true).SingleAsync();
             Assert.Equal("unknown", persisted["Status"].AsString);
             Assert.Equal(Model, persisted["ActualModel"].AsString);
-            Assert.False(await TapdModelAdvisoryWorker.IsCheckHealthyAsync(database, DateTime.UtcNow, false, default));
+            Assert.False(await TapdModelAdvisoryWorker.IsCheckHealthyAsync(database, DateTime.UtcNow, config, default));
             Assert.Equal(1, await database.AdminNotifications.CountDocumentsAsync(_ => true));
         }
         finally

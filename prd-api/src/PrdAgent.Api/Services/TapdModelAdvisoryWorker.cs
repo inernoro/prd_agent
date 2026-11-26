@@ -7,6 +7,7 @@ using PrdAgent.Core.Models;
 using PrdAgent.GatewayTransport;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Infrastructure.Security;
 
 namespace PrdAgent.Api.Services;
 
@@ -21,6 +22,20 @@ public sealed class TapdModelAdvisoryWorker(
 
     public static bool IsEnabled(IConfiguration config)
         => bool.TryParse(config[EnabledKey], out var enabled) && enabled;
+
+    internal static bool CanCheckPreview(IConfiguration config)
+        => IsEnabled(config) && DeploymentAuthority.IsCdsBranchPreview(config)
+            && config["VITE_GIT_BRANCH"]?.Trim() is { Length: > 0 } branch
+            && !string.Equals(branch, "main", StringComparison.OrdinalIgnoreCase)
+            && !string.IsNullOrWhiteSpace(config[TapdBugAgentService.ModelPublicIdKey]);
+
+    internal static string StateId(IConfiguration config)
+    {
+        var caller = AppCallerRegistry.TapdBugAgent.Extract.Chat;
+        return CanCheckPreview(config)
+            ? $"{caller}:{TaskPermitDeployment.Resolve(config)}:{config[TapdBugAgentService.ModelPublicIdKey]!.Trim()}"
+            : caller;
+    }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -40,7 +55,8 @@ public sealed class TapdModelAdvisoryWorker(
         var services = scope.ServiceProvider;
         var states = services.GetRequiredService<MongoDbContext>().Database.GetCollection<BsonDocument>(StateCollection);
         var caller = AppCallerRegistry.TapdBugAgent.Extract.Chat;
-        var key = Filter.Eq("_id", caller);
+        var preview = CanCheckPreview(configuration);
+        var key = Filter.Eq("_id", StateId(configuration));
         await states.UpdateOneAsync(key, Update.SetOnInsert("Caller", caller), new UpdateOptions { IsUpsert = true }, ct);
         var now = DateTime.UtcNow;
         var token = Guid.NewGuid().ToString("N");
@@ -63,7 +79,11 @@ public sealed class TapdModelAdvisoryWorker(
                 .Set("RetirementAt", result.Notice is null ? (BsonValue)BsonNull.Value : new BsonDateTime(result.Notice.RetirementAt.UtcDateTime));
             logger.LogInformation("TAPD 模型淘汰状态 {Status} ActualModel={ActualModel} Default={Default} Available={Available} CheckedAt={CheckedAt}",
                 result.Status, result.ActualModel, result.DefaultPublicId, result.DefaultAvailable, result.CheckedAt);
-            try { await NotifyAsync(services.GetRequiredService<AdminNotificationEventService>(), result, now, ct); }
+            try
+            {
+                if (!preview)
+                    await NotifyAsync(services.GetRequiredService<AdminNotificationEventService>(), result, now, ct);
+            }
             catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
             {
                 update = update.Set("NextCheckAt", now.AddHours(1));
@@ -83,10 +103,12 @@ public sealed class TapdModelAdvisoryWorker(
         => "tapd-model-retirement-" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
             $"{notice.ProviderId}\n{notice.ModelId}\n{notice.RetirementAt.UtcDateTime:O}"))).ToLowerInvariant();
 
-    public static async Task<bool> IsCheckHealthyAsync(MongoDbContext database, DateTime utcNow, bool requiresDefault, CancellationToken ct)
+    public static async Task<bool> IsCheckHealthyAsync(MongoDbContext database, DateTime utcNow,
+        IConfiguration configuration, CancellationToken ct)
     {
+        var requiresDefault = string.IsNullOrWhiteSpace(configuration[TapdBugAgentService.ModelPublicIdKey]);
         var state = await database.Database.GetCollection<BsonDocument>(StateCollection)
-            .Find(Filter.Eq("_id", AppCallerRegistry.TapdBugAgent.Extract.Chat)).FirstOrDefaultAsync(ct);
+            .Find(Filter.Eq("_id", StateId(configuration))).FirstOrDefaultAsync(ct);
         return state is not null
             && state.GetValue("LastQuerySucceeded", false) == BsonBoolean.True
             && state.GetValue("Status", "").AsString is "unknown" or "announced"
