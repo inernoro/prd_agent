@@ -5,6 +5,24 @@ namespace PrdAgent.Tests;
 
 public class HostedCollectionRulesTests
 {
+    [Theory]
+    [InlineData("[\"架构决策合集\",\"评审实践合集\",\"设计指南合集\"]")]
+    [InlineData("```json\n[\"架构决策合集\",\"评审实践合集\",\"设计指南合集\"]\n```")]
+    [InlineData("```\r\n[\"架构决策合集\",\"评审实践合集\",\"设计指南合集\"]\r\n```")]
+    public void SuggestedNamesAcceptRawAndFencedJson(string response)
+    {
+        Assert.Equal(new[] { "架构决策合集", "评审实践合集", "设计指南合集" }, HostedCollectionRules.ParseSuggestedNames(response));
+    }
+
+    [Theory]
+    [InlineData("```json```")]
+    [InlineData("```json\n[\"架构决策合集\",\"架构决策合集\",\"设计指南合集\"]\n```")]
+    [InlineData("```json\n[\"架构决策合集\",\"评审实践合集\",\"设计指南合集\"]\n```额外说明")]
+    public void SuggestedNamesRequireThreeDistinctNamesInOneJsonArray(string response)
+    {
+        Assert.Empty(HostedCollectionRules.ParseSuggestedNames(response));
+    }
+
     [Fact]
     public void ExplicitMainIsPinnedWithoutChangingOtherMembersOrSourceList()
     {

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using MongoDB.Bson.Serialization.Attributes;
 
 namespace PrdAgent.Core.Models;
@@ -21,6 +22,33 @@ public class HostedCollection
 
 public static class HostedCollectionRules
 {
+    public static string[] ParseSuggestedNames(string? response)
+    {
+        if (response is not { Length: > 0 and <= 2048 }) return [];
+
+        var output = response.Trim();
+        if (output.StartsWith("```", StringComparison.Ordinal) && output.EndsWith("```", StringComparison.Ordinal))
+        {
+            var firstLineEnd = output.IndexOf('\n');
+            if (firstLineEnd < 3 || firstLineEnd >= output.Length - 3) return [];
+            var language = output[3..firstLineEnd].Trim();
+            if (language.Length != 0 && !language.Equals("json", StringComparison.OrdinalIgnoreCase)) return [];
+            output = output[(firstLineEnd + 1)..^3];
+        }
+
+        try
+        {
+            var names = (JsonSerializer.Deserialize<string?[]>(output) ?? [])
+                .Where(name => !string.IsNullOrWhiteSpace(name))
+                .Select(name => name!.Trim())
+                .Where(name => name.Length is > 2 and <= 32 && !name.Any(char.IsControl))
+                .Select(name => name.EndsWith("合集", StringComparison.Ordinal) ? name : name + "合集")
+                .Distinct(StringComparer.OrdinalIgnoreCase).Take(3).ToArray();
+            return names.Length == 3 ? names : [];
+        }
+        catch (JsonException) { return []; }
+    }
+
     public static List<string> OrderedIds(IEnumerable<string> ids, string? mainSiteId = null)
     {
         var result = ids.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.Ordinal).ToList();
