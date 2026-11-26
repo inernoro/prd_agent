@@ -23,15 +23,15 @@ export function listQuickCreationAssets(scope: AssetScope) {
   return apiRequest<{ items: QcAsset[]; total: number }>(`${base}/assets?scope=${scope}`);
 }
 
-export function getQuickCreationRun(runId: string) {
-  return apiRequest<QcRun>(`${base}/runs/${encodeURIComponent(runId)}`);
+export function getQuickCreationRun(runId: string, signal?: AbortSignal) {
+  return apiRequest<QcRun>(`${base}/runs/${encodeURIComponent(runId)}`, { signal });
 }
 
 export function createQuickCreationRun(input: CreateRunInput) {
   return apiRequest<QcRun>(`${base}/runs`, { method: 'POST', body: input });
 }
 
-/** 只重做失败的那一步或那一幕，已完成的部分保留 */
+/** 按任务当前支持的恢复动作提交，原稿与要求保存在原任务中。 */
 export function retryQuickCreationRun(runId: string, input: { action: 'retry-unit' | 'retry-step' | 'skip-unit' | 'requeue'; unitIndex?: number }) {
   return apiRequest<QcRun>(`${base}/runs/${encodeURIComponent(runId)}/retry`, { method: 'POST', body: input });
 }

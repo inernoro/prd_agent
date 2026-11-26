@@ -37,6 +37,8 @@ async function openWorkbench(page) {
   ]);
   const { accessToken } = await data(login, 'MAP login');
   assert.ok(accessToken);
+  const mobileMenu = page.getByRole('button', { name: '打开导航菜单', exact: true });
+  if (await mobileMenu.isVisible()) await mobileMenu.click();
   const toolbox = page.locator('nav button[title^="百宝箱"]:visible')
     .or(page.getByRole('button', { name: '百宝箱', exact: true }).filter({ visible: true })).first();
   await toolbox.click();
@@ -124,6 +126,13 @@ try {
     await page.reload();
     await page.locator(`[data-run-id="${web.id}"]`).waitFor();
     await page.screenshot({ path: join(out, '05-recovered-run.png') });
+    const runUrl = new URL(`${base}/runs/${web.id}`, origin).href;
+    await page.route(runUrl, route => route.abort('internetdisconnected'), { times: 1 });
+    await page.locator('[data-qc=reconnecting]').waitFor();
+    await page.screenshot({ path: join(out, '06-disconnected-run.png') });
+    await page.locator('[data-qc=reconnecting]').waitFor({ state: 'hidden' });
+    assert.equal(await page.locator('[data-run-id]').getAttribute('data-run-id'), web.id);
+    receipt.cases.push('transient browser disconnect, same persisted task resumed automatically');
     const expected = new Map([[web.id, 22 * 60_000], [film.id, 135 * 60_000]]);
     const started = Date.now();
     while (expected.size) {

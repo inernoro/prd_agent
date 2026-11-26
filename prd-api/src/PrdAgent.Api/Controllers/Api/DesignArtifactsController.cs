@@ -261,7 +261,7 @@ public sealed partial class DesignArtifactsController : ControllerBase
         try
         {
             uploadedSources = await DesignRunInputAttachments.ResolveSourcesAsync(
-                _db, userId, request.AttachmentIds, CancellationToken.None, preserveText: quickCreation != null);
+                _db, userId, request.AttachmentIds, CancellationToken.None, quickCreation: quickCreation != null);
             if (isCodeFilm && quickCreation == null)
             {
                 if (uploadedSources.Count != 1

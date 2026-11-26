@@ -27,12 +27,13 @@ import { ProgressPreview, VideoPlayer, WebPreview } from './ResultPanel';
 import { StyleLibrary, StylePickerChip } from './StyleLibrary';
 import { AssetLibrary } from './AssetLibrary';
 import { WorksList } from './WorksList';
-import { MAX_ATTACHMENTS, formatChars, formatClock, summarizeAttachments } from './format';
+import { CHAR_BUDGET, MAX_ATTACHMENTS, MAX_REFERENCE_IMAGES, formatChars, formatClock, summarizeAttachments } from './format';
 import type { AssetScope, OutputKind, QcAsset, QcAttachment, QcFailure, QcRun, QcTemplate, QcTemplateCategory, QcTemplateSource, QcWork } from './types';
 import './quickCreation.css';
 
 const OUTPUT_LABEL: Record<OutputKind, string> = { video: '视频', web: '网页' };
 const SAMPLE_KB_ENTRY = 'sample-review-habits';
+const RETRY_RUN_READ_ERRORS = new Set(['DISCONNECTED', 'NETWORK_ERROR', 'SERVER_ERROR', 'SERVER_UNAVAILABLE', 'TIMEOUT']);
 
 function runBadge(run: QcRun) {
   if (run.status === 'queued') return { label: `排队中 · 第 ${run.queue?.position ?? '-'} 位`, variant: 'new' as const };
@@ -55,6 +56,7 @@ export function QuickCreationAgentPage() {
   const [works, setWorks] = useState<QcWork[]>([]);
   const [run, setRun] = useState<QcRun | null>(null);
   const [runError, setRunError] = useState<string | null>(null);
+  const [reconnecting, setReconnecting] = useState(false);
 
   const [kind, setKind] = useState<OutputKind>('video');
   const [templateId, setTemplateId] = useState<string>('');
@@ -104,31 +106,46 @@ export function QuickCreationAgentPage() {
     if (!templateId && templates.length) setTemplateId((templates.find(t => t.id === DEFAULT_STYLE) ?? templates[0]).id);
   }, [templates, templateId]);
 
-  /* 按任务编号加载 */
+  /* 首次进入与自动恢复都按地址里的任务编号读取。 */
   useEffect(() => {
-    setRun(null); setRunError(null); setPanel(null); setRightTab('select');
+    setRun(null); setRunError(null); setReconnecting(false); setPanel(null); setRightTab('select');
     if (!runId) return;
-    let stop = false;
-    void getQuickCreationRun(runId).then(res => {
-      if (stop) return;
-      if (res.success) setRun(res.data); else setRunError(res.error?.message || '没有找到这个任务');
-    });
-    return () => { stop = true; };
+    const controller = new AbortController();
+    let timer: number | undefined;
+    const load = async () => {
+      const res = await getQuickCreationRun(runId, controller.signal);
+      if (controller.signal.aborted) return;
+      if (res.success) {
+        setReconnecting(false);
+        setRun(res.data);
+      } else if (RETRY_RUN_READ_ERRORS.has(res.error.code)) {
+        setReconnecting(true);
+        timer = window.setTimeout(load, 4000);
+      } else {
+        setReconnecting(false);
+        setRunError(res.error.message || '没有找到这个任务');
+      }
+    };
+    void load();
+    return () => { controller.abort(); window.clearTimeout(timer); };
   }, [runId]);
 
-  /* 进行中的任务每秒查一次：阶段切换和恢复结果能在一秒内出现 */
-  const POLL_MS = 1000;
-  /* 轮询跟着任务状态走：排队、生成、发布中继续查；恢复或重试让任务重新进行时自动接上 */
+  /* 读失败时保留上次进度，自动回查同一个任务。 */
   const isLive = !!run && run.id === runId && (run.status === 'queued' || run.status === 'running' || run.publish.status === 'publishing');
   useEffect(() => {
     if (!isLive || !runId) return;
-    let stop = false;
-    const timer = window.setTimeout(async () => {
-      const res = await getQuickCreationRun(runId);
-      if (!stop && res.success) setRun(res.data);
-    }, POLL_MS);
-    return () => { stop = true; window.clearTimeout(timer); };
-  }, [isLive, runId, run]);
+    const controller = new AbortController();
+    let timer: number;
+    const poll = async () => {
+      const res = await getQuickCreationRun(runId, controller.signal);
+      if (controller.signal.aborted) return;
+      setReconnecting(!res.success);
+      if (res.success) setRun(res.data);
+      timer = window.setTimeout(poll, res.success ? 1000 : 4000);
+    };
+    timer = window.setTimeout(poll, 1000);
+    return () => { controller.abort(); window.clearTimeout(timer); };
+  }, [isLive, runId]);
 
   const openRun = (id: string) => setParams({ run: id });
   const startNew = () => { setParams({}); setAsk(''); setAttachments([]); setPane('chat'); };
@@ -187,7 +204,9 @@ export function QuickCreationAgentPage() {
   const sum = summarizeAttachments(attachments);
   const hasText = attachments.some(a => a.status === 'ready' && a.kind !== 'image');
   const blockReason = adding || sum.reading ? '还有附件在读取，读完即可生成'
-    : !hasText ? '放进至少一份稿件或知识库文档后即可生成' : null;
+    : !hasText ? '放进至少一份稿件或知识库文档后即可生成'
+    : sum.chars > CHAR_BUDGET ? '稿件超过 20,000 字，请精简或分次生成'
+    : attachments.filter(a => a.status === 'ready' && a.kind === 'image').length > MAX_REFERENCE_IMAGES ? '一次最多使用三张图片，请移除多余图片' : null;
   const draftTitle = attachments.find(a => a.status === 'ready' && a.kind !== 'image')?.name.replace(/\.(md|markdown|txt)$/i, '') ?? (template ? `未命名 · ${template.name}` : '未命名');
 
   const submit = async () => {
@@ -510,9 +529,12 @@ export function QuickCreationAgentPage() {
       </div>
       <div className="min-h-0 flex-1">
         {loading ? (
-          <div className="flex h-full items-center justify-center gap-2 text-[13px] text-token-muted"><MapSpinner size={14} />正在打开任务…</div>
+          <div role="status" className="flex h-full items-center justify-center gap-2 text-[13px] text-token-muted"><MapSpinner size={14} />{reconnecting ? '任务状态暂时没有读到，正在重新连接…' : '正在打开任务…'}</div>
         ) : (
-          <WorkbenchLayout pane={pane} conversation={run ? runConversation : composeConversation} composer={run ? runFooter : composer} preview={preview} />
+          <div className="flex h-full min-h-0 flex-col">
+            {reconnecting && <p role="status" data-qc="reconnecting" className="m-0 shrink-0 px-3 py-2 text-[13px] text-token-secondary">连接暂时中断，正在恢复状态。这里保留了上一次读到的进度。</p>}
+            <div className="min-h-0 flex-1"><WorkbenchLayout pane={pane} conversation={run ? runConversation : composeConversation} composer={run ? runFooter : composer} preview={preview} /></div>
+          </div>
         )}
       </div>
     </div>

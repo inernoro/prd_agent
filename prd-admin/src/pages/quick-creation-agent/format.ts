@@ -42,5 +42,6 @@ export function summarizeAttachments(items: QcAttachment[]) {
 }
 
 /** 一次创作的附件上限与文字预算 */
-export const MAX_ATTACHMENTS = 8;
+export const MAX_ATTACHMENTS = 10;
+export const MAX_REFERENCE_IMAGES = 3;
 export const CHAR_BUDGET = 20000;

@@ -13,8 +13,6 @@ namespace PrdAgent.Api.Controllers.Api;
 
 public sealed partial class DesignArtifactsController
 {
-    private const int QuickCreationAttachmentLimit = 8;
-    private const int QuickCreationSampleCharacters = 60_000;
     private const string QuickCreationSampleName = "需求评审的三个习惯.md";
     private const string QuickCreationSample = """
         刚加入团队的同学，第一次参加需求评审时常常不知道该看什么。这份说明只讲三个习惯，养成之后，评审会快很多。
@@ -171,8 +169,9 @@ public sealed partial class DesignArtifactsController
             return QuickCreationError("这个风格不在当前目录，请重新选择");
         if (request.Ask?.Length > 3500) return QuickCreationError("创作要求太长，请缩短后再提交");
         var ids = request.AttachmentIds?.Distinct(StringComparer.Ordinal).ToList() ?? [];
-        if (ids.Count is 0 or > QuickCreationAttachmentLimit || ids.Any(id => string.IsNullOrWhiteSpace(id) || id.Length > 80))
-            return QuickCreationError("请放入一至八份可用资料");
+        if (ids.Count is 0 or > DesignRunInputAttachments.QuickCreationAttachmentLimit
+            || ids.Any(id => string.IsNullOrWhiteSpace(id) || id.Length > 80))
+            return QuickCreationError("请放入一至十份可用资料");
         var userId = this.GetRequiredUserId();
         var rows = await _db.Attachments.Find(item => ids.Contains(item.AttachmentId) && item.UploaderId == userId
                 && item.QuickCreationKind != null).ToListAsync(ct);
@@ -500,7 +499,7 @@ public sealed partial class DesignArtifactsController
 
     private static string? GetQuickCreationTextError(string content) =>
         string.IsNullOrWhiteSpace(content) ? "文件没有可读文字，请重新上传或移除"
-        : content.Length > QuickCreationSampleCharacters ? "单份稿件超过 6 万字，请拆分后重传" : null;
+        : content.Length > DesignRunInputAttachments.QuickCreationCharacterLimit ? "单份稿件超过 2 万字，请精简后重传" : null;
 
     private static bool ValidQuickCreationImage(string mime, byte[] bytes) => mime switch
     {
