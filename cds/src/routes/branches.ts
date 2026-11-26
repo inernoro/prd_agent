@@ -21885,7 +21885,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   router.get('/infra', async (req, res) => {
     // P4 Part 3b: optional ?project=<id> filter.
-    const projectFilter = typeof req.query.project === 'string' ? req.query.project : null;
+    const projectFilter = infraCollaborationProject(req) ?? (typeof req.query.project === 'string' ? req.query.project : null);
     const live = req.query.live === 'true' || req.query.live === '1';
     const services = projectFilter
       ? stateService.getInfraServicesForProject(projectFilter)
@@ -21952,7 +21952,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
    * returns null so the caller can 400 with a clear "which project?"
    * message instead of silently operating on the wrong one.
    */
+  function infraCollaborationProject(req: Request): string | undefined {
+    const key = (req as Parameters<typeof assertProjectAccess>[0]).cdsProjectKey;
+    return key && stateService.getProject(key.projectId)?.agentKeyCollaboration ? key.projectId : undefined;
+  }
+
   function resolveInfraProject(req: Request, id: string): { projectId: string } | { ambiguous: string[] } | null {
+    const sharedProject = infraCollaborationProject(req);
+    if (sharedProject) return { projectId: sharedProject };
     const q = typeof req.query.project === 'string' ? req.query.project : null;
     if (q) return { projectId: q };
     const all = stateService.getInfraServices().filter(s => s.id === id);
@@ -22066,7 +22073,7 @@ router.post('/branches/:id/storage/provision',async(req,res)=>{
         return;
       }
       const queryProject = typeof req.query.project === 'string' ? req.query.project : null;
-      const projectId = body.projectId || queryProject || 'default';
+      const projectId = body.projectId || infraCollaborationProject(req) || queryProject || 'default';
       const targetProject = stateService.getProject(projectId);
       if (!targetProject) {
         res.status(400).json({ error: `未知项目: ${projectId}` });
@@ -22203,6 +22210,14 @@ router.post('/branches/:id/storage/provision',async(req,res)=>{
       {
         const m = assertProjectAccess(req as any, resolved.projectId);
         if (m) { res.status(m.status).json(m.body); return; }
+      }
+      if (infraCollaborationProject(req)) {
+        const existing = stateService.getInfraServiceForProjectAndId(resolved.projectId, req.params.id);
+        if (!existing) { res.status(404).json({ error: 'infra_not_found' }); return; }
+        if ((['id', 'projectId', 'containerName'] as const).some(key => updates[key] !== undefined && updates[key] !== existing[key])) {
+          res.status(403).json({ error: 'infra_identity_immutable', message: '基础设施更新必须保留其项目和容器归属' });
+          return;
+        }
       }
       stateService.updateInfraService(req.params.id, updates, resolved.projectId);
       stateService.save();
@@ -22343,7 +22358,8 @@ router.post('/branches/:id/storage/provision',async(req,res)=>{
 
   router.get('/infra/:id/health', async (req, res) => {
     const { id } = req.params;
-    const service = stateService.getInfraService(id);
+    const sharedProject = infraCollaborationProject(req);
+    const service = sharedProject ? stateService.getInfraServiceForProjectAndId(sharedProject, id) : stateService.getInfraService(id);
     if (!service) {
       res.status(404).json({ error: `基础设施服务 "${id}" 不存在` });
       return;

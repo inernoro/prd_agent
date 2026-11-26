@@ -1787,6 +1787,20 @@ describe('human project grants through the production server', () => {
     expect((await credentialCall('POST', '/api/branches/branch-project-a/set-default', designKey, {})).status).toBe(200);
     expect(state.getState().defaultBranch).toBe('branch-project-b');
     expect(state.getProject('project-a')?.defaultBranch).toBe('branch-project-a');
+    for (const projectId of ['project-a', 'project-b']) {
+      state.addInfraService({ id: 'cache', projectId, name: 'Cache', dockerImage: 'redis:7',
+        containerPort: 6379, hostPort: 16379, containerName: `fixture-cache-${projectId}`, status: 'running',
+        volumes: [], env: {}, createdAt: new Date().toISOString() });
+    }
+    const stopInfraService = vi.fn().mockResolvedValue(undefined);
+    Object.assign(container, { stopInfraService });
+    const infraList = await credentialCall('GET', '/api/infra', planningKey);
+    expect(infraList.status).toBe(200);
+    expect(infraList.body.services.map((row: { projectId: string }) => row.projectId)).toEqual(['project-a']);
+    expect((await credentialCall('POST', '/api/infra/cache/stop?project=project-b', designKey)).status).toBe(403);
+    expect((await credentialCall('POST', '/api/infra/cache/stop?project=project-a', designKey)).status).toBe(200);
+    expect(stopInfraService.mock.calls).toEqual([['fixture-cache-project-a', 'cds-infra-stop']]);
+    expect(state.getInfraServiceForProjectAndId('project-b', 'cache')?.status).toBe('running');
     expect((await credentialCall('PUT', '/api/build-profiles/profile-project-b/deploy-mode', designKey, { mode: 'alternate' })).status).toBe(403);
     expect((await credentialCall('POST', '/api/build-profiles/bulk-set-modes', designKey, {
       filter: 'all', modes: { smoke: { label: 'Smoke', command: 'fixture' } },

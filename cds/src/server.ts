@@ -1947,6 +1947,14 @@ function projectKeyAllowsRequest(
       if (/^\/api\/env(?:\/[^/]+)?$/i.test(url)) {
         return req.method === 'GET' || req.method === 'HEAD' || req.method === 'PUT' || req.method === 'DELETE';
       }
+      if (/^\/api\/infra(?:\/|$)/i.test(url)) {
+        const read = req.method === 'GET' || req.method === 'HEAD';
+        return read && /^\/api\/infra(?:\/(?:catalog|[^/]+\/(?:health|logs)))?$/i.test(url)
+          || req.method === 'POST' && /^\/api\/infra\/[^/]+\/(?:start|stop|restart)$/i.test(url)
+          || req.method === 'DELETE' && /^\/api\/infra\/[^/]+$/i.test(url)
+          || (hasProjectAccess || legacy) && (req.method === 'POST' && /^\/api\/infra$/i.test(url)
+            || req.method === 'PUT' && /^\/api\/infra\/[^/]+$/i.test(url));
+      }
       if ((req.method === 'POST' && /^\/api\/releases\/targets(?:\/local-prod|\/[^/]+\/reclaim)?$/i.test(url))
         || (req.method === 'PATCH' && /^\/api\/releases\/targets\/[^/]+$/i.test(url))) return hasProjectAccess || legacy;
       if (/^\/api\/branches\/state-audit$/i.test(url)) return false;
