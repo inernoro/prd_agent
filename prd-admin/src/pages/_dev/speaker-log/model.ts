@@ -125,6 +125,37 @@ export function changedCharIndexes(prev: string, next: string): number[] {
   return indexes;
 }
 
+/** 新字的入场动画时长。短于播放器的帧间隔，类名不能只留一帧。 */
+export const CAPTION_HOLD_MS = 160;
+
+/** 给变化的字记下出现时刻。没变的字保留原时刻，这样后一个字到来时前一个字还能播完。 */
+export function stampChangedChars(bornAt: readonly number[], prev: string, next: string, now: number): number[] {
+  const stamped = bornAt.slice(0, next.length);
+  for (const index of changedCharIndexes(prev, next)) stamped[index] = now;
+  return stamped;
+}
+
+export function freshCaptionIndexes(bornAt: readonly number[], now: number, holdMs = CAPTION_HOLD_MS): number[] {
+  const indexes: number[] = [];
+  for (let index = 0; index < bornAt.length; index += 1) {
+    const at = bornAt[index];
+    if (at !== undefined && now - at < holdMs) indexes.push(index);
+  }
+  return indexes;
+}
+
+/** 距离最早一个新字播完还要多久。没有待播的字时返回 null。 */
+export function captionHoldRemaining(bornAt: readonly number[], now: number, holdMs = CAPTION_HOLD_MS): number | null {
+  let remaining: number | null = null;
+  for (const at of bornAt) {
+    if (at === undefined) continue;
+    const left = holdMs - (now - at);
+    if (left <= 0) continue;
+    remaining = remaining === null ? left : Math.min(remaining, left);
+  }
+  return remaining;
+}
+
 /**
  * 阅读历史时不把视口拽走。贴在底部时才跟着新内容。
  * scrollHeight 用增长前的高度，nextScrollHeight 用增长后的高度。

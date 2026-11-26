@@ -19,8 +19,12 @@ import {
   SAMPLE_START,
   USER_NAME,
   addSeconds,
+  CAPTION_HOLD_MS,
+  captionHoldRemaining,
   changedCharIndexes,
+  freshCaptionIndexes,
   logScrollSignature,
+  stampChangedChars,
   nextScrollTop,
   projectRound2,
   projectSample,
@@ -29,12 +33,11 @@ import {
 } from './model';
 
 const noop = () => undefined;
+const actions = { jump: noop, setRate: noop, replay: noop, toggleReduce: noop, setTheme: noop };
 
 function renderAt(partial: Parameters<typeof screenAt>[0]) {
   return renderToStaticMarkup(
-    <SpeakerLogScreen model={screenAt(partial)} actions={{
-      jump: noop, setRate: noop, replay: noop, toggleReduce: noop, setTheme: noop,
-    }} />,
+    <SpeakerLogScreen model={screenAt(partial)} actions={actions} />,
   );
 }
 
@@ -144,6 +147,12 @@ describe('音箱日志样例时间', () => {
   it('只标变化的字，阅读历史时不改滚动位置', () => {
     expect(changedCharIndexes('打开', '打开任')).toEqual([2]);
     expect(changedCharIndexes('打开任', '打开任')).toEqual([]);
+    const first = stampChangedChars([], '', '米', 0);
+    const both = stampChangedChars(first, '米', '米多', 70);
+    expect(freshCaptionIndexes(both, 100)).toEqual([0, 1]);
+    expect(freshCaptionIndexes(both, CAPTION_HOLD_MS)).toEqual([1]);
+    expect(freshCaptionIndexes(both, 70 + CAPTION_HOLD_MS)).toEqual([]);
+    expect(captionHoldRemaining(both, 100)).toBe(60);
     expect(nextScrollTop({
       scrollTop: 40, scrollHeight: 400, clientHeight: 200, nextScrollHeight: 520,
     })).toBe(40);

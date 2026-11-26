@@ -12,10 +12,12 @@ import {
   KEYFRAME_SEEK,
   ROUND2_MS,
   SAMPLE_DURATION_MS,
-  changedCharIndexes,
   buildScreen,
+  captionHoldRemaining,
+  freshCaptionIndexes,
   logScrollSignature,
   nextScrollTop,
+  stampChangedChars,
   type Conversation,
   type FrameId,
   type Line,
@@ -137,16 +139,30 @@ function LiveCaption({ text, settled, mark, live, reduce }: {
   live: boolean;
   reduce: boolean;
 }) {
-  const prev = useRef(live ? '' : text);
-  const changed = live ? changedCharIndexes(prev.current, text) : [];
+  const prevText = useRef(live && !reduce ? '' : text);
+  const bornAt = useRef<number[]>([]);
+  const [, refresh] = useState(0);
+  if (!live || reduce) {
+    prevText.current = text;
+    bornAt.current = [];
+  } else if (prevText.current !== text) {
+    bornAt.current = stampChangedChars(bornAt.current, prevText.current, text, performance.now());
+    prevText.current = text;
+  }
+  const fresh = live && !reduce ? freshCaptionIndexes(bornAt.current, performance.now()) : [];
+  const freshKey = fresh.join(',');
   useEffect(() => {
-    prev.current = text;
-  }, [text]);
+    if (!live || reduce) return undefined;
+    const left = captionHoldRemaining(bornAt.current, performance.now());
+    if (left === null) return undefined;
+    const id = window.setTimeout(() => refresh((value) => value + 1), left);
+    return () => window.clearTimeout(id);
+  }, [text, live, reduce, freshKey]);
   if (!text) return null;
   return (
     <span className="cap" data-settled={settled ? '1' : '0'}>
       {Array.from(text).map((ch, index) => (
-        <span key={`${index}-${ch}`} className={!reduce && changed.includes(index) ? 'cap-new' : undefined}>{ch}</span>
+        <span key={`${index}-${ch}`} className={fresh.includes(index) ? 'cap-new' : undefined}>{ch}</span>
       ))}
       {mark ? <span className="cap-mark">定稿</span> : null}
     </span>
