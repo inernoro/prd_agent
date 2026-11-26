@@ -1925,7 +1925,7 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
    * 由 migrateGlobalsToProjects() 一次性 seed, 之后 setProject* 不再写它。
    * 老 setDefaultBranch(id) 显式 API 仍然能改它（保留 legacy 调用兼容）。
    */
-  setProjectDefaultBranch(projectId: string, branchId: string | null): void {
+  setProjectDefaultBranch(projectId: string, branchId: string | null, { seedGlobal = true } = {}): void {
     const project = this.getProject(projectId);
     if (project) {
       project.defaultBranch = branchId;
@@ -1934,7 +1934,7 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     // 仅在 legacy state.defaultBranch 还未被 seed 过 (== null/undefined) 时
     // 把第一个真实值塞进去，给 proxy.ts 这种 single-project 时代的兜底
     // 路径一个起步值。已经有值就不动。
-    if (this.state.defaultBranch == null && branchId) {
+    if (seedGlobal && this.state.defaultBranch == null && branchId) {
       this.state.defaultBranch = branchId;
     }
   }

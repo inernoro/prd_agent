@@ -16,6 +16,7 @@ import { MemoryAuthStore } from '../../src/infra/auth-store/memory-store.js';
 import { humanPrincipalId, humanProjectGrantUpdateStatus, beginHumanProjectGrantUpdate } from '../../src/services/human-project-access.js';
 import * as humanProjectAccess from '../../src/services/human-project-access.js';
 import { createIdentityRouter, resolveUserCredential } from '../../src/routes/identity.js';
+import { createUptimeRouter } from '../../src/routes/uptime.js';
 import { DeploymentRunService } from '../../src/services/deployment-run.js';
 import { BranchOperationCoordinator } from '../../src/services/branch-operation-coordinator.js';
 import { multiPreviewUrl } from '../../web/src/lib/previewUrl.js';
@@ -128,6 +129,11 @@ describe('human project grants through the production server', () => {
       branchOperationCoordinator: new BranchOperationCoordinator(),
       containerService: container as any,
       proxyService: { getProxyLog: () => [], setOnProxyLog: () => {}, handleSwitchFromExpress: () => {} } as any });
+    const monitor = {
+      getSummary: () => ({ targets: ['project-a', 'project-b'].map(projectId => ({ id: projectId, projectId, status: 'up' })) }),
+      getCoverage: () => ({ total: 1, covered: 1, uncovered: [], byReason: [] }),
+    } as unknown as Parameters<typeof createUptimeRouter>[0]['monitor'];
+    app.use('/api', createUptimeRouter({ monitor, store: state }));
     server = app.listen(0, '127.0.0.1');
     await new Promise<void>(resolve => server.once('listening', resolve));
     base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
@@ -1447,7 +1453,7 @@ describe('human project grants through the production server', () => {
     });
   });
 
-  it('lets the same anonymous design publisher revise after expiry and denies name or revoked-key recovery', async () => {
+  it('keeps renewal audit identity and lets another approved project publisher revise without taking that identity', async () => {
     const projectId = 'project-a';
     const approval = `/api/projects/${projectId}/access-requests`;
     const designs = `/api/projects/${projectId}/design`;
@@ -1542,8 +1548,6 @@ describe('human project grants through the production server', () => {
 
     const second = await designRevision(2);
     const reviseFirst = { intent: 'revise', designId, expectedVersion: '1' };
-    const unrelated = await issue();
-    expect((await publish(unrelated.key, second, 'design-recovery-same-name', reviseFirst)).status).toBe(403);
     const recovered = await issue(initial.key, 'Renamed fixture designer');
     const recoveredIntake = await credentialCall('GET', `${designs}/intake`, recovered.key);
     expect.soft(recoveredIntake.body.designs[0]).toMatchObject({ designId, canRevise: true });
@@ -1555,10 +1559,15 @@ describe('human project grants through the production server', () => {
     const third = await publish(recoveredAgain.key, await designRevision(3), 'design-recovery-third',
       { intent: 'revise', designId, expectedVersion: '2' });
     expect(third.status).toBe(201);
+    const collaborator = await issue();
+    const fourth = await publish(collaborator.key, await designRevision(4), 'design-collaboration-fourth',
+      { intent: 'revise', designId, expectedVersion: '3' });
+    expect(fourth.status).toBe(201);
     const published = await credentialCall('GET', designs, recoveredAgain.key);
     const versions = published.body.designs.find((design: { id: string }) => design.id === designId).versions;
-    expect(versions.map((version: { version: number }) => version.version)).toEqual([1, 2, 3]);
-    expect(new Set(versions.map((version: { publisher: { id: string } }) => version.publisher.id)).size).toBe(1);
+    expect(versions.map((version: { publisher: { id: string } }) => version.publisher.id)).toEqual([
+      ...Array(3).fill('project-key:' + initial.keyId), 'project-key:' + collaborator.keyId,
+    ]);
 
     expire(recoveredAgain.keyId);
     const pending = await begin(recoveredAgain.key);
@@ -1708,6 +1717,92 @@ describe('human project grants through the production server', () => {
     }
     expect((await call('GET', project + '/agent-keys')).body.keys)
       .toEqual([expect.objectContaining({ id: issued.body.keyId, ...permissions })]);
+  });
+
+  it('uses one project grant for existing keys on the project navigation when collaboration is enabled', async () => {
+    const project = '/api/projects/project-a';
+    const other = '/api/projects/project-b';
+    const navigation = [
+      project,
+      '/api/branches',
+      '/api/build-profiles',
+      '/api/scheduled-jobs?project=project-a',
+      '/api/reports?projectId=project-a',
+      '/api/acceptance/tasks?projectId=project-a',
+      '/api/uptime/summary?project=project-a',
+      '/api/code-reviews?projectId=project-a',
+      '/api/releases/center?projectId=project-a',
+    ];
+    const readers = await Promise.all([
+      call('POST', project + '/agent-keys', owner, { designAccess: 'read' }),
+      call('POST', project + '/agent-keys', owner, { planningAccess: 'read' }),
+      call('POST', other + '/agent-keys', owner, { designAccess: 'read' }),
+    ]);
+    expect(readers.map(row => row.status)).toEqual([201, 201, 201]);
+    const [designKey, planningKey, otherKey] = readers.map(row => row.body.plaintext);
+    expect((await credentialCall('GET', project, designKey)).status).toBe(403);
+    state.setDefaultBranch('branch-project-b');
+
+    expect(await call('PUT', project, owner, { agentKeyCollaboration: true })).toMatchObject({
+      status: 200, body: { project: { agentKeyCollaboration: true } },
+    });
+    expect(await call('PUT', project, owner, { inheritGlobalEnv: true })).toMatchObject({
+      status: 409, body: { error: 'project_scope_conflict' },
+    });
+    for (const key of [designKey, planningKey]) {
+      for (const route of navigation) {
+        expect((await credentialCall('GET', route, key)).status, route).toBe(200);
+      }
+      expect(await credentialCall('GET', project + '/design/intake', key)).toMatchObject({
+        status: 200, body: { permissions: { write: true, feedback: true, frameworkPublish: true } },
+      });
+      expect(await credentialCall('GET', project + '/planning/capabilities', key)).toMatchObject({
+        status: 200, body: { permissions: ['read', 'propose', 'write'] },
+      });
+      const branchList = (await credentialCall('GET', '/api/branches', key)).body;
+      expect(branchList.branches.map((row: { projectId: string }) => row.projectId)).toEqual(['project-a']);
+      expect(branchList.defaultBranch).toBeNull();
+      expect(branchList).not.toHaveProperty('capacity');
+      expect((await credentialCall('GET', '/api/build-profiles', key)).body.profiles.map((row: { projectId: string }) => row.projectId)).toEqual(['project-a']);
+      expect((await credentialCall('GET', '/api/uptime/summary', key)).body.targets.map((row: { projectId: string }) => row.projectId)).toEqual(['project-a']);
+      expect(Object.keys((await credentialCall('GET', '/api/config', key)).body).sort()).toEqual(['previewDomain', 'workerPort']);
+      expect((await credentialCall('GET', '/api/branches/branch-project-b', key)).status).toBe(403);
+      expect((await credentialCall('GET', other + '/design/intake', key)).status).toBe(403);
+      expect((await credentialCall('GET', '/api/reports?project=project-b', key)).status).toBe(403);
+      expect((await credentialCall('GET', '/api/self-status', key)).status).toBe(403);
+      expect((await credentialCall('PUT', project, key, { agentKeyCollaboration: false })).status).toBe(403);
+      expect((await credentialCall('PUT', project, key, { inheritGlobalEnv: true })).status).toBe(403);
+      expect((await credentialCall('PUT', project, key, { gitRepoUrl: 'https://fixture.test/repository.git' })).status).toBe(403);
+      expect((await credentialCall('POST', project + '/clone', key, {})).status).toBe(403);
+    }
+    expect(await credentialCall('PUT', project + '/preview-mode', designKey, { mode: 'port' })).toMatchObject({
+      status: 200, body: { mode: 'port' },
+    });
+    expect(await credentialCall('POST', project + '/planning/commands', designKey, {
+      type: 'decision.create', requestId: 'collaborative-project-decision',
+      title: 'Project collaboration fixture', source: { type: 'manual', ref: 'fixture' },
+      summary: 'Both project roles can write',
+    })).toMatchObject({ status: 201 });
+    expect((await credentialCall('POST', '/api/branches/branch-project-a/set-default', designKey, {})).status).toBe(200);
+    expect(state.getState().defaultBranch).toBe('branch-project-b');
+    expect(state.getProject('project-a')?.defaultBranch).toBe('branch-project-a');
+    expect((await credentialCall('PUT', '/api/build-profiles/profile-project-b/deploy-mode', designKey, { mode: 'alternate' })).status).toBe(403);
+    expect((await credentialCall('POST', '/api/build-profiles/bulk-set-modes', designKey, {
+      filter: 'all', modes: { smoke: { label: 'Smoke', command: 'fixture' } },
+    })).body.targets).toMatchObject([{ id: 'profile-project-a' }]);
+    expect(state.getBuildProfile('profile-project-b')?.deployModes).not.toHaveProperty('smoke');
+    expect(await credentialCall('POST', '/api/scheduled-jobs/check-target', designKey, {
+      projectId: 'project-a', target: { type: 'http', url: 'https://fixture.test/' },
+    })).toMatchObject({ status: 403, body: { error: 'system_runner_required' } });
+    expect((await credentialCall('GET', project + '/design/intake', otherKey)).status).toBe(403);
+    expect((await credentialCall('GET', other + '/design/intake', otherKey)).body.permissions.write).toBe(false);
+    expect((await call('DELETE', project + '/agent-keys/' + readers[0].body.keyId, owner)).status).toBe(200);
+    expect((await credentialCall('GET', project + '/design/intake', designKey)).status).not.toBe(200);
+    vi.stubEnv('CDS_AI_ACCESS_KEY', 'local-system-maintenance-fixture');
+    expect(await credentialCall('PUT', project, 'local-system-maintenance-fixture', { agentKeyCollaboration: false })).toMatchObject({
+      status: 200, body: { project: { agentKeyCollaboration: false } },
+    });
+    expect((await credentialCall('GET', project + '/design/intake', planningKey)).status).toBe(403);
   });
 
   it('lists keys newest first and separates verified user, agent, and unconfirmed sources', async () => {

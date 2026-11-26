@@ -717,10 +717,9 @@ describe('private CDS design workspace', () => {
 
       const second = draft('Private version two');
       const revise = { sourceMode: 'private', intent: 'revise', designId, expectedVersion: '1', sourcePath, sourceCommit: '2'.repeat(40) };
-      expect((await publish('unowned-revision', second, revise, { actor: 'designer' })).status).toBe(403);
       expect((await publish('read-only-revision', second, revise, { actor: 'read-designer' })).status).toBe(403);
       expect((await publish('outside-revision', second, revise, { actor: 'outside' })).status).toBe(404);
-      expect((await publish('private-revision', second, revise, publisher)).status).toBe(201);
+      expect((await publish('private-revision', second, revise, { actor: 'designer' })).status).toBe(201);
       expect((await publish('stale-revision', second, { ...revise, sourceCommit: '3'.repeat(40) }, publisher)).status).toBe(409);
       expect(sourceLookups).toBe(0);
       const { designs } = await (await get()).json();
@@ -732,6 +731,7 @@ describe('private CDS design workspace', () => {
       for (const [index, bytes] of [first, second].entries()) {
         const version = item.versions[index];
         expect(version).toMatchObject({ version: index + 1, sourceVerification: 'private-upload', sourcePath,
+          publisher: { id: ['git-designer', 'designer'][index] },
           sourceCommit: [firstInput.sourceCommit, revise.sourceCommit][index], sha256: createHash('sha256').update(bytes).digest('hex') });
         const path = `/artifacts/${version.delivery.archiveId}`;
         const archive = await get(path, 'read-designer');
@@ -916,7 +916,7 @@ describe('private CDS design workspace', () => {
     const update = draft('Fixture V2');
     const publishParams = { intent: 'revise', designId, expectedVersion: '1', ...gitSource(update, source, 'b') };
     expect((await publish('should-not-publish', update, publishParams, { actor: 'implementer' })).status).toBe(403);
-    expect((await publish('feedback-next', update, publishParams)).status).toBe(201);
+    expect((await publish('feedback-next', update, publishParams, { actor: 'git-designer' })).status).toBe(201);
     const reply = await send('designer', 'reuse-response', 'feedback.reply', { feedbackId, body: 'V2 uses the shared list.', revision: 2 });
     expect(reply.status).toBe(201);
     expect((await send('implementer', 'confirm-reuse', 'feedback.resolve', { feedbackId, decision: 'close', body: 'Confirmed on V2.' })).status).toBe(201);
@@ -1078,7 +1078,7 @@ describe('private CDS design workspace', () => {
     expect(ownerIntake.designs[0].sourcePaths).toHaveLength(2);
     expect(ownerIntake.designs[0]).not.toHaveProperty('designKey');
     expect((await (await get('/intake', 'rotated-designer')).json()).designs[0].canRevise).toBe(true);
-    expect((await (await get('/intake', 'git-designer')).json()).designs[0].canRevise).toBe(false);
+    expect((await (await get('/intake', 'git-designer')).json()).designs[0].canRevise).toBe(true);
     const readOnly = await get('/intake', 'read-designer');
     expect(readOnly.status).toBe(200);
     expect(await readOnly.json()).toMatchObject({ permissions: { write: false }, designs: [{ designId, canRevise: false }] });
@@ -1107,20 +1107,21 @@ describe('private CDS design workspace', () => {
     expect(manifestMistake.status).toBe(409);
     expect(JSON.stringify(await manifestMistake.json())).toContain(designId);
     const explicit = { ...revisedSource, designId, intent: 'revise', expectedVersion: '1' };
-    expect((await publish('explicit-peer', revised, explicit, { actor: 'git-designer' })).status).toBe(403);
-    expect((await publish('old-explicit-peer', revised, { ...revisedSource, designId }, { actor: 'git-designer' })).status).toBe(403);
+    const missingVersion = await publish('old-explicit-peer', revised, { ...revisedSource, designId }, { actor: 'git-designer' });
+    expect(missingVersion.status).toBe(409);
+    expect(await missingVersion.json()).toMatchObject({ message: expect.stringContaining('expectedVersion') });
     expect((await publish('explicit-viewer', revised, explicit, { actor: 'read-designer' })).status).toBe(403);
     expect((await publish('explicit-outside', revised, explicit, { actor: 'outside' })).status).toBe(404);
     const afterRejections = await new FileProjectRevisionStore<DesignWorkspaceCommit>(directory).read(projectId, 0);
     expect(afterRejections).toHaveLength(1);
-    expect((await publish('explicit-author', revised, explicit, { actor: 'rotated-designer' })).status).toBe(201);
+    expect((await publish('explicit-peer', revised, explicit, { actor: 'git-designer' })).status).toBe(201);
     const replay = await publish('same-request', first, firstInput, { actor: 'rotated-designer' });
     expect(replay.status).toBe(200);
     expect(await replay.json()).toMatchObject({ reused: true, result: { designId, version: 1 } });
     expect((await publish('same-request', first, { ...firstInput, note: 'Changed request' })).status).toBe(409);
     expect((await (await get()).json()).designs).toEqual([expect.objectContaining({
       id: designId, versions: [expect.objectContaining({ version: 1, publisher: expect.objectContaining({ id: 'designer' }) }),
-        expect.objectContaining({ version: 2, publisher: expect.objectContaining({ id: 'designer' }) })],
+        expect.objectContaining({ version: 2, publisher: expect.objectContaining({ id: 'git-designer' }) })],
     })]);
   });
 
@@ -1155,17 +1156,32 @@ describe('private CDS design workspace', () => {
     const receipts = await Promise.all(first.map(row => row.json()));
     expect(receipts[0].result).toEqual(receipts[1].result);
     const { designId } = receipts[0].result;
+    expect((await command('design.freeze', { designId, version: 1 })).status).toBe(201);
     const v2a = draft('Candidate A'), v2b = draft('Candidate B');
     const revise = { designId, intent: 'revise', expectedVersion: '1' };
     const results = await Promise.all([
       publish('v2-a', v2a, { ...gitSource(v2a, source.sourcePath, 'b'), ...revise }),
-      publish('v2-b', v2b, { ...gitSource(v2b, source.sourcePath, 'c'), ...revise }, { api: otherApi }),
+      publish('v2-b', v2b, { ...gitSource(v2b, source.sourcePath, 'c'), ...revise }, { api: otherApi, actor: 'git-designer' }),
     ]);
     expect(results.map(row => row.status).sort()).toEqual([201, 409]);
     expect(await results.find(row => row.status === 201)!.json()).toMatchObject({ result: { designId, version: 2 } });
+    expect(await results.find(row => row.status === 409)!.json()).toMatchObject({
+      error: 'design_intake_conflict', message: expect.stringContaining('V2'),
+    });
+    const losingActor = results[0].status === 409 ? 'designer' : 'git-designer';
+    expect((await (await get('/intake', losingActor)).json()).designs[0]).toMatchObject({
+      designId, latestVersion: 2, baselineVersion: 1, canRevise: true,
+    });
+    const merged = draft('Candidate A and B');
+    expect((await publish('merged-revision', merged, { ...gitSource(merged, source.sourcePath, 'd'), ...revise, expectedVersion: '2' },
+      { actor: losingActor })).status).toBe(201);
     const commits = await new FileProjectRevisionStore<DesignWorkspaceCommit>(directory).read(projectId, 0);
-    expect(commits).toHaveLength(2);
-    expect(commits.map(commit => commit.design?.version?.version)).toEqual([1, 2]);
+    expect(commits.flatMap(commit => commit.design?.version?.version ?? [])).toEqual([1, 2, 3]);
+    expect((await (await get()).json()).designs[0]).toMatchObject({ id: designId, frozen: 1, versions: [
+      { version: 1, publisher: { id: 'designer' } },
+      { version: 2, publisher: { id: results[0].status === 201 ? 'designer' : 'git-designer' } },
+      { version: 3, publisher: { id: losingActor } },
+    ] });
   });
 
   it('reuses an explicit-intent receipt when the same Git files were packaged again', async () => {
@@ -1761,8 +1777,7 @@ describe('private CDS design workspace', () => {
       const secondBytes = draft('Reversible fixture V2', { id: designId });
       const revision = { sourceMode: 'private', intent: 'revise', designId, expectedVersion: '1',
         sourcePath, sourceCommit: '2'.repeat(40) };
-      expect((await publish('reversible-wrong-author', secondBytes, revision, { actor: 'git-designer' })).status).toBe(403);
-      const next = await publish('reversible-second', secondBytes, revision);
+      const next = await publish('reversible-second', secondBytes, revision, { actor: 'git-designer' });
       expect(next.status).toBe(201);
       expect((await next.json()).result).toMatchObject({ designId, version: 2 });
       expect((await command('design.freeze', { designId, version: 2 })).status).toBe(201);

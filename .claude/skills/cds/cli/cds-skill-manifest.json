@@ -27,7 +27,7 @@
     "cds/reference/acceptance-reports.md": "dc7a834ec6e41a4eb51be4054cf7e3dea5752a0f4a2892e928c5457cc4ac31d5",
     "cds/reference/api.md": "6309ef6683f7e4b73779c69c0c3b37efb8fa69403ccb63bf4cec5c9fb27ca708",
     "cds/reference/auth.md": "958f28c4f5eaa60e3b245984cd978110b4969f1baf54fd00ed59ef579fe189bd",
-    "cds/reference/design-intake.md": "325d546642274f25503b13ddf769c1df77508090ff21ddae218d1a7e95ee57b6",
+    "cds/reference/design-intake.md": "0eb0c4cb8e459ccf295dc3e54a5219068e2195799c7a2a9531f2ef9e5c0e32e6",
     "cds/reference/design-loop.md": "c42edc59fcc1884fb9333fec80a475ff9cd6933adfc65faa1a0981349040f135",
     "cds/reference/diagnose.md": "0b4d1c3957f560c095f3cbca5e43f277e3cc75f92b5573d6833e85a6ce248b78",
     "cds/reference/drop-in.md": "f4cde6d2f3705d3bea763ffc33f01dbafd48e04afdd52da4e29f3eccd98fcbb4",
@@ -95,5 +95,5 @@
     "cds-release/references/configuration-contract.md": "f25c5b7650f5410780120a56472131dfecd9f3e754d136df4a1706caaf6b572e",
     "preview-url/SKILL.md": "cba546b198bc1e0bad384d447078663d0e6906f1d080722dd29db7b14a33f65b"
   },
-  "generatedAt": "2026-11-26T18:35:52.695442+00:00"
+  "generatedAt": "2026-11-26T19:46:57.398335+00:00"
 }

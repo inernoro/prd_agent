@@ -1927,12 +1927,49 @@ function projectKeyAllowsRequest(
   state: StateService,
   member?: PairingMember,
 ): boolean {
-  if (isLegacyProjectAgentKey(key)) return true;
+  const project = state.getProject(key.projectId);
+  const collaboration = project?.agentKeyCollaboration === true;
+  const legacy = isLegacyProjectAgentKey(key);
+  if (!collaboration && legacy) return true;
   if (req.method === 'GET' && req.path === '/api/credentials/self-check') return true;
   if (isPublicAgentSetupRoute(req.method, req.path)) return true;
   const hasProjectAccess = key.projectAccess === 'rw' || key.projectAccess === 'admin';
   const url = req.path.replace(/^\/_cds\/api\//i, '/api/').replace(/\/+$/, '');
   const projectPath = /^\/api\/projects\/([^/]+)(\/.*)?$/i.exec(url);
+  if (collaboration) {
+    if (!dtsCredentialAllowed(state, { kind: 'project-key', id: key.keyId }, key.projectId)) return false;
+    if ([req.query.project, req.query.projectId].some(target => target !== undefined
+      && (typeof target !== 'string' || state.getProject(target)?.id !== key.projectId))) return false;
+    if (!projectPath) {
+      if (!/^\/api(?:\/|$)/i.test(url) || isPublicAccessRequestRoute(req.method, url)) return true;
+      if (/^\/api\/projects$/i.test(url)) return req.method === 'GET' || req.method === 'HEAD';
+      if (/^\/api\/config$/i.test(url)) return req.method === 'GET' || req.method === 'HEAD';
+      if ((req.method === 'POST' && /^\/api\/releases\/targets(?:\/local-prod|\/[^/]+\/reclaim)?$/i.test(url))
+        || (req.method === 'PATCH' && /^\/api\/releases\/targets\/[^/]+$/i.test(url))) return hasProjectAccess || legacy;
+      if (/^\/api\/branches\/state-audit$/i.test(url)) return false;
+      const branchPath = /^\/api\/branches\/([^/]+)(?:\/|$)/i.exec(url);
+      if (branchPath && !['stream', 'cleanup-damaged-containers', 'cleanup-stopped', 'cleanup-orphan-containers'].includes(branchPath[1].toLowerCase())) {
+        try {
+          const branch = state.getBranch(decodeURIComponent(branchPath[1]));
+          if (!branch || (branch.projectId || 'default') !== key.projectId) return false;
+          if (hasProjectAccess || legacy) return true;
+          if (/\/database-init\/run$/i.test(url)) return false;
+          return !project.inheritGlobalEnv || !/\/(?:container-env|container-exec|effective-env\/reveal)$/i.test(url);
+        } catch { return false; }
+      }
+      const profilePath = /^\/api\/build-profiles\/([^/]+)(?:\/|$)/i.exec(url);
+      if (profilePath && url.toLowerCase() !== '/api/build-profiles/bulk-set-modes') {
+        try {
+          const profile = state.getBuildProfile(decodeURIComponent(profilePath[1]));
+          return Boolean(profile && (profile.projectId || 'default') === key.projectId);
+        } catch { return false; }
+      }
+      // These controllers bind their objects to a project. System management
+      // routes have no such owner and are not part of project collaboration.
+      return /^\/api\/(?:branches|remote-branches|build-profiles|deployment-runs|deployment-versions|releases|scheduled-jobs|reports|report-folders|acceptance|uptime|code-reviews|dts|bug-reports|notices|cds-events)(?:\/|$)/i.test(url)
+        || /^\/api\/overview\/topology$/i.test(url);
+    }
+  }
   if (!projectPath) return hasProjectAccess;
   try {
     const target = decodeURIComponent(projectPath[1]);
@@ -1941,6 +1978,11 @@ function projectKeyAllowsRequest(
   const suffix = projectPath[2]?.toLowerCase() ?? '';
   const method = req.method;
   const read = method === 'GET' || method === 'HEAD';
+  if (collaboration) {
+    if (/^\/migrat(?:e|ion)(?:\/|$)/.test(suffix) || !read && /^\/github\/(?:link|unlink)$/.test(suffix)) return false;
+    if (!hasProjectAccess && !legacy && /^\/clone(?:\/|$)/.test(suffix)) return false;
+    if (!/^\/agent-keys(?:\/|$)/.test(suffix)) return true;
+  }
   if (/^\/design(?:\/|$)/.test(suffix)) {
     if (!key.designAccess) return false;
     const route = '/api/projects/:projectId/design';

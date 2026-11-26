@@ -3636,6 +3636,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       gitRepoUrl: string;
       autoSmokeEnabled: boolean;
       agentPrebuiltOnly: boolean;
+      agentKeyCollaboration: boolean;
       resourceChipDisplay: {
         icon?: boolean;
         name?: boolean;
@@ -3738,8 +3739,21 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       }
     }
 
-    const patch: Partial<Pick<Project, 'name' | 'aliasName' | 'slug' | 'description' | 'gitRepoUrl' | 'autoSmokeEnabled' | 'agentPrebuiltOnly' | 'resourceChipDisplay' | 'githubEventPolicy' | 'githubBotPushFilterEnabled' | 'defaultDeployModes' | 'autoPublishAfterMinutes' | 'autoStopAfterMinutes' | 'deployReadinessFloorSeconds' | 'inheritGlobalEnv'>> = {};
+    const patch: Partial<Pick<Project, 'name' | 'aliasName' | 'slug' | 'description' | 'gitRepoUrl' | 'autoSmokeEnabled' | 'agentPrebuiltOnly' | 'agentKeyCollaboration' | 'resourceChipDisplay' | 'githubEventPolicy' | 'githubBotPushFilterEnabled' | 'defaultDeployModes' | 'autoPublishAfterMinutes' | 'autoStopAfterMinutes' | 'deployReadinessFloorSeconds' | 'inheritGlobalEnv'>> = {};
+    if (body.agentKeyCollaboration !== undefined) {
+      const denied = assertUnscopedAdmin(req as Parameters<typeof assertUnscopedAdmin>[0]);
+      if (denied) { res.status(denied.status).json(denied.body); return; }
+      if (typeof body.agentKeyCollaboration !== 'boolean') {
+        res.status(400).json({ error: 'validation', field: 'agentKeyCollaboration', message: '项目凭据共享开关必须是布尔值' });
+        return;
+      }
+      patch.agentKeyCollaboration = body.agentKeyCollaboration;
+    }
     if (body.inheritGlobalEnv !== undefined) {
+      if (project.agentKeyCollaboration) {
+        const denied = assertUnscopedAdmin(req as Parameters<typeof assertUnscopedAdmin>[0]);
+        if (denied) { res.status(denied.status).json(denied.body); return; }
+      }
       if (typeof body.inheritGlobalEnv !== 'boolean') {
         res.status(400).json({
           error: 'validation',
@@ -3749,6 +3763,18 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         return;
       }
       patch.inheritGlobalEnv = body.inheritGlobalEnv;
+    }
+    if ((patch.agentKeyCollaboration ?? project.agentKeyCollaboration) && (patch.inheritGlobalEnv ?? project.inheritGlobalEnv)) {
+      res.status(409).json({ error: 'project_scope_conflict', message: '共享项目凭据时，请使用项目自己的环境变量。' });
+      return;
+    }
+    if (body.gitRepoUrl !== undefined && body.gitRepoUrl !== project.gitRepoUrl && project.agentKeyCollaboration) {
+      const presented = (req as { cdsProjectKey?: { keyId: string } }).cdsProjectKey;
+      const key = presented && stateService.getAgentKeys(project.id).find(entry => entry.id === presented.keyId);
+      if (presented && (!key || !key.projectAccess && !isLegacyProjectAgentKey(key))) {
+        res.status(403).json({ error: 'repository_binding_required', message: '此操作会重新绑定 CDS 的仓库连接，请使用原有仓库管理授权' });
+        return;
+      }
     }
     // PR_D.3: 合并 5 个 toggle 到 githubEventPolicy（partial patch — 仅
     // 对显式传入的 key 更新，不影响其它 key）。

@@ -27,7 +27,7 @@ import {
 import { planningText, rejectPlanning } from './engineering-planning-input.js';
 import type { ProjectRevisionAsset, ProjectRevisionStore } from './project-revision-store.js';
 
-export type DesignActor = PlanningActor & { steward?: boolean; feedbackSupplement?: boolean; gitPublishOnly?: boolean; feedback?: boolean };
+export type DesignActor = PlanningActor & { steward?: boolean; feedbackSupplement?: boolean; gitPublishOnly?: boolean; requireGitSource?: boolean; feedback?: boolean };
 type Receipt = {
   projectId: string; reused: boolean;
   result: { type: string; designId?: string; version?: number; id?: string; frameworkId?: string; runId?: string;
@@ -546,7 +546,6 @@ export class DesignWorkspaceService {
     const state = await this.load(projectId);
     const entry = state.designs.get(id) ?? missing('该稿件不存在');
     const version = versionOf(entry, input.version);
-    if (actor.gitPublishOnly) authored(actor, version.publisher);
     write(actor);
     if (!version.handoffPlan) return conflict('请在同一稿件发布含交接场景的版本，再运行检查');
     if (!this.deps.handoff?.check) return rejectPlanning(503, 'design_handoff_unavailable', '交接检查环境暂不可用，请在具备隔离预览的 CDS 实例重试。');
@@ -665,7 +664,7 @@ export class DesignWorkspaceService {
         frameworkPublish: actor.permissions.includes('write'),
       ...(this.deps.handoff && actor.permissions.includes('write') ? { handoffCheck: true } : {}),
         sign: actor.kind === 'human' && actor.permissions.includes('write'),
-        ...((actor.gitPublishOnly || actor.kind === 'human' && actor.permissions.includes('approve')) ? { programRecheck: true } : {}),
+        ...((actor.gitPublishOnly || actor.projectCollaborator || actor.kind === 'human' && actor.permissions.includes('approve')) ? { programRecheck: true } : {}),
         ...(installed ? { installedAcceptance: true } : {}),
         steward: actor.steward === true, feedbackSupplement: actor.kind === 'human' && actor.feedbackSupplement === true, actorId: actor.id } };
   }
@@ -748,7 +747,7 @@ export class DesignWorkspaceService {
           versionGap: designVersionGap(entry.frozen, entry.implementedVersion),
           versionHistory: entry.versions.map(({ version, sourceCommit }) => ({ version, sourceCommit })),
           ...(entry.scope ? { scope: structuredClone(entry.scope) } : {}),
-          canRevise: canWrite && (actor.steward === true || latest.publisher.id === actor.id),
+          canRevise: canWrite,
           openFeedbackCount: entry.feedback?.filter(item => item.status !== 'closed').length ?? 0 };
       }),
       frameworks: [...state.frameworks.values()].map(frame => {
@@ -905,7 +904,7 @@ export class DesignWorkspaceService {
     }
     if (params.requireGit !== undefined && params.requireGit !== 'true') invalidDesign('Git 来源校验须使用 requireGit=true');
     if (privateUpload && params.requireGit === 'true') invalidDesign('私有归档和 Git 来源校验请选择一种');
-    const requireGit = !privateUpload && Boolean(intent || actor.gitPublishOnly || params.requireGit === 'true');
+    const requireGit = !privateUpload && Boolean(intent || actor.gitPublishOnly || actor.requireGitSource || params.requireGit === 'true');
     const note = optionalText(params.note, '发布说明', 1000);
     const loaded = await readDesignPackage(bytes, { publication: true });
     if (loaded.project !== projectId) invalidDesign('稿件包项目与当前 CDS 项目不符');
@@ -937,17 +936,19 @@ export class DesignWorkspaceService {
         const id = selectedId ?? `DSN-${randomUUID().slice(0, 8).toUpperCase()}`;
         const existing = state.designs.get(id);
         const previous = existing?.versions.at(-1);
+        if (targetId && !existing) missing('需要更新的稿件不存在，请先读设计接入清单');
+        if (expectedVersion !== undefined && previous?.version !== expectedVersion) {
+          intakeConflict(`稿件 ${id} 当前是 V${previous?.version}。请回读与原版本的差异，合并后按最新版续发`);
+        }
+        if (previous && expectedVersion === undefined && previous.publisher.id !== actor.id && !actor.steward) {
+          intakeConflict(`稿件 ${id} 当前是 V${previous.version}。请使用 intent=revise 并带上该版本作为 expectedVersion`);
+        }
         const programEvidence = Boolean(loaded.demoData || loaded.evidenceProtocol || previous && designProgramEvidenceRequired(previous));
         if (previous && designDatasetRequired(previous) && !loaded.demoData) {
           invalidDesign('原稿已启用演示数据摘要校验，续版须声明本版的演示数据及经校验的摘要');
         }
         if (programEvidence && !['src/fixtures.ts', 'src/data-design.ts'].every(path => loaded.delivery.index.some(file => file.path === path))) {
           invalidDesign('原稿使用程序取证，续版需保留两份虚构演示数据源');
-        }
-        if (targetId && !existing) missing('需要更新的稿件不存在，请先读设计接入清单');
-        if (previous) authored(actor, previous.publisher);
-        if (expectedVersion !== undefined && previous?.version !== expectedVersion) {
-          intakeConflict(`稿件 ${id} 当前是 V${previous?.version}。请回读新版并确认基线后再续版`);
         }
         if (designKey && existing?.designKey && existing.designKey !== designKey) {
           intakeConflict(`稿件 ${id} 已绑定设计接入标识 ${existing.designKey}`);
@@ -1258,7 +1259,6 @@ export class DesignWorkspaceService {
           if (thread.status === 'closed') conflict('请由反馈者或项目管理者重开后再回复');
           const revision = input.revision === undefined ? undefined : versionOf(entry, input.revision);
           if (revision) {
-            authored(actor, revision.publisher);
             if (revision.version < thread.version) invalidDesign('回复引用的版本不能早于反馈版本');
           }
           feedback.replies = [...thread.replies, { body, revision: revision?.version, author: identity(actor), at: now }];
@@ -1288,7 +1288,7 @@ export class DesignWorkspaceService {
     }
     if (type === 'reference.generate') {
       designRecord(input, '生成稿件缩略图', ['type', 'requestId', 'designId', 'version']);
-      review(actor);
+      if (!actor.projectCollaborator) review(actor);
       if (!this.deps.referenceCapture) rejectPlanning(503, 'design_capture_unavailable', '自动生成缩略图暂不可用，可在画廊直接打开原型。');
       const id = designId(input.designId, '稿件编号');
       if (this.referenceJobs.size >= 8 && !this.referenceJobs.has(`${projectId}/${id}/${input.version}`)) {
@@ -1304,13 +1304,17 @@ export class DesignWorkspaceService {
       return receipt;
     }
     if (type === 'brief.share' || type === 'brief.revoke') {
-      review(actor);
-      if (!actor.steward) forbidden('请由项目管理者确认将此需求交给设计');
+      if (!actor.projectCollaborator) {
+        review(actor);
+        if (!actor.steward) forbidden('请由项目管理者确认将此需求交给设计');
+      }
       return this.mutate(projectId, actor, requestId, input, context => this.updateRequirement(type, input, context));
     }
     if (type === 'scope.register' || type === 'scope.assign') {
-      review(actor);
-      if (!actor.steward) forbidden('请由项目管理者配置设计归属');
+      if (!actor.projectCollaborator) {
+        review(actor);
+        if (!actor.steward) forbidden('请由项目管理者配置设计归属');
+      }
       return this.mutate(projectId, actor, requestId, input, context => this.updateScope(type, input, context));
     }
     if (type === 'share.prepare') {
@@ -1332,7 +1336,7 @@ export class DesignWorkspaceService {
       const result = { type, designId: id };
       if (type === 'design.review') {
         designRecord(input, '稿件评审请求', ['type', 'requestId', 'designId', 'reviewerIds']);
-        authored(actor, entry.versions.at(-1)!.publisher);
+        if (!actor.projectCollaborator) authored(actor, entry.versions.at(-1)!.publisher);
         const reviewers = await this.reviewers(projectId, input.reviewerIds);
         const currentVersion = entry.versions.at(-1)!.version;
         const reviewRequested = entry.frozen !== currentVersion && reviewers.length > 0;
@@ -1639,7 +1643,7 @@ export class DesignWorkspaceService {
         if (!designProgramEvidenceRequired(version) || run.signed) conflict('请选择要求程序取证的未签收运行');
         if (designDatasetRequired(version) && !version.demoData) conflict('稿件演示数据摘要尚未校验，请设计方核对本版私有归档');
         if (recheck) {
-          if (version.publisher.id !== actor.id && !(actor.kind === 'human' && actor.permissions.includes('approve')
+          if (!actor.projectCollaborator && version.publisher.id !== actor.id && !(actor.kind === 'human' && actor.permissions.includes('approve')
             && entry.reviewers?.some(reviewer => reviewer.id === actor.id))) forbidden('请由稿件作者或受邀评审人独立复验');
         } else if (actor.gitPublishOnly) forbidden('请使用项目实施权限运行取证');
         if (designProgramStatus(version, run).invalid) {

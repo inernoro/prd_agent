@@ -347,7 +347,8 @@ export class EngineeringPlanningService {
     }
     const approval = command.type === 'proposal.accept' || command.type === 'proposal.reject';
     const need = approval ? 'approve' : command.type === 'proposal.submit' ? 'propose' : 'write';
-    if (!actor.permissions.includes(need) || (actor.kind === 'agent' && command.type !== 'proposal.submit' && command.type !== 'debt.create')) {
+    if (!actor.permissions.includes(need) || (actor.kind === 'agent' && !actor.projectCollaborator
+      && command.type !== 'proposal.submit' && command.type !== 'debt.create')) {
       rejectPlanning(403, 'write_forbidden', approval ? '请由该项目有确认权限的成员处理提案' : '当前授权不允许此操作，请检查项目权限');
     }
     const key = hash([actor.kind, actor.id, command.requestId]);
@@ -555,7 +556,9 @@ export class EngineeringPlanningService {
   }
 
   async previewImport(projectId: string, actor: PlanningActor, input: unknown) {
-    if (actor.kind !== 'human' || !actor.permissions.includes('write')) rejectPlanning(403, 'write_forbidden', '请由有写权限的成员预览导入');
+    if (!(actor.kind === 'human' || actor.projectCollaborator) || !actor.permissions.includes('write')) {
+      rejectPlanning(403, 'write_forbidden', '请使用有写权限的项目身份预览导入');
+    }
     const rows = planningImportInputs(input);
     return new PlanningMutation(await this.load(projectId), projectId, actor, this.now().toISOString()).previewImport(rows);
   }

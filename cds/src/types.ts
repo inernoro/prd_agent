@@ -4119,6 +4119,8 @@ export interface Project {
 
   /** Stable identifier, used in URLs and routing filters. */
   id: string;
+  /** Active keys issued for this project share access to its project operations. */
+  agentKeyCollaboration?: boolean;
   /** 主备对账策略与最近证据。缺省表示该项目尚未启用备用站。 */
   standbyMirror?: StandbyMirrorConfig;
   /** 唯一可编辑的项目 slug，用于预览地址；关联使用稳定的 id。 */
