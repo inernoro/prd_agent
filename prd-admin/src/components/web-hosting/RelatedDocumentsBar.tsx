@@ -130,6 +130,7 @@ export default function RelatedDocumentsBar({ siteId, source, onNavigate, varian
     <AnchoredMenu open={open} onClose={close} anchorRef={anchor} anchorEl={menuAnchor}
       align={reviewReader && mobile ? 'viewport-right' : compact ? 'right' : 'left'}
       offsetX={0} gap={reviewReader && mobile ? 0 : 6} minWidth={280}
+      ignoreAutomaticFrameFocus={reviewReader}
       className={`related-popover ${reviewReader ? 'related-reader-popover' : token ? 'surface-tone-dark' : ''}`} theme={reviewReader ? theme : undefined}
       style={{ width: collectionsEnabled && split ? 'min(680px, calc(100vw - 24px))' : 'min(464px, calc(100vw - 24px))', maxHeight, padding: 0,
         ...(reviewReader ? { background: 'var(--review-b-popover)', boxShadow: '0 12px 24px #0003, 0 2px 5px #0002' } : {}) }}>

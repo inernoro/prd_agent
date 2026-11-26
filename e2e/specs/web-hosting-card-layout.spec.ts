@@ -851,10 +851,18 @@ test('视频分享可打开历史版本和合集卡片，分享读者没有上�
   await expect(page.locator('iframe[title="V1 网页预览"]')).toHaveAttribute('src', oldUrl);
   await expect(page.getByRole('button', { name: '上传新版本', exact: true })).toHaveCount(0);
   await page.getByRole('button', { name: '关闭历史版本' }).click();
-  await page.getByRole('button', { name: '合集', exact: true }).click();
+  const collectionToggle = page.getByRole('button', { name: '合集', exact: true });
+  await collectionToggle.click();
   const collection = page.getByRole('dialog', { name: '合集', exact: true });
   await expect(collection.locator('.related-document-card')).toHaveCount(1);
   await expect(collection.locator('.related-document-card')).toContainText(member.title);
+  await page.locator('iframe[title="项目演示视频"]').evaluate(frame => {
+    frame.focus();
+    window.dispatchEvent(new Event('blur'));
+  });
+  await expect(collectionToggle).toBeFocused();
+  await expect(collectionToggle).toHaveAttribute('aria-expanded', 'true');
+  await expect(collection).toBeVisible();
 });
 
 // 从资产库入口验证批量创建、保存、分享和回读，测试数据不写入运行环境。
