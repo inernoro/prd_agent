@@ -2,8 +2,11 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { buildCdsSkillManifest, copyCdsSkillSource } from '../../src/services/cds-skill-manifest.js';
+import { designAcceptancePolicy } from '../../src/shared/design-acceptance-standard.mjs';
+import { designDimensions, designObjectiveMethods } from '../../src/shared/design-methods.js';
 
 const skills = ['cds', 'cds-design', 'cds-project-scan', 'cds-deploy-pipeline', 'cds-release', 'preview-url'];
 const roots: string[] = [];
@@ -19,6 +22,16 @@ async function fixture() {
   return root;
 }
 describe('CDS full skill export receipt', () => {
+  it('ships the same acceptance gate and catalog that CDS runs and displays', async () => {
+    const repo = fileURLToPath(new URL('../../..', import.meta.url));
+    for (const name of ['design-acceptance-policy.json', 'design-acceptance-standard.mjs']) {
+      expect(await fs.readFile(path.join(repo, '.claude/skills/cds/cli', name)))
+        .toEqual(await fs.readFile(path.join(repo, 'cds/src/shared', name)));
+    }
+    expect(designAcceptancePolicy.methods).toEqual(designObjectiveMethods.map(([id, label]) => ({ id, label })));
+    expect(designAcceptancePolicy.dimensions).toEqual(Object.entries(designDimensions).map(([id, label]) => ({ id, label })));
+  });
+
   it('covers all six skills and changes the digest when shipped code changes', async () => {
     const root = await fixture();
     const first = await buildCdsSkillManifest(root);

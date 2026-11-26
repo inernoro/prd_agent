@@ -5,7 +5,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { it, expect } from 'vitest';
 
-it('真实预构建在完全没有源码目录时也可导入快照、通知和原型预览模块', () => {
+it('真实预构建在没有源码目录时也可导入快照、通知、原型预览和验收门禁', () => {
   const cdsRoot = fileURLToPath(new URL('../..', import.meta.url));
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-source-free-import-'));
   try {
@@ -26,6 +26,9 @@ it('真实预构建在完全没有源码目录时也可导入快照、通知和�
       const prototype = await import(${moduleUrl('services/design-prototype.js')});
       if (!prototype.designPrototypeCsp.includes('sandbox allow-scripts')
         || !prototype.decorateDesignPrototype('<html><head></head></html>').includes('cds-design-entry-result')) process.exit(4);
+      const acceptance = await import(${moduleUrl('shared/design-acceptance-standard.mjs')});
+      if (acceptance.designAcceptancePolicy.gate !== 'G-11'
+        || !acceptance.inspectDesignAcceptance({}).some(issue => issue.code === 'missing_acceptance_plan')) process.exit(5);
     `], { cwd: root, encoding: 'utf8', timeout: 20_000 });
     expect(imported.status, imported.stderr).toBe(0);
     expect(fs.readFileSync(path.join(dist, 'shared/notification-templates.json'))).toEqual(fs.readFileSync(path.join(cdsRoot, 'src/shared/notification-templates.json')));
@@ -33,5 +36,7 @@ it('真实预构建在完全没有源码目录时也可导入快照、通知和�
       .toEqual(fs.readFileSync(path.join(cdsRoot, 'src/services/preview-demo-snapshot.json')));
     expect(fs.readFileSync(path.join(dist, 'shared/design-preview-contract.json')))
       .toEqual(fs.readFileSync(path.join(cdsRoot, 'src/shared/design-preview-contract.json')));
+    expect(fs.readFileSync(path.join(dist, 'shared/design-acceptance-policy.json')))
+      .toEqual(fs.readFileSync(path.join(cdsRoot, 'src/shared/design-acceptance-policy.json')));
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 }, 60_000);

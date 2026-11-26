@@ -1,3 +1,4 @@
+import type { designAcceptancePolicy } from './design-acceptance-standard.mjs';
 import type { designHandoffPolicy, DesignHandoffPlan, DesignHandoffState } from './design-handoff.js';
 import type { DesignAcceptancePlan, DesignCoverageRecord, DesignDimension, DesignFlow, DesignKnownIssue, DesignMethodId, DesignMethodSettings, DesignRegression, DesignSmoke } from './design-methods.js';
 import type { DesignVisualRow } from './design-visual.js';
@@ -294,6 +295,7 @@ export type DesignRequirement = {
   replies?: Array<{ id: string; author: DesignFeedbackAuthor; body: string; at: string; planVersion: number }>;
 };
 export type DesignIntake = {
+  acceptancePolicy?: typeof designAcceptancePolicy;
   handoffPolicy?: typeof designHandoffPolicy;
   protocolVersion: 1;
   projectId: string;

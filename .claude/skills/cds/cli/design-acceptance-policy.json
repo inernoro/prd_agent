@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "gate": "G-11",
+  "methods": [
+    { "id": "mece", "label": "MECE 覆盖" },
+    { "id": "compare", "label": "对照图" },
+    { "id": "visual", "label": "视觉" },
+    { "id": "regress", "label": "历史易错" },
+    { "id": "flow", "label": "流程" },
+    { "id": "human", "label": "人工" },
+    { "id": "smoke", "label": "冒烟" },
+    { "id": "debt", "label": "验收债务" }
+  ],
+  "dimensions": [
+    { "id": "correctness", "label": "正确性" },
+    { "id": "compatibility", "label": "兼容性" },
+    { "id": "performance", "label": "性能容量" },
+    { "id": "security", "label": "安全合规" },
+    { "id": "operations", "label": "运维部署" },
+    { "id": "experience", "label": "用户体验" }
+  ]
+}

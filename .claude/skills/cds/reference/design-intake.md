@@ -28,7 +28,7 @@
 
 ## 发布框架
 
-接入清单的 `permissions.frameworkPublish` 为 `true` 时，已授权的设计智能体可以直接发布。使用 CLI 0.26.23 或以上，复用当前项目的设计发布授权。
+接入清单的 `permissions.frameworkPublish` 为 `true` 时，已授权的设计智能体可以直接发布。按接入说明更新 CLI，复用当前项目的设计发布授权。
 
 1. 从接入清单的 `frameworks` 查重。首发选一个稳定的框架编号，`expectedVersion` 填 `0`。后续沿用原编号，`expectedVersion` 填刚回读的 `latestVersion`。
 2. 准备 JSON 材料，包含 `tokens`、`components`、`rules` 或 `skeleton`。可附 `charter` 说明初衷、适用范围、维护人及示意稿编号和版本。材料来自稿件时，先按固定版号读取规范与素材。
@@ -118,7 +118,7 @@
 程序在本技能的 `scripts/design/` 里，对任何稿件目录都适用，不用复制进稿件包。发布只走两条固定命令，版本号由程序推算：
 
 ```bash
-# 发布前：生成 changes/（有旧版本时），跑门禁 G-01 到 G-09；通过后打印该用的发布命令
+# 发布前生成 changes/（有旧版本时），运行门禁。通过后打印发布命令
 node <技能根>/cds/scripts/design/release.mjs check --dir design/<目录> [--full <实现所在版本>]
 # 发布成功后：核对来源提交和工作区一致，写 versions.json，打本地 tag
 node <技能根>/cds/scripts/design/release.mjs register --dir design/<目录> --commit <来源提交> [--design <稿件编号>]
@@ -127,7 +127,7 @@ node <技能根>/cds/scripts/design/release.mjs register --dir design/<目录> -
 - 驳回时退出码为 1，逐条列出规则编号。按编号修改，修完重跑，不跳过、不手改结果。
 - 首发后第一次登记要带 `--design`。已经发布过、但还没有 `versions.json` 的稿件，先用 `--version <已发布的最新版>` 补登记，再出下一版。
 - 自检没通过（包括未验证）的项，登记在稿件目录的 `tools/gate-allow.json` 里，写负责人和理由。新增例外要人确认。
-- CDS 发布接口按同样的 G-01 到 G-09 复核。本地门禁先驳回，省一次往返；两边规则对不上时，以 CDS 的驳回为准，并把差异补进 `gate.mjs`。
+- CDS 发布接口复核 G-01 至 G-09 和 G-11。本地 G-10 核对应用框架，G-11 与发布接口使用同一个校验程序。
 - 不能出现在包里的真实站点，用环境变量 `CDS_DESIGN_FORBIDDEN_HOSTS` 传入，不写进稿件包。
 - 单独算两个版本的差异：`version-diff.mjs --dir <目录> --from v<旧> --to v<新>`。交换两个参数就是回退方向。
 - **交接清单由程序生成**：`check` 同时按目标生成稿件根目录的 `交接清单.md`（`handoff.mjs`），起点是实现方的实施基线（`--baseline`，没给就取 `--full` 的第一个起点）。它是交给实现方的唯一一份清单：
@@ -361,6 +361,8 @@ CDS 按以下规则校验稿件。驳回回执返回规则编号。用 `intake` 
 | G-07 | `versions.json` 和 `changes/index.json` 覆盖 CDS 已存历史，索引及差异摘要与实际清单一致。 |
 | G-08 | 包中使用虚构数据，移除敏感站点、真实邮箱与凭据。 |
 | G-09 | ZIP 不超过 3.8 MiB。 |
+| G-10 | 本地检查正式应用壳、构建指纹和框架规则自检。 |
+| G-11 | 所有新发布版本明确八种验收手段与适用理由，验收项标注维度，覆盖空缺说明原因。回执提供出错字段、规则编号和修复说明。 |
 
 ## 双向反馈
 
@@ -397,9 +399,11 @@ CDS 按以下规则校验稿件。驳回回执返回规则编号。用 `intake` 
 
 ## 按手段验收
 
-带有 `设计文档/验收手段.md` 或 `acceptancePlan` 的稿件，使用「验收」下的总览、MECE 覆盖、对照图、视觉、流程、人工、冒烟、验收债务。可用 `check=mece`、`compare`、`visual`、`flow`、`human`、`smoke`、`debt` 固定手段入口。
+所有稿件在「验收」都可打开 MECE 覆盖、对照图、视觉、历史易错、流程、人工、冒烟和验收债务。可用 `check=mece`、`compare`、`visual`、`regress`、`flow`、`human`、`smoke`、`debt` 链接到具体手段。历史版本缺计划时提示待配置，仍可查看本版的规则和运行记录。
 
-发布时在 `design.json` 的 `acceptancePlan` 按手段记录 `applicable`。省略的手段默认适用。标为不适用时写明 `reason`，例如 `"smoke": {"applicable": false, "reason": "本稿仅描述离线流程，不涉及页面或接口"}`。在各稿件验收项的 `dimension` 写一个维度。可选值为 `correctness`、`compatibility`、`performance`、`security`、`operations`、`experience`。旧稿未标维度的规则会列出来，由后续续版补齐。
+首稿和续版发布前回读接入清单的 `acceptancePolicy`，在 `design.json.acceptancePlan` 为全部八种手段填写 `applicable`。不适用或计划停用时注明 `reason`。MECE 必须启用，有画面时启用对照图和视觉，有人工项时启用人工，有交互规则时启用流程。按稿件的实际风险说明其他手段的取舍。
+
+每条验收项用 `dimension` 指定一个覆盖维度。CDS 从规则归集六个维度，缺少规则的维度在 `risks` 中填写 `dimension`、实际风险 `risk` 和不适用的 `reason`。引用规则时使用同一维度的规则编号。脚手架把无法依据现有规则判断的 `applicable` 留给设计方确认。发布只校验计划和规则，正式运行的结果以独立回读的证据为准。旧稿续版时按回执补齐，已受理的原请求仍按原回执重放。
 
 1. **覆盖与取证**。先回读当前运行和真实提交。用 `risk-matrix` 检查六维度，用适用手段对应技能走完整场景。对照图需要同条件双图和 V-01 对照结果，视觉需要当前实拍和 V-01 至 V-10 的结果。可分别登记适用性。人工核对继续写入稿件验收格。
 2. **流程和冒烟**。用 `cdscli design flow <稿件> --run <运行> --commit <提交> --file <记录.json>`，冒烟改用 `design smoke`。MCP 用 `cds_design_acceptance` 的 `acceptance.flow` 或 `acceptance.smoke`。每次写一条稳定 `id`，同运行同编号更新原记录，重试沿用原请求编号。

@@ -44,10 +44,11 @@ description: CDS 设计（精准技能）。用户说「/cds-design」、「发�
 3. **出稿**：
    - 原型用 `prototype-build.mjs` 在正式代码上构建（见第二节），新稿件从 `cdscli design scaffold` 开始，它会生成 `prototype.json` 和入口；
    - `design.json` 写 `goals`（每个目标写「怎么算做到」和它的验收项）、验收项（带 `slots`）、画面清单（真实页面的 `impl` 地址）、演示数据（`demoData`）；
+   - 从接入清单的 `acceptancePolicy` 读取方法和维度。填完 `acceptancePlan`、每条规则的 `dimension`，为没有规则的维度说明不适用理由。脚手架里的待定选项须根据稿件内容确认。
    - 源码差异要能在正式基线上直接编译。
 4. **门禁**：`node <技能根>/cds/scripts/design/release.mjs check --dir design/<目录>`。
-   - 跑门禁 G-01 到 G-10，同时生成 `交接清单.md`；
-   - 被驳回就按规则编号修，不跳过。
+   - 跑门禁 G-01 到 G-11，同时生成 `交接清单.md`；
+   - G-11 回执给出缺项字段和规则编号。按业务依据补齐后重新预检，随后用同一稿件身份发布。
 5. **私有发布**：`cdscli design publish --private`，回读核对版本和来源提交。
 6. **登记**：`release.mjs register --dir design/<目录> --commit <来源提交>`。它会打印稿件地址。
 7. **程序交接检查**：`cdscli design handoff <稿件编号> --version <版号>`。记录固定版本回执，失败的入口和关键交互在同稿修正后重验。设计库封面由 CDS 从原型生成，交付包省略封面截图。

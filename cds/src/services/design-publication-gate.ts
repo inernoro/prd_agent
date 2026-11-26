@@ -1,6 +1,7 @@
 import { getDomain } from 'tldts';
 import type { DesignRule, DesignScreen, DesignVersion } from '../shared/design-workspace.js';
-import { rejectPlanning } from './engineering-planning-input.js';
+import { inspectDesignAcceptance, type DesignAcceptanceIssue } from '../shared/design-acceptance-standard.mjs';
+import { PlanningError, rejectPlanning } from './engineering-planning-input.js';
 
 type GateNumber = 'G-01' | 'G-02' | 'G-03' | 'G-04' | 'G-05' | 'G-06' | 'G-07' | 'G-08' | 'G-09';
 type HistoryVersion = Pick<DesignVersion, 'version' | 'sourceCommit' | 'acceptance' | 'screens' | 'delivery'>;
@@ -22,6 +23,12 @@ type GateInput = {
 export const designPublicationGateLimit = Math.floor(4 * 1024 * 1024 * 0.95);
 export function rejectDesignGate(rule: GateNumber, message: string): never {
   return rejectPlanning(400, rule, `${rule} ${message}`);
+}
+
+export class DesignAcceptanceGateError extends PlanningError {
+  constructor(public readonly issues: DesignAcceptanceIssue[]) {
+    super(400, 'G-11', 'G-11 请补齐验收计划和覆盖维度。');
+  }
 }
 
 const object = (value: unknown): Record<string, unknown> | undefined =>
@@ -233,4 +240,6 @@ export function validateDesignPublicationGate(input: GateInput, context: DesignP
   validateHistory(input, context, next);
   validatePrivacy(input.files, allowances, context.publicBaseUrl);
   if (input.archiveBytes > designPublicationGateLimit) rejectDesignGate('G-09', '上传 ZIP 不得超过 3.8 MiB');
+  const issues = inspectDesignAcceptance(input.manifest);
+  if (issues.length) throw new DesignAcceptanceGateError(issues);
 }

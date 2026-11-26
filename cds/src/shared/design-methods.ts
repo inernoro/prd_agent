@@ -209,12 +209,17 @@ export function designMethodsState(version: DesignVersion, run?: DesignRun, entr
     const visual = version.screens.flatMap(screen => designVisualSlots(screen).map(slot => designMethodVisualStatus(screen, slot, run, sceneCoverage)));
     states.compare = pairs.length ? designEvidenceStatus([...pairs, ...ruleEvidence(version, run, 'screenshot')]) : 'missing';
     states.visual = designEvidenceStatus(visual);
+    const history = designKnownIssues(entry, version, run);
+    if (history.length) states.regress = designEvidenceStatus(history.map(issue => {
+      const result = run.regress?.[issue.id];
+      return result?.evidence?.trim() ? result.status : 'missing';
+    }));
     states.flow = designEvidenceStatus((run.flows ?? []).map(flow => flow.status));
     states.human = designEvidenceStatus(ruleEvidence(version, run, 'human'));
     states.smoke = designEvidenceStatus((run.smoke ?? []).map(item => item.status));
     states.debt = Object.keys(run.issues).length || version.acceptance.some(rule => rule.how === 'measure' && !rule.probe) ? 'missing' : 'passed';
   }
-  const methods = (objective ? designObjectiveMethods : designMethods).map(([id, name, purpose, skills]) => {
+  const catalog = designObjectiveMethods.map(([id, name, purpose, skills]) => {
     const choice = designMethodChoice(version, id, entry, run);
     const progress = items ? designMethodProgress(items[id]) : undefined;
     let status: DesignMethodStatus = choice === 'enabled' ? states[id] : choice;
@@ -226,8 +231,17 @@ export function designMethodsState(version: DesignVersion, run?: DesignRun, entr
     const setting = designMethodSetting(version, id, entry, run);
     return { id, name, purpose, skills, status, progress, setting, reason: setting?.reason ?? version.acceptancePlan?.[id]?.reason };
   });
+  // The full catalog is visible even on revisions governed by the earlier acceptance contract.
+  const methods = objective ? catalog : catalog.filter(method => method.id !== 'regress');
+  const displayMethods = catalog.map(method => {
+    const awaitingRun = !run || method.id === 'flow' && !run.flows?.length || method.id === 'smoke' && !run.smoke?.length;
+    const status = awaitingRun && (method.status === 'passed' || method.status === 'missing') ? 'notrun'
+      : method.id === 'mece' && method.status === 'passed' && version.acceptance.some(rule => !rule.dimension) ? 'missing'
+      : method.status;
+    return { ...method, status, progress: awaitingRun ? undefined : method.progress };
+  });
   const required = methods.filter(method => method.id !== 'debt' && method.status !== 'not_applicable' && method.status !== 'disabled');
-  return { methods, required, coverage, objective, blockers: required.filter(method => method.status !== 'passed') };
+  return { methods, displayMethods, required, coverage, objective, blockers: required.filter(method => method.status !== 'passed') };
 }
 
 export function designVisualBreakdown(version: DesignVersion, run?: DesignRun) {

@@ -19,7 +19,8 @@ const methodStatus = (method: Method) => {
   if (method.status === 'disabled') return method.setting?.enabled === false ? '已停用' : '未启用';
   if (method.status === 'not_applicable') return '不适用';
   const progress = method.progress;
-  if (!progress?.total) return '没有条目';
+  if (!progress) return '未运行';
+  if (!progress.total) return '没有条目';
   if (!progress.done) return '未开始';
   if (progress.done < progress.total) return '进行中';
   return progress.failed ? '完成 · 有问题' : '已完成';
@@ -43,18 +44,20 @@ export function ObjectiveMethodIntro({ method, canEnable, busy, enable, disable,
   disable?: () => void;
 }) {
   const guide = methodGuides[method.id];
-  const progress = method.progress!;
+  const progress = method.progress;
   const active = isActive(method);
   return <>
     <li data-item={method.id}><h4><b>1</b>{method.name}<small>{method.purpose}</small>
       {active && disable && <button className="ep-button dw-ac-disable" type="button" data-action="disable-method" disabled={busy} onClick={disable}>
         <PauseCircle aria-hidden="true" />停用
       </button>}</h4>
-      {active ? <div className="dw-ac-progress">
+      {active && progress && <div className="dw-ac-progress">
         <Segments parts={[["passed", progress.passed], ["failed", progress.failed]]} total={progress.total} />
         <span>完成 {progress.done}/{progress.total}{progress.failed > 0 && ` · 有问题 ${progress.failed}`}</span>
         <strong>{methodStatus(method)}</strong>
-      </div> : <div className="dw-ac-locked"><Lock aria-hidden="true" /><div>
+      </div>}
+      {active && !progress && <p className="dw-vs-muted">{methodStatus(method)}</p>}
+      {!active && <div className="dw-ac-locked"><Lock aria-hidden="true" /><div>
         <strong>{methodStatus(method)}</strong>
         <small>{method.reason || '当前稿件没有启用此手段。可以先查看做法和示例。'}</small>
         {method.setting?.enabled === false && <small>{methodAudit(method)}</small>}
@@ -87,14 +90,14 @@ export function ObjectiveMethodTable({ methods, go, cards }: { methods: Method[]
     <div className="dw-ac-mrow dw-ac-mhead" role="row">{['手段', '进度', '谁执行'].map(title => <span key={title} role="columnheader">{title}</span>)}</div>
     {ordered.map(method => {
       const { id, name, purpose, skills, status, reason } = method;
-      const { total, done, passed, failed } = method.progress!;
+      const { total, done, passed, failed } = method.progress ?? { total: 0, done: 0, passed: 0, failed: 0 };
       return <div className="dw-ac-mrow" role="row" data-status={status} key={id} data-key={id} data-done={done} data-total={total} data-failed={failed}
         title={`执行技能 ${skills}`} onClick={() => go(id)}>
         <span role="cell"><button type="button" className="dw-ac-method-link">
           {status === 'disabled' && <Lock className="dw-ac-lock" aria-hidden="true" />}{name}</button>
           <small>{isActive(method) ? purpose : [methodStatus(method), reason].filter(Boolean).join(' · ')}</small></span>
         <span role="cell" className="dw-ac-mprog">{isActive(method) && <Segments parts={[["passed", passed], ["failed", failed]]} total={total} />}
-          <small>{isActive(method) && total > 0 ? `${done}/${total}${failed ? ` · ${failed} 有问题` : ''}` : isActive(method) ? '没有条目' : '可看示例'}</small></span>
+          <small>{isActive(method) && total > 0 ? `${done}/${total}${failed ? ` · ${failed} 有问题` : ''}` : isActive(method) ? methodStatus(method) : '可看示例'}</small></span>
         <span role="cell" className="dw-ac-who">{executors[id] ?? '智能体'}</span>
       </div>;
     })}

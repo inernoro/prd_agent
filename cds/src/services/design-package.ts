@@ -8,7 +8,8 @@ import { designSlots, designViewports, type DesignDeliveryFile, type DesignDemoD
   type DesignRule, type DesignScope, type DesignScreen, type DesignTheme, type DesignVideo } from '../shared/design-workspace.js';
 import { designHandoffChecks, type DesignHandoffPlan, type DesignHandoffStep } from '../shared/design-handoff.js';
 import { designDimensions, designObjectiveMethods, type DesignAcceptancePlan, type DesignCoverageRecord, type DesignDimension } from '../shared/design-methods.js';
-import { rejectDesignGate, validateDesignPublicationGate, type DesignPublicationGateContext } from './design-publication-gate.js';
+import { inspectDesignAcceptance, type DesignAcceptanceIssue } from '../shared/design-acceptance-standard.mjs';
+import { DesignAcceptanceGateError, rejectDesignGate, validateDesignPublicationGate, type DesignPublicationGateContext } from './design-publication-gate.js';
 import { PlanningError, planningText, rejectPlanning } from './engineering-planning-input.js';
 
 const mib = 1024 * 1024;
@@ -516,7 +517,7 @@ function describeDesignDelivery(entries: Map<string, Buffer>, root: string, inpu
     frameworkDraft: frameworkDraft ? input.frameworkDraft as string : undefined, prototypeVersion, date, notes };
 }
 
-export async function readDesignPackage(bytes: Buffer) {
+export async function readDesignPackage(bytes: Buffer, options?: { publication?: boolean }) {
   let entries: Map<string, Buffer>;
   try { entries = await zipEntries(bytes); } catch { return invalidDesign('无法读取稿件 ZIP，检查完整性、文件类型、路径和体积'); }
   const manifests = [...entries.keys()].filter(name => name === 'design.json' || /^[^/]+\/design\.json$/.test(name));
@@ -543,6 +544,16 @@ export async function readDesignPackage(bytes: Buffer) {
     }
   }
   const input = gateField('G-01', 'design.json 须为有效的 JSON 对象', () => json('design.json'))!;
+  function acceptanceField<T>(read: () => T, matches: (issue: DesignAcceptanceIssue) => boolean): T {
+    try { return read(); } catch (error) {
+      // Older accepted packages remain readable. Only a malformed field in a publish gets the new diagnostics here.
+      if (options?.publication && error instanceof PlanningError) {
+        const issues = inspectDesignAcceptance(input).filter(matches);
+        if (issues.length) throw new DesignAcceptanceGateError(issues);
+      }
+      throw error;
+    }
+  }
   const rationale = gateField('G-04', '请随包提供有效的 UTF-8 设计思路', () =>
     planningText(utf8(input.rationale ?? '思路.md', 64 * 1024), '设计思路', 64 * 1024));
   const prototypeFile = input.prototype ?? 'dist/index.html';
@@ -563,8 +574,9 @@ export async function readDesignPackage(bytes: Buffer) {
   if (Buffer.byteLength(html) + renders.reduce((sum, capture) => sum + capture.content.length, 0) > 8 * mib) {
     return invalidDesign('单个稿件版本的原型和截图最多 8 MiB');
   }
-  const acceptance = gateField('G-03', '验收项最多 60 条，须使用唯一编号和有效的画面与检查方法', () =>
-    unique(list(input.acceptance, '验收项', 60, value => rule(value, screens), true), row => row.id, '验收项'));
+  const acceptance = acceptanceField(() => gateField('G-03', '验收项最多 60 条，须使用唯一编号和有效的画面与检查方法', () =>
+    unique(list(input.acceptance, '验收项', 60, value => rule(value, screens), true), row => row.id, '验收项')),
+  issue => issue.code === 'invalid_dimension');
   const handoffPlan = input.handoff === undefined ? undefined : parseDesignHandoffPlan(input.handoff, screens, acceptance);
   const presentation = parseDesignPresentation(input, screens, file);
   const goals = parseDesignGoals(input.goals, acceptance);
@@ -592,10 +604,12 @@ export async function readDesignPackage(bytes: Buffer) {
     project: planningText(input.project, '项目', 160), title: planningText(input.title, '稿件标题', 180), rationale,
     sha256: designDigest(bytes), filesSha256: designDigest(JSON.stringify(delivery.index.map(file => [file.path, file.sha256]))),
     prototype: Buffer.from(html), screens, acceptance, spec, renders, delivery, ...presentation, goals, demoData, handoffPlan,
-    acceptancePlan: input.acceptancePlan === undefined ? undefined : parseAcceptancePlan(input.acceptancePlan),
+    acceptancePlan: input.acceptancePlan === undefined ? undefined : acceptanceField(
+      () => parseAcceptancePlan(input.acceptancePlan), issue => issue.field.startsWith('acceptancePlan')),
     acceptanceMode: acceptanceMode === 'objective' ? 'objective' as const : undefined,
     evidenceProtocol: evidenceProtocol === 'program-v1' ? evidenceProtocol : undefined,
-    risks: input.risks === undefined ? undefined : parseCoverage(input.risks, acceptance),
+    risks: input.risks === undefined ? undefined : acceptanceField(
+      () => parseCoverage(input.risks, acceptance), issue => issue.field.startsWith('risks')),
     frameworkCharter: charter && parseFrameworkCharter(charter),
     checks,
     validatePublicationGate(context: DesignPublicationGateContext) {
