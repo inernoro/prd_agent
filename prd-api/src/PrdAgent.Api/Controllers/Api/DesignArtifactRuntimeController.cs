@@ -77,17 +77,16 @@ public sealed class DesignArtifactRuntimeController : ControllerBase
     }
 
     [HttpPost("workspace/result")]
-    [RequestSizeLimit(DesignArtifactWorkspaceBroker.MaxOutputBytes)]
+    [RequestSizeLimit(DesignArtifactWorkspaceBroker.MaxCodeFilmOutputBytes)]
     public async Task<IActionResult> CommitWorkspaceResult(string runId, CancellationToken ct)
     {
         try
         {
             // 本控制器是匿名入口：先验工作区票据（与实时预览同一张票、同一个运行窗口），
-            // 再读请求体。反过来的话，没有票据的请求也能把最多 20 MiB 序列化结果包读进内存（Codex P2，PR #1533）。
-            // CommitResultAsync 里仍会再验一次，这里只负责把未授权请求挡在读体之前。
+            // 按任务类型绑定读体上限。未授权请求在接触请求体之前即被拒绝。
             var token = ReadBearerToken();
-            await _broker.ValidatePreviewAsync(runId, token, ct);
-            var bytes = await ReadBoundedBodyAsync(Request, DesignArtifactWorkspaceBroker.MaxOutputBytes, ct);
+            var limit = await _broker.ValidatePreviewAsync(runId, token, ct);
+            var bytes = await ReadBoundedBodyAsync(Request, limit, ct);
             var result = await _broker.CommitResultAsync(runId, token, bytes, ct);
             return Ok(new
             {

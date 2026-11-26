@@ -1,4 +1,6 @@
 using System.Net;
+using System.Net.Http.Headers;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.Configuration;
@@ -26,6 +28,119 @@ public sealed class OpenDesignServiceArtifactExecutorTests
     private const string BaseUrl = "http://design-opendesign:8093";
     private const string ApiKey = "internal-design-key";
     private const string IndexHtml = "<!doctype html><html><body>服务交回的页面</body></html>";
+
+    [Fact]
+    public void CodeFilmSlots_KeepWebAndLegacyRecoveryOnTheOriginalService()
+    {
+        var config = Config(new()
+        {
+            [OpenDesignTransportResolver.BaseUrlKey] = BaseUrl,
+            [OpenDesignTransportResolver.ApiKeyKey] = ApiKey,
+            [OpenDesignTransportResolver.CodeFilmSlotsKey] = "http://film-one:8093,http://film-two:8093",
+        });
+        var slots = OpenDesignTransportResolver.CodeFilmSlots(config);
+        slots.Count.ShouldBe(2);
+        OpenDesignTransportResolver.ResolveForCodeFilmSlot(config, null).BaseUrl.ShouldBe(new Uri(BaseUrl));
+        var assigned = OpenDesignTransportResolver.ResolveForCodeFilmSlot(config, slots[1].AbsoluteUri);
+        assigned.BaseUrl.ShouldBe(slots[1]);
+        assigned.ApiKey.ShouldBe(ApiKey);
+        OpenDesignTransportResolver.ResolveForCodeFilmSlot(config, "http://retired:8093/").Problem.ShouldNotBeNull();
+    }
+
+    [Fact]
+    public void CodeFilmSlots_RejectDuplicateEndpointsAndTheWebSlot()
+    {
+        var config = Config(new()
+        {
+            [OpenDesignTransportResolver.BaseUrlKey] = BaseUrl,
+            [OpenDesignTransportResolver.ApiKeyKey] = ApiKey,
+            [OpenDesignTransportResolver.CodeFilmSlotsKey] = BaseUrl,
+        });
+        Should.Throw<InvalidOperationException>(() => OpenDesignTransportResolver.CodeFilmSlots(config));
+        config[OpenDesignTransportResolver.CodeFilmSlotsKey] = "http://film:8093,http://film:8093/";
+        Should.Throw<InvalidOperationException>(() => OpenDesignTransportResolver.CodeFilmSlots(config));
+    }
+
+    [Theory]
+    [InlineData(null, 2)]
+    [InlineData("10", 10)]
+    [InlineData("30", 30)]
+    public void CodeFilmSlots_UseConfigurableStartupMinimum(string? minimum, int expected)
+    {
+        var config = Config(new() { [OpenDesignTransportResolver.CodeFilmMinimumSlotsKey] = minimum });
+        OpenDesignTransportResolver.CodeFilmMinimumSlots(config).ShouldBe(expected);
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("31")]
+    [InlineData("invalid")]
+    public void CodeFilmSlots_RejectInvalidStartupMinimum(string minimum)
+    {
+        var config = Config(new() { [OpenDesignTransportResolver.CodeFilmMinimumSlotsKey] = minimum });
+        Should.Throw<InvalidOperationException>(() => OpenDesignTransportResolver.CodeFilmMinimumSlots(config));
+    }
+
+    [Fact]
+    public async Task CodeFilmSlots_ExcludeUnavailableServiceAndAdmitItAfterRecovery()
+    {
+        using var service = new FakeDesignService();
+        var executor = BuildExecutor(service, BuildBroker().Object);
+        var slot = new Uri("http://film-one:8093");
+        service.OnCapabilities(() => Json(HttpStatusCode.OK, new JsonObject
+        {
+            ["protocol"] = "map-design-executor-v1", ["healthy"] = false,
+        }));
+        (await executor.ProbeCodeFilmSlotAsync(slot, CancellationToken.None)).ShouldBeFalse();
+
+        service.OnCapabilities(() => Json(HttpStatusCode.OK, new JsonObject
+        {
+            ["protocol"] = "other-executor", ["healthy"] = true, ["acceptingTasks"] = true,
+        }));
+        (await executor.ProbeCodeFilmSlotAsync(slot, CancellationToken.None)).ShouldBeFalse();
+
+        service.OnCapabilities(() => Json(HttpStatusCode.OK, new JsonObject
+        {
+            ["protocol"] = "map-design-executor-v1", ["healthy"] = true, ["acceptingTasks"] = false,
+        }));
+        (await executor.ProbeCodeFilmSlotAsync(slot, CancellationToken.None)).ShouldBeFalse();
+
+        service.OnCapabilities(() => Json(HttpStatusCode.OK, new JsonObject
+        {
+            ["protocol"] = "map-design-executor-v1", ["healthy"] = true, ["acceptingTasks"] = true,
+        }));
+        (await executor.ProbeCodeFilmSlotAsync(slot, CancellationToken.None)).ShouldBeTrue();
+        service.CapabilityAuthorization.ShouldBeNull();
+    }
+
+    [Fact]
+    public void CodeFilmQueue_IsIsolatedFromWebDesign()
+    {
+        var queue = RunKinds.DesignArtifactQueue(DesignArtifactTypes.CodeFilm);
+        queue.ShouldNotBe(RunKinds.DesignArtifactQueue(DesignArtifactTypes.HtmlPpt));
+    }
+
+    [Fact]
+    public async Task RetainedFilm_ReadsTheOriginalBytesAndRejectsCorruption()
+    {
+        var film = new byte[64];
+        "ftyp"u8.CopyTo(film.AsSpan(4));
+        var digest = Convert.ToHexString(SHA256.HashData(film));
+        var service = new FakeDesignService();
+        service.OnFilmRecovery(authorization =>
+        {
+            authorization.ShouldBe($"Bearer {ApiKey}");
+            var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(film) };
+            response.Content.Headers.ContentType = new MediaTypeHeaderValue("video/mp4");
+            response.Headers.Add("X-Content-Sha256", digest);
+            return response;
+        });
+        var executor = BuildExecutor(service, BuildBroker().Object);
+        (await executor.ReadRetainedFilmAsync(RunId, CancellationToken.None)).ShouldBe(film);
+
+        film[^1] = 1;
+        await Should.ThrowAsync<InvalidDataException>(() => executor.ReadRetainedFilmAsync(RunId, CancellationToken.None));
+    }
 
     // ───────────── 执行：事件映射 ─────────────
 
@@ -1045,6 +1160,7 @@ public sealed class OpenDesignServiceArtifactExecutorTests
         private Func<JsonObject?, HttpResponseMessage> _submit = _ => new HttpResponseMessage(HttpStatusCode.NotImplemented);
         private Func<string?, HttpResponseMessage> _events = _ => new HttpResponseMessage(HttpStatusCode.NotImplemented);
         private Func<HttpResponseMessage> _capabilities = () => new HttpResponseMessage(HttpStatusCode.NotImplemented);
+        private Func<string?, HttpResponseMessage> _filmRecovery = _ => new HttpResponseMessage(HttpStatusCode.NotFound);
 
         public List<Submission> Submissions { get; } = new();
         public List<EventsRequest> EventRequests { get; } = new();
@@ -1055,6 +1171,7 @@ public sealed class OpenDesignServiceArtifactExecutorTests
         public void OnSubmit(Func<JsonObject?, HttpResponseMessage> respond) => _submit = respond;
         public void OnEvents(Func<string?, HttpResponseMessage> respond) => _events = respond;
         public void OnCapabilities(Func<HttpResponseMessage> respond) => _capabilities = respond;
+        public void OnFilmRecovery(Func<string?, HttpResponseMessage> respond) => _filmRecovery = respond;
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
@@ -1065,6 +1182,8 @@ public sealed class OpenDesignServiceArtifactExecutorTests
                 CapabilityAuthorization = authorization;
                 return _capabilities();
             }
+            if (request.Method == HttpMethod.Get && path == $"/v1/tasks/{RunId}/film-recovery")
+                return _filmRecovery(authorization);
             if (request.Method == HttpMethod.Post && path == "/v1/tasks")
             {
                 var body = JsonNode.Parse(await request.Content!.ReadAsStringAsync(ct)) as JsonObject;

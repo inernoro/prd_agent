@@ -78,6 +78,8 @@ export function buildDaemonEnv(input: {
   return {
     PATH: input.path,
     HOME: input.home,
+    ...(process.env.DESIGN_RUNTIME_BROWSER_EXECUTABLE_PATH
+      ? { PLAYWRIGHT_CHROME: process.env.DESIGN_RUNTIME_BROWSER_EXECUTABLE_PATH } : {}),
     NODE_ENV: 'production',
     // 与上游镜像的 ENV 一致；本服务进程自己不用这个上限（见 Dockerfile）。
     NODE_OPTIONS: '--max-old-space-size=192',

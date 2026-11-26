@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Runtime.CompilerServices;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -84,8 +85,40 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
     public string Runtime => DesignArtifactRuntimes.OpenDesign;
 
     public bool Supports(string artifactType, string operation) =>
-        artifactType is DesignArtifactTypes.WebPage or DesignArtifactTypes.HtmlPpt
-        && operation is DesignArtifactOperations.Generate or DesignArtifactOperations.Edit;
+        artifactType == DesignArtifactTypes.CodeFilm
+            ? operation == DesignArtifactOperations.Generate
+            : artifactType is DesignArtifactTypes.WebPage or DesignArtifactTypes.HtmlPpt
+              && operation is DesignArtifactOperations.Generate or DesignArtifactOperations.Edit;
+
+    internal async Task<byte[]?> ReadRetainedFilmAsync(string runId, CancellationToken ct, string? codeFilmSlot = null)
+    {
+        var transport = OpenDesignTransportResolver.ResolveForCodeFilmSlot(_configuration, codeFilmSlot);
+        if (transport.Transport != OpenDesignTransport.Service || transport.Problem != null
+            || transport.BaseUrl == null || transport.ApiKey == null)
+            return null;
+
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeout.CancelAfter(RequestTimeout);
+        using var request = new HttpRequestMessage(
+            HttpMethod.Get, Endpoint(transport, $"v1/tasks/{Uri.EscapeDataString(runId)}/film-recovery"));
+        Authorize(request, transport);
+        using var response = await CreateClient().SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
+        if (response.StatusCode == HttpStatusCode.NotFound) return null;
+        response.EnsureSuccessStatusCode();
+
+        var length = response.Content.Headers.ContentLength;
+        if (length == null || length < 32 || length > DesignArtifactWorkspaceBroker.MaxCodeFilmOutputBytes * 3 / 4
+            || response.Content.Headers.ContentType?.MediaType != "video/mp4"
+            || !response.Headers.TryGetValues("X-Content-Sha256", out var values))
+            throw new InvalidDataException("设计服务返回的影片大小、类型或校验值不符合约定");
+        var expected = values.FirstOrDefault();
+        var bytes = await response.Content.ReadAsByteArrayAsync(timeout.Token);
+        var actual = Convert.ToHexString(SHA256.HashData(bytes));
+        if (bytes.LongLength != length || !string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("设计服务返回的影片校验失败");
+        _logger.LogInformation("已恢复 OpenDesign 影片 run={RunId} bytes={Length} sha256={Sha256}", runId, length, actual);
+        return bytes;
+    }
 
     // ───────────────────────── 能力探针 ─────────────────────────
 
@@ -98,6 +131,19 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
             return new DesignArtifactProviderProbeResult(false, false, false, IncompleteConfigurationReason);
         }
 
+        return Logged(await ProbeCapabilitiesAsync(transport, ct));
+    }
+
+    internal async Task<bool> ProbeCodeFilmSlotAsync(Uri slot, CancellationToken ct)
+    {
+        var transport = OpenDesignTransportResolver.Resolve(_configuration);
+        if (transport.Transport != OpenDesignTransport.Service || transport.Problem != null || transport.ApiKey == null)
+            return false;
+        return (await ProbeCapabilitiesAsync(transport with { BaseUrl = slot }, ct)).AcceptingTasks;
+    }
+
+    private async Task<ProbeVerdict> ProbeCapabilitiesAsync(OpenDesignTransportResolution transport, CancellationToken ct)
+    {
         using var timeout = new CancellationTokenSource(ProbeTimeout);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, timeout.Token);
         try
@@ -108,24 +154,23 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
             var text = await response.Content.ReadAsStringAsync(linked.Token);
             if (!response.IsSuccessStatusCode)
             {
-                return Logged(Unavailable(
+                return Unavailable(
                     "设计执行服务暂时回报不了自身状态，OpenDesign 暂不可用：请稍后重试；持续出现请管理员查看设计执行服务的状态",
-                    $"capabilities status={(int)response.StatusCode} baseUrl={transport.BaseUrl}"));
+                    $"capabilities status={(int)response.StatusCode} baseUrl={transport.BaseUrl}");
             }
-            return Logged(MapCapabilities(text, transport.BaseUrl));
+            return MapCapabilities(text, transport.BaseUrl!);
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
-            return Logged(Unavailable(
+            return Unavailable(
                 "设计执行服务没有及时回报自身状态，OpenDesign 暂不可用：等它恢复即可，无需处理；持续出现请管理员查看设计执行服务是否在运行",
-                $"capabilities timeout={(int)ProbeTimeout.TotalSeconds}s baseUrl={transport.BaseUrl}"));
+                $"capabilities timeout={(int)ProbeTimeout.TotalSeconds}s baseUrl={transport.BaseUrl}");
         }
         catch (Exception ex) when (ex is HttpRequestException or IOException)
         {
-            _logger.LogWarning(ex, "读取设计执行服务能力失败 transport=service baseUrl={BaseUrl}", transport.BaseUrl);
             return Unavailable(
                 "MAP 连不上设计执行服务，OpenDesign 暂不可用：请管理员检查设计执行服务是否在运行，必要时把 OpenDesign 切回经 CDS 会话的旧路径",
-                $"capabilities error={ex.GetType().Name} baseUrl={transport.BaseUrl}").Result;
+                $"capabilities error={ex.GetType().Name} baseUrl={transport.BaseUrl}");
         }
     }
 
@@ -140,7 +185,8 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
     /// 探针结论：<see cref="Result"/> 的 Reason 会经公开能力接口与 RUNTIME_NOT_READY 交给普通用户，
     /// 只写结果与下一步；HTTP 状态、协议名、服务原文、内部地址放 <see cref="Diagnostic"/>，只进日志。
     /// </summary>
-    internal sealed record ProbeVerdict(DesignArtifactProviderProbeResult Result, string? Diagnostic);
+    internal sealed record ProbeVerdict(
+        DesignArtifactProviderProbeResult Result, string? Diagnostic, bool AcceptingTasks = false);
 
     private static ProbeVerdict Unavailable(string userReason, string diagnostic) =>
         new(new DesignArtifactProviderProbeResult(Configured: true, Healthy: false, Enabled: false, Reason: userReason), diagnostic);
@@ -197,7 +243,10 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
                 $"unhealthy code={code ?? "unknown"} message={serviceMessage ?? "none"} baseUrl={baseUrl}");
         }
 
-        return new ProbeVerdict(new DesignArtifactProviderProbeResult(Configured: true, Healthy: true, Enabled: true, Reason: null), null);
+        return new ProbeVerdict(
+            new DesignArtifactProviderProbeResult(Configured: true, Healthy: true, Enabled: true, Reason: null),
+            null,
+            AcceptingTasks: capabilities["acceptingTasks"]?.GetValueKind() == JsonValueKind.True);
     }
 
     // ───────────────────────── 执行 ─────────────────────────
@@ -215,7 +264,9 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
             yield break;
         }
 
-        var transport = OpenDesignTransportResolver.Resolve(_configuration);
+        var transport = run.ArtifactType == DesignArtifactTypes.CodeFilm
+            ? OpenDesignTransportResolver.ResolveForCodeFilmSlot(_configuration, run.CodeFilmRuntimeSlot)
+            : OpenDesignTransportResolver.Resolve(_configuration);
         _logger.LogInformation(
             "OpenDesign 设计任务开始执行 transport={Transport} run={RunId} operation={Operation} baseUrl={BaseUrl}",
             TransportLogName, run.Id, run.Operation, transport.BaseUrl);
@@ -230,9 +281,11 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
         var workspace = await _workspaceBroker.PrepareForDirectGatewayAsync(run, currentHtml, CancellationToken.None);
         var ticketExpiresAt = run.RuntimeTicketExpiresAt ?? UtcNow().Add(FallbackTicketTtl);
         // 排队不能把票据耗光：任务真正开跑时，票据至少还要够它跑满上限。
-        var queueDeadline = ticketExpiresAt - TimeSpan.FromSeconds(TaskTimeoutSeconds) - TicketSafetyMargin;
+        var timeoutSeconds = run.ArtifactType == DesignArtifactTypes.CodeFilm
+            ? run.QuickCreation?.FilmTimeoutSeconds ?? 3300 : TaskTimeoutSeconds;
+        var queueDeadline = ticketExpiresAt - TimeSpan.FromSeconds(timeoutSeconds) - TicketSafetyMargin;
         const int attempt = 1;
-        var requestBody = BuildTaskRequest(run, workspace, attempt, TaskTimeoutSeconds);
+        var requestBody = BuildTaskRequest(run, workspace, attempt, timeoutSeconds);
         var translator = new OpenDesignEventTranslator(run.Operation == DesignArtifactOperations.Edit, run.Progress);
         var accepted = false;
         // 提交请求一旦发出，服务就可能已经接下任务——哪怕 MAP 没等到 202（调用方取消、响应丢失、超时）。
@@ -308,14 +361,14 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
                 throw submit.Failure!;
             }
 
-            var eventsDeadline = UtcNow() + TimeSpan.FromSeconds(TaskTimeoutSeconds) + EventGrace;
+            var eventsDeadline = UtcNow() + TimeSpan.FromSeconds(timeoutSeconds) + EventGrace;
             var afterSeq = 0L;
             var consecutiveFailures = 0;
             while (true)
             {
                 if (UtcNow() >= eventsDeadline)
                     throw new InvalidOperationException(OpenDesignFailureMessage.Describe(
-                        OpenDesignFailureStage.Deadline(TimeSpan.FromSeconds(TaskTimeoutSeconds)), remoteReason: null));
+                        OpenDesignFailureStage.Deadline(TimeSpan.FromSeconds(timeoutSeconds)), remoteReason: null));
 
                 var open = await OpenEventStreamAsync(transport, run.Id, afterSeq, ct);
                 if (open.Failure != null) throw open.Failure;
@@ -482,7 +535,9 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
                 ["runId"] = run.Id,
             },
             ["timeoutSeconds"] = timeoutSeconds,
-            ["envelope"] = JsonNode.Parse(DesignArtifactPromptBuilder.BuildRemoteEnvelope(run)),
+            ["envelope"] = run.ArtifactType == DesignArtifactTypes.CodeFilm
+                ? new JsonObject { ["schemaVersion"] = "map-code-film-command-v1", ["runId"] = run.Id, ["command"] = run.Instruction }
+                : JsonNode.Parse(DesignArtifactPromptBuilder.BuildRemoteEnvelope(run)),
         };
 
     private async Task<DesignArtifactGatewayGrantUsage?> ObserveGrantUsageAsync(

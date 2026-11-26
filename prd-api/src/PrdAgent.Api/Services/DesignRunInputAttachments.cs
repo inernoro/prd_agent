@@ -28,7 +28,7 @@ public static class DesignRunInputAttachments
     };
 
     public static async Task<List<DesignUploadedSource>> ResolveSourcesAsync(
-        MongoDbContext db, string userId, IReadOnlyList<string>? attachmentIds, CancellationToken ct)
+        MongoDbContext db, string userId, IReadOnlyList<string>? attachmentIds, CancellationToken ct, bool preserveText = false)
     {
         var ids = Normalize(attachmentIds);
         if (ids.Count == 0) return new List<DesignUploadedSource>();
@@ -40,8 +40,9 @@ public static class DesignRunInputAttachments
         foreach (var id in ids)
         {
             var attachment = found[id];
-            var text = (attachment.ExtractedText ?? string.Empty).Trim();
-            if (text.Length == 0)
+            var text = attachment.ExtractedText ?? string.Empty;
+            if (!preserveText) text = text.Trim();
+            if (string.IsNullOrWhiteSpace(text))
                 throw new DesignRunInputException($"文件「{attachment.FileName}」没有可读取的文字内容，请上传 Markdown、Word、PDF 或纯文本文件");
             total += text.Length;
             if (total > MaxUploadedCharacters)
@@ -90,6 +91,18 @@ public static class DesignRunInputAttachments
     /// <summary>直连执行器的提示词与 OpenDesign 的工作区共用这一份文字形态，避免两边各拼各的。</summary>
     public static string ToMarkdown(DesignUploadedSource source)
         => $"# {source.FileName}\n\n{source.Content}";
+
+    public static async Task<(string Path, string Key, long Size)> ResolveFilmSourceAsync(
+        MongoDbContext db, string userId, string attachmentId, CancellationToken ct)
+    {
+        var owned = await LoadOwnedAsync(db, userId, [attachmentId], ct);
+        var attachment = owned[attachmentId];
+        var name = Path.GetFileName(attachment.FileName);
+        if (name == null || !System.Text.RegularExpressions.Regex.IsMatch(name, @"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,100}\.md$")
+            || string.IsNullOrWhiteSpace(attachment.StorageKey) || attachment.Size is <= 0 or > 1024 * 1024)
+            throw new DesignRunInputException("请使用 1 MB 内的 Markdown 原件和英文文件名");
+        return (name, attachment.StorageKey, attachment.Size);
+    }
 
     private static List<string> Normalize(IReadOnlyList<string>? ids)
         => (ids ?? Array.Empty<string>())

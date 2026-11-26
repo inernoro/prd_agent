@@ -299,6 +299,22 @@ export const BUILTIN_TOOLS: ToolboxItem[] = [
     // 失败 3 步为驱动脚本选择器问题与推理模型思考期实况空窗（同日已修）
   },
   {
+    id: 'builtin-quick-creation',
+    name: '快速创作',
+    description: '一份文档 + 一个模板，快速得到能播放的视频或能浏览的网页，并发布到网页托管',
+    icon: 'Clapperboard',
+    category: 'builtin',
+    type: 'builtin',
+    kind: 'agent',
+    agentKey: 'quick-creation-agent',
+    routePath: '/quick-creation-agent',
+    permission: 'access',
+    tags: ['视频', '网页', '文稿', '配音', '模板'],
+    usageCount: 0,
+    createdAt: new Date().toISOString(),
+    wip: true,
+  },
+  {
     id: 'builtin-task-tree',
     name: '个人任务树',
     description: '分层任务管理，对话摘取任务、卡点上报，一眼看清推进进度',

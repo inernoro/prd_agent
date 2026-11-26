@@ -69,7 +69,7 @@ export class OpenDesignClient {
   async odJson(
     apiPath: string,
     options: {
-      method: 'GET' | 'POST';
+      method: 'GET' | 'POST' | 'PATCH';
       body?: Record<string, unknown>;
       signal?: AbortSignal;
       acceptedStatuses?: number[];

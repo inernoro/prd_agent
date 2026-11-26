@@ -66,6 +66,25 @@ public sealed class RedisRunQueueIsolationTests : IAsyncLifetime
         Assert.Null(await consumer.DequeueAsync(RunKinds.DesignArtifact, TimeSpan.Zero));
     }
 
+    [DesignQueueRedisFact]
+    public async Task CodeFilmRecovery_PreservesOriginalQueueOrderAndAllowsRequeueAfterPop()
+    {
+        using var producer = Queue("project-a::video::revision::current");
+        using var recovery = Queue("project-a::video::revision::current");
+        using var retiredRevision = Queue("project-a::video::revision::retired");
+        await producer.EnqueueAsync(RunKinds.CodeFilm, "first");
+        await producer.EnqueueAsync(RunKinds.CodeFilm, "second");
+        await Task.WhenAll(Enumerable.Range(0, 10)
+            .Select(_ => recovery.EnqueueAsync(RunKinds.CodeFilm, "first")));
+
+        Assert.Null(await retiredRevision.DequeueAsync(RunKinds.CodeFilm, TimeSpan.Zero));
+        Assert.Equal("first", await producer.DequeueAsync(RunKinds.CodeFilm, TimeSpan.Zero));
+        await recovery.EnqueueAsync(RunKinds.CodeFilm, "first");
+        Assert.Equal("second", await producer.DequeueAsync(RunKinds.CodeFilm, TimeSpan.Zero));
+        Assert.Equal("first", await producer.DequeueAsync(RunKinds.CodeFilm, TimeSpan.Zero));
+        Assert.Null(await producer.DequeueAsync(RunKinds.CodeFilm, TimeSpan.Zero));
+    }
+
     [DesignQueueRedisTheory]
     [InlineData("project-a::branch-a::revision::revision-a")]
     [InlineData(null)]
@@ -88,7 +107,9 @@ public sealed class RedisRunQueueIsolationTests : IAsyncLifetime
         using var same = new RedisRunQueue(_connection, TaskConfiguration("project-a", "branch-a", "revision-b"));
         using var b = new RedisRunQueue(_connection, TaskConfiguration("project-b", "branch-b", "revision-a"));
         foreach (var kind in typeof(RunKinds).GetFields().Where(field => field.IsLiteral)
-                     .Select(field => (string)field.GetRawConstantValue()!).Where(kind => kind != RunKinds.DesignArtifact).Append("future-unregistered-business"))
+                     .Select(field => (string)field.GetRawConstantValue()!)
+                     .Where(kind => kind is not (RunKinds.DesignArtifact or RunKinds.CodeFilm))
+                     .Append("future-unregistered-business"))
         {
             await a.EnqueueAsync($" {kind} ", "new-run");
             Assert.True((await _redis!.GetDatabase().ListLeftPopAsync($"run:{kind}:queue")).IsNull);
@@ -140,18 +161,23 @@ public sealed class RedisRunQueueKeyTests
     [InlineData(null, "unscoped")]
     public void DesignKeys_IsolateScopesAndNeverUseLegacyQueue(string? first, string? second)
     {
-        var firstKey = RedisRunQueue.BuildKey(RunKinds.DesignArtifact, first);
-        Assert.NotEqual(firstKey, RedisRunQueue.BuildKey(RunKinds.DesignArtifact, second));
-        Assert.NotEqual("run:designArtifact:queue", firstKey);
-        Assert.StartsWith("run:v2:designArtifact:", firstKey);
-        Assert.Equal(firstKey, RedisRunQueue.BuildKey($" {RunKinds.DesignArtifact} ", first));
+        foreach (var kind in new[] { RunKinds.DesignArtifact, RunKinds.CodeFilm })
+        {
+            var firstKey = RedisRunQueue.BuildKey(kind, first);
+            Assert.NotEqual(firstKey, RedisRunQueue.BuildKey(kind, second));
+            Assert.NotEqual($"run:{kind}:queue", firstKey);
+            Assert.StartsWith($"run:v2:{kind}:", firstKey);
+            Assert.Equal(firstKey, RedisRunQueue.BuildKey($" {kind} ", first));
+        }
     }
 
     [Fact]
     public void EveryOtherAndFutureKind_UsesStableDeploymentNamespace()
     {
         foreach (var kind in typeof(RunKinds).GetFields().Where(field => field.IsLiteral)
-                     .Select(field => (string)field.GetRawConstantValue()!).Where(kind => kind != RunKinds.DesignArtifact).Append("future-unregistered-business"))
+                     .Select(field => (string)field.GetRawConstantValue()!)
+                     .Where(kind => kind is not (RunKinds.DesignArtifact or RunKinds.CodeFilm))
+                     .Append("future-unregistered-business"))
         {
             var key = RedisRunQueue.BuildKey($" {kind} ", "project::branch");
             Assert.StartsWith($"run:v3:{kind}:", key);

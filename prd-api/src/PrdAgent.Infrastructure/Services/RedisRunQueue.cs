@@ -13,6 +13,7 @@ public sealed class RedisRunQueue : IRunQueue, IDisposable
     private readonly ConnectionMultiplexer _redis;
     private readonly IDatabase _db;
     private readonly string _designQueueKey;
+    private readonly string _codeFilmQueueKey;
     private readonly string _taskDeploymentIdentity;
 
     public RedisRunQueue(string connectionString, IConfiguration configuration)
@@ -28,7 +29,9 @@ public sealed class RedisRunQueue : IRunQueue, IDisposable
             throw new ArgumentException("任务队列缺少可信部署身份", nameof(taskDeploymentIdentity));
         _taskDeploymentIdentity = taskDeploymentIdentity;
         // 在构造时冻结完整部署作用域，避免入队与出队期间环境变化导致队列漂移。
-        _designQueueKey = BuildKey(RunKinds.DesignArtifact, scopeReader());
+        var scope = scopeReader();
+        _designQueueKey = BuildKey(RunKinds.DesignArtifact, scope);
+        _codeFilmQueueKey = BuildKey(RunKinds.CodeFilm, scope);
         _redis = ConnectionMultiplexer.Connect(connectionString.Trim());
         _db = _redis.GetDatabase();
     }
@@ -36,7 +39,7 @@ public sealed class RedisRunQueue : IRunQueue, IDisposable
     internal static string BuildKey(string? kind, string? scope)
     {
         kind = (kind ?? string.Empty).Trim();
-        if (kind != RunKinds.DesignArtifact)
+        if (kind is not (RunKinds.DesignArtifact or RunKinds.CodeFilm))
         {
             // 全部现有和未来任务默认走新命名空间；旧进程不能弹走受租约保护的新任务。
             // 普通任务按项目与分支稳定隔离，不含 revision，发布换代和多实例仍消费同一队列。
@@ -50,18 +53,36 @@ public sealed class RedisRunQueue : IRunQueue, IDisposable
         var identity = scope is null
             ? "unscoped"
             : $"scope:{Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(scope)))}";
-        return $"run:v2:{RunKinds.DesignArtifact}:{identity}:queue";
+        return $"run:v2:{kind}:{identity}:queue";
     }
 
-    private string Key(string kind) => (kind ?? string.Empty).Trim() == RunKinds.DesignArtifact
-        ? _designQueueKey
-        : BuildKey(kind, _taskDeploymentIdentity);
+    private string Key(string kind) => (kind ?? string.Empty).Trim() switch
+    {
+        RunKinds.DesignArtifact => _designQueueKey,
+        RunKinds.CodeFilm => _codeFilmQueueKey,
+        _ => BuildKey(kind, _taskDeploymentIdentity)
+    };
 
     public async Task EnqueueAsync(string kind, string runId, CancellationToken ct = default)
     {
         var id = (runId ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(id)) return;
-        await _db.ListRightPushAsync(Key(kind), id);
+        var key = Key(kind);
+        if (string.Equals(kind?.Trim(), RunKinds.CodeFilm, StringComparison.Ordinal))
+        {
+            // Mongo 周期补投时，已经等待的任务保留原 FIFO 位置。弹出后仍可补投，
+            // 由 Mongo 的原子认领防止重复执行，覆盖弹出后到认领前的进程中断。
+            await _db.ScriptEvaluateAsync(
+                """
+                if not redis.call('LPOS', KEYS[1], ARGV[1]) then
+                    redis.call('RPUSH', KEYS[1], ARGV[1])
+                end
+                return 0
+                """,
+                [key], [id]);
+            return;
+        }
+        await _db.ListRightPushAsync(key, id);
     }
 
     public async Task<string?> DequeueAsync(string kind, TimeSpan timeout, CancellationToken ct = default)

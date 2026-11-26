@@ -86,6 +86,7 @@ const CdsAgentPage = lazy(() => import('@/pages/cds-agent').then(m => ({ default
 const InfraServicesPage = lazy(() => import('@/pages/infra-services').then(m => ({ default: m.InfraServicesPage })));
 const OpenPlatformTabsPage = lazy(() => import('@/pages/OpenPlatformTabsPage'));
 const MdToPptAgentPage = lazy(() => import('@/pages/md-to-ppt-agent/MdToPptAgentPage').then(m => ({ default: m.MdToPptAgentPage })));
+const QuickCreationAgentPage = lazy(() => import('@/pages/quick-creation-agent/QuickCreationAgentPage').then(m => ({ default: m.QuickCreationAgentPage })));
 const TechDocFormatAgentPage = lazy(() => import('@/pages/tech-doc-format-agent').then(m => ({ default: m.TechDocFormatAgentPage })));
 const SpeechAgentListPage = lazy(() => import('@/pages/speech-agent').then(m => ({ default: m.SpeechAgentListPage })));
 const SpeechAgentCreatePage = lazy(() => import('@/pages/speech-agent').then(m => ({ default: m.SpeechAgentCreatePage })));
@@ -747,6 +748,21 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       section: 'toolbox',
       appKey: 'md-to-ppt-agent',
       tags: ['PPT', 'Markdown', '演示', '网页', 'reveal.js'],
+      wip: true,
+    },
+  },
+  {
+    path: '/quick-creation-agent',
+    permission: 'access',
+    element: shellGuarded('access', <QuickCreationAgentPage />),
+    nav: {
+      label: '快速创作',
+      shortLabel: '快创',
+      description: '一份文档加一个模板，快速得到能播放的视频或能浏览的网页，并发布到网页托管',
+      icon: 'Clapperboard',
+      section: 'toolbox',
+      appKey: 'quick-creation-agent',
+      tags: ['视频', '网页', '文稿', '配音', '模板', '网页托管'],
       wip: true,
     },
   },

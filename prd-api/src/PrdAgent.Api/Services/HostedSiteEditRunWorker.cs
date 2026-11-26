@@ -23,6 +23,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
     internal static readonly TimeSpan LeaseDuration = TimeSpan.FromMinutes(2);
     internal static readonly TimeSpan RecoveryInterval = TimeSpan.FromSeconds(15);
     internal static readonly TimeSpan QueueRecoveryDelay = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan CodeFilmSlotProbeInterval = TimeSpan.FromSeconds(10);
     private const int MaxModelInputChars = 240_000;
 
     /// <summary>同一 revision 的执行进程退出后（进程重启）给用户的原因。</summary>
@@ -44,6 +45,8 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
     private readonly IRunQueue _queue;
     private readonly IRunEventStore _events;
     private readonly ILogger<HostedSiteEditRunWorker> _logger;
+    private readonly IReadOnlyList<Uri> _codeFilmSlots;
+    private readonly int _codeFilmMinimumSlots;
     private readonly string _instanceId = $"{Environment.MachineName}:{Guid.NewGuid():N}";
 
     public HostedSiteEditRunWorker(
@@ -51,35 +54,110 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         IRunQueue queue,
         IRunEventStore events,
         ILogger<HostedSiteEditRunWorker> logger,
-        PrdAgent.Core.Interfaces.ITaskExecutionCoordinator? taskExecutions = null)
+        PrdAgent.Core.Interfaces.ITaskExecutionCoordinator? taskExecutions = null,
+        IConfiguration? configuration = null)
     {
         _taskExecutions = taskExecutions;
         _scopeFactory = scopeFactory;
         _queue = queue;
         _events = events;
         _logger = logger;
+        _codeFilmSlots = configuration == null ? [] : OpenDesignTransportResolver.CodeFilmSlots(configuration);
+        _codeFilmMinimumSlots = OpenDesignTransportResolver.CodeFilmMinimumSlots(configuration);
     }
 
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    protected override Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        var nextRecoveryAt = DateTime.MinValue;
+        var workers = new List<Task> {
+            ReconcileLoopAsync(stoppingToken),
+            ConsumeQueueAsync(RunKinds.DesignArtifact, null, stoppingToken)
+        };
+        workers.Add(ConsumeCodeFilmQueueAsync(stoppingToken));
+        return Task.WhenAll(workers);
+    }
+
+    private async Task ConsumeCodeFilmQueueAsync(CancellationToken stoppingToken)
+    {
+        if (_codeFilmSlots.Count == 0)
+        {
+            // 没部署独立槽的历史配置仍能走原执行器。
+            await ConsumeQueueAsync(RunKinds.CodeFilm, null, stoppingToken);
+            return;
+        }
+
+        var startupPlan = await Task.WhenAll(_codeFilmSlots.Select(async slot =>
+            (Slot: slot, Ready: await ProbeCodeFilmSlotAsync(slot, stoppingToken))));
+        var readyCount = startupPlan.Count(slot => slot.Ready);
+        _logger.Log(readyCount < _codeFilmMinimumSlots ? LogLevel.Warning : LogLevel.Information,
+            "代码视频启动槽位规划 configured={Configured} ready={Ready} targetMinimum={TargetMinimum}",
+            startupPlan.Length, readyCount, _codeFilmMinimumSlots);
+
+        await Task.WhenAll(startupPlan.Select(slot =>
+            ConsumeQueueAsync(RunKinds.CodeFilm, slot.Slot, stoppingToken, slot.Ready)));
+    }
+
+    private async Task<bool> ProbeCodeFilmSlotAsync(Uri slot, CancellationToken ct)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var executor = scope.ServiceProvider.GetRequiredService<OpenDesignServiceArtifactExecutor>();
+        return await executor.ProbeCodeFilmSlotAsync(slot, ct);
+    }
+
+    private async Task ReconcileLoopAsync(CancellationToken stoppingToken)
+    {
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            try
+            {
+                await ReconcileAsync(stoppingToken);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                break;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "设计产物 Run 恢复扫描失败");
+            }
+            await Task.Delay(RecoveryInterval, stoppingToken);
+        }
+    }
+
+    private async Task ConsumeQueueAsync(
+        string kind, Uri? codeFilmSlot, CancellationToken stoppingToken,
+        bool slotReady = true)
+    {
+        var nextProbeAt = DateTime.UtcNow + CodeFilmSlotProbeInterval;
         while (!stoppingToken.IsCancellationRequested)
         {
             string? runId = null;
             try
             {
-                if (DateTime.UtcNow >= nextRecoveryAt)
+                if (codeFilmSlot != null)
                 {
-                    await ReconcileAsync(stoppingToken);
-                    nextRecoveryAt = DateTime.UtcNow + RecoveryInterval;
+                    if (DateTime.UtcNow >= nextProbeAt)
+                    {
+                        var ready = await ProbeCodeFilmSlotAsync(codeFilmSlot, stoppingToken);
+                        nextProbeAt = DateTime.UtcNow + CodeFilmSlotProbeInterval;
+                        if (slotReady != ready)
+                            _logger.Log(ready ? LogLevel.Information : LogLevel.Warning,
+                                "代码视频执行槽状态变化 slot={Slot} ready={Ready}", codeFilmSlot, ready);
+                        slotReady = ready;
+                    }
+                    if (!slotReady)
+                    {
+                        await Task.Delay(CodeFilmSlotProbeInterval, stoppingToken);
+                        continue;
+                    }
                 }
-                runId = await _queue.DequeueAsync(RunKinds.DesignArtifact, TimeSpan.FromSeconds(1), stoppingToken);
+
+                runId = await _queue.DequeueAsync(kind, TimeSpan.FromSeconds(1), stoppingToken);
                 if (string.IsNullOrWhiteSpace(runId))
                 {
                     await Task.Delay(250, stoppingToken);
                     continue;
                 }
-                await ProcessAsync(runId, CancellationToken.None);
+                await ProcessAsync(runId, CancellationToken.None, codeFilmSlot);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -92,7 +170,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         }
     }
 
-    internal async Task ProcessAsync(string runId, CancellationToken ct)
+    internal async Task ProcessAsync(string runId, CancellationToken ct, Uri? codeFilmSlot = null)
     {
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
@@ -108,8 +186,32 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             LeaseDuration,
             ct);
         if (run == null) return;
+        if (run.QuickCreation != null)
+        {
+            var startedAt = DateTime.UtcNow;
+            var started = await db.DesignArtifactRuns.UpdateOneAsync(
+                item => item.Id == runId && item.DeploymentSlug == DeploymentScope.Current
+                    && item.Status == RunStatuses.Running && item.LeaseOwnerId == leaseOwner,
+                Builders<DesignArtifactRun>.Update.Set(item => item.ExecutionStartedAt, startedAt),
+                cancellationToken: ct);
+            if (started.ModifiedCount != 1) return;
+            run.ExecutionStartedAt = startedAt;
+        }
         await using var taskExecutionAttempt = await TaskExecutionAttempt.AcquireAsync(_taskExecutions, run.TaskPermitId, run.Id);
         if (taskExecutionAttempt.ShouldSkip) return;
+        if (run.ArtifactType == DesignArtifactTypes.CodeFilm && codeFilmSlot != null && run.CodeFilmRuntimeSlot == null)
+        {
+            var slot = codeFilmSlot.AbsoluteUri;
+            var now = DateTime.UtcNow;
+            var assigned = await db.DesignArtifactRuns.UpdateOneAsync(
+                item => item.Id == runId && item.DeploymentSlug == DeploymentScope.Current
+                    && item.Status == RunStatuses.Running && item.LeaseOwnerId == leaseOwner
+                    && item.LeaseExpiresAt > now && item.CodeFilmRuntimeSlot == null,
+                Builders<DesignArtifactRun>.Update.Set(item => item.CodeFilmRuntimeSlot, slot),
+                cancellationToken: ct);
+            if (assigned.ModifiedCount != 1) return;
+            run.CodeFilmRuntimeSlot = slot;
+        }
         using var taskExecutionScope = TaskExecutionContext.Enter(taskExecutionAttempt.Lease?.Identity
             ?? TaskExecutionContext.ForRun(run.TaskPermitId, run.Id));
 
@@ -354,6 +456,23 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             }
 
             executionCts.Token.ThrowIfCancellationRequested();
+            if (run.ArtifactType == DesignArtifactTypes.CodeFilm)
+            {
+                var film = verifiedFiles?.SingleOrDefault(file => file.Path == "film.mp4")
+                    ?? throw new InvalidOperationException("OpenDesign 没有交付 MP4 成片");
+                if (!await CompleteRunAsync(db, run.Id, leaseOwner, null, null,
+                        "影片已生成", DateTime.UtcNow, CancellationToken.None, codeFilm: true))
+                    throw new DesignArtifactRunLeaseLostException(run.Id);
+
+                meta.Status = RunStatuses.Done;
+                meta.EndedAt = DateTime.UtcNow;
+                await projection.WriteAsync(() => _events.SetRunAsync(RunKinds.DesignArtifact, meta, RunTtl, ct: CancellationToken.None));
+                await projection.WriteAsync(() => _events.AppendEventAsync(RunKinds.DesignArtifact, run.Id, "done",
+                    new { mediaType = film.MediaType, sha256 = film.Sha256, size = film.Size,
+                        filmUrl = $"/api/design-artifacts/runs/{run.Id}/film.mp4" }, RunTtl, CancellationToken.None));
+                return;
+            }
+
             var html = HardenExecutorOutput(output.ToString(), verifiedFiles);
             var isOpenDesignPresentation = run.ArtifactType == DesignArtifactTypes.HtmlPpt
                                            && run.Runtime == DesignArtifactRuntimes.OpenDesign;
@@ -2087,16 +2206,21 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         string? artifactRevisionId,
         string phase,
         DateTime completedAt,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool codeFilm = false)
     {
         var write = await db.DesignArtifactRuns.UpdateOneAsync(
             x => x.DeploymentSlug == DeploymentScope.Current && (x.Id == runId
-                 && x.Status == RunStatuses.Committing
+                 && (codeFilm
+                     ? x.ArtifactType == DesignArtifactTypes.CodeFilm && x.Status == RunStatuses.Running
+                       && x.CancelRequestedAt == null && x.WorkspaceResultAssetKey != null
+                     : x.Status == RunStatuses.Committing)
                  && x.CleanupLeaseOwnerId == null
                  && x.LeaseOwnerId == leaseOwner
                  && x.LeaseExpiresAt > completedAt),
             Builders<DesignArtifactRun>.Update
                 .Set(x => x.Status, RunStatuses.Done)
+                .Set(x => x.PhaseCode, DesignArtifactPhaseCodes.Completed)
                 .Set(x => x.Progress, 100)
                 .Set(x => x.Phase, phase)
                 .Set(x => x.ArtifactSiteId, artifactSiteId)
@@ -2241,7 +2365,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                         CancellationToken.None);
                     try
                     {
-                        await queue.EnqueueAsync(RunKinds.DesignArtifact, resumed.Id, CancellationToken.None);
+                        await queue.EnqueueAsync(RunKinds.DesignArtifactQueue(resumed.ArtifactType), resumed.Id, CancellationToken.None);
                     }
                     catch
                     {
@@ -2360,7 +2484,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                 Builders<DesignArtifactRun>.Update.Set(x => x.RecoveryEnqueuedAt, now),
                 cancellationToken: CancellationToken.None);
             if (write.ModifiedCount == 1)
-                await queue.EnqueueAsync(RunKinds.DesignArtifact, candidate.Id, CancellationToken.None);
+                await queue.EnqueueAsync(RunKinds.DesignArtifactQueue(candidate.ArtifactType), candidate.Id, CancellationToken.None);
         }
 
         if (activityRecorder != null)

@@ -43,6 +43,48 @@ public static class OpenDesignTransportResolver
     public const string TransportKey = "DesignRuntime:OpenDesign:Transport";
     public const string BaseUrlKey = "DesignRuntime:OpenDesign:BaseUrl";
     public const string ApiKeyKey = "DesignRuntime:OpenDesign:ApiKey";
+    public const string CodeFilmSlotsKey = "DesignRuntime:OpenDesign:CodeFilmSlots";
+    public const string CodeFilmMinimumSlotsKey = "DesignRuntime:OpenDesign:CodeFilmMinimumSlots";
+    internal const int MaximumCodeFilmSlots = 30;
+
+    internal static int CodeFilmMinimumSlots(IConfiguration? configuration)
+    {
+        var raw = Normalize(configuration?[CodeFilmMinimumSlotsKey]);
+        if (raw == null) return 2;
+        if (int.TryParse(raw, out var count) && count is >= 1 and <= MaximumCodeFilmSlots)
+            return count;
+        throw new InvalidOperationException("代码视频启动槽数目标须在 1 至 30 之间");
+    }
+
+    public static IReadOnlyList<Uri> CodeFilmSlots(IConfiguration configuration)
+    {
+        var raw = Normalize(configuration[CodeFilmSlotsKey]);
+        if (raw == null) return [];
+        var regularDesign = Resolve(configuration).BaseUrl;
+        var slots = new List<Uri>();
+        foreach (var entry in raw.Split(',', StringSplitOptions.TrimEntries))
+        {
+            if (!Uri.TryCreate(entry, UriKind.Absolute, out var uri)
+                || uri.Scheme is not ("http" or "https")
+                || uri.UserInfo.Length != 0 || uri.Query.Length != 0 || uri.Fragment.Length != 0
+                || uri.AbsolutePath != "/" || slots.Contains(uri) || uri == regularDesign)
+                throw new InvalidOperationException("代码视频执行槽配置须使用不同的 HTTP 服务地址");
+            slots.Add(uri);
+        }
+        if (slots.Count > MaximumCodeFilmSlots)
+            throw new InvalidOperationException("代码视频执行槽配置最多支持 30 项");
+        return slots;
+    }
+
+    public static OpenDesignTransportResolution ResolveForCodeFilmSlot(IConfiguration configuration, string? slot)
+    {
+        var transport = Resolve(configuration);
+        if (slot == null) return transport;
+        var endpoint = CodeFilmSlots(configuration).SingleOrDefault(uri => uri.AbsoluteUri == slot);
+        return endpoint == null
+            ? transport with { Problem = "代码视频原执行槽当前未配置" }
+            : transport with { BaseUrl = endpoint };
+    }
 
     public static OpenDesignTransportResolution Resolve(IConfiguration configuration)
     {

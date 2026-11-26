@@ -4,7 +4,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { codeFilmDefaultAnswers } from '../src/engine/code-film.js';
+import { FilmRecoveryStore } from '../src/engine/film-recovery.js';
 import { normalizeTaskRequest } from '../src/protocol.js';
+import { sha256 } from '../src/workspace/primitives.js';
+import { MAP_DESIGN_WORKSPACE_SCHEMA, parseWorkspacePackage } from '../src/workspace/transfer.js';
 import {
   API_KEY,
   auth,
@@ -55,6 +59,45 @@ async function cleanedUp(h: Harness, taskId: string) {
     return response.body.task?.cleanup === 'completed' && h.runtime.tasks.slotState() === 'idle' ? response.body.task : undefined;
   }, `task ${taskId} cleanup`);
 }
+
+describe('film recovery', () => {
+  it('serves only a complete retained MP4 after the OpenDesign workspace has been reset', async () => {
+    harness = await startHarness();
+    const recovery = new FilmRecoveryStore(path.join(harness.root, 'film-recovery'));
+    const box = (type: string) => {
+      const bytes = Buffer.alloc(12);
+      bytes.writeUInt32BE(bytes.length);
+      bytes.write(type, 4, 'ascii');
+      return bytes;
+    };
+    const movie = Buffer.concat([box('ftyp'), box('mdat'), box('moov')]);
+    const retain = (bytes: Buffer) => recovery.retain('film-recovery-test', {
+      path: 'film.mp4',
+      mediaType: 'video/mp4',
+      size: bytes.length,
+      sha256: sha256(bytes),
+      contentBase64: bytes.toString('base64'),
+    });
+    expect(retain(movie.subarray(0, -1))).toBe(false);
+    expect(retain(movie)).toBe(true);
+
+    await harness.runtime.lifecycle.reset();
+    expect(taskDirectoriesAreEmpty(harness)).toBe(true);
+    expect(harness.runtime.tasks.get('film-recovery-test')).toBeUndefined();
+    const url = harness.baseUrl + '/v1/tasks/film-recovery-test/film-recovery';
+    expect((await fetch(url)).status).toBe(401);
+    const response = await fetch(url, { headers: auth });
+    expect(response.status).toBe(200);
+    expect(response.headers.get('x-content-sha256')).toBe(sha256(movie));
+    expect(Buffer.from(await response.arrayBuffer())).toEqual(movie);
+
+    const persisted = path.join(recovery.directory, 'film-recovery-test.film');
+    const corrupted = fs.readFileSync(persisted);
+    corrupted[corrupted.length - 1] ^= 1;
+    fs.writeFileSync(persisted, corrupted);
+    expect((await fetch(url, { headers: auth })).status).toBe(404);
+  });
+});
 
 describe('GET /v1/capabilities', () => {
   it('reports protocol, engine, versions, design systems and a live healthy engine', async () => {
@@ -154,7 +197,78 @@ describe('authentication', () => {
   });
 });
 
+describe('native code film form continuation', () => {
+  const form = {
+    id: 'film-brief',
+    questions: [
+      { id: 'duration', type: 'radio', defaultValue: '60s', options: [{ label: '60 秒', value: '60s' }] },
+      { id: 'audio', type: 'radio', defaultValue: 'auto_voice', options: [{ label: '由你安排配音', value: 'auto_voice' }] },
+      { id: 'review', type: 'radio', defaultValue: 'direct', options: [{ label: '直接制作完整短片', value: 'direct' }] },
+    ],
+  };
+  const body = (value: unknown) => `<question-form>
+${JSON.stringify(value)}
+</question-form>`;
+
+  it('echoes the recommended choices through the native conversation protocol', () => {
+    expect(codeFilmDefaultAnswers(body(form))).toBe(
+      '[form answers — film-brief]\n- duration: 60s\n- audio: auto_voice\n- review: direct',
+    );
+  });
+
+  it('uses the native tagged form identity and leaves optional text unanswered', () => {
+    const questions = [
+      { ...form.questions[0], defaultValue: '90s', options: [{ label: '约 90 秒', value: '90s' }] },
+      { id: 'audio', type: 'textarea', defaultValue: '无，按默认方案制作。' },
+      { ...form.questions[2], id: 'storyboard' },
+    ];
+    const markup = `<question-form id="adr-film-brief" title="确认短片制作方向">
+${JSON.stringify({ questions })}
+</question-form>`;
+    expect(codeFilmDefaultAnswers(markup)).toBe(
+      '[form answers — adr-film-brief]\n- duration: 90s\n- audio: (skipped)\n- storyboard: direct',
+    );
+  });
+
+  it('skips custom questions, invalid choices and ambiguous forms', () => {
+    expect(codeFilmDefaultAnswers(body(form) + body(form))).toBeUndefined();
+    expect(codeFilmDefaultAnswers(body({ ...form, questions: [{ id: 'draft', type: 'textarea', required: true }] }))).toBeUndefined();
+    expect(codeFilmDefaultAnswers(body({
+      ...form, questions: [{ ...form.questions[0], defaultValue: '300s' }],
+    }))).toBeUndefined();
+  });
+});
+
 describe('POST /v1/tasks', () => {
+  it('preserves the exact film command and original text without using the HTML output contract', async () => {
+    const pkg = buildPackage([]);
+    map = await startFakeMap(pkg);
+    const source = Buffer.from('# ADR 原文\r\n\r\n  保留空白。\n');
+    const serialized = Buffer.from(JSON.stringify({
+      schemaVersion: MAP_DESIGN_WORKSPACE_SCHEMA,
+      runId: pkg.runId,
+      baseRevision: pkg.baseRevision,
+      files: [{
+        path: 'decisions.md', mediaType: 'text/markdown', sha256: sha256(source),
+        size: source.length, contentBase64: source.toString('base64'),
+      }],
+    }));
+    const command = '  用视觉笔记风格给我做一支关于架构决策记录的片子。\n';
+    const request = taskRequest(map, pkg);
+    const filmRequest = {
+      ...request,
+      envelope: { schemaVersion: 'map-code-film-command-v1', runId: pkg.runId, command },
+      transfer: { ...(request.transfer as object), inputSha256: sha256(serialized), allowedOutputPaths: ['film.mp4'] },
+    };
+    const normalized = normalizeTaskRequest(filmRequest);
+
+    expect(normalized.codeFilm).toBe(true);
+    expect(normalized.instruction).toBe(command);
+    expect(parseWorkspacePackage(serialized, normalized.transfer).files[0].bytes).toEqual(source);
+    expect(() => normalizeTaskRequest({ ...filmRequest, transfer: request.transfer })).toThrow('only film.mp4');
+    expect(() => normalizeTaskRequest({ ...filmRequest, envelope: request.envelope })).toThrow('index.html');
+  });
+
   it('accepts only the configured direct LLMGW authority and binds its identity to the task', async () => {
     const pkg = buildPackage([]);
     map = await startFakeMap(pkg);
