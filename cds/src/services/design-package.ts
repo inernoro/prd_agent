@@ -6,6 +6,7 @@ import previewContract from '../shared/design-preview-contract.json' with { type
 import { crc32 } from '../utils/zip.js';
 import { designSlots, designViewports, type DesignDeliveryFile, type DesignDemoData, type DesignDemoStep, type DesignFrameworkCharter, type DesignGoal, type DesignMaterial,
   type DesignRule, type DesignScope, type DesignScreen, type DesignTheme, type DesignVideo } from '../shared/design-workspace.js';
+import { designHandoffChecks, type DesignHandoffPlan, type DesignHandoffStep } from '../shared/design-handoff.js';
 import { designDimensions, designObjectiveMethods, type DesignAcceptancePlan, type DesignCoverageRecord, type DesignDimension } from '../shared/design-methods.js';
 import { rejectDesignGate, validateDesignPublicationGate, type DesignPublicationGateContext } from './design-publication-gate.js';
 import { PlanningError, planningText, rejectPlanning } from './engineering-planning-input.js';
@@ -355,10 +356,96 @@ function rule(value: unknown, screens: DesignScreen[]): DesignRule {
     }
     probe = { type: method.type, tolerance: method.tolerance as number | undefined };
   }
+  if (input.interaction !== undefined && input.interaction !== true) invalidDesign('交互验收项须声明为需执行的行为');
   return { id: designId(input.id, '验收编号'), rule: planningText(input.rule, '验收规则', 600), how, priority, slots,
-    screenId, probe, expected: input.expected === undefined ? undefined : planningText(input.expected, '验收期望', 800),
+    screenId, probe, ...(input.interaction ? { interaction: true as const } : {}), expected: input.expected === undefined ? undefined : planningText(input.expected, '验收期望', 800),
     ...(input.dimension === undefined ? {} : { dimension: parseDesignDimension(input.dimension) }),
     ...(input.requirementRef === undefined ? {} : { requirementRef: designId(input.requirementRef, '需求条款编号') }) };
+}
+
+function handoffSelector(value: unknown) {
+  const selector = planningText(value, '场景控件', 240);
+  if (/>>|[\u0000-\u001f]|^(?:css|text|xpath|internal:[^=]+)=/i.test(selector)) invalidDesign('场景控件须使用本画面内的 CSS 选择器');
+  return selector;
+}
+
+function handoffValue(value: unknown) {
+  if (typeof value !== 'string' || value.length > 1600 || value.includes('\0')) return invalidDesign('场景测试值须为最多 1600 字的文字');
+  return value;
+}
+
+function parseHandoffStep(value: unknown, remembered: Set<string>): DesignHandoffStep {
+  const step = designRecord(value, '场景步骤');
+  const selector = handoffSelector(step.selector);
+  if (step.action === 'click') {
+    designRecord(value, '点击步骤', ['action', 'selector']);
+    return { action: step.action, selector };
+  }
+  if (step.action === 'fill' || step.action === 'select') {
+    designRecord(value, '填写或选择步骤', ['action', 'selector', 'value']);
+    return { action: step.action, selector, value: handoffValue(step.value) };
+  }
+  if (step.action === 'attach') {
+    designRecord(value, '添加文本附件', ['action', 'selector', 'name', 'value']);
+    const name = planningText(step.name, '虚构附件名称', 120);
+    if (/[\u0000-\u001f\\/:]/.test(name) || !/\.(txt|md|markdown)$/i.test(name)) {
+      invalidDesign('请提供没有目录的文本附件名称');
+    }
+    return { action: step.action, selector, name, value: handoffValue(step.value) };
+  }
+  const check = designHandoffChecks.find(check => check === step.check) ?? invalidDesign('请选择受支持的检查方式');
+  const reading = check === 'text' || check === 'attribute' || check === 'value';
+  const attribute = check === 'attribute' ? planningText(step.attribute, '页面属性', 80) : undefined;
+  if ((attribute && !/^[a-zA-Z_][a-zA-Z0-9_.:-]*$/.test(attribute)) || (!attribute && step.attribute !== undefined)) {
+    invalidDesign('请填写有效的页面属性');
+  }
+  if (step.action === 'remember' && reading) {
+    designRecord(value, '记录操作前状态', ['action', 'selector', 'check', 'attribute', 'as']);
+    const name = designId(step.as, '状态编号');
+    if (remembered.has(name)) invalidDesign('同一场景的状态编号不可重复');
+    remembered.add(name);
+    return { action: step.action, selector, check, attribute, as: name };
+  }
+  if (step.action !== 'expect') return invalidDesign('不支持的场景步骤');
+  designRecord(value, '结果检查步骤', ['action', 'selector', 'check', 'attribute', 'equals', 'sameAs']);
+  if (step.sameAs !== undefined) {
+    const name = designId(step.sameAs, '操作前状态编号');
+    if (!reading || !remembered.has(name) || step.equals !== undefined) return invalidDesign('请引用同一场景中已记录的状态');
+    return { action: step.action, selector, check, attribute, sameAs: name };
+  }
+  if (reading) return { action: step.action, selector, check, attribute, equals: handoffValue(step.equals) };
+  if (step.equals !== undefined && typeof step.equals !== 'boolean') return invalidDesign('该检查的期望值须为真或假');
+  if (step.equals === false && (check === 'media-playing' || check === 'audio-playing' || check === 'fullscreen')) {
+    return invalidDesign('媒体播放和全屏须验证实际进入对应状态');
+  }
+  return { action: step.action, selector, check, equals: step.equals ?? true };
+}
+
+export function parseDesignHandoffPlan(value: unknown, screens: DesignScreen[], acceptance: DesignRule[]): DesignHandoffPlan {
+  const definition = designRecord(value, '交接场景', ['cases']);
+  const rules = new Map(acceptance.map(item => [item.id, item]));
+  const cases = unique(list(definition.cases, '交接场景', 24, raw => {
+    const item = designRecord(raw, '交接场景', ['id', 'title', 'screenId', 'ruleIds', 'theme', 'steps']);
+    const screenId = designId(item.screenId, '画面编号');
+    const screen = screens.find(row => row.id === screenId) ?? invalidDesign('交接场景引用了不存在的画面');
+    const theme = screen.themes.find(value => value === (item.theme ?? screen.themes[0])) ?? invalidDesign('场景主题须来自画面清单');
+    const ruleIds = unique(list(item.ruleIds, '关联验收项', 12, value => {
+      const id = designId(value, '验收项编号');
+      if (!rules.has(id)) invalidDesign('交接场景引用了不存在的验收项');
+      return id;
+    }), id => id, '验收项');
+    const remembered = new Set<string>();
+    const steps = list(item.steps, '场景步骤', 24, value => parseHandoffStep(value, remembered));
+    const acts = steps.some(row => row.action === 'click' || row.action === 'fill' || row.action === 'select' || row.action === 'attach');
+    if (!ruleIds.length || steps.at(-1)?.action !== 'expect' || (!acts && ruleIds.some(id => rules.get(id)?.interaction))) {
+      return invalidDesign('场景须关联验收条款，并在操作后检查结果');
+    }
+    return { id: designId(item.id, '场景编号'), title: planningText(item.title, '场景标题', 120), screenId, ruleIds, theme, steps };
+  }), item => item.id, '交接场景');
+  if (!cases.length || acceptance.some(rule => rule.interaction && !cases.some(item => item.ruleIds.includes(rule.id)))) {
+    return invalidDesign('请为每项交互要求补齐可运行的交接场景');
+  }
+  return { cases };
 }
 
 const deliveryText = /\.(?:md|mdx|txt|json|ya?ml|html?|css|[cm]?js|ts|tsx|jsx|csv|toml|xml|svg)$/i;
@@ -478,6 +565,7 @@ export async function readDesignPackage(bytes: Buffer) {
   }
   const acceptance = gateField('G-03', '验收项最多 60 条，须使用唯一编号和有效的画面与检查方法', () =>
     unique(list(input.acceptance, '验收项', 60, value => rule(value, screens), true), row => row.id, '验收项'));
+  const handoffPlan = input.handoff === undefined ? undefined : parseDesignHandoffPlan(input.handoff, screens, acceptance);
   const presentation = parseDesignPresentation(input, screens, file);
   const goals = parseDesignGoals(input.goals, acceptance);
   const demoData = parseDesignDemoData(input.demoData, name => utf8(name, 512 * 1024));
@@ -503,7 +591,7 @@ export async function readDesignPackage(bytes: Buffer) {
     packageId: input.id === undefined ? undefined : designId(input.id, '稿件编号'),
     project: planningText(input.project, '项目', 160), title: planningText(input.title, '稿件标题', 180), rationale,
     sha256: designDigest(bytes), filesSha256: designDigest(JSON.stringify(delivery.index.map(file => [file.path, file.sha256]))),
-    prototype: Buffer.from(html), screens, acceptance, spec, renders, delivery, ...presentation, goals, demoData,
+    prototype: Buffer.from(html), screens, acceptance, spec, renders, delivery, ...presentation, goals, demoData, handoffPlan,
     acceptancePlan: input.acceptancePlan === undefined ? undefined : parseAcceptancePlan(input.acceptancePlan),
     acceptanceMode: acceptanceMode === 'objective' ? 'objective' as const : undefined,
     evidenceProtocol: evidenceProtocol === 'program-v1' ? evidenceProtocol : undefined,

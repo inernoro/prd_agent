@@ -107,6 +107,13 @@ export function DesignWorkspacePage() {
   const frameworkVersion = framework?.versions.find(row => row.version === Number(params.get('version')));
   const frameworkList = params.get('view') === 'frameworks';
   const version = entry?.versions.find(row => row.version === Number(versionParam)) ?? (entry ? latestDesign(entry) : undefined);
+  const handoffBlocks = Boolean(version?.handoff && version.handoff.status !== 'passed' && version.handoff.status !== 'legacy'
+    && entry?.frozen !== version.version);
+  useEffect(() => {
+    if (version?.handoff?.status !== 'running') return;
+    const timer = window.setTimeout(refreshWorkspace, 1800);
+    return () => window.clearTimeout(timer);
+  }, [version?.handoff?.status, refreshWorkspace, reload]);
   const canFreeze = permissions?.review && (!entry?.reviewers?.length || entry.reviewers.some(reviewer => reviewer.id === permissions.actorId));
   const canUnfreeze = permissions?.review && (permissions.steward || canFreeze);
   const activeUpgrade = entry?.upgrade?.status === 'active' ? entry.upgrade : undefined;
@@ -281,13 +288,14 @@ export function DesignWorkspacePage() {
     const requestId = pending.current?.key === key ? pending.current.id : crypto.randomUUID();
     pending.current = { key, id: requestId };
     try {
-      const endpoint = type === 'feedback.attach' ? '/feedback/attachments'
+      const endpoint = type === 'handoff.check' ? '/handoff/check' : type === 'feedback.attach' ? '/feedback/attachments'
         : type.startsWith('feedback.') || ['brief.reply', 'brief.claim', 'brief.release'].includes(type) ? '/feedback' : '/commands';
       const response = await apiRequest<{ projectId: string }>(designPath(project) + endpoint,
         { method: 'POST', body: { type, requestId, ...fields } });
       if (response.projectId !== project) throw new Error('操作回执与当前项目不符');
       pending.current = undefined;
-      setNotice(type === 'reference.generate' ? '已提交补图，请在画廊查看进度。' : '操作已保存');
+      setNotice(type === 'reference.generate' ? '已提交补图，请在画廊查看进度。'
+        : type === 'handoff.check' ? '已提交交接检查。' : '操作已保存');
       if (type !== 'reference.generate') refreshWorkspace();
       return true;
     } catch (error) { setIssue(error instanceof Error ? error.message : '未能保存操作，请重试'); return false; }
@@ -386,9 +394,11 @@ export function DesignWorkspacePage() {
         </dl>
         <SkillGuide designId={entry.id} version={version.version} />
         <footer className="dw-row">
-          {canFreeze && !activeUpgrade && entry.frozen !== version.version
+          {version.handoff && version.handoff.status !== 'legacy' &&
+            <button className="ep-button" type="button" onClick={() => openFull('delivery', { part: 'handoff' })}>查看交接检查</button>}
+          {canFreeze && !handoffBlocks && !activeUpgrade && entry.frozen !== version.version
             && <button className="ep-button" type="button" disabled={busy} data-action="freeze" onClick={() => setFreezeTarget({ id: entry.id, version: version.version })}>定为实施基线</button>}
-          {canFreeze && !activeUpgrade && (version.version === currentVersion || version.version === entry.frozen)
+          {canFreeze && !handoffBlocks && !activeUpgrade && (version.version === currentVersion || version.version === entry.frozen)
             && version.version !== entry.implementedVersion && <button className="ep-button" type="button" disabled={busy}
               data-action="start-upgrade" onClick={() => void command('implementation.start', {
                 designId: entry.id, version: version.version, expectedBaseline: entry.frozen ?? null,
@@ -500,7 +510,7 @@ export function DesignWorkspacePage() {
               if (view === 'need') openFull('need');
               else onChange({ ...deliveryQuery, tab: 'delivery', screen: screen ?? '' });
             }}
-            onSetBaseline={canFreeze && !activeUpgrade ? () => setFreezeTarget({ id: entry.id, version: version.version }) : undefined}
+            onSetBaseline={canFreeze && !handoffBlocks && !activeUpgrade ? () => setFreezeTarget({ id: entry.id, version: version.version }) : undefined}
             command={command} onPreviewStale={refreshWorkspace} />}
           {tab === 'log' && <DesignHistory entry={entry} version={version}
             onVersion={selected => onChange({ ...deliveryQuery, version: String(selected), tab: 'delivery', run: '', screen: '' })}
@@ -541,7 +551,7 @@ export function DesignWorkspacePage() {
     </DialogContent></Dialog>}
     {showCandidates && entry && version && workspace && <ExtractFramework key={`${entry.id}/${version.version}`} entry={entry} version={version} workspace={workspace} command={command}
       busy={busy} issue={issue} close={() => { setIssue(''); setExtract(false); dismissPanel('framework-candidates'); }} />}
-    {draftVisible && canFreeze && !activeUpgrade && entry && version && freeze?.id === entry.id && freeze.version === version.version
+    {draftVisible && canFreeze && !handoffBlocks && !activeUpgrade && entry && version && freeze?.id === entry.id && freeze.version === version.version
       && entry.frozen !== version.version && <Dialog open onOpenChange={open => { if (!open && !busy) closeFreeze(); }}>
       <DialogContent className="dw-modal dw-surface" data-design-panel="freeze">
         <DialogTitle>将 V{version.version} 定为实施基线</DialogTitle>

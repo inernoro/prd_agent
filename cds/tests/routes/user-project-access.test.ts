@@ -1423,6 +1423,19 @@ describe('human project grants through the production server', () => {
     expect((await credentialCall('POST', approval, identity, { designAccess: 'publish' })).status).toBe(403);
   });
 
+  it('项目成员只能在获授权项目运行稿件交接检查', async () => {
+    expect((await grant(['project-a'])).status).toBe(200);
+    const check = { type: 'handoff.check', requestId: 'member-design-check', designId: 'DSN-fixture', version: 1 };
+    const own = '/api/projects/project-a/design/handoff/check';
+    expect(await call('POST', own, member, check)).toMatchObject({
+      status: 404, body: { error: 'design_not_found', message: '该稿件不存在' },
+    });
+    expect((await call('POST', own, member, { ...check, type: 'acceptance.sign' })).status).toBe(400);
+    expect(await call('POST', '/api/projects/project-b/design/handoff/check', member, check)).toMatchObject({
+      status: 404, body: { error: 'design_not_found', message: '没有可访问的设计项目' },
+    });
+  });
+
   it('lets the same anonymous design publisher revise after expiry and denies name or revoked-key recovery', async () => {
     const projectId = 'project-a';
     const approval = `/api/projects/${projectId}/access-requests`;

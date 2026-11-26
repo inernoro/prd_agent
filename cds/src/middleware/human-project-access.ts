@@ -115,7 +115,7 @@ export function createHumanProjectAccessMiddleware(state: StateService) {
           || (tail.length === 1 && /^(reviewers|intake)$/i.test(tail[0]))
           || (tail.length === 2 && /^artifacts$/i.test(tail[0])));
         const write = method === 'POST' && ((tail.length === 1 && /^(commands|packages|feedback|viewed)$/i.test(tail[0]))
-          || (tail.length === 2 && /^feedback$/i.test(tail[0]) && /^attachments$/i.test(tail[1]))
+          || (tail.length === 2 && /^(feedback\/attachments|handoff\/check)$/i.test(tail.join('/')))
           || (tail.length === 3 && /^shares$/i.test(tail[0]) && /^handoff$/i.test(tail[2])));
         if ((read || write) && checkProject(id)) { next(); return; }
         res.status(404).json({ error: 'design_not_found', message: '没有可访问的设计项目' }); return;
