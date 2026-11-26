@@ -279,7 +279,7 @@ describe('CDS Agent 接入口令', () => {
     // 分支地址设置只提供给有权限的人类会话，不新增 Agent 写入口。
     // 新增分支归档清理：有项目边界、需要明确确认，不直接暴露为MCP自动操作。
     // 短期监控提议协议单独登记，不作为可直调的系统写能力。
-    expect(CDS_AGENT_CAPABILITY_DEFINITIONS).toHaveLength(78);
+    expect(CDS_AGENT_CAPABILITY_DEFINITIONS).toHaveLength(79);
     expect(getAgentCapabilitiesForMission('engineering-planning')).toMatchObject([{
       id: 'engineering-planning',
       routeSource: 'engineering-planning.ts',
@@ -315,6 +315,8 @@ describe('CDS Agent 接入口令', () => {
       .toMatchObject({ access: 'project', agentUse: 'direct', risk: 'write', cliFamily: 'code-review' });
     expect(CDS_AGENT_CAPABILITY_DEFINITIONS.find(capability => capability.id === 'project-inspections'))
       .toMatchObject({ access: 'project', risk: 'write', agentUse: 'direct' });
+    expect(CDS_AGENT_CAPABILITY_DEFINITIONS.find(capability => capability.id === 'project-avatars'))
+      .toMatchObject({ scope: 'project', access: 'project', risk: 'write', agentUse: 'guided', mcpExposure: 'approval-required' });
     expect(CDS_AGENT_CAPABILITY_DEFINITIONS.find(capability => capability.id === 'identity-connections'))
       .toMatchObject({ access: 'public', risk: 'write', agentUse: 'direct' });
     expect(CDS_AGENT_CAPABILITY_DEFINITIONS.find(capability => capability.id === 'instance-catalog'))

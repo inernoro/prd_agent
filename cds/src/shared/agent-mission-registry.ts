@@ -207,6 +207,7 @@ const CDS_AGENT_CAPABILITY_SEEDS = [
   ['operator-console', '系统运维审批台', 'operator-console.ts', 'system', 'human-only', 'destructive', 'guided', 'cds', '', 'AI 可以发起请求和查状态，批准、拒绝和执行仅人类可做'],
   ['peer-sync', 'Peer Sync 配对与资源同步', 'peer-sync.ts', 'system', 'protocol-token', 'destructive', 'protocol-only', 'cds', 'peer', '配对码、HMAC 和资源 apply 属于专用同步协议'],
   ['pending-import', '项目配置导入审批', 'pending-import.ts', 'project', 'project', 'write', 'direct', 'cds-project-scan', 'import', 'Agent 可提交，审批和拒绝由页面完成'],
+  ['project-avatars', '项目头像', 'project-avatars.ts', 'project', 'project', 'write', 'guided', 'cds', '', '使用获授权的项目，在项目卡片上上传 PNG、JPEG 或 WebP，或恢复默认头像。上传经 R2 确认后才更新，镜像项目由原项目管理'],
   ['project-compose', 'Compose 与配置漂移', 'project-compose.ts', 'project', 'project', 'write', 'direct', 'cds-project-scan', 'scan / verify', '变更 Compose 前先读取当前 SSOT 并执行 drift scan'],
   ['project-infra-resync', '基础设施重新同步', 'project-infra-resync.ts', 'project', 'project', 'destructive', 'guided', 'cds-project-scan', '', '必须先 preview，再批准 execute'],
   ['project-migration', '项目与数据迁移', 'project-migration.ts', 'project', 'project', 'destructive', 'guided', 'cds', '', '迁移需要来源、目标、快照、进度和可回滚证据'],
