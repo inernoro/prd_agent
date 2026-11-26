@@ -56,6 +56,20 @@ try {
     && item.runtimeModelCallCount === 78);
   assert.ok(reference, 'The cloud acceptance account does not own the original ADR film. No new film was submitted.');
   const movies = dialog.getByLabel('最近任务');
+  const fresh = history.items.find((item) => item.title === 'ADR 视觉笔记 · 快速创作云端复验 2026-11-26');
+  assert.ok(fresh, 'The original owner cannot find the new cloud task.');
+  await movies.selectOption(fresh.runId);
+  await dialog.getByRole('status').first().waitFor();
+  await page.reload();
+  const [reloadedHistory] = await Promise.all([
+    page.waitForResponse(requestMatches('/api/design-artifacts/code-films', 'GET')),
+    page.getByRole('button', { name: '快速创作', exact: true }).click(),
+  ]);
+  const afterReload = (await responseData(reloadedHistory, 'Read history after reload')).items.find((item) => item.runId === fresh.runId);
+  assert.ok(afterReload, 'The same task is missing after a browser reload.');
+  await movies.selectOption(fresh.runId);
+  await dialog.getByRole('status').first().waitFor();
+  console.log('Refresh verified: the same submitted run remained visible in the browser.');
   await movies.selectOption(reference.runId);
   const filmPath = `/api/design-artifacts/runs/${reference.runId}/film.mp4`;
   const [film] = await Promise.all([
@@ -82,7 +96,20 @@ try {
   });
   assert.equal(blob.length, 29_785_188);
   assert.equal(blob.digest, '192c5094efe19eea21e6039c628bcfe4d978158e45d2b2d8967a2313751f88e0');
-  console.log('Original MP4 recovered in browser; bytes and duration match the original.');
+  await video.evaluate(async (movie) => {
+    movie.muted = true;
+    await movie.play();
+  });
+  await page.waitForFunction(() => document.querySelector('video[aria-label="生成视频预览"]')?.currentTime > 0.1);
+  await video.evaluate((movie) => {
+    movie.pause();
+    movie.currentTime = 42;
+  });
+  await page.waitForFunction(() => {
+    const movie = document.querySelector('video[aria-label="生成视频预览"]');
+    return movie && !movie.seeking && Math.abs(movie.currentTime - 42) < 0.1;
+  });
+  console.log('Original MP4 recovered in browser; hash, duration, playback and seek verified.');
 
   const saveButton = dialog.getByRole('button', { name: '保存到网页托管', exact: true });
   const save = async () => {
