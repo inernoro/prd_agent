@@ -47,6 +47,7 @@ import { resolveArtifactCommitIdentity } from '../services/artifact-commit-ident
 import { refreshArtifactWaiters, registerArtifactWaitRefresher, requestArtifactWaitRefresh } from '../services/artifact-admission-wait.js';
 import { diagnoseCiImage, mapArtifactProducer } from '../services/ci-image-diagnosis.js';
 import { ContainerStopUnconfirmedError, resolveEffectiveProfile, resolveDeployReadinessFloorSeconds, applyDeployReadinessFloor } from '../services/container.js';
+import { dockerRuntimeResourceFlags } from '../services/runtime-resource-limits.js';
 import { diskGuard } from '../services/disk-guard.js';
 import { createJanitorObservationRouter } from './janitor-observation.js';
 import { createSelfUpdateCheckpoint, prepareDetachedCdsRestart } from '../services/self-update-handoff.js';
@@ -17276,6 +17277,21 @@ export function createBranchRouter(deps: RouterDeps): Router {
         return Object.keys(out).length > 0 ? out : undefined;
       })();
 
+      const prevOverride = stateService.getBranchProfileOverride(id, profileId);
+      const enforceRuntime = resolveEffectiveProfile(profile, entry).resources?.enforceRuntime;
+      const requestedResources = body.resources && typeof body.resources === 'object' && !Array.isArray(body.resources)
+        ? body.resources as BuildProfileOverride['resources'] : undefined;
+      let resources = requestedResources ?? (prevOverride?.resources?.enforceRuntime != null ? prevOverride.resources : undefined);
+      if (requestedResources && enforceRuntime != null && requestedResources.enforceRuntime == null) {
+        resources = { ...requestedResources, enforceRuntime };
+      }
+      try {
+        dockerRuntimeResourceFlags(resources);
+      } catch (error) {
+        res.status(400).json({ error: (error as Error).message });
+        return;
+      }
+
       const override = {
         dockerImage: typeof body.dockerImage === 'string' ? body.dockerImage : undefined,
         command: typeof body.command === 'string' ? body.command : undefined,
@@ -17284,7 +17300,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         env: envOverride,
         pathPrefixes: Array.isArray(body.pathPrefixes) ? body.pathPrefixes as string[] : undefined,
         dependsOn: Array.isArray(body.dependsOn) ? body.dependsOn.map(value => (value as string).trim()) : undefined,
-        resources: body.resources && typeof body.resources === 'object' && !Array.isArray(body.resources) ? body.resources as { memoryMB?: number; cpus?: number } : undefined,
+        resources,
         activeDeployMode: typeof body.activeDeployMode === 'string' ? body.activeDeployMode : undefined,
         startupSignal: typeof body.startupSignal === 'string' ? body.startupSignal : undefined,
         readinessProbe,
@@ -17299,7 +17315,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 抹掉，下一次 forwarder 刷新时路由消失（Codex review 第七轮 P1）。
       // 这两个字段没有任何客户端用「省略」表达清空（要清由 web-entry-config 显式写），
       // 所以请求体没提就从已存的覆盖里原样带过来，不管它的人不许毁它。
-      const prevOverride = stateService.getBranchProfileOverride(id, profileId);
       const preserved: Pick<BuildProfileOverride, 'subdomain' | 'webEntry' | 'dependsOn'> = {
         ...(body.dependsOn === undefined && prevOverride?.dependsOn != null
           ? { dependsOn: prevOverride.dependsOn } : {}),

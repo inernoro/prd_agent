@@ -2401,6 +2401,19 @@ describe('Branch Routes', () => {
       expect(bad.status).toBe(400);
     });
 
+    it('keeps explicit runtime caps on a branch service when other profile settings change', async () => {
+      seedBranch('b1');
+      await request(server, 'PUT', '/api/branches/b1/extra-services', {
+        extraProfiles: [{ id: 'demo-extra', name: 'demo-extra', dockerImage: 'nginx:alpine', containerPort: 80 }],
+      });
+      const url = '/api/branches/b1/profile-overrides/demo-extra';
+      const resources = { enforceRuntime: true, cpus: 1.5, memoryMB: 6144 };
+      expect((await request(server, 'PUT', url, { resources })).status).toBe(200);
+      expect((await request(server, 'PUT', url, { notes: '更新备注' })).status).toBe(200);
+      expect((await request(server, 'PUT', url, { resources: { cpus: 2 } })).status).toBe(400);
+      expect(stateService.getBranch('b1')!.profileOverrides?.['demo-extra']?.resources).toEqual(resources);
+    });
+
     it('clears a stale profileOverride when its extra service is removed (Codex P2)', async () => {
       seedBranch('b1');
       await request(server, 'PUT', '/api/branches/b1/extra-services', {
