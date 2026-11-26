@@ -328,6 +328,13 @@ public sealed class DesignArtifactsController : ControllerBase
         {
             requestPolicy = await DesignArtifactModelSelection.CaptureForWebPageAsync(_configuration,
                 _modelResolver, request.ModelOptionId, DesignArtifactOperations.Generate, CancellationToken.None);
+            if (isCodeFilm && _configuration["DesignRuntime:OpenDesign:CodeFilmReasoningEffort"] is { Length: > 0 } effort)
+            {
+                if (effort is not ("low" or "medium"))
+                    throw new InvalidOperationException("代码视频推理档位须为 low 或 medium");
+                requestPolicy.ReasoningMode = "effort";
+                requestPolicy.ReasoningEffort = effort;
+            }
         }
         catch (DesignArtifactModelUnavailableException ex)
         {
@@ -405,7 +412,7 @@ public sealed class DesignArtifactsController : ControllerBase
         }
         try
         {
-            await _queue.EnqueueAsync(RunKinds.DesignArtifact, runId, CancellationToken.None);
+            await _queue.EnqueueAsync(RunKinds.DesignArtifactQueue(run.ArtifactType), runId, CancellationToken.None);
         }
         catch (Exception ex)
         {
@@ -717,7 +724,7 @@ public sealed class DesignArtifactsController : ControllerBase
         }
         try
         {
-            await _queue.EnqueueAsync(RunKinds.DesignArtifact, restarted.Id, CancellationToken.None);
+            await _queue.EnqueueAsync(RunKinds.DesignArtifactQueue(restarted.ArtifactType), restarted.Id, CancellationToken.None);
         }
         catch (Exception ex)
         {
@@ -834,7 +841,7 @@ public sealed class DesignArtifactsController : ControllerBase
         OpenDesignServiceArtifactExecutor recovery, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(run.WorkspaceResultAssetKey))
-            return await recovery.ReadRetainedFilmAsync(run.Id, ct);
+            return await recovery.ReadRetainedFilmAsync(run.Id, ct, run.CodeFilmRuntimeSlot);
         var package = await workspace.ReadCommittedCodeFilmAsync(run, ct);
         return Convert.FromBase64String(package.Files.Single(file => file.Path == "film.mp4").ContentBase64);
     }

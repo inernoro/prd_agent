@@ -188,6 +188,7 @@ public class DesignArtifactRun : PrdAgent.Core.Interfaces.ITaskAuthorizedRun
     /// 禁止按更新时间重新选择另一个基础设施目标。
     /// </summary>
     public string? RuntimeConnectionId { get; set; }
+    public string? CodeFilmRuntimeSlot { get; set; }
 
     public string Instruction { get; set; } = string.Empty;
 

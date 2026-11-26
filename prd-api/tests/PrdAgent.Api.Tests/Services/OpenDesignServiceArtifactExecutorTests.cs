@@ -30,6 +30,47 @@ public sealed class OpenDesignServiceArtifactExecutorTests
     private const string IndexHtml = "<!doctype html><html><body>服务交回的页面</body></html>";
 
     [Fact]
+    public void CodeFilmSlots_KeepWebAndLegacyRecoveryOnTheOriginalService()
+    {
+        var config = Config(new()
+        {
+            [OpenDesignTransportResolver.BaseUrlKey] = BaseUrl,
+            [OpenDesignTransportResolver.ApiKeyKey] = ApiKey,
+            [OpenDesignTransportResolver.CodeFilmSlotsKey] = "http://film-one:8093,http://film-two:8093",
+        });
+        var slots = OpenDesignTransportResolver.CodeFilmSlots(config);
+        slots.Count.ShouldBe(2);
+        OpenDesignTransportResolver.ResolveForCodeFilmSlot(config, null).BaseUrl.ShouldBe(new Uri(BaseUrl));
+        var assigned = OpenDesignTransportResolver.ResolveForCodeFilmSlot(config, slots[1].AbsoluteUri);
+        assigned.BaseUrl.ShouldBe(slots[1]);
+        assigned.ApiKey.ShouldBe(ApiKey);
+        OpenDesignTransportResolver.ResolveForCodeFilmSlot(config, "http://retired:8093/").Problem.ShouldNotBeNull();
+    }
+
+    [Fact]
+    public void CodeFilmSlots_RejectDuplicateEndpointsAndTheWebSlot()
+    {
+        var config = Config(new()
+        {
+            [OpenDesignTransportResolver.BaseUrlKey] = BaseUrl,
+            [OpenDesignTransportResolver.ApiKeyKey] = ApiKey,
+            [OpenDesignTransportResolver.CodeFilmSlotsKey] = BaseUrl,
+        });
+        Should.Throw<InvalidOperationException>(() => OpenDesignTransportResolver.CodeFilmSlots(config));
+        config[OpenDesignTransportResolver.CodeFilmSlotsKey] = "http://film:8093,http://film:8093/";
+        Should.Throw<InvalidOperationException>(() => OpenDesignTransportResolver.CodeFilmSlots(config));
+    }
+
+    [Fact]
+    public void CodeFilmQueue_IsIsolatedFromWebDesignAndFromOtherRevisions()
+    {
+        var queue = RunKinds.DesignArtifactQueue(DesignArtifactTypes.CodeFilm);
+        queue.ShouldNotBe(RunKinds.DesignArtifactQueue(DesignArtifactTypes.HtmlPpt));
+        RedisRunQueue.BuildKey(queue, "film-test::revision::first")
+            .ShouldNotBe(RedisRunQueue.BuildKey(queue, "film-test::revision::second"));
+    }
+
+    [Fact]
     public async Task RetainedFilm_ReadsTheOriginalBytesAndRejectsCorruption()
     {
         var film = new byte[64];

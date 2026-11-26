@@ -33,6 +33,7 @@ import {
 import { runtimeDiagnosticPreview } from './diagnostics.js';
 import { OpenDesignClient, signalForDeadline, type OpenDesignRunOutcome } from './engine/client.js';
 import { codeFilmDefaultAnswers, collectCodeFilm, registerCodeFilmSkill, verifyCodeFilmInput } from './engine/code-film.js';
+import { observeCodeFilmWork } from './engine/code-film-timing.js';
 import type { FilmRecoveryStore } from './engine/film-recovery.js';
 import type { EngineDaemon } from './engine/daemon.js';
 import { startEgressRelay, type EgressRelay, type EgressRelayOptions } from './engine/egress-relay.js';
@@ -581,6 +582,8 @@ export class DesignTaskExecutor {
           if (film) retainFilm(film);
         };
         let finalRunId = firstRunId;
+        const startedAt = performance.now();
+        const stopTiming = observeCodeFilmWork(this.options.daemon.describe().pid ?? undefined);
         try {
           await client.waitForRun(firstRunId, budget.finalizationDeadline, signal, onStage);
           let film = getFilm();
@@ -613,6 +616,9 @@ export class DesignTaskExecutor {
           throw error;
         } finally {
           this.captureInterruptedFilm = undefined;
+          const timing = { totalMs: Math.round(performance.now() - startedAt), ...stopTiming() };
+          this.options.log?.(`[code-film-timing] ${JSON.stringify({runId: sessionId, ...timing})}`);
+          onStage('code_film_timing', timing);
         }
       }
       const designDirection = designContext.direction;

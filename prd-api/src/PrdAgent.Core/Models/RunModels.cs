@@ -9,6 +9,10 @@ public static class RunKinds
     public const string VideoToDoc = "videoToDoc";
     public const string Arena = "arena";
     public const string DesignArtifact = "designArtifact";
+    public const string CodeFilm = "codeFilm";
+
+    public static string DesignArtifactQueue(string artifactType) =>
+        artifactType == DesignArtifactTypes.CodeFilm ? CodeFilm : DesignArtifact;
 }
 
 public static class RunStatuses

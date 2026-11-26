@@ -90,9 +90,9 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
             : artifactType is DesignArtifactTypes.WebPage or DesignArtifactTypes.HtmlPpt
               && operation is DesignArtifactOperations.Generate or DesignArtifactOperations.Edit;
 
-    internal async Task<byte[]?> ReadRetainedFilmAsync(string runId, CancellationToken ct)
+    internal async Task<byte[]?> ReadRetainedFilmAsync(string runId, CancellationToken ct, string? codeFilmSlot = null)
     {
-        var transport = OpenDesignTransportResolver.Resolve(_configuration);
+        var transport = OpenDesignTransportResolver.ResolveForCodeFilmSlot(_configuration, codeFilmSlot);
         if (transport.Transport != OpenDesignTransport.Service || transport.Problem != null
             || transport.BaseUrl == null || transport.ApiKey == null)
             return null;
@@ -248,7 +248,9 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
             yield break;
         }
 
-        var transport = OpenDesignTransportResolver.Resolve(_configuration);
+        var transport = run.ArtifactType == DesignArtifactTypes.CodeFilm
+            ? OpenDesignTransportResolver.ResolveForCodeFilmSlot(_configuration, run.CodeFilmRuntimeSlot)
+            : OpenDesignTransportResolver.Resolve(_configuration);
         _logger.LogInformation(
             "OpenDesign 设计任务开始执行 transport={Transport} run={RunId} operation={Operation} baseUrl={BaseUrl}",
             TransportLogName, run.Id, run.Operation, transport.BaseUrl);
