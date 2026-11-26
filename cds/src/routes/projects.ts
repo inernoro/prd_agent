@@ -88,6 +88,7 @@ import { combinedOutput } from '../types.js';
 import { workloadCgroupFlags } from '../services/workload-cgroup.js';
 import { isAuthenticatedHuman, isHumanSystemOwner, verifiedHumanAccountId, type HumanAuthContext } from '../services/human-auth.js';
 import { canHumanAccessProject, isScopedHuman } from '../services/human-project-access.js';
+import { dtsCredentialAllowed } from '../services/dts-access.js';
 
 type OnboardingRuntime = NonNullable<Project['onboardingRuntime']>;
 type OnboardingService = NonNullable<Project['onboardingServices']>[number];
@@ -371,6 +372,24 @@ function agentKeyIssuer(key: Pick<AgentKey, 'issuer' | 'createdBy' | 'issuedByCr
   // Older direct sign / approval routes recorded the authenticated account when known.
   const account = key.createdBy?.trim().toLowerCase();
   return account && !['anonymous', 'cookie', 'operator'].includes(account) ? 'user' : 'unknown';
+}
+
+function designApprovalReceipt(state: StateService, projectId: string, key: AgentKey) {
+  if (key.designAccess !== 'publish' || !key.designAccessRequestId) return undefined;
+  const approval = state.getAccessRequest(key.designAccessRequestId);
+  if (!approval || (approval.kind ?? 'project') !== 'project' || approval.status !== 'approved'
+    || approval.projectId !== projectId || approval.designAccess !== key.designAccess || approval.issuedKeyId !== key.id) {
+    return undefined;
+  }
+  const { id, decidedAt, deliveredAt, issuedKeyPlaintext } = approval;
+  if (!deliveredAt && !issuedKeyPlaintext) return undefined;
+  return {
+    requestId: id,
+    approvedAt: decidedAt,
+    deliveryStatus: deliveredAt ? 'delivered' : 'awaiting-collection',
+    deliveredAt,
+    usable: dtsCredentialAllowed(state, { kind: 'project-key', id: key.id }, projectId, 'design'),
+  };
 }
 
 function agentKeySigner(req: import('express').Request): { issuer: ProjectAgentKeyIssuer; createdBy?: string } {
@@ -4650,6 +4669,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         projectAccess: e.projectAccess,
         planningAccess: e.planningAccess,
         designAccess: e.designAccess,
+        designApproval: designApprovalReceipt(stateService, project.id, e),
         createdAt: e.createdAt,
         createdBy: e.createdBy,
         issuer: agentKeyIssuer(e),
