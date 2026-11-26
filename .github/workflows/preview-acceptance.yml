@@ -217,7 +217,22 @@ jobs:
           E2E_BASE_URL: ${{ github.event.inputs.e2e_base_url }}
           E2E_USER: ${{ secrets.E2E_USER }}
           E2E_PASSWORD: ${{ secrets.E2E_PASSWORD }}
+          VERIFY_FILM_AUDIO: '1'
         run: node quick-film-cloud-acceptance.mjs
+
+      - name: Set up Python for audio verification
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Check caption timing in the finished audio track
+        env:
+          HF_HUB_DISABLE_TELEMETRY: '1'
+          HF_HUB_DISABLE_XET: '1'
+        run: |
+          trap 'rm -f "$RUNNER_TEMP/map-accepted-film.mp4"' EXIT
+          python -m pip install --no-cache-dir 'faster-whisper==1.2.1'
+          python quick-film-audio-alignment.py
 
       - name: Upload HTML report on failure
         if: failure()

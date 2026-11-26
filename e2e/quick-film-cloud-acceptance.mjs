@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { chromium } from '@playwright/test';
 
 const origin = 'https://opendesign-sketchnote-film-codex-prd-agent.miduo.org';
@@ -172,6 +175,14 @@ try {
   }
   assert.ok(hostedPlayer, 'The owner share page did not load the original movie.');
   console.log('Owner share plays the same hosted movie; anonymous access was denied.');
+
+  if (process.env.VERIFY_FILM_AUDIO === '1') {
+    const response = await page.request.get(endpoint(filmPath).href, apiAuth);
+    assert.ok(response.ok(), 'The committed result could not be read for audio verification.');
+    const content = await response.body();
+    assert.equal(createHash('sha256').update(content).digest('hex'), blob.digest);
+    await writeFile(join(process.env.RUNNER_TEMP, 'map-accepted-film.mp4'), content, { mode: 0o600, flag: 'wx' });
+  }
 
 } finally {
   await browser.close();
