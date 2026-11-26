@@ -1,4 +1,3 @@
-import { useDesignThumbnails } from './DesignGallery';
 import { useRef, useState, type FormEvent, type MouseEvent } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
@@ -8,6 +7,7 @@ import { designDemoImplementationPath, designSlots, designViewports, type Design
 import { designComparisonStatus, designMethodPlanEnabled, designMethodVisualStatus, designObjectivePlanEnabled } from '../../../../src/shared/design-methods';
 import { concreteVisualEvidence, designSceneCoverage, designVisualCheckStatus, designVisualKey, designVisualReference, designVisualRowForSlot, designVisualRuleShot, designVisualSlots,
   designVisualStandard, designVisualStatus, visualSlotTheme, type DesignVisualChecks, type DesignVisualRow, type DesignVisualStatus } from '../../../../src/shared/design-visual';
+import { useDesignThumbnails } from './DesignGallery';
 import { cellNames, designArtifact, designDate, designPublisherLabel, ruleModes, slotNames, type DesignCommand } from './design-ui';
 
 const verdictNames: Record<DesignVisualStatus, string> = {
@@ -15,6 +15,10 @@ const verdictNames: Record<DesignVisualStatus, string> = {
 };
 const checkNames = { passed: '通过', failed: '有问题', missing: '缺证据' } as const;
 const columns = ['画面', '验收方式', '对照图', '实现图', '结论'];
+const thumbnailStatusLabels = {
+  running: '对照图生成中', incomplete: '对照图生成未完成', idle: '等待生成对照图',
+  unavailable: '对照图生成暂不可用', locked: '签收时的对照图已保留', ready: '当前画面缺少对照图',
+} as const;
 
 function reviewRow(version: DesignVersion, screen: DesignScreen, slot: DesignSlot, visualOnly: boolean, run?: DesignRun,
   sceneCoverage?: ReturnType<typeof designSceneCoverage>) {
@@ -38,9 +42,9 @@ function reviewRow(version: DesignVersion, screen: DesignScreen, slot: DesignSlo
 }
 type ReviewRow = ReturnType<typeof reviewRow>;
 
-export function DesignVisualAcceptance({ entry, version: declared, run, busy, writable, command, onRule, program, visualOnly = false }: {
+export function DesignVisualAcceptance({ entry, version: declared, run, busy, writable, command, onRule, program, canGenerateReferences, visualOnly = false }: {
   entry: DesignEntry; version: DesignVersion; run?: DesignRun; busy: boolean; writable: boolean;
-  command: DesignCommand; onRule: (cell: DesignCell) => void; visualOnly?: boolean;
+  command: DesignCommand; onRule: (cell: DesignCell) => void; canGenerateReferences?: boolean; visualOnly?: boolean;
   program?: { capture: boolean; recheck: boolean; actor?: string };
 }) {
   const thumbnails = useDesignThumbnails(entry.projectId, declared, entry.id);
@@ -74,6 +78,15 @@ export function DesignVisualAcceptance({ entry, version: declared, run, busy, wr
     || program && !run?.programEvidence?.[designVisualKey(row.screen.id, slot)]?.review?.matched);
   const shown = filter === 'todo' ? pending : rows;
   const row = rows.find(row => row.screen.id === opened);
+  const thumbnailState = thumbnails.status?.state;
+  const showReferenceStatus = !visualOnly && !program && shown.some(item => !item.reference);
+  const thumbnailLabel = thumbnails.error ? '暂时读不到对照图进度'
+    : thumbnailState ? thumbnailStatusLabels[thumbnailState] : '正在读取对照图状态';
+  const thumbnailProgress = (thumbnailState === 'running' || thumbnailState === 'incomplete') && thumbnails.status
+    ? ` ${thumbnails.status.completed}/${thumbnails.status.total}` : '';
+  const canRequestReferences = canGenerateReferences && !thumbnails.error && (thumbnailState === 'idle' || thumbnailState === 'incomplete');
+  const prototypePath = `/design?${new URLSearchParams({ project: entry.projectId, design: entry.id,
+    version: String(version.version), tab: 'delivery' })}`;
   const snapshot = (artifactId: string) => designArtifact(entry.projectId, artifactId);
   const open = (event: MouseEvent<HTMLButtonElement>, screenId: string) => {
     opener.current = event.currentTarget;
@@ -104,6 +117,14 @@ export function DesignVisualAcceptance({ entry, version: declared, run, busy, wr
         <button type="button" aria-pressed={filter === 'all'} onClick={() => setFilter('all')}>全部 {rows.length}</button>
       </div>
     </div>
+    {showReferenceStatus && <div className="dw-thumbnail-tools">
+      <span role="status">{thumbnailLabel}{thumbnailProgress}</span>
+      {thumbnails.error && <button className="ep-button" type="button" onClick={thumbnails.refresh}>重读对照图状态</button>}
+      {canRequestReferences && <button className="ep-button" type="button" disabled={busy || thumbnails.loading}
+        onClick={() => void command('reference.generate', { designId: entry.id, version: version.version }).finally(thumbnails.refresh)}>
+        {thumbnailState === 'incomplete' ? '重试生成对照图' : '生成对照图'}</button>}
+      <Link className="ep-link" to={prototypePath}>打开原型</Link>
+    </div>}
     {shown.length ? <div className="dw-vs-table" role="table" aria-label="逐画面对照">
       <div className="dw-vs-row dw-vs-head" role="row">{columns.map(label => <span role="columnheader" key={label}>{label}</span>)}</div>
       {shown.map(row => {
@@ -133,7 +154,7 @@ export function DesignVisualAcceptance({ entry, version: declared, run, busy, wr
         </button></div>
         <div role="cell" className="dw-vs-verdict">
           <span className="dw-status" data-state={row.verdict}>{verdictNames[row.verdict]}</span>
-          {!row.reference && !visualOnly && <small>{program ? '待同条件截图' : '对照图由设计方提供'}</small>}
+          {!row.reference && !visualOnly && program && <small>待同条件截图</small>}
           {!row.implementation && <small>{row.screen.impl || hasDemo ? program ? '待程序实拍' : '实现方补实拍' : '实现方绑定画面'}</small>}
           {proof && <small>程序实拍 · {proof.commit.slice(0, 8)} · {proof.review ? proof.review.matched ? '复验一致' : '复验有差异' : '待设计方复验'}</small>}
           {proof?.dataset && <small title={proof.dataset}>数据集 {proof.dataset.slice(0, 12)}</small>}

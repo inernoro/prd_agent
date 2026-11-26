@@ -9,27 +9,43 @@ type Shell = Pick<IShellExecutor, 'exec'>;
 type Image = () => Promise<string | undefined>;
 
 async function runDesignBrowserContainer(shell: Shell, resolveImage: Image, input: object, timeout: number) {
-  const image = await resolveImage();
-  if (!image) return undefined;
   const name = 'cds-design-cover-' + randomUUID();
-  const command = [
-    'docker create --rm --interactive --init --pull=missing',
-    '--network=none --read-only --cap-drop=ALL --security-opt=no-new-privileges:true',
-    '--user=1000:1000 --pids-limit=128 --memory=512m --memory-swap=512m --cpus=1',
-    '--tmpfs /tmp:rw,noexec,nosuid,nodev,size=160m,mode=1777 --log-driver=none',
-    '--name', name, shellQuoteArg(image),
-  ].join(' ');
+  const startedAt = Date.now();
+  let stage: 'image' | 'create' | 'run' = 'image';
+  const incomplete = (reason: string, exitCode?: number) => {
+    // Shell output may include untrusted prototype content. Report the stage and fixed codes only.
+    console.warn('[design-browser] request failed', { stage, reason, exitCode, elapsedMs: Date.now() - startedAt });
+    return undefined;
+  };
   let createdId: string | undefined;
   try {
+    const image = await resolveImage();
+    if (!image) return incomplete('unavailable');
+    stage = 'create';
+    const command = [
+      'docker create --rm --interactive --init --pull=missing',
+      '--network=none --read-only --cap-drop=ALL --security-opt=no-new-privileges:true',
+      // PID quotas count Chromium threads, including the raster and font workers.
+      '--user=1000:1000 --pids-limit=256 --memory=768m --memory-swap=768m --cpus=1',
+      '--tmpfs /tmp:rw,noexec,nosuid,nodev,size=160m,mode=1777 --log-driver=none',
+      '--name', name, shellQuoteArg(image),
+    ].join(' ');
     const created = await shell.exec(command, { timeout: 120_000 });
     const id = created.stdout.trim();
-    if (created.exitCode !== 0 || !/^[0-9a-f]{64}$/.test(id)) return undefined;
+    if (created.exitCode !== 0 || !/^[0-9a-f]{64}$/.test(id)) return incomplete('container-create', created.exitCode);
     createdId = id;
+    stage = 'run';
     const result = await shell.exec('docker start --attach --interactive ' + id, { timeout, stdin: JSON.stringify(input) + '\n' });
-    return result.exitCode === 0 ? result.stdout.trim() : undefined;
+    const output = result.stdout.trim();
+    return result.exitCode === 0 && output ? output : incomplete('container-result', result.exitCode);
+  } catch (error) {
+    const code = (error as { code?: unknown } | null)?.code;
+    return incomplete(code === 'deadline' || code === 'capacity' || code === 'unavailable' ? code : 'execution');
   } finally {
-    await shell.exec('docker rm -f ' + (createdId ?? name), { timeout: 5000,
-      ...(createdId ? { executionPurpose: 'temporary-cleanup' } : {}) }).catch(() => {});
+    if (stage !== 'image') {
+      await shell.exec('docker rm -f ' + (createdId ?? name), { timeout: 5000,
+        ...(createdId ? { executionPurpose: 'temporary-cleanup' } : {}) }).catch(() => {});
+    }
   }
 }
 
@@ -55,20 +71,32 @@ export function createDesignHandoffContainer(shell: Shell, resolveImage: Image):
 
 export function createDesignReferenceContainer(shell: Shell, resolveImage: Image): DesignReferenceCapture {
   return async function* (prototype, targets) {
-    // Keep batches below the isolated executor's output limit, and publish progress between batches.
     const source = prototype.toString('base64');
-    for (let offset = 0; offset < targets.length; offset += 4) {
-      const references = targets.slice(offset, offset + 4);
-      const output = await runDesignBrowserContainer(shell, resolveImage, { prototype: source, references }, 70_000);
-      if (!output || output.length > 8 * 1024 * 1024) return;
-      const images: unknown = JSON.parse(output);
-      if (!Array.isArray(images) || images.length !== references.length) return;
+    const readBatch = async (references: typeof targets): Promise<unknown[] | undefined> => {
+      const output = await runDesignBrowserContainer(shell, resolveImage, { prototype: source, references }, references.length === 1 ? 30_000 : 70_000);
+      if (!output || output.length > 8 * 1024 * 1024) return undefined;
+      try {
+        const images: unknown = JSON.parse(output);
+        return Array.isArray(images) && images.length === references.length ? images : undefined;
+      } catch { return undefined; }
+    };
+    // Keep output within the executor limit. After a batch failure, isolate each remaining screen.
+    let batchSize = 4;
+    for (let offset = 0; offset < targets.length;) {
+      const references = targets.slice(offset, offset + batchSize);
+      const images = await readBatch(references);
+      if (!images) {
+        if (references.length === 1) return;
+        batchSize = 1;
+        continue;
+      }
       for (const [index, target] of references.entries()) {
         const image: unknown = images[index];
         if (typeof image === 'string' && image.length <= 2 * 1024 * 1024 && /^[A-Za-z0-9+/]+={0,2}$/.test(image)) {
           yield { ...target, bytes: Buffer.from(image, 'base64') };
         }
       }
+      offset += references.length;
     }
   };
 }

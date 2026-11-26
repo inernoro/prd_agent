@@ -292,6 +292,111 @@ describe('V17 交付工作区', () => {
     });
   }, 30_000);
 
+  it('对照图共用程序取图状态并能重试或打开原型', async () => {
+    const screens = [historyScreen('retry-overview', '对照概览'), historyScreen('retry-details', '对照详情')]
+      .map(screen => ({ ...screen, themes: ['light' as const] }));
+    const version = { ...unbound.versions[0], screens };
+    const draft = { ...unbound, versions: [version] };
+    const input = { ...workspace, designs: [draft] };
+    const api = `/api/projects/${projectId}/design`;
+    const renders: DesignThumbnailStatus['renders'] = {};
+    let state: DesignThumbnailStatus['state'] = 'running';
+    let canReview = false;
+    await withDesignBrowser(() => ({ ...input, permissions: { ...input.permissions, review: canReview } }), async (page, commands) => {
+      await page.route(url => url.pathname === api && url.searchParams.get('view') === 'thumbnails', route => {
+        const query = new URL(route.request().url()).searchParams;
+        expect(query.get('designId')).toBe(draft.id);
+        expect(query.get('version')).toBe('1');
+        return route.fulfill({ json: { designId: draft.id, version: 1, state, total: 2, completed: Object.keys(renders).length,
+          renders } satisfies DesignThumbnailStatus });
+      });
+      await page.route(url => url.pathname === api + '/commands', route => {
+        commands.push(route.request().postDataJSON());
+        state = 'running';
+        return route.fulfill({ json: { projectId, result: { designId: draft.id, version: 1 } } });
+      });
+      await page.route(url => url.pathname === `${api}/artifacts/${version.prototypeId}`, route => route.fulfill({
+        contentType: 'text/html; charset=utf-8',
+        body: decorateDesignPrototype('<!doctype html><html><body><h1>用于复查的原型</h1></body></html>'),
+      }));
+      await page.route('**/design/artifacts/fixture-retry-*', route =>
+        route.fulfill({ body: thumbnailPng, contentType: 'image/png' }));
+
+      await page.goto(browserDesignUrl({ design: draft.id, version: '1', tab: 'accept', check: 'compare' }));
+      const section = page.getByRole('tabpanel', { name: '对照图' });
+      const table = section.getByRole('table', { name: '逐画面对照' });
+      const generated = section.getByRole('status').filter({ hasText: /对照图生成中.*0\/2/ });
+      await table.waitFor();
+      await generated.first().waitFor({ timeout: 3_000 });
+      expect(await generated.count()).toBe(1);
+      state = 'incomplete';
+
+      const incomplete = section.getByRole('status').filter({ hasText: /对照图生成未完成/ });
+      await incomplete.first().waitFor();
+      expect(await incomplete.count()).toBe(1);
+      expect(await section.getByText('对照图由设计方提供', { exact: true }).count()).toBe(0);
+      expect(await table.getByText('缺对照图', { exact: true }).count()).toBe(screens.length);
+      expect(await table.getByText('缺实拍', { exact: true }).count()).toBe(screens.length);
+      expect(await table.getByText('未运行', { exact: true }).count()).toBe(screens.length);
+      const retry = section.getByRole('button', { name: '重试生成对照图', exact: true });
+      expect(await retry.count()).toBe(0);
+      await section.getByRole('link', { name: '打开原型', exact: true }).click();
+      await page.waitForURL(url => url.pathname === '/design' && url.searchParams.get('design') === draft.id
+        && url.searchParams.get('version') === '1' && url.searchParams.get('tab') !== 'accept');
+      await page.locator('.dw-frame iframe').contentFrame().getByRole('heading', { name: '用于复查的原型' }).waitFor();
+      canReview = true;
+      await page.goto(browserDesignUrl({ design: draft.id, version: '1', tab: 'accept', check: 'compare' }));
+      await retry.waitFor();
+      expect(await retry.count()).toBe(1);
+      expect(commands).toHaveLength(0);
+      await retry.click();
+      await generated.waitFor();
+      expect(commands).toHaveLength(1);
+      expect(commands[0]).toMatchObject({ type: 'reference.generate', designId: draft.id, version: 1 });
+
+      for (const screen of screens) renders[screen.id] = { light: { id: 'fixture-retry-' + screen.id, sha256: 'f'.repeat(64) } };
+      state = 'ready';
+      await expect.poll(() => table.locator('img').count(), { timeout: 6_000 }).toBe(screens.length);
+      await expect.poll(() => retry.isVisible()).toBe(false);
+      expect(await table.getByText('缺实拍', { exact: true }).count()).toBe(screens.length);
+      expect(await table.getByText('未运行', { exact: true }).count()).toBe(screens.length);
+    });
+  }, 30_000);
+
+  it('触屏手机从缺图的对照页打开同一版本的手机单屏原型', async () => {
+    const desktop = historyScreen('fallback-desktop', '缺图桌面样例');
+    const phone: DesignScreen = { ...historyScreen('fallback-phone', '缺图手机样例'), viewport: 'phone' };
+    const version = { ...unbound.versions[0], screens: [desktop, phone] };
+    const draft = { ...unbound, versions: [version] };
+    const input = { ...workspace, designs: [draft] };
+    const api = `/api/projects/${projectId}/design`;
+
+    await withDesignBrowser(() => input, async (page, commands) => {
+      await page.route(url => url.pathname === api && url.searchParams.get('view') === 'thumbnails', route => route.fulfill({
+        json: { designId: draft.id, version: 1, state: 'incomplete', total: 4, completed: 0, renders: {} } satisfies DesignThumbnailStatus,
+      }));
+      await page.route(url => url.pathname === `${api}/artifacts/${version.prototypeId}`, route => route.fulfill({
+        contentType: 'text/html; charset=utf-8',
+        body: decorateDesignPrototype(`<!doctype html><html><body><h1></h1><script>
+          document.querySelector('h1').textContent = location.hash === '${phone.route}' ? '手机原型就绪' : '桌面原型';
+        </script></body></html>`),
+      }));
+
+      await page.goto(browserDesignUrl({ design: draft.id, version: '1', tab: 'accept', check: 'compare' }));
+      expect(await page.evaluate(() => ({ width: innerWidth, points: navigator.maxTouchPoints })))
+        .toEqual({ width: 375, points: 1 });
+      const panel = page.getByRole('tabpanel', { name: '对照图' });
+      await panel.getByRole('status').filter({ hasText: /对照图生成未完成/ }).waitFor();
+      await panel.getByRole('link', { name: '打开原型', exact: true }).tap();
+      const frame = page.locator('.dw-single .dw-frame');
+      await frame.waitFor();
+      expect(await frame.getAttribute('data-screen')).toBe(phone.id);
+      expect(new URL(page.url()).searchParams.get('version')).toBe('1');
+      await frame.locator('iframe').contentFrame().getByRole('heading', { name: '手机原型就绪' }).waitFor();
+      expect(commands).toHaveLength(0);
+    }, { viewport: { width: 375, height: 812 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true });
+  }, 20_000);
+
   it('随画面显示右栏，全文关闭、右栏收起以及返回保持同一屏', async () => {
     await withDesignBrowser(() => historyWorkspace, async page => {
       await page.goto(browserDesignUrl({ design: historyDraft.id, version: '1' }));
@@ -748,7 +853,7 @@ const browserDesignOrigin = 'http://127.0.0.1:1';
 let browserDesignScript: Promise<string> | undefined;
 
 async function withDesignBrowser(input: () => DesignWorkspace,
-  check: (page: Page, commands: RecordedDesignCommand[], views: FixtureView[]) => Promise<void>) {
+  check: (page: Page, commands: RecordedDesignCommand[], views: FixtureView[]) => Promise<void>, options?: BrowserContextOptions) {
   browserDesignScript ??= build({
     stdin: {
       contents: `import React from 'react';
@@ -765,7 +870,7 @@ async function withDesignBrowser(input: () => DesignWorkspace,
     loader: { '.css': 'empty', '.svg': 'dataurl' }, jsx: 'automatic', bundle: true, write: false,
   }).then(result => result.outputFiles[0].text);
   const script = await browserDesignScript;
-  const page = await fixturePage();
+  const page = await fixturePage(options);
   try {
     page.setDefaultTimeout(8000);
     page.setDefaultNavigationTimeout(15_000);
@@ -778,7 +883,8 @@ async function withDesignBrowser(input: () => DesignWorkspace,
       if (url.origin !== browserDesignOrigin) return route.abort();
       if (url.pathname === '/fixture-design.js') return route.fulfill({ body: script, contentType: 'text/javascript' });
       if (url.pathname === '/design') return route.fulfill({ contentType: 'text/html', body:
-        '<!doctype html><html data-theme="light"><body><div id="root"></div><script src="/fixture-design.js"></script></body></html>',
+        '<!doctype html><html data-theme="light"><head><meta name="viewport" content="width=device-width, initial-scale=1"></head>' +
+        '<body><div id="root"></div><script src="/fixture-design.js"></script></body></html>',
       });
       if (url.pathname === '/api/projects') {
         return route.fulfill({ json: { projects: [{ id: projectId, name: '虚拟工程项目' }] } });
