@@ -67,4 +67,23 @@ describe('isolated design reference capture', () => {
     expect(shell.commands.filter(command => command.startsWith('docker start '))).toHaveLength(3);
     expect(shell.commands.filter(command => command === 'docker rm -f ' + id)).toHaveLength(3);
   });
+
+  it('gives the remaining screenshots separate browser sessions when retrying a partial batch', async () => {
+    const shell = new MockShellExecutor();
+    const attempts: Array<{ ids: string[]; retry?: boolean; timeout?: number }> = [];
+    shell.addResponsePattern(/^docker create /, () => ({ stdout: id, stderr: '', exitCode: 0 }));
+    shell.addResponsePattern(/^docker start /, (_match, options) => {
+      const request = JSON.parse(options!.stdin!) as { references: DesignReferenceTarget[]; retry?: boolean };
+      attempts.push({ ids: request.references.map(target => target.screen.id), retry: request.retry, timeout: options?.timeout });
+      const result = request.references.map(() => request.retry && request.references.length === 1 ? thumbnail.toString('base64') : null);
+      return { stdout: JSON.stringify(result), stderr: '', exitCode: 0 };
+    });
+    shell.addResponse('docker rm -f ' + id, { stdout: '', stderr: '', exitCode: 0 });
+    const capture = createDesignReferenceContainer(shell, async () => image);
+    const result = [];
+    for await (const item of capture(Buffer.from('fixture prototype'), targets.slice(1, 3), true)) result.push(item);
+    expect(attempts.map(attempt => attempt.ids)).toEqual([['second'], ['third']]);
+    expect(attempts.every(({ retry, timeout }) => retry === true && (timeout ?? 0) > 40_000)).toBe(true);
+    expect(result.map(item => [item.screen.id, item.bytes])).toEqual([['second', thumbnail], ['third', thumbnail]]);
+  });
 });

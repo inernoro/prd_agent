@@ -73,19 +73,21 @@ export function createDesignHandoffContainer(shell: Shell, resolveImage: Image):
 }
 
 export function createDesignReferenceContainer(shell: Shell, resolveImage: Image): DesignReferenceCapture {
-  return async function* (prototype, targets) {
+  return async function* (prototype, targets, retry = false) {
     const source = prototype.toString('base64');
     const readBatch = async (references: typeof targets): Promise<{ images?: unknown[]; unavailable?: boolean }> => {
-      const { output, unavailable } = await runDesignBrowserContainer(shell, resolveImage,
-        { prototype: source, references }, references.length === 1 ? 40_000 : 70_000);
+      const singleTimeout = retry ? 60_000 : 40_000;
+      const { output, unavailable } = await runDesignBrowserContainer(shell, resolveImage, { prototype: source, references, retry },
+        references.length === 1 ? singleTimeout : 70_000);
       if (!output || output.length > 8 * 1024 * 1024) return { unavailable };
       try {
         const images: unknown = JSON.parse(output);
         return Array.isArray(images) && images.length === references.length ? { images } : {};
       } catch { return {}; }
     };
-    // Keep output within the executor limit. After a batch failure, isolate each remaining screen.
-    let batchSize = 4;
+    // Small partial batches get a fresh browser for each missing screenshot on retry.
+    const standardBatchSize = 4;
+    let batchSize = retry && targets.length <= standardBatchSize ? 1 : standardBatchSize;
     let consecutiveFailures = 0;
     for (let offset = 0; offset < targets.length;) {
       const references = targets.slice(offset, offset + batchSize);
