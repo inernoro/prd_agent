@@ -170,14 +170,9 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
         DesignWorkspacePackage package;
         if (isCodeFilm && run.QuickCreation is { } quickCreation)
         {
-            var template = QuickCreationCatalog.Find(quickCreation.TemplateId)
-                ?? throw new InvalidOperationException("原风格未找到，请回到工作台选择其他风格");
-            var guide = QuickCreationCatalog.ReadGuide(template);
-            if (QuickCreationCatalog.Hash(guide) != quickCreation.StyleSha256)
-                throw new InvalidOperationException("原风格版本已变化，资料已保留，请回到工作台重新选择");
             var files = (run.UploadedSources ?? []).Select((source, index) => DesignArtifactWorkspaceContract.ToFile(
                 $"source-{index + 1}.md", "text/markdown", Encoding.UTF8.GetBytes(source.Content))).ToList();
-            files.Add(DesignArtifactWorkspaceContract.ToFile(template.PromptRef, "text/markdown", guide));
+            files.Add(QuickCreationCatalog.FreezeWorkspaceGuide(quickCreation));
             if (referenceFiles != null) files.AddRange(referenceFiles);
             package = new DesignWorkspacePackage(SchemaVersion, run.Id, $"film-{run.Id}", files);
         }
@@ -194,6 +189,8 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
         else
         {
             package = DesignArtifactWorkspaceContract.BuildInputPackage(run, currentHtml, currentFiles, originals, referenceFiles);
+            if (run.QuickCreation is { } webInput)
+                package = package with { Files = [.. package.Files, QuickCreationCatalog.FreezeWorkspaceGuide(webInput)] };
         }
         var bytes = DesignArtifactWorkspaceContract.ValidateInputPackageSize(package, MaxInputBytes);
         var inputSha256 = Sha256Hex(bytes);

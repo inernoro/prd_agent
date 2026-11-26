@@ -1,5 +1,5 @@
-using System.Text;
 using PrdAgent.Api.Services;
+using PrdAgent.Core.Models;
 using Xunit;
 
 namespace PrdAgent.Api.Tests.Services;
@@ -21,8 +21,14 @@ public sealed class QuickCreationCatalogTests
             var bytes = QuickCreationCatalog.ReadGuide(template);
             Assert.Equal(template.GuideSha256, QuickCreationCatalog.Hash(bytes));
             Assert.Equal($"styles/{template.Id}/STYLE.md", template.PromptRef);
-            var guide = Encoding.UTF8.GetString(bytes);
-            Assert.Equal(guide, QuickCreationCatalog.FreezeWebDirection(template, guide).GeneratePrompt);
+            var direction = QuickCreationCatalog.FreezeWebDirection(template);
+            Assert.Contains(template.PromptRef, direction.GeneratePrompt);
+            Assert.False(string.IsNullOrWhiteSpace(direction.DesignSystemId));
+            var workspaceFile = QuickCreationCatalog.FreezeWorkspaceGuide(new QuickCreationInput
+            {
+                TemplateId = template.Id, StyleSha256 = template.GuideSha256,
+            });
+            Assert.Equal(bytes, Convert.FromBase64String(workspaceFile.ContentBase64));
         }
     }
 }

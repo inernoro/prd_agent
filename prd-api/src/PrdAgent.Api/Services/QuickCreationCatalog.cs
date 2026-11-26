@@ -27,18 +27,29 @@ internal static class QuickCreationCatalog
         return bytes;
     }
 
-    internal static DesignArtifactDesignDirection FreezeWebDirection(Template template, string guide)
+    internal static DesignArtifactDesignDirection FreezeWebDirection(Template template)
     {
         var direction = new DesignArtifactDesignDirection
         {
             StyleId = $"opuscar:{template.Id}",
             StyleName = template.Name,
             StyleDescription = template.Line,
-            GeneratePrompt = guide,
+            DesignSystemId = "minimal",
+            GeneratePrompt = $"先完整读取工作区的 {template.PromptRef}。风格说明控制配色、字体、空间与版式。网页里的内容以稿件为准。",
             BrandSource = "lemo-opuscar",
             PromptFingerprint = template.GuideSha256,
         };
         return direction;
+    }
+
+    internal static DesignWorkspaceFile FreezeWorkspaceGuide(QuickCreationInput input)
+    {
+        var template = Find(input.TemplateId)
+            ?? throw new InvalidOperationException("原风格未找到，请回到工作台选择其他风格");
+        var guide = ReadGuide(template);
+        if (Hash(guide) != input.StyleSha256)
+            throw new InvalidOperationException("原风格版本已变化，资料已保留，请回到工作台重新选择");
+        return DesignArtifactWorkspaceContract.ToFile(template.PromptRef, "text/markdown", guide);
     }
 
     private static Catalog Load()

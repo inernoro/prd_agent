@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { codeFilmDefaultAnswers } from '../src/engine/code-film.js';
+import { codeFilmDefaultAnswers, parseFilmCaptions } from '../src/engine/code-film.js';
 import { FilmRecoveryStore } from '../src/engine/film-recovery.js';
 import { normalizeTaskRequest } from '../src/protocol.js';
 import { sha256 } from '../src/workspace/primitives.js';
@@ -265,8 +265,17 @@ describe('POST /v1/tasks', () => {
     expect(normalized.codeFilm).toBe(true);
     expect(normalized.instruction).toBe(command);
     expect(parseWorkspacePackage(serialized, normalized.transfer).files[0].bytes).toEqual(source);
-    expect(() => normalizeTaskRequest({ ...filmRequest, transfer: request.transfer })).toThrow('only film.mp4');
+    expect(() => normalizeTaskRequest({ ...filmRequest, transfer: request.transfer })).toThrow('film.mp4 and film.json');
+    expect(normalizeTaskRequest({
+      ...filmRequest, transfer: { ...filmRequest.transfer, allowedOutputPaths: ['film.mp4', 'film.json'] },
+    }).transfer.allowedOutputPaths).toEqual(['film.mp4', 'film.json']);
     expect(() => normalizeTaskRequest({ ...filmRequest, envelope: request.envelope })).toThrow('index.html');
+  });
+
+  it('keeps real caption timing, clips it to measured duration and ignores malformed cues', () => {
+    const captions = parseFilmCaptions('1\n00:00:01,000 --> 00:00:03,600\n<i>架构决定</i>\n\n'
+      + '2\n00:00:06,000 --> 00:00:08,000\n超出成片\n\n不合法的字幕', 3);
+    expect(captions).toEqual([{ fromSec: 1, toSec: 3, text: '架构决定' }]);
   });
 
   it('accepts only the configured direct LLMGW authority and binds its identity to the task', async () => {

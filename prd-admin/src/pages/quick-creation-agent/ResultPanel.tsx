@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Captions, Check, Maximize, Monitor, Pause, Play, SkipBack, SkipForward, Smartphone, Volume2, VolumeX } from 'lucide-react';
 import { cn } from '@/lib/cn';
-import { getSite } from '@/services/real/webPages';
-import { readQuickCreationFilm } from '@/services/real/quickCreation';
+import { readQuickCreationFilm, readQuickCreationPage } from '@/services/real/quickCreation';
 import { StyleFrame, TemplatePageBody } from './TemplateFrames';
 import type { QcRun, QcScene, QcTemplate } from './types';
 import { formatClock } from './format';
@@ -256,15 +255,18 @@ export function WebPreview({ run, template }: { run: QcRun; template: QcTemplate
   const [device, setDevice] = useState<'desktop' | 'phone'>('desktop');
   const [anchor, setAnchor] = useState<string | undefined>();
   const [previewUrl, setPreviewUrl] = useState<string | undefined>();
+  const [publishedHtml, setPublishedHtml] = useState<string | undefined>();
   const [previewError, setPreviewError] = useState(false);
   useEffect(() => {
     setPreviewUrl(undefined);
+    setPublishedHtml(undefined);
     setPreviewError(false);
     if (!run.previewSiteId) return;
     let active = true;
-    void getSite(run.previewSiteId).then(result => {
+    void readQuickCreationPage(run.previewSiteId).then(result => {
       if (!active) return;
       if (result.success && result.data.siteUrl) {
+        setPublishedHtml(result.data.html);
         const url = new URL(result.data.siteUrl, window.location.origin);
         if (url.protocol === 'https:' || url.protocol === 'http:') setPreviewUrl(url.toString());
         else setPreviewError(true);
@@ -272,7 +274,18 @@ export function WebPreview({ run, template }: { run: QcRun; template: QcTemplate
     });
     return () => { active = false; };
   }, [run.previewSiteId]);
-  const sections = run.sections ?? [];
+  const sections = useMemo(() => {
+    if (run.sections?.length) return run.sections;
+    const html = publishedHtml ?? run.previewHtml;
+    if (!html) return [];
+    const preview = new DOMParser().parseFromString(html, 'text/html');
+    return Array.from(preview.querySelectorAll<HTMLElement>('h2, h3')).slice(0, 12).flatMap(heading => {
+      const title = heading.textContent?.trim();
+      const anchor = heading.id || heading.closest('section[id]')?.id;
+      return title && anchor ? [{ title, anchor, body: '' }] : [];
+    });
+  }, [run.sections, run.previewHtml, publishedHtml]);
+  const points = run.keyPoints?.length ? run.keyPoints : sections.map(section => ({ text: section.title, anchor: section.anchor }));
   const previewDestination = previewUrl && anchor ? `${previewUrl.split('#')[0]}#${encodeURIComponent(anchor)}` : previewUrl;
   return (
     <div className="h-full space-y-4 overflow-y-auto p-2.5 sm:p-4 lg:p-5" style={{ overscrollBehavior: 'contain' }} data-qc="web-preview" data-active-anchor={anchor ?? ''}>
@@ -298,12 +311,12 @@ export function WebPreview({ run, template }: { run: QcRun; template: QcTemplate
           </div>
         </div>
       </div>
-      {!!run.keyPoints?.length && (
+      {!!points.length && (
         <div>
-          <div className="mb-2 text-[12px] text-token-muted">页首导读的 {run.keyPoints.length} 个重点 · 点击定位</div>
+          <div className="mb-2 text-[12px] text-token-muted">网页章节{previewUrl ? ' · 点击定位' : ''}</div>
           <div className="grid gap-2 sm:grid-cols-3">
-            {run.keyPoints.map((k, i) => (
-              <button key={k.text} type="button" data-qc={`web-point-${i + 1}`} onClick={() => setAnchor(k.anchor)}
+            {points.map((k, i) => (
+              <button key={(k.anchor ?? '') + k.text} type="button" data-qc={`web-point-${i + 1}`} disabled={!previewUrl || !k.anchor} onClick={() => setAnchor(k.anchor)}
                 className={cn('flex items-start gap-2.5 rounded-[10px] border bg-[var(--bg-input)] px-3 py-2.5 text-left text-[12.5px] leading-5 hover-bg-soft max-md:min-h-11', anchor === k.anchor ? 'border-[color:var(--accent-primary)]/60' : 'border-token-subtle')}>
                 <span className="font-[var(--font-code)] text-[color:var(--accent-primary)]">{String(i + 1).padStart(2, '0')}</span>
                 <span className="text-token-primary">{k.text}</span>

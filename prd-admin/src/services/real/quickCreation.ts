@@ -53,6 +53,10 @@ export async function readQuickCreationFilm(runId: string) {
   return file.blob;
 }
 
+export function readQuickCreationPage(siteId: string) {
+  return apiRequest<{ siteUrl: string; html: string }>(`/api/web-pages/${encodeURIComponent(siteId)}/content`);
+}
+
 export function retryAttachmentRead(attachmentId: string) {
   return apiRequest<QcAttachment>(`${base}/attachments/${encodeURIComponent(attachmentId)}/read`, { method: 'POST', body: {} });
 }

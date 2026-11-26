@@ -203,14 +203,14 @@ public sealed partial class DesignArtifactsController
         };
         var instruction = film
             ? $"用原版 Lemo-Opuscar 技能把附件稿件做成代码视频。风格：{template.Name}（{template.Id}）。完整读取随任务提供的 {template.PromptRef}，按原样说明执行。使用中文配音和同步字幕，交付可播放的 MP4。"
-            : $"把附件稿件做成可阅读的网页，按服务端提供的「{template.Name}」原版风格说明借鉴配色、字体与版式。正文以稿件为准。";
+            : $"把附件稿件做成可阅读的网页。完整读取 {template.PromptRef}，按「{template.Name}」借鉴配色、字体与版式。正文以稿件为准。";
         return await CreateRunCoreAsync(new CreateDesignArtifactRunRequest
         {
             ArtifactType = film ? DesignArtifactTypes.CodeFilm : DesignArtifactTypes.WebPage,
             Instruction = ask.Length == 0 ? instruction : instruction + "\n\n用户要求：\n" + ask,
             Title = request.Title ?? Path.GetFileNameWithoutExtension(byId[sourceIds[0]].FileName),
             AttachmentIds = sourceIds,
-        }, input, images, film ? null : QuickCreationCatalog.FreezeWebDirection(template, Encoding.UTF8.GetString(guide)));
+        }, input, images, film ? null : QuickCreationCatalog.FreezeWebDirection(template));
     }
 
     [HttpGet("/api/quick-creation/runs/{runId}")]
