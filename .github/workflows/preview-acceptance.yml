@@ -217,7 +217,7 @@ jobs:
           E2E_BASE_URL: ${{ github.event.inputs.e2e_base_url }}
           E2E_USER: ${{ secrets.E2E_USER }}
           E2E_PASSWORD: ${{ secrets.E2E_PASSWORD }}
-        run: pnpm test
+        run: node quick-film-cloud-acceptance.mjs
 
       - name: Upload HTML report on failure
         if: failure()
