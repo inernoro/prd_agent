@@ -64,7 +64,7 @@ export function WorksList({ works, templates, onOpen, onCreate }: {
           const st = workStatus(w);
           return (
             <li key={w.runId}>
-              <button type="button" onClick={() => onOpen(w.runId)} className="flex min-h-[64px] w-full items-center gap-3 px-3 py-2.5 text-left hover-bg-soft md:px-4">
+              <button type="button" data-run-id={w.runId} onClick={() => onOpen(w.runId)} className="flex min-h-[64px] w-full items-center gap-3 px-3 py-2.5 text-left hover-bg-soft md:px-4">
                 <span className="w-[88px] shrink-0 overflow-hidden rounded-md border border-token-subtle md:w-[104px]">
                   {t ? <TemplateFrame frame={t.frame} scene={1} /> : <span className="block aspect-video bg-token-nested" />}
                 </span>

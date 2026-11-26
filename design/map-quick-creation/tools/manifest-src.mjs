@@ -66,7 +66,7 @@ const rows = [
   ['A-23', null, 'works', 'human', D, '离开后在作品列表看到任务仍在进行，点它回到同一个任务', '作品列表第一组是进行中的任务，点开回到 ?run=<编号> 的同一任务'],
   ['A-24', null, 'failed-scene', 'screenshot', D, '单幕失败只标出失败的那一幕，写明已保存的内容，主按钮只重做这一幕', '第 4 幕红框；失败卡写「已保存：原稿与要求、6 幕分镜与画面、其余旁白」，主按钮「重试第 4 幕」'],
   ['A-25', null, 'timeout', 'screenshot', D, '整条超时是失败状态，保留稿件与已生成的分镜，给出从断点继续的动作', '失败卡写「生成超时，已停止」和已保存的 3 幕，主按钮「重新排队，从这里继续」'],
-  ['A-26', null, 'done-video', 'human', D, '成片播放器：播放 / 暂停、上一幕 / 下一幕、拖动进度、字幕开关、全屏，进度条上有重点刻度', '逐个控件点一遍，字幕随幕切换；关字幕后画面不再显示字幕'],
+  ['A-26', null, 'done-video', 'human', D, '成片播放器播放真实的视频文件和音轨：播放 / 暂停、上一幕 / 下一幕、拖动进度、静音、字幕开关、全屏，进度条上有重点刻度', '点播放后画面与声音都在走；字幕随幕切换；关字幕后字幕按钮为未按下、画面不再显示字幕'],
   ['A-27', null, 'done-video', 'human', D, '片头预告的重点可点击，跳到对应时间并开始播放', '点「再画边界」后时间到 0:40，当前重点卡描边'],
   ['A-28', null, 'done-video', 'screenshot', D, '完成后过程收成一行，注意力给成品与发布', '左栏显示「排队 → 分镜 → 配音 → 合成 全部完成 · 用时」一行，可展开；主按钮是「发布到网页托管」'],
   ['A-29', null, 'publish-failed', 'screenshot', D, '发布失败时成品仍可播放，说明重试只上传、不会重新生成，可重试', '失败卡含原因、「重试只上传，不会重新生成」与「重试发布」，右栏播放器可用'],
@@ -81,11 +81,112 @@ const rows = [
   ['A-38', null, 'toolbox', 'screenshot', D, '百宝箱里是一张独立的「快速创作」入口卡片，带开发中标记', '卡片名、简介与「开发中」标记可见，点击进入快速创作'],
   ['A-39', null, 'compose-web', 'screenshot', D, '切到网页后只显示网页模板，产出标签与主按钮旁的标记同步', '模板变为「导读长页」「卡片速览」，输入框下方标记为「网页 · 导读长页」'],
   ['A-40', null, 'hosting', 'screenshot', D, '网页托管里新发布的记录高亮，并提示默认可见范围', '高亮卡片带「刚刚发布」，右下提示「默认仅团队成员可看」'],
+  ['A-41', null, 'compose', 'human', D, '直接粘贴正文：一次粘贴 300 字以上的长文自动作为一份稿件附件，输入框只留给要求', '粘贴后输入框清空，附件托盘多一份「粘贴的正文」，快捷生成可用'],
+  ['A-42', null, 'compose', 'human', D, '上传 Markdown / TXT 稿件或图片：读出文字的可直接生成，空文件或不支持的格式显示原因', '上传「评审要点.md」后附件托盘出现该文件且显示已读取，快捷生成可用'],
 ];
 
-const acceptance = rows.map(([id, ruleId, screenId, how, slots, rule, expected, extra]) => ({ id, ...(ruleId ? { ruleId } : {}), screenId, how, slots, rule, expected, ...(extra ?? {}) }));
+/* 关键操作：CDS 交接检查按 handoff.cases 实际执行 */
+const INTERACTIVE = new Set(['A-12', 'A-15', 'A-17', 'A-18', 'A-19', 'A-20', 'A-23', 'A-24', 'A-25', 'A-26', 'A-27', 'A-29', 'A-30', 'A-32', 'A-33', 'A-39', 'A-40', 'A-41', 'A-42']);
+const acceptance = rows.map(([id, ruleId, screenId, how, slots, rule, expected, extra]) => ({ id, ...(ruleId ? { ruleId } : {}), screenId, how, slots, rule, expected, ...(extra ?? {}), ...(INTERACTIVE.has(id) ? { interaction: true } : {}) }));
+
+/* 可运行场景：每个从进入画面开始、以结果检查结束；失败恢复先 remember 已完成的状态，再用 sameAs 核对保留 */
+const SAMPLE_PASTE = '# 新同事入职第一周\n' + '第一天先领账号与权限，第二天熟悉知识库目录，第三天旁听一次需求评审，第四天提一个小改动，第五天写一份周小结。'.repeat(8);
+const cases = [
+  { id: 'submit-sample-doc', title: '用示例稿件快捷生成，提交后看到已保存与排队', screenId: 'compose', theme: 'light', ruleIds: ['A-12', 'A-19', 'A-20'], steps: [
+    { action: 'expect', selector: '[data-qc=block-reason]', check: 'visible' },
+    { action: 'click', selector: '[data-qc=sample-doc]' },
+    { action: 'expect', selector: '[data-qc=submit]', check: 'enabled' },
+    { action: 'click', selector: '[data-qc=submit]' },
+    { action: 'expect', selector: '[data-qc=saved-notice]', check: 'visible' },
+    { action: 'expect', selector: '[data-qc=queue-card]', check: 'visible' },
+  ] },
+  { id: 'submit-pasted-text', title: '粘贴长正文成为稿件附件后生成', screenId: 'compose', theme: 'light', ruleIds: ['A-41'], steps: [
+    { action: 'fill', selector: '#qc-ask', value: SAMPLE_PASTE },
+    { action: 'expect', selector: '#qc-ask', check: 'value', value: '' },
+    { action: 'expect', selector: '[data-qc=attachment-tray]', check: 'attribute', attribute: 'data-count', value: '1' },
+    { action: 'expect', selector: '[data-qc=submit]', check: 'enabled' },
+    { action: 'click', selector: '[data-qc=submit]' },
+    { action: 'expect', selector: '[data-qc=queue-card]', check: 'visible' },
+  ] },
+  { id: 'submit-uploaded-file', title: '上传 Markdown 稿件后生成', screenId: 'compose', theme: 'light', ruleIds: ['A-42'], steps: [
+    { action: 'attach', selector: '[data-qc=file-input]', name: '评审要点.md', value: '# 评审要点\n先读目标，再画边界，最后对验收。' },
+    { action: 'expect', selector: '[data-qc=attachment-tray]', check: 'attribute', attribute: 'data-count', value: '1' },
+    { action: 'expect', selector: '[data-qc=submit]', check: 'enabled' },
+    { action: 'click', selector: '[data-qc=submit]' },
+    { action: 'expect', selector: '[data-qc=queue-card]', check: 'visible' },
+  ] },
+  { id: 'retry-failed-attachment', title: '读取失败的附件单项重试，其它附件保持不变', screenId: 'attachments-expanded', theme: 'light', ruleIds: ['A-15', 'A-17'], steps: [
+    { action: 'remember', selector: '[data-att-id=att-doc-habits]', check: 'attribute', attribute: 'data-att-status', as: 'habits' },
+    { action: 'expect', selector: '[data-att-id=att-doc-minutes]', check: 'attribute', attribute: 'data-att-status', value: 'failed' },
+    { action: 'click', selector: '[data-att-id=att-doc-minutes] [data-qc=att-retry]' },
+    { action: 'expect', selector: '[data-att-id=att-doc-minutes]', check: 'attribute', attribute: 'data-att-status', value: 'ready' },
+    { action: 'expect', selector: '[data-att-id=att-doc-habits]', check: 'attribute', attribute: 'data-att-status', sameAs: 'habits' },
+    { action: 'expect', selector: '[data-qc=attachment-tray]', check: 'attribute', attribute: 'data-failed-count', value: '0' },
+  ] },
+  { id: 'remove-failed-attachment', title: '移除读取失败的附件', screenId: 'attachments-expanded', theme: 'dark', ruleIds: ['A-15'], steps: [
+    { action: 'remember', selector: '[data-att-id=att-doc-habits]', check: 'attribute', attribute: 'data-att-status', as: 'habits' },
+    { action: 'click', selector: '[data-att-id=att-doc-minutes] [data-qc=att-remove]' },
+    { action: 'expect', selector: '[data-qc=attachment-tray]', check: 'attribute', attribute: 'data-failed-count', value: '0' },
+    { action: 'expect', selector: '[data-att-id=att-doc-habits]', check: 'attribute', attribute: 'data-att-status', sameAs: 'habits' },
+  ] },
+  { id: 'leave-and-return', title: '排队中离开，从作品列表回到同一任务', screenId: 'queued', theme: 'light', ruleIds: ['A-23'], steps: [
+    { action: 'remember', selector: '[data-qc-ready]', check: 'attribute', attribute: 'data-run-id', as: 'task' },
+    { action: 'click', selector: '[data-qc=leave]' },
+    { action: 'expect', selector: '[data-qc=works]', check: 'visible' },
+    { action: 'click', selector: '[data-qc=works] [data-run-id=run-queued]' },
+    { action: 'expect', selector: '[data-qc-ready]', check: 'attribute', attribute: 'data-run-id', sameAs: 'task' },
+    { action: 'expect', selector: '[data-qc=queue-card]', check: 'visible' },
+  ] },
+  { id: 'retry-failed-scene', title: '单幕配音失败只重做这一幕，其余幕保留，最后得到成片', screenId: 'failed-scene', theme: 'light', ruleIds: ['A-24'], steps: [
+    { action: 'remember', selector: '[data-scene="1"]', check: 'attribute', attribute: 'data-scene-status', as: 'scene1' },
+    { action: 'expect', selector: '[data-scene="4"]', check: 'attribute', attribute: 'data-scene-status', value: 'failed' },
+    { action: 'click', selector: '[data-qc=recover-primary]' },
+    { action: 'expect', selector: '[data-scene="4"]', check: 'attribute', attribute: 'data-scene-status', value: 'voicing' },
+    { action: 'expect', selector: '[data-scene="1"]', check: 'attribute', attribute: 'data-scene-status', sameAs: 'scene1' },
+    { action: 'expect', selector: '[data-qc=video-player]', check: 'visible' },
+  ] },
+  { id: 'requeue-after-timeout', title: '整条超时后重新排队，已画好的幕保留', screenId: 'timeout', theme: 'light', ruleIds: ['A-25'], steps: [
+    { action: 'remember', selector: '[data-scene="3"]', check: 'attribute', attribute: 'data-scene-status', as: 'scene3' },
+    { action: 'click', selector: '[data-qc=recover-primary]' },
+    { action: 'expect', selector: '[data-qc=queue-card]', check: 'visible' },
+    { action: 'expect', selector: '[data-scene="3"]', check: 'attribute', attribute: 'data-scene-status', sameAs: 'scene3' },
+  ] },
+  { id: 'play-film', title: '播放成片：画面与声音在走，重点跳转与字幕开关', screenId: 'done-video', theme: 'light', ruleIds: ['A-26', 'A-27'], steps: [
+    { action: 'click', selector: '[data-qc=play-toggle]' },
+    { action: 'expect', selector: '[data-qc=film]', check: 'media-playing' },
+    { action: 'expect', selector: '[data-qc=film]', check: 'audio-playing' },
+    { action: 'click', selector: '[data-qc=key-point-2]' },
+    { action: 'expect', selector: '[data-qc=video-player]', check: 'attribute', attribute: 'data-scene-index', value: '4' },
+    { action: 'click', selector: '[data-qc=captions-toggle]' },
+    { action: 'expect', selector: '[data-qc=captions-toggle]', check: 'attribute', attribute: 'aria-pressed', value: 'false' },
+  ] },
+  { id: 'publish-retry-to-hosting', title: '发布失败后成片仍可播，重试成功并落到网页托管记录', screenId: 'done-video', theme: 'dark', ruleIds: ['A-29', 'A-30', 'A-40'], steps: [
+    { action: 'click', selector: '[data-qc=publish]' },
+    { action: 'expect', selector: '[data-qc=publish-failed]', check: 'visible' },
+    { action: 'expect', selector: '[data-qc=play-toggle]', check: 'enabled' },
+    { action: 'click', selector: '[data-qc=publish-retry]' },
+    { action: 'expect', selector: '[data-qc=published]', check: 'visible' },
+    { action: 'click', selector: '[data-qc=open-hosting]' },
+    { action: 'expect', selector: '[data-qc=focused-site]', check: 'visible' },
+  ] },
+  { id: 'web-key-point', title: '网页成品：重点定位到对应一节', screenId: 'web-done', theme: 'light', ruleIds: ['A-32'], steps: [
+    { action: 'click', selector: '[data-qc=web-point-2]' },
+    { action: 'expect', selector: '[data-qc=web-preview]', check: 'attribute', attribute: 'data-active-anchor', value: 'scope' },
+  ] },
+  { id: 'redo-as-web', title: '用同一份稿件改做网页，稿件与要求带回', screenId: 'done-video', theme: 'light', ruleIds: ['A-33', 'A-39'], steps: [
+    { action: 'click', selector: '[data-qc=redo-other]' },
+    { action: 'expect', selector: '[data-qc-ready]', check: 'attribute', attribute: 'data-output', value: 'web' },
+    { action: 'expect', selector: '[data-qc=submit]', check: 'enabled' },
+  ] },
+  { id: 'review-sent-attachments', title: '回看已发送的附件并回到预览', screenId: 'done-video', theme: 'light', ruleIds: ['A-18'], steps: [
+    { action: 'click', selector: '[data-qc=open-all-attachments]' },
+    { action: 'expect', selector: '[data-qc=attachment-review]', check: 'visible' },
+    { action: 'click', selector: '[data-qc=review-back]' },
+    { action: 'expect', selector: '[data-qc=video-player]', check: 'visible' },
+  ] },
+];
 const goals = [
-  { id: 'G-01', goal: '一份文档 + 一个模板，最快路径得到成品', doneWhen: '首次打开即可选产出与模板、放稿件并快捷生成；没有稿件时按钮不可用且说明原因', items: ['A-11', 'A-12', 'A-13', 'A-39'] },
+  { id: 'G-01', goal: '一份文档 + 一个模板，最快路径得到成品', doneWhen: '首次打开即可选产出与模板，用示例、上传、知识库或粘贴放进稿件并快捷生成；没有稿件时按钮不可用且说明原因', items: ['A-11', 'A-12', 'A-13', 'A-39', 'A-41', 'A-42'] },
   { id: 'G-02', goal: '附件再多也清楚、不堆一大把', doneWhen: '收起时只占一行，展开可分组管理，失败项单独处理；发送后可回看', items: ['A-14', 'A-15', 'A-16', 'A-17', 'A-18'] },
   { id: 'G-03', goal: '团队集中提交时，排队、后台继续和恢复都看得见', doneWhen: '排队写位置与预计开始；生成写阶段、进度与剩余；离开后能回到同一任务', items: ['A-19', 'A-20', 'A-21', 'A-22', 'A-23'] },
   { id: 'G-04', goal: '失败时保住已有工作，并给出明确的恢复入口', doneWhen: '单幕失败只重做那一幕；超时保留已完成部分并从断点继续', items: ['A-24', 'A-25'] },
@@ -102,7 +203,7 @@ const manifest = {
   group: 'MAP · 创作',
   framework: 'FW-MAP-ADMIN',
   frameworkVersion: 1,
-  prototypeVersion: 1,
+  prototypeVersion: 2,
   date: new Date().toISOString().slice(0, 10),
   rationale: '思路.md',
   prototype: 'dist/index.html',
@@ -114,6 +215,7 @@ const manifest = {
   screens: screens.map(s => ({ ...s, impl: null })),
   acceptance,
   goals,
+  handoff: { cases },
 };
 writeFileSync(path.join(dir, 'design.json'), JSON.stringify(manifest, null, 2) + '\n');
 console.log(JSON.stringify({ screens: screens.length, acceptance: acceptance.length, goals: goals.length }));

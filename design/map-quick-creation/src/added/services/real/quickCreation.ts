@@ -43,6 +43,11 @@ export function retryAttachmentRead(attachmentId: string) {
   return apiRequest<QcAttachment>(`${base}/attachments/${encodeURIComponent(attachmentId)}/read`, { method: 'POST', body: {} });
 }
 
+/** 粘贴的长正文作为一份稿件附件保存，输入框只留给「要求」 */
+export function addTextAttachment(input: { name: string; text: string }) {
+  return apiRequest<QcAttachment>(`${base}/attachments/text`, { method: 'POST', body: input });
+}
+
 export async function uploadQuickCreationAttachment(file: File): Promise<ApiResponse<QcAttachment>> {
   const token = useAuthStore.getState().token;
   const fd = new FormData();

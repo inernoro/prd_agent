@@ -11,9 +11,10 @@ const argv = process.argv.slice(2); const i = argv.indexOf('--checkout');
 const checkout = path.resolve(i >= 0 ? argv[i + 1] : path.join(dir, '..', '..'));
 const req = createRequire(path.join(checkout, 'prd-admin', 'package.json'));
 let chromium; try { ({ chromium } = req('playwright')); } catch { ({ chromium } = createRequire(import.meta.url)('playwright')); }
-const ts = readFileSync(path.join(checkout, 'cds/src/services/design-prototype.ts'), 'utf8');
-const csp = ts.match(/designPrototypeCsp = \[([\s\S]*?)\]\.join/)[1].match(/"([^"]+)"/g).map(s => s.slice(1, -1)).join('; ');
-const bridge = ts.match(/const prototypeBridge = `([\s\S]*?)`;\n/)[1];
+/* 宿主契约取自已安装技能的 design-preview-contract.json（与 CDS 当前预览容器一致的 CSP 与桥接脚本） */
+const contract = JSON.parse(readFileSync(path.join(checkout, '.claude/skills/cds/cli/design-preview-contract.json'), 'utf8'));
+const csp = contract.csp.join('; ');
+const bridge = `<script data-entry-timeout="${contract.entryTimeoutMs}">\n${contract.bridge.join('\n')}\n</script>`;
 const raw = readFileSync(path.join(dir, 'dist/index.html'), 'utf8');
 const h = raw.match(/<head(?:\s[^>]*)?>/i);
 const html = raw.slice(0, h.index + h[0].length) + bridge + raw.slice(h.index + h[0].length);

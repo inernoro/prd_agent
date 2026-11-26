@@ -4,8 +4,8 @@
   "group": "MAP · 创作",
   "framework": "FW-MAP-ADMIN",
   "frameworkVersion": 1,
-  "prototypeVersion": 1,
-  "date": "2026-11-25",
+  "prototypeVersion": 2,
+  "date": "2026-11-26",
   "rationale": "思路.md",
   "prototype": "dist/index.html",
   "checks": "checks/result.json",
@@ -473,7 +473,8 @@
         "desktop-dark"
       ],
       "rule": "没有可用稿件时不能生成，原因写在按钮下方",
-      "expected": "检查：没有附件时 [data-qc=submit] 为 disabled，且 [data-qc=block-reason] 可见"
+      "expected": "检查：没有附件时 [data-qc=submit] 为 disabled，且 [data-qc=block-reason] 可见",
+      "interaction": true
     },
     {
       "id": "A-13",
@@ -506,7 +507,8 @@
         "desktop-dark"
       ],
       "rule": "读取失败的附件排在最前、用错误色，写明原因与恢复动作，可单项重试或移除",
-      "expected": "展开后第一组是「读取失败」，含原因文字、「重试」与移除按钮"
+      "expected": "展开后第一组是「读取失败」，含原因文字、「重试」与移除按钮",
+      "interaction": true
     },
     {
       "id": "A-16",
@@ -528,7 +530,8 @@
         "desktop-dark"
       ],
       "rule": "有附件在读取时不能生成，读完自动可用；失败项不会用于生成",
-      "expected": "按钮下方写「还有附件在读取，读完即可生成」；失败组标注「不会用于生成」"
+      "expected": "按钮下方写「还有附件在读取，读完即可生成」；失败组标注「不会用于生成」",
+      "interaction": true
     },
     {
       "id": "A-18",
@@ -539,7 +542,8 @@
         "desktop-dark"
       ],
       "rule": "发送后附件收成一行（前两个 + 「全部 N 个附件」），点开在右栏按类型回看原文，可回到预览",
-      "expected": "右栏出现附件分组列表与原文，顶部有「回到预览」"
+      "expected": "右栏出现附件分组列表与原文，顶部有「回到预览」",
+      "interaction": true
     },
     {
       "id": "A-19",
@@ -550,7 +554,8 @@
         "desktop-dark"
       ],
       "rule": "提交后先确认稿件和要求已保存，说明离开也会继续",
-      "expected": "左栏消息下方第一张卡写「稿件和要求已保存。生成在后台进行，离开页面也会继续。」"
+      "expected": "左栏消息下方第一张卡写「稿件和要求已保存。生成在后台进行，离开页面也会继续。」",
+      "interaction": true
     },
     {
       "id": "A-20",
@@ -561,7 +566,8 @@
         "desktop-dark"
       ],
       "rule": "排队显示位置、前面几个、预计开始时间，并明确排队不是失败",
-      "expected": "排队卡写「排队中 · 第 4 位」「前面 3 个，约 1 分 40 秒后开始」与「排队不是失败」"
+      "expected": "排队卡写「排队中 · 第 4 位」「前面 3 个，约 1 分 40 秒后开始」与「排队不是失败」",
+      "interaction": true
     },
     {
       "id": "A-21",
@@ -594,7 +600,8 @@
         "desktop-dark"
       ],
       "rule": "离开后在作品列表看到任务仍在进行，点它回到同一个任务",
-      "expected": "作品列表第一组是进行中的任务，点开回到 ?run=<编号> 的同一任务"
+      "expected": "作品列表第一组是进行中的任务，点开回到 ?run=<编号> 的同一任务",
+      "interaction": true
     },
     {
       "id": "A-24",
@@ -605,7 +612,8 @@
         "desktop-dark"
       ],
       "rule": "单幕失败只标出失败的那一幕，写明已保存的内容，主按钮只重做这一幕",
-      "expected": "第 4 幕红框；失败卡写「已保存：原稿与要求、6 幕分镜与画面、其余旁白」，主按钮「重试第 4 幕」"
+      "expected": "第 4 幕红框；失败卡写「已保存：原稿与要求、6 幕分镜与画面、其余旁白」，主按钮「重试第 4 幕」",
+      "interaction": true
     },
     {
       "id": "A-25",
@@ -616,7 +624,8 @@
         "desktop-dark"
       ],
       "rule": "整条超时是失败状态，保留稿件与已生成的分镜，给出从断点继续的动作",
-      "expected": "失败卡写「生成超时，已停止」和已保存的 3 幕，主按钮「重新排队，从这里继续」"
+      "expected": "失败卡写「生成超时，已停止」和已保存的 3 幕，主按钮「重新排队，从这里继续」",
+      "interaction": true
     },
     {
       "id": "A-26",
@@ -626,8 +635,9 @@
         "desktop-light",
         "desktop-dark"
       ],
-      "rule": "成片播放器：播放 / 暂停、上一幕 / 下一幕、拖动进度、字幕开关、全屏，进度条上有重点刻度",
-      "expected": "逐个控件点一遍，字幕随幕切换；关字幕后画面不再显示字幕"
+      "rule": "成片播放器播放真实的视频文件和音轨：播放 / 暂停、上一幕 / 下一幕、拖动进度、静音、字幕开关、全屏，进度条上有重点刻度",
+      "expected": "点播放后画面与声音都在走；字幕随幕切换；关字幕后字幕按钮为未按下、画面不再显示字幕",
+      "interaction": true
     },
     {
       "id": "A-27",
@@ -638,7 +648,8 @@
         "desktop-dark"
       ],
       "rule": "片头预告的重点可点击，跳到对应时间并开始播放",
-      "expected": "点「再画边界」后时间到 0:40，当前重点卡描边"
+      "expected": "点「再画边界」后时间到 0:40，当前重点卡描边",
+      "interaction": true
     },
     {
       "id": "A-28",
@@ -660,7 +671,8 @@
         "desktop-dark"
       ],
       "rule": "发布失败时成品仍可播放，说明重试只上传、不会重新生成，可重试",
-      "expected": "失败卡含原因、「重试只上传，不会重新生成」与「重试发布」，右栏播放器可用"
+      "expected": "失败卡含原因、「重试只上传，不会重新生成」与「重试发布」，右栏播放器可用",
+      "interaction": true
     },
     {
       "id": "A-30",
@@ -671,7 +683,8 @@
         "desktop-dark"
       ],
       "rule": "发布成功给「在网页托管中查看」，进入网页托管后定位并高亮这条记录",
-      "expected": "点按钮进入 /web-pages?focusSite=<站点编号>，对应卡片高亮（复用 WebPagesPage 已有的 focusSite）"
+      "expected": "点按钮进入 /web-pages?focusSite=<站点编号>，对应卡片高亮（复用 WebPagesPage 已有的 focusSite）",
+      "interaction": true
     },
     {
       "id": "A-31",
@@ -693,7 +706,8 @@
         "desktop-dark"
       ],
       "rule": "网页产出：生成中大纲逐节出现；完成后可切桌面 / 手机预览，重点点击定位到对应一节",
-      "expected": "网页生成中右栏列出 4 节；完成后点「再画边界」，对应一节高亮"
+      "expected": "网页生成中右栏列出 4 节；完成后点「再画边界」，对应一节高亮",
+      "interaction": true
     },
     {
       "id": "A-33",
@@ -704,7 +718,8 @@
         "desktop-dark"
       ],
       "rule": "同一份稿件可一键改做另一种产出，稿件与要求自动带回",
-      "expected": "点「用这份稿件做网页」回到创作，附件与要求已填好，产出切到网页"
+      "expected": "点「用这份稿件做网页」回到创作，附件与要求已填好，产出切到网页",
+      "interaction": true
     },
     {
       "id": "A-34",
@@ -772,7 +787,8 @@
         "desktop-dark"
       ],
       "rule": "切到网页后只显示网页模板，产出标签与主按钮旁的标记同步",
-      "expected": "模板变为「导读长页」「卡片速览」，输入框下方标记为「网页 · 导读长页」"
+      "expected": "模板变为「导读长页」「卡片速览」，输入框下方标记为「网页 · 导读长页」",
+      "interaction": true
     },
     {
       "id": "A-40",
@@ -783,19 +799,46 @@
         "desktop-dark"
       ],
       "rule": "网页托管里新发布的记录高亮，并提示默认可见范围",
-      "expected": "高亮卡片带「刚刚发布」，右下提示「默认仅团队成员可看」"
+      "expected": "高亮卡片带「刚刚发布」，右下提示「默认仅团队成员可看」",
+      "interaction": true
+    },
+    {
+      "id": "A-41",
+      "screenId": "compose",
+      "how": "human",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "直接粘贴正文：一次粘贴 300 字以上的长文自动作为一份稿件附件，输入框只留给要求",
+      "expected": "粘贴后输入框清空，附件托盘多一份「粘贴的正文」，快捷生成可用",
+      "interaction": true
+    },
+    {
+      "id": "A-42",
+      "screenId": "compose",
+      "how": "human",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "上传 Markdown / TXT 稿件或图片：读出文字的可直接生成，空文件或不支持的格式显示原因",
+      "expected": "上传「评审要点.md」后附件托盘出现该文件且显示已读取，快捷生成可用",
+      "interaction": true
     }
   ],
   "goals": [
     {
       "id": "G-01",
       "goal": "一份文档 + 一个模板，最快路径得到成品",
-      "doneWhen": "首次打开即可选产出与模板、放稿件并快捷生成；没有稿件时按钮不可用且说明原因",
+      "doneWhen": "首次打开即可选产出与模板，用示例、上传、知识库或粘贴放进稿件并快捷生成；没有稿件时按钮不可用且说明原因",
       "items": [
         "A-11",
         "A-12",
         "A-13",
-        "A-39"
+        "A-39",
+        "A-41",
+        "A-42"
       ]
     },
     {
@@ -880,5 +923,515 @@
       "items": [],
       "where": "后续稿件 map/quick-creation-studio；本稿画面 concept-settings、concept-studio 仅作方向参考"
     }
-  ]
+  ],
+  "handoff": {
+    "cases": [
+      {
+        "id": "submit-sample-doc",
+        "title": "用示例稿件快捷生成，提交后看到已保存与排队",
+        "screenId": "compose",
+        "theme": "light",
+        "ruleIds": [
+          "A-12",
+          "A-19",
+          "A-20"
+        ],
+        "steps": [
+          {
+            "action": "expect",
+            "selector": "[data-qc=block-reason]",
+            "check": "visible"
+          },
+          {
+            "action": "click",
+            "selector": "[data-qc=sample-doc]"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-qc=submit]",
+            "check": "enabled"
+          },
+          {
+            "action": "click",
+            "selector": "[data-qc=submit]"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-qc=saved-notice]",
+            "check": "visible"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-qc=queue-card]",
+            "check": "visible"
+          }
+        ]
+      },
+      {
+        "id": "submit-pasted-text",
+        "title": "粘贴长正文成为稿件附件后生成",
+        "screenId": "compose",
+        "theme": "light",
+        "ruleIds": [
+          "A-41"
+        ],
+        "steps": [
+          {
+            "action": "fill",
+            "selector": "#qc-ask",
+            "value": "# 新同事入职第一周\n第一天先领账号与权限，第二天熟悉知识库目录，第三天旁听一次需求评审，第四天提一个小改动，第五天写一份周小结。第一天先领账号与权限，第二天熟悉知识库目录，第三天旁听一次需求评审，第四天提一个小改动，第五天写一份周小结。第一天先领账号与权限，第二天熟悉知识库目录，第三天旁听一次需求评审，第四天提一个小改动，第五天写一份周小结。第一天先领账号与权限，第二天熟悉知识库目录，第三天旁听一次需求评审，第四天提一个小改动，第五天写一份周小结。第一天先领账号与权限，第二天熟悉知识库目录，第三天旁听一次需求评审，第四天提一个小改动，第五天写一份周小结。第一天先领账号与权限，第二天熟悉知识库目录，第三天旁听一次需求评审，第四天提一个小改动，第五天写一份周小结。第一天先领账号与权限，第二天熟悉知识库目录，第三天旁听一次需求评审，第四天提一个小改动，第五天写一份周小结。第一天先领账号与权限，第二天熟悉知识库目录，第三天旁听一次需求评审，第四天提一个小改动，第五天写一份周小结。"
+          },
+          {
+            "action": "expect",
+            "selector": "#qc-ask",
+            "check": "value",
+            "equals": ""
+          },
+          {
+            "action": "expect",
+            "selector": "[data-qc=attachment-tray]",
+            "check": "attribute",
+            "attribute": "data-count",
+            "equals": "1"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-qc=submit]",
+            "check": "enabled"
+          },
+          {
+            "action": "click",
+            "selector": "[data-qc=submit]"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-qc=queue-card]",
+            "check": "visible"
+          }
+        ]
+      },
+      {
+        "id": "submit-uploaded-file",
+        "title": "上传 Markdown 稿件后生成",
+        "screenId": "compose",
+        "theme": "light",
+        "ruleIds": [
+          "A-42"
+        ],
+        "steps": [
+          {
+            "action": "attach",
+            "selector": "[data-qc=file-input]",
+            "name": "评审要点.md",
+            "value": "# 评审要点\n先读目标，再画边界，最后对验收。"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-qc=attachment-tray]",
+            "check": "attribute",
+            "attribute": "data-count",
+            "equals": "1"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-qc=submit]",
+            "check": "enabled"
+          },
+          {
+            "action": "click",
+            "selector": "[data-qc=submit]"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-qc=queue-card]",
+            "check": "visible"
+          }
+        ]
+      },
+      {
+        "id": "retry-failed-attachment",
+        "title": "读取失败的附件单项重试，其它附件保持不变",
+        "screenId": "attachments-expanded",
+        "theme": "light",
+        "ruleIds": [
+          "A-15",
+          "A-17"
+        ],
+        "steps": [
+          {
+            "action": "remember",
+            "selector": "[data-att-id=att-doc-habits]",
+            "check": "attribute",
+            "attribute": "data-att-status",
+            "as": "habits"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-att-id=att-doc-minutes]",
+            "check": "attribute",
+            "attribute": "data-att-status",
+            "equals": "failed"
+          },
+          {
+            "action": "click",
+            "selector": "[data-att-id=att-doc-minutes] [data-qc=att-retry]"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-att-id=att-doc-minutes]",
+            "check": "attribute",
+            "attribute": "data-att-status",
+            "equals": "ready"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-att-id=att-doc-habits]",
+            "check": "attribute",
+            "attribute": "data-att-status",
+            "sameAs": "habits"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-qc=attachment-tray]",
+            "check": "attribute",
+            "attribute": "data-failed-count",
+            "equals": "0"
+          }
+        ]
+      },
+      {
+        "id": "remove-failed-attachment",
+        "title": "移除读取失败的附件",
+        "screenId": "attachments-expanded",
+        "theme": "dark",
+        "ruleIds": [
+          "A-15"
+        ],
+        "steps": [
+          {
+            "action": "remember",
+            "selector": "[data-att-id=att-doc-habits]",
+            "check": "attribute",
+            "attribute": "data-att-status",
+            "as": "habits"
+          },
+          {
+            "action": "click",
+            "selector": "[data-att-id=att-doc-minutes] [data-qc=att-remove]"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-qc=attachment-tray]",
+            "check": "attribute",
+            "attribute": "data-failed-count",
+            "equals": "0"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-att-id=att-doc-habits]",
+            "check": "attribute",
+            "attribute": "data-att-status",
+            "sameAs": "habits"
+          }
+        ]
+      },
+      {
+        "id": "leave-and-return",
+        "title": "排队中离开，从作品列表回到同一任务",
+        "screenId": "queued",
+        "theme": "light",
+        "ruleIds": [
+          "A-23"
+        ],
+        "steps": [
+          {
+            "action": "remember",
+            "selector": "[data-qc-ready]",
+            "check": "attribute",
+            "attribute": "data-run-id",
+            "as": "task"
+          },
+          {
+            "action": "click",
+            "selector": "[data-qc=leave]"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-qc=works]",
+            "check": "visible"
+          },
+          {
+            "action": "click",
+            "selector": "[data-qc=works] [data-run-id=run-queued]"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-qc-ready]",
+            "check": "attribute",
+            "attribute": "data-run-id",
+            "sameAs": "task"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-qc=queue-card]",
+            "check": "visible"
+          }
+        ]
+      },
+      {
+        "id": "retry-failed-scene",
+        "title": "单幕配音失败只重做这一幕，其余幕保留，最后得到成片",
+        "screenId": "failed-scene",
+        "theme": "light",
+        "ruleIds": [
+          "A-24"
+        ],
+        "steps": [
+          {
+            "action": "remember",
+            "selector": "[data-scene=\"1\"]",
+            "check": "attribute",
+            "attribute": "data-scene-status",
+            "as": "scene1"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-scene=\"4\"]",
+            "check": "attribute",
+            "attribute": "data-scene-status",
+            "equals": "failed"
+          },
+          {
+            "action": "click",
+            "selector": "[data-qc=recover-primary]"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-scene=\"4\"]",
+            "check": "attribute",
+            "attribute": "data-scene-status",
+            "equals": "voicing"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-scene=\"1\"]",
+            "check": "attribute",
+            "attribute": "data-scene-status",
+            "sameAs": "scene1"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-qc=video-player]",
+            "check": "visible"
+          }
+        ]
+      },
+      {
+        "id": "requeue-after-timeout",
+        "title": "整条超时后重新排队，已画好的幕保留",
+        "screenId": "timeout",
+        "theme": "light",
+        "ruleIds": [
+          "A-25"
+        ],
+        "steps": [
+          {
+            "action": "remember",
+            "selector": "[data-scene=\"3\"]",
+            "check": "attribute",
+            "attribute": "data-scene-status",
+            "as": "scene3"
+          },
+          {
+            "action": "click",
+            "selector": "[data-qc=recover-primary]"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-qc=queue-card]",
+            "check": "visible"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-scene=\"3\"]",
+            "check": "attribute",
+            "attribute": "data-scene-status",
+            "sameAs": "scene3"
+          }
+        ]
+      },
+      {
+        "id": "play-film",
+        "title": "播放成片：画面与声音在走，重点跳转与字幕开关",
+        "screenId": "done-video",
+        "theme": "light",
+        "ruleIds": [
+          "A-26",
+          "A-27"
+        ],
+        "steps": [
+          {
+            "action": "click",
+            "selector": "[data-qc=play-toggle]"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-qc=film]",
+            "check": "media-playing"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-qc=film]",
+            "check": "audio-playing"
+          },
+          {
+            "action": "click",
+            "selector": "[data-qc=key-point-2]"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-qc=video-player]",
+            "check": "attribute",
+            "attribute": "data-scene-index",
+            "equals": "4"
+          },
+          {
+            "action": "click",
+            "selector": "[data-qc=captions-toggle]"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-qc=captions-toggle]",
+            "check": "attribute",
+            "attribute": "aria-pressed",
+            "equals": "false"
+          }
+        ]
+      },
+      {
+        "id": "publish-retry-to-hosting",
+        "title": "发布失败后成片仍可播，重试成功并落到网页托管记录",
+        "screenId": "done-video",
+        "theme": "dark",
+        "ruleIds": [
+          "A-29",
+          "A-30",
+          "A-40"
+        ],
+        "steps": [
+          {
+            "action": "click",
+            "selector": "[data-qc=publish]"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-qc=publish-failed]",
+            "check": "visible"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-qc=play-toggle]",
+            "check": "enabled"
+          },
+          {
+            "action": "click",
+            "selector": "[data-qc=publish-retry]"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-qc=published]",
+            "check": "visible"
+          },
+          {
+            "action": "click",
+            "selector": "[data-qc=open-hosting]"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-qc=focused-site]",
+            "check": "visible"
+          }
+        ]
+      },
+      {
+        "id": "web-key-point",
+        "title": "网页成品：重点定位到对应一节",
+        "screenId": "web-done",
+        "theme": "light",
+        "ruleIds": [
+          "A-32"
+        ],
+        "steps": [
+          {
+            "action": "click",
+            "selector": "[data-qc=web-point-2]"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-qc=web-preview]",
+            "check": "attribute",
+            "attribute": "data-active-anchor",
+            "equals": "scope"
+          }
+        ]
+      },
+      {
+        "id": "redo-as-web",
+        "title": "用同一份稿件改做网页，稿件与要求带回",
+        "screenId": "done-video",
+        "theme": "light",
+        "ruleIds": [
+          "A-33",
+          "A-39"
+        ],
+        "steps": [
+          {
+            "action": "click",
+            "selector": "[data-qc=redo-other]"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-qc-ready]",
+            "check": "attribute",
+            "attribute": "data-output",
+            "equals": "web"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-qc=submit]",
+            "check": "enabled"
+          }
+        ]
+      },
+      {
+        "id": "review-sent-attachments",
+        "title": "回看已发送的附件并回到预览",
+        "screenId": "done-video",
+        "theme": "light",
+        "ruleIds": [
+          "A-18"
+        ],
+        "steps": [
+          {
+            "action": "click",
+            "selector": "[data-qc=open-all-attachments]"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-qc=attachment-review]",
+            "check": "visible"
+          },
+          {
+            "action": "click",
+            "selector": "[data-qc=review-back]"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-qc=video-player]",
+            "check": "visible"
+          }
+        ]
+      }
+    ]
+  }
 }

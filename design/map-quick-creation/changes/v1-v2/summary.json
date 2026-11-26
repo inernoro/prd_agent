@@ -1,0 +1,361 @@
+{
+ "from": {
+  "label": "V1",
+  "version": 1,
+  "commit": "6eece65e23cb0379f6cfc391b3bd126e77a3f0a6",
+  "title": "快速创作 · 交付说明（V1）"
+ },
+ "to": {
+  "label": "V2",
+  "version": 2,
+  "commit": null,
+  "title": "快速创作 · 交付说明（V2）"
+ },
+ "direction": "upgrade",
+ "acceptance": {
+  "added": [
+   {
+    "id": "A-41",
+    "rule": "直接粘贴正文：一次粘贴 300 字以上的长文自动作为一份稿件附件，输入框只留给要求",
+    "expected": "粘贴后输入框清空，附件托盘多一份「粘贴的正文」，快捷生成可用",
+    "how": "human",
+    "screenId": "compose",
+    "slots": [
+     "desktop-light",
+     "desktop-dark"
+    ],
+    "interaction": true
+   },
+   {
+    "id": "A-42",
+    "rule": "上传 Markdown / TXT 稿件或图片：读出文字的可直接生成，空文件或不支持的格式显示原因",
+    "expected": "上传「评审要点.md」后附件托盘出现该文件且显示已读取，快捷生成可用",
+    "how": "human",
+    "screenId": "compose",
+    "slots": [
+     "desktop-light",
+     "desktop-dark"
+    ],
+    "interaction": true
+   }
+  ],
+  "removed": [],
+  "changed": [
+   {
+    "id": "A-12",
+    "fields": [
+     "interaction"
+    ],
+    "from": {},
+    "to": {
+     "interaction": true
+    }
+   },
+   {
+    "id": "A-15",
+    "fields": [
+     "interaction"
+    ],
+    "from": {},
+    "to": {
+     "interaction": true
+    }
+   },
+   {
+    "id": "A-17",
+    "fields": [
+     "interaction"
+    ],
+    "from": {},
+    "to": {
+     "interaction": true
+    }
+   },
+   {
+    "id": "A-18",
+    "fields": [
+     "interaction"
+    ],
+    "from": {},
+    "to": {
+     "interaction": true
+    }
+   },
+   {
+    "id": "A-19",
+    "fields": [
+     "interaction"
+    ],
+    "from": {},
+    "to": {
+     "interaction": true
+    }
+   },
+   {
+    "id": "A-20",
+    "fields": [
+     "interaction"
+    ],
+    "from": {},
+    "to": {
+     "interaction": true
+    }
+   },
+   {
+    "id": "A-23",
+    "fields": [
+     "interaction"
+    ],
+    "from": {},
+    "to": {
+     "interaction": true
+    }
+   },
+   {
+    "id": "A-24",
+    "fields": [
+     "interaction"
+    ],
+    "from": {},
+    "to": {
+     "interaction": true
+    }
+   },
+   {
+    "id": "A-25",
+    "fields": [
+     "interaction"
+    ],
+    "from": {},
+    "to": {
+     "interaction": true
+    }
+   },
+   {
+    "id": "A-26",
+    "fields": [
+     "rule",
+     "expected",
+     "interaction"
+    ],
+    "from": {
+     "rule": "成片播放器：播放 / 暂停、上一幕 / 下一幕、拖动进度、字幕开关、全屏，进度条上有重点刻度",
+     "expected": "逐个控件点一遍，字幕随幕切换；关字幕后画面不再显示字幕"
+    },
+    "to": {
+     "rule": "成片播放器播放真实的视频文件和音轨：播放 / 暂停、上一幕 / 下一幕、拖动进度、静音、字幕开关、全屏，进度条上有重点刻度",
+     "expected": "点播放后画面与声音都在走；字幕随幕切换；关字幕后字幕按钮为未按下、画面不再显示字幕",
+     "interaction": true
+    }
+   },
+   {
+    "id": "A-27",
+    "fields": [
+     "interaction"
+    ],
+    "from": {},
+    "to": {
+     "interaction": true
+    }
+   },
+   {
+    "id": "A-29",
+    "fields": [
+     "interaction"
+    ],
+    "from": {},
+    "to": {
+     "interaction": true
+    }
+   },
+   {
+    "id": "A-30",
+    "fields": [
+     "interaction"
+    ],
+    "from": {},
+    "to": {
+     "interaction": true
+    }
+   },
+   {
+    "id": "A-32",
+    "fields": [
+     "interaction"
+    ],
+    "from": {},
+    "to": {
+     "interaction": true
+    }
+   },
+   {
+    "id": "A-33",
+    "fields": [
+     "interaction"
+    ],
+    "from": {},
+    "to": {
+     "interaction": true
+    }
+   },
+   {
+    "id": "A-39",
+    "fields": [
+     "interaction"
+    ],
+    "from": {},
+    "to": {
+     "interaction": true
+    }
+   },
+   {
+    "id": "A-40",
+    "fields": [
+     "interaction"
+    ],
+    "from": {},
+    "to": {
+     "interaction": true
+    }
+   }
+  ]
+ },
+ "screens": {
+  "added": [],
+  "removed": [],
+  "changed": []
+ },
+ "docs": {
+  "added": [],
+  "removed": []
+ },
+ "meta": {
+  "prototypeVersion": {
+   "from": 1,
+   "to": 2
+  }
+ },
+ "files": {
+  "added": [
+   {
+    "path": "checks/handoff-local.json",
+    "area": "自检"
+   },
+   {
+    "path": "src/assets/demo-film.webm",
+    "area": "源码"
+   },
+   {
+    "path": "tools/handoff-local.mjs",
+    "area": "工具"
+   },
+   {
+    "path": "tools/make-demo-film.mjs",
+    "area": "工具"
+   }
+  ],
+  "removed": [],
+  "changed": [
+   {
+    "path": "checks/result.json",
+    "area": "自检"
+   },
+   {
+    "path": "design.json",
+    "area": "其他"
+   },
+   {
+    "path": "dist/index.html",
+    "area": "原型"
+   },
+   {
+    "path": "src/added/pages/quick-creation-agent/AttachmentTray.tsx",
+    "area": "源码"
+   },
+   {
+    "path": "src/added/pages/quick-creation-agent/QuickCreationAgentPage.tsx",
+    "area": "源码"
+   },
+   {
+    "path": "src/added/pages/quick-creation-agent/ResultPanel.tsx",
+    "area": "源码"
+   },
+   {
+    "path": "src/added/pages/quick-creation-agent/RunProgress.tsx",
+    "area": "源码"
+   },
+   {
+    "path": "src/added/pages/quick-creation-agent/WorksList.tsx",
+    "area": "源码"
+   },
+   {
+    "path": "src/added/pages/quick-creation-agent/types.ts",
+    "area": "源码"
+   },
+   {
+    "path": "src/added/services/real/quickCreation.ts",
+    "area": "源码"
+   },
+   {
+    "path": "src/env.ts",
+    "area": "源码"
+   },
+   {
+    "path": "src/main.tsx",
+    "area": "源码"
+   },
+   {
+    "path": "tools/interact-check.mjs",
+    "area": "工具"
+   },
+   {
+    "path": "tools/manifest-src.mjs",
+    "area": "工具"
+   },
+   {
+    "path": "tools/prototype-build.prd-admin.patch",
+    "area": "工具"
+   },
+   {
+    "path": "tools/self-check.mjs",
+    "area": "工具"
+   },
+   {
+    "path": "tools/walkthrough.json",
+    "area": "工具"
+   },
+   {
+    "path": "versions.json",
+    "area": "其他"
+   },
+   {
+    "path": "交付说明.md",
+    "area": "文档"
+   },
+   {
+    "path": "思路.md",
+    "area": "文档"
+   },
+   {
+    "path": "设计文档/源码差异.diff",
+    "area": "文档"
+   }
+  ]
+ },
+ "checks": {
+  "from": {
+   "passed": 41,
+   "total": 41,
+   "failed": []
+  },
+  "to": {
+   "passed": 43,
+   "total": 43,
+   "failed": []
+  }
+ },
+ "source": {
+  "files": 10,
+  "bytes": 45236
+ }
+}

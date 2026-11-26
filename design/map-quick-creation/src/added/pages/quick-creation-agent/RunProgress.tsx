@@ -52,8 +52,8 @@ export function FailureCard({ failure, onAction }: { failure: QcFailure; onActio
       <div className="flex items-center gap-2 text-[13px] font-medium text-[color:var(--accent-fg-error)]"><AlertTriangle size={14} />{failure.message}</div>
       <div className="mt-1.5 text-[12px] leading-5 text-token-secondary">已保存：{failure.saved.join('、')}。重试只会重做没完成的部分。</div>
       <div className="mt-2.5 flex flex-wrap gap-2">
-        {primary && <Button size="sm" variant="primary" className="max-md:min-h-11" onClick={() => onAction(primary)}><RotateCcw size={13} />{label[primary]}</Button>}
-        {others.map(a => <Button key={a} size="sm" variant="ghost" className="max-md:min-h-11" onClick={() => onAction(a)}>{label[a]}</Button>)}
+        {primary && <Button size="sm" variant="primary" className="max-md:min-h-11" data-qc="recover-primary" onClick={() => onAction(primary)}><RotateCcw size={13} />{label[primary]}</Button>}
+        {others.map(a => <Button key={a} size="sm" variant="ghost" className="max-md:min-h-11" data-qc={`recover-${a}`} onClick={() => onAction(a)}>{label[a]}</Button>)}
       </div>
     </div>
   );

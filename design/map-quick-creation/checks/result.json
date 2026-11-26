@@ -1,9 +1,9 @@
 {
-  "runAt": "2026-11-25",
-  "browser": "Chromium（Playwright），本机还原 CDS 预览容器（正式 CSP 响应头 + decorateDesignPrototype 桥接脚本、sandbox=\"allow-scripts\"），桌面 1440×900 与手机 390×844、浅色与深色",
+  "runAt": "2026-11-26",
+  "browser": "Chromium（Playwright），本机还原 CDS 预览容器（技能 design-preview-contract.json 的 CSP 响应头与桥接脚本、sandbox=\"allow-scripts\"），桌面 1440×900 与手机 390×844、浅色与深色",
   "url": "dist/index.html",
-  "total": 41,
-  "passed": 41,
+  "total": 43,
+  "passed": 43,
   "items": [
     {
       "id": "A-01",
@@ -147,19 +147,19 @@
       "id": "A-24",
       "name": "A-24 单幕失败只标出失败的那一幕，写明已保存的内容，主按钮只重做这一幕",
       "pass": true,
-      "note": "failed-scene：第 4 幕红框，失败卡列出已保存内容，主按钮「重试第 4 幕」"
+      "note": "交接场景 retry-failed-scene 本机预跑：重试后第 4 幕为配音中、第 1 幕保持已完成，随后得到成片播放器"
     },
     {
       "id": "A-25",
       "name": "A-25 整条超时是失败状态，保留稿件与已生成的分镜，给出从断点继续的动作",
       "pass": true,
-      "note": "timeout：「生成超时，已停止」，已保存 3 幕，主按钮「重新排队，从这里继续」"
+      "note": "交接场景 requeue-after-timeout 本机预跑：重新排队后排队卡出现，第 3 幕保持「待配音」"
     },
     {
       "id": "A-26",
-      "name": "A-26 成片播放器：播放 / 暂停、上一幕 / 下一幕、拖动进度、字幕开关、全屏，进度条上有重点刻度",
+      "name": "A-26 成片播放器播放真实的视频文件和音轨：播放 / 暂停、上一幕 / 下一幕、拖动进度、静音、字幕开关、全屏，进度条上有重点刻度",
       "pass": true,
-      "note": "交互：下一幕 0:00→0:12；关字幕后字幕层 1→0；播放 2 秒 0:12→0:14；全屏按钮存在"
+      "note": "交接场景 play-film 本机预跑：点播放后 media-playing 与 audio-playing 通过（真实 WebM 视频与音轨），重点 2 跳到第 4 幕，字幕按钮 aria-pressed 变为 false"
     },
     {
       "id": "A-27",
@@ -244,6 +244,18 @@
       "name": "A-40 网页托管里新发布的记录高亮，并提示默认可见范围",
       "pass": true,
       "note": "hosting：高亮卡片「刚刚发布」，提示默认仅团队成员可看"
+    },
+    {
+      "id": "A-41",
+      "name": "A-41 直接粘贴正文：一次粘贴 300 字以上的长文自动作为一份稿件附件，输入框只留给要求",
+      "pass": true,
+      "note": "交接场景 submit-pasted-text 本机预跑：粘贴 400 余字后输入框清空、附件 1 个、快捷生成可用并进入排队"
+    },
+    {
+      "id": "A-42",
+      "name": "A-42 上传 Markdown / TXT 稿件或图片：读出文字的可直接生成，空文件或不支持的格式显示原因",
+      "pass": true,
+      "note": "交接场景 submit-uploaded-file 本机预跑：上传「评审要点.md」后附件 1 个、快捷生成可用并进入排队"
     },
     {
       "id": "C-01",

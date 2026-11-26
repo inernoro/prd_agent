@@ -53,15 +53,15 @@
  },
  "A-24": {
   "status": "passed",
-  "note": "failed-scene：第 4 幕红框，失败卡列出已保存内容，主按钮「重试第 4 幕」"
+  "note": "交接场景 retry-failed-scene 本机预跑：重试后第 4 幕为配音中、第 1 幕保持已完成，随后得到成片播放器"
  },
  "A-25": {
   "status": "passed",
-  "note": "timeout：「生成超时，已停止」，已保存 3 幕，主按钮「重新排队，从这里继续」"
+  "note": "交接场景 requeue-after-timeout 本机预跑：重新排队后排队卡出现，第 3 幕保持「待配音」"
  },
  "A-26": {
   "status": "passed",
-  "note": "交互：下一幕 0:00→0:12；关字幕后字幕层 1→0；播放 2 秒 0:12→0:14；全屏按钮存在"
+  "note": "交接场景 play-film 本机预跑：点播放后 media-playing 与 audio-playing 通过（真实 WebM 视频与音轨），重点 2 跳到第 4 幕，字幕按钮 aria-pressed 变为 false"
  },
  "A-27": {
   "status": "passed",
@@ -118,5 +118,13 @@
  "A-40": {
   "status": "passed",
   "note": "hosting：高亮卡片「刚刚发布」，提示默认仅团队成员可看"
+ },
+ "A-41": {
+  "status": "passed",
+  "note": "交接场景 submit-pasted-text 本机预跑：粘贴 400 余字后输入框清空、附件 1 个、快捷生成可用并进入排队"
+ },
+ "A-42": {
+  "status": "passed",
+  "note": "交接场景 submit-uploaded-file 本机预跑：上传「评审要点.md」后附件 1 个、快捷生成可用并进入排队"
  }
 }

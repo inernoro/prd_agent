@@ -129,6 +129,8 @@ export interface QcRun {
   durationSec?: number;
   keyPoints?: QcKeyPoint[];
   voice?: string;
+  /** 成片媒体（视频产出完成后才有）：播放器直接播放它，字幕与重点随 currentTime 切换 */
+  media?: { url: string; mime: string };
   publish: QcPublish;
   createdAt: string;
   updatedAt: string;

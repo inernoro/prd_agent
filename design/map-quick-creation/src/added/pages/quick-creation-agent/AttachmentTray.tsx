@@ -59,7 +59,7 @@ function rowMeta(item: QcAttachment): string {
 function Row({ item, onRemove, onRetry, onOpen }: { item: QcAttachment; onRemove?: () => void; onRetry?: () => void; onOpen?: () => void }) {
   const failed = item.status === 'failed';
   return (
-    <li className={cn('flex items-start gap-2.5 rounded-[var(--radius-field)] px-2.5 py-2', failed && 'bg-[color:var(--accent-fg-error)]/[0.06]')}>
+    <li data-att-id={item.id} data-att-status={item.status} className={cn('flex items-start gap-2.5 rounded-[var(--radius-field)] px-2.5 py-2', failed && 'bg-[color:var(--accent-fg-error)]/[0.06]')}>
       <span className="mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-token-nested"><KindIcon kind={item.kind} /></span>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5">
@@ -74,9 +74,9 @@ function Row({ item, onRemove, onRetry, onOpen }: { item: QcAttachment; onRemove
         {failed && item.error && <div className="mt-1 text-[12px] leading-5 text-[color:var(--accent-fg-error)]">{item.error}</div>}
       </div>
       <div className="flex shrink-0 items-center gap-1">
-        {failed && onRetry && <Button size="xs" variant="secondary" className="max-md:min-h-11" onClick={onRetry}><RotateCcw size={12} />重试</Button>}
+        {failed && onRetry && <Button size="xs" variant="secondary" className="max-md:min-h-11" data-qc="att-retry" onClick={onRetry}><RotateCcw size={12} />重试</Button>}
         {onRemove && (
-          <button type="button" aria-label={`移除 ${item.name}`} onClick={onRemove}
+          <button type="button" data-qc="att-remove" aria-label={`移除 ${item.name}`} onClick={onRemove}
             className="inline-flex h-7 w-7 max-md:h-11 max-md:w-11 items-center justify-center rounded-md text-token-muted hover-bg-soft hover:text-token-primary">
             <X size={14} />
           </button>
@@ -136,7 +136,7 @@ export function AttachmentTray({ items, onRemove, onRetry, onClearFailed, defaul
   const overBudget = sum.chars > CHAR_BUDGET;
 
   return (
-    <div className="rounded-[var(--radius-field)] border border-token-subtle bg-token-nested" data-qc="attachment-tray">
+    <div className="rounded-[var(--radius-field)] border border-token-subtle bg-token-nested" data-qc="attachment-tray" data-count={sum.total} data-failed-count={sum.failed} data-reading-count={sum.reading}>
       <button type="button" data-qc="tray-toggle" onClick={() => setExpanded(v => !v)} aria-expanded={expanded}
         className="flex w-full items-center gap-2 whitespace-nowrap px-2.5 pt-2 text-left text-[12px] max-md:min-h-11 max-md:pt-0">
         <span className="min-w-0 truncate">
@@ -211,7 +211,7 @@ export function AttachmentReview({ items, activeId, onSelect, onBack }: { items:
           {active && <KindIcon kind={active.kind} />}
           <span className="min-w-0 truncate text-[14px] font-semibold text-token-primary">{active?.name}</span>
           <span className="text-[12px] text-token-muted">{active ? rowMeta(active) : ''}</span>
-          <Button size="xs" variant="ghost" className="ml-auto max-md:min-h-11" onClick={onBack}>回到预览</Button>
+          <Button size="xs" variant="ghost" className="ml-auto max-md:min-h-11" data-qc="review-back" onClick={onBack}>回到预览</Button>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto whitespace-pre-wrap px-5 py-4 text-[13.5px] leading-7 text-token-secondary">
           {active?.kind === 'image' ? '这张图作为画面参考使用，不读入旁白。' : active?.excerpt ?? ''}

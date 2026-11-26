@@ -83,3 +83,12 @@
    build: {
      write: false,
      lib: { entry: path.join(draft, config.entry ?? 'src/main.tsx'), name: 'CdsDesignPrototype', formats: ['iife'], fileName: 'prototype' },
+@@ -135,7 +170,7 @@
+ const html = '<!doctype html>\n<html lang="zh-CN" data-theme="light"><head>'
+   + '<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+   + `<meta name="cds-prototype-build" content='${fingerprint}'>`
+-  + '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; frame-src data:; script-src \'unsafe-inline\'; style-src \'unsafe-inline\'; font-src data:; img-src data: blob:; form-action \'none\'; base-uri \'none\'">'
++  + '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; frame-src data:; script-src \'unsafe-inline\'; style-src \'unsafe-inline\'; font-src data:; img-src data: blob:; media-src data: blob:; form-action \'none\'; base-uri \'none\'">'
+   + `<title>${String(config.title ?? '设计原型').replace(/[<&]/g, '')}</title><style>${css}</style></head><body><div id="root"></div><script>${script}</script></body></html>\n`;
+ if (Buffer.byteLength(html) > 4 * 1024 * 1024) fail('原型超过 CDS 的 4 MiB 单文件上限');
+ const out = path.resolve(opt('out') ?? path.join(draft, 'dist', 'index.html'));

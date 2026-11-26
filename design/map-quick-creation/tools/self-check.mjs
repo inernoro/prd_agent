@@ -3,7 +3,7 @@
 //
 //   node tools/self-check.mjs --checkout <仓库根> [--shots <截图目录>]
 //
-// 容器还原：响应头 CSP 与桥接脚本取自 <仓库根>/cds/src/services/design-prototype.ts；原型放进 sandbox="allow-scripts" 的 iframe；
+// 容器还原：响应头 CSP 与桥接脚本取自 <仓库根>/.claude/skills/cds/cli/design-preview-contract.json；原型放进 sandbox="allow-scripts" 的 iframe；
 // 手机画面用 390×844 设备模拟（外层页面带 viewport meta，否则会按 980 宽排版）。
 import http from 'node:http';
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
@@ -22,9 +22,10 @@ try { ({ chromium } = require('playwright')); } catch { ({ chromium } = createRe
 
 const design = JSON.parse(readFileSync(path.join(dir, 'design.json'), 'utf8'));
 const walkthrough = existsSync(path.join(dir, 'tools/walkthrough.json')) ? JSON.parse(readFileSync(path.join(dir, 'tools/walkthrough.json'), 'utf8')) : {};
-const ts = readFileSync(path.join(checkout, 'cds/src/services/design-prototype.ts'), 'utf8');
-const csp = ts.match(/designPrototypeCsp = \[([\s\S]*?)\]\.join/)[1].match(/"([^"]+)"/g).map(s => s.slice(1, -1)).join('; ');
-const bridge = ts.match(/const prototypeBridge = `([\s\S]*?)`;\n/)[1];
+/* 宿主契约取自已安装技能的 design-preview-contract.json（与 CDS 当前预览容器一致的 CSP 与桥接脚本） */
+const contract = JSON.parse(readFileSync(path.join(checkout, '.claude/skills/cds/cli/design-preview-contract.json'), 'utf8'));
+const csp = contract.csp.join('; ');
+const bridge = `<script data-entry-timeout="${contract.entryTimeoutMs}">\n${contract.bridge.join('\n')}\n</script>`;
 const raw = readFileSync(path.join(dir, design.prototype), 'utf8');
 const head = raw.match(/<head(?:\s[^>]*)?>/i);
 const html = raw.slice(0, head.index + head[0].length) + bridge + raw.slice(head.index + head[0].length);
@@ -146,6 +147,6 @@ const items = design.acceptance.map(a => {
 });
 items.push({ id: 'C-01', name: 'C-01 预览容器零报错（所有画面 × 主题）', pass: !errorsTotal, note: errorsTotal ? results.screens.filter(s => s.errors.length).map(s => `${s.id}/${s.theme}：${s.errors[0]}`).join('；') : `${results.screens.length} 次打开，控制台与 CSP 报错 0 条` });
 /* 字段与 CDS 发布接口一致：runAt、browser、url、total、passed、items[{ id, name, pass, note }] */
-const out = { runAt: new Date().toISOString().slice(0, 10), browser: 'Chromium（Playwright），本机还原 CDS 预览容器（正式 CSP 响应头 + decorateDesignPrototype 桥接脚本、sandbox="allow-scripts"），桌面 1440×900 与手机 390×844、浅色与深色', url: design.prototype, total: items.length, passed: items.filter(i => i.pass).length, items };
+const out = { runAt: new Date().toISOString().slice(0, 10), browser: 'Chromium（Playwright），本机还原 CDS 预览容器（技能 design-preview-contract.json 的 CSP 响应头与桥接脚本、sandbox="allow-scripts"），桌面 1440×900 与手机 390×844、浅色与深色', url: design.prototype, total: items.length, passed: items.filter(i => i.pass).length, items };
 writeFileSync(path.join(dir, 'checks/result.json'), JSON.stringify(out, null, 2) + '\n');
 console.log(JSON.stringify({ passed: out.passed, total: out.total, failed: items.filter(i => !i.pass).map(i => `${i.id}: ${i.note}`.slice(0, 300)) }, null, 1));

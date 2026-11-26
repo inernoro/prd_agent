@@ -1,0 +1,71 @@
+{
+  "runAt": "2026-11-26",
+  "note": "本机预跑，结论以 CDS 交接检查回执为准",
+  "results": [
+    {
+      "id": "submit-sample-doc",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "id": "submit-pasted-text",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "id": "submit-uploaded-file",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "id": "retry-failed-attachment",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "id": "remove-failed-attachment",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "id": "leave-and-return",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "id": "retry-failed-scene",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "id": "requeue-after-timeout",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "id": "play-film",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "id": "publish-retry-to-hosting",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "id": "web-key-point",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "id": "redo-as-web",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "id": "review-sent-attachments",
+      "status": "passed",
+      "errors": []
+    }
+  ]
+}

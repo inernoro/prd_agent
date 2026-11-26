@@ -4,7 +4,7 @@
 import './env';
 import React, { useEffect, useState } from 'react';
 import ReactDOM from 'react-dom/client';
-import { MemoryRouter, Navigate, Route, Routes } from 'react-router-dom';
+import { MemoryRouter, Navigate, Route, Routes, useSearchParams } from 'react-router-dom';
 import '@/styles/tailwind.css';
 import '@/styles/tokens.css';
 import '@/styles/globals.css';
@@ -14,6 +14,13 @@ import { QuickCreationAgentPage } from '@/pages/quick-creation-agent/QuickCreati
 import { HostingLanding, ToolboxLanding } from './concept/Landings';
 import { SettingsConcept } from './concept/SettingsConcept';
 import { StudioConcept } from './concept/StudioConcept';
+import { TemplateFrame } from '@/pages/quick-creation-agent/TemplateFrames';
+
+/* 只用于生成演示成片（tools/make-demo-film.mjs）：整页渲染一帧模板画面 */
+function FilmFrame() {
+  const [q] = useSearchParams();
+  return <div data-qc-ready="film-frame" style={{ width: 1280 }}><TemplateFrame frame="visual-note" scene={Number(q.get('scene') ?? 1)} /></div>;
+}
 
 /* 菜单目录与服务端 AdminMenuCatalog 的侧栏分组一致（prd-api/src/PrdAgent.Core/Security/AdminMenuCatalog.cs） */
 const menu = [
@@ -42,6 +49,7 @@ function Prototype() {
   return (
     <MemoryRouter key={entry} initialEntries={[entry]}>
       <Routes>
+        <Route path="/film-frame" element={<FilmFrame />} />
         <Route element={<AppShell />}>
           <Route path="/quick-creation-agent" element={<QuickCreationAgentPage />} />
           <Route path="/web-pages" element={<HostingLanding />} />

@@ -16,7 +16,7 @@ import { SplitToTabLayout } from '@/components/design/SplitToTabLayout';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import {
   addKnowledgeAttachment, createQuickCreationRun, getQuickCreationRun, listQuickCreationTemplates, listQuickCreationWorks,
-  publishQuickCreationRun, retryAttachmentRead, retryQuickCreationRun, uploadQuickCreationAttachment,
+  addTextAttachment, publishQuickCreationRun, retryAttachmentRead, retryQuickCreationRun, uploadQuickCreationAttachment,
 } from '@/services/real/quickCreation';
 import { AttachmentReview, AttachmentTray, SentAttachmentSummary } from './AttachmentTray';
 import { FailureCard, QueueCard, RunProgress } from './RunProgress';
@@ -72,23 +72,29 @@ export function QuickCreationAgentPage() {
     if (!templateId && kindTemplates[0]) setTemplateId(kindTemplates[0].id);
   }, [kindTemplates, templateId]);
 
-  /* 按任务编号加载并轮询，直到终态；发布中也继续轮询 */
+  /* 按任务编号加载 */
   useEffect(() => {
     setRun(null); setRunError(null); setReview({ open: false });
     if (!runId) return;
     let stop = false;
-    let timer: number | undefined;
-    const tick = async () => {
-      const res = await getQuickCreationRun(runId);
+    void getQuickCreationRun(runId).then(res => {
       if (stop) return;
-      if (!res.success) { setRunError(res.error?.message || '没有找到这个任务'); return; }
-      setRun(res.data);
-      const live = res.data.status === 'queued' || res.data.status === 'running' || res.data.publish.status === 'publishing';
-      if (live) timer = window.setTimeout(tick, 1500);
-    };
-    void tick();
-    return () => { stop = true; window.clearTimeout(timer); };
+      if (res.success) setRun(res.data); else setRunError(res.error?.message || '没有找到这个任务');
+    });
+    return () => { stop = true; };
   }, [runId]);
+
+  /* 轮询跟着任务状态走：排队、生成、发布中继续查；恢复或重试让任务重新进行时自动接上 */
+  const isLive = !!run && run.id === runId && (run.status === 'queued' || run.status === 'running' || run.publish.status === 'publishing');
+  useEffect(() => {
+    if (!isLive || !runId) return;
+    let stop = false;
+    const timer = window.setTimeout(async () => {
+      const res = await getQuickCreationRun(runId);
+      if (!stop && res.success) setRun(res.data);
+    }, 1500);
+    return () => { stop = true; window.clearTimeout(timer); };
+  }, [isLive, runId, run]);
 
   const openRun = (id: string) => setParams({ run: id });
   const startNew = () => { setParams({}); setAsk(''); setAttachments([]); };
@@ -108,7 +114,19 @@ export function QuickCreationAgentPage() {
   const retryRead = async (id: string) => {
     setAttachments(list => list.map(a => (a.id === id ? { ...a, status: 'reading', progress: 0, error: undefined } : a)));
     const res = await retryAttachmentRead(id);
-    if (res.success) setAttachments(list => list.map(a => (a.id === id ? res.data : a)));
+    /* 重试本身失败时退回「读取失败」并写明原因，不能停在读取中 */
+    setAttachments(list => list.map(a => (a.id !== id ? a : res.success ? res.data
+      : { ...a, status: 'failed', progress: undefined, error: `${res.error?.message || '这次重试也没有成功'}，可以稍后再试或换一个文件` })));
+  };
+  /* 粘贴的长正文（一次增加 300 字以上）转成一份稿件附件，输入框只留给「要求」 */
+  const PASTE_AS_DOC = 300;
+  const onAskChange = async (next: string) => {
+    if (next.length - ask.length < PASTE_AS_DOC) { setAsk(next); return; }
+    const pasted = next.startsWith(ask) ? next.slice(ask.length) : next;
+    const firstLine = pasted.trim().split('\n')[0].replace(/^#+\s*/, '').slice(0, 30) || '粘贴的正文';
+    const res = await addTextAttachment({ name: `${firstLine}.md`, text: pasted });
+    if (res.success) { setAttachments(list => [...list, res.data]); toast.info('已作为稿件附件', `粘贴的 ${pasted.length.toLocaleString('zh-CN')} 字已放进附件，输入框留给要求`); }
+    else { setAsk(next); toast.error('没能转成附件', `${res.error?.message || '请稍后重试'}，正文暂时留在输入框里`); }
   };
   const sum = summarizeAttachments(attachments);
   const hasText = attachments.some(a => a.status === 'ready' && a.kind !== 'image');
@@ -227,11 +245,11 @@ export function QuickCreationAgentPage() {
           <AttachmentTray items={attachments} onRemove={id => setAttachments(l => l.filter(a => a.id !== id))} onRetry={id => void retryRead(id)}
             onClearFailed={() => setAttachments(l => l.filter(a => a.status !== 'failed'))} />
           <label htmlFor="qc-ask" className="sr-only">补充要求</label>
-          <textarea id="qc-ask" rows={2} value={ask} onChange={e => setAsk(e.target.value)}
+          <textarea id="qc-ask" rows={2} value={ask} onChange={e => void onAskChange(e.target.value)}
             placeholder="可选：加一句要求，例如「稍微快一点，先提醒我三个重点，给新同事看」；也可以直接粘贴正文"
             className="block w-full resize-none border-0 bg-transparent px-1 text-[13.5px] leading-6 text-token-primary outline-none placeholder:text-token-muted" />
           <div className="flex items-center gap-1">
-            <input ref={fileInput} type="file" accept=".md,.markdown,.txt,image/*" multiple hidden
+            <input ref={fileInput} type="file" accept=".md,.markdown,.txt,image/*" multiple hidden data-qc="file-input"
               onChange={e => { const files = Array.from(e.target.files ?? []); e.target.value = ''; files.forEach(f => void addFile(f)); }} />
             <button type="button" aria-label="上传稿件或图片" className="qc-icon-btn" onClick={() => fileInput.current?.click()}><Paperclip size={16} /></button>
             <button type="button" aria-label="从知识库选择" data-qc="pick-knowledge" className="qc-icon-btn" onClick={() => void addKnowledge('kb-picker')}><BookOpen size={16} /></button>
@@ -256,7 +274,7 @@ export function QuickCreationAgentPage() {
         </div>
         <div className="qc-rise flex items-center gap-2 rounded-[var(--radius-field)] border border-token-subtle bg-token-nested px-3 py-2 text-[12.5px] text-token-secondary">
           <Check size={14} className="shrink-0 text-[color:var(--accent-fg-success)]" aria-hidden />
-          稿件和要求已保存。生成在后台进行，离开页面也会继续。
+          <span data-qc="saved-notice">稿件和要求已保存。生成在后台进行，离开页面也会继续。</span>
         </div>
         {run.status === 'queued' && <QueueCard run={run} />}
         <RunProgress run={run} />
@@ -276,14 +294,14 @@ export function QuickCreationAgentPage() {
               <div className="space-y-2 rounded-[var(--radius-field)] border border-[color:var(--accent-fg-error)]/35 bg-[color:var(--accent-fg-error)]/[0.06] p-3" role="alert" data-qc="publish-failed">
                 <div className="text-[13px] font-medium text-[color:var(--accent-fg-error)]">发布没有完成</div>
                 <div className="text-[12px] leading-5 text-token-secondary">{run.publish.error}。{run.kind === 'video' ? '成片' : '网页'}已保存在作品里，右侧照常可看；重试只上传，不会重新生成。</div>
-                <Button size="sm" variant="primary" className="max-md:min-h-11" onClick={() => void onPublish()}>重试发布</Button>
+                <Button size="sm" variant="primary" className="max-md:min-h-11" data-qc="publish-retry" onClick={() => void onPublish()}>重试发布</Button>
               </div>
             )}
             {run.publish.status === 'done' && (
               <div className="flex flex-wrap items-center gap-2 rounded-[var(--radius-field)] border border-[color:var(--accent-fg-success)]/35 bg-[color:var(--accent-fg-success)]/[0.06] p-3" data-qc="published">
                 <Check size={15} className="text-[color:var(--accent-fg-success)]" aria-hidden />
                 <span className="min-w-0 flex-1 text-[12.5px] text-token-primary">已发布到网页托管 · {run.publish.siteTitle}</span>
-                <Button size="sm" variant="secondary" className="max-md:min-h-11" onClick={() => navigate(`/web-pages?focusSite=${encodeURIComponent(run.publish.siteId ?? '')}`)}>
+                <Button size="sm" variant="secondary" className="max-md:min-h-11" data-qc="open-hosting" onClick={() => navigate(`/web-pages?focusSite=${encodeURIComponent(run.publish.siteId ?? '')}`)}>
                   <ExternalLink size={13} />在网页托管中查看
                 </Button>
               </div>
@@ -295,14 +313,14 @@ export function QuickCreationAgentPage() {
         {run.status === 'queued' || run.status === 'running' ? (
           <>
             <span className="min-w-0 flex-1">可以离开，完成后会发站内通知，也能在「我的作品」找到它。</span>
-            <Button size="sm" variant="secondary" className="max-md:min-h-11" onClick={() => setParams({ view: 'works' })}>离开，稍后回来</Button>
+            <Button size="sm" variant="secondary" className="max-md:min-h-11" data-qc="leave" onClick={() => setParams({ view: 'works' })}>离开，稍后回来</Button>
           </>
         ) : run.status === 'failed' ? (
           <span className="min-w-0 flex-1">已完成的部分都已保存，可以现在处理，也可以稍后在「我的作品」里继续。</span>
         ) : (
           <>
             <span className="min-w-0 flex-1">想换个模板或产出？用同一份稿件再做一个。</span>
-            <Button size="sm" variant="secondary" className="max-md:min-h-11" onClick={() => { setAttachments(run.attachments.filter(a => a.status === 'ready')); setAsk(run.ask); setKind(run.kind === 'video' ? 'web' : 'video'); setTemplateId(''); setParams({}); }}>
+            <Button size="sm" variant="secondary" className="max-md:min-h-11" data-qc="redo-other" onClick={() => { setAttachments(run.attachments.filter(a => a.status === 'ready')); setAsk(run.ask); setKind(run.kind === 'video' ? 'web' : 'video'); setTemplateId(''); setParams({}); }}>
               用这份稿件做{run.kind === 'video' ? '网页' : '视频'}
             </Button>
           </>
@@ -342,7 +360,7 @@ export function QuickCreationAgentPage() {
   const loading = runId && !run && !runError;
   const ready = loading ? undefined : run ? `run-${run.status}` : 'compose';
   return (
-    <div className="flex h-full min-h-0 flex-col" data-qc-ready={ready}>
+    <div className="flex h-full min-h-0 flex-col" data-qc-ready={ready} data-output={run?.kind ?? kind} data-run-id={run?.id ?? ''}>
       {header}
       <div className="min-h-0 flex-1">
         {loading ? (
