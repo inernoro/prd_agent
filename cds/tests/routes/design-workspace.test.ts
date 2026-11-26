@@ -9,6 +9,7 @@ import express from 'express';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createHumanProjectAccessMiddleware } from '../../src/middleware/human-project-access.js';
 import { createDesignWorkspaceRouter } from '../../src/routes/design-workspace.js';
+import type { DesignReferenceTarget } from '../../src/services/design-framework-browser.js';
 import { DesignWorkspaceService, type DesignActor, type DesignWorkspaceCommit } from '../../src/services/design-workspace.js';
 import { EngineeringPlanningService, FileEngineeringPlanningStore } from '../../src/services/engineering-planning.js';
 import { humanPrincipalId } from '../../src/services/human-project-access.js';
@@ -120,7 +121,8 @@ describe('private CDS design workspace', () => {
     return { sourceCommit, sourcePath };
   }
 
-  function openWorkspace(planning?: EngineeringPlanningService, storeDirectory = directory) {
+  function openWorkspace(planning?: EngineeringPlanningService, storeDirectory = directory,
+    captureCover?: (prototype: Buffer, target: DesignReferenceTarget) => Promise<Buffer | undefined>) {
     const dependencies = {
       now: () => new Date(clock),
       approvedPlanFor: async (project: string, plan: string) => project === projectId && plan === 'PLN-approved'
@@ -144,6 +146,7 @@ describe('private CDS design workspace', () => {
     };
     return new DesignWorkspaceService(new FileProjectRevisionStore<DesignWorkspaceCommit>(storeDirectory), {
       ...dependencies,
+      ...(captureCover ? { captureCover } : {}),
       ...(planning ? {
         findDebt: async (project, debtId, sourceRef) => await planning.designAcceptanceDebt(project, debtId, sourceRef) === debtId,
         resolveDebtProposal: (project, proposalId, sourceRef) => planning.designAcceptanceDebt(project, proposalId, sourceRef),
@@ -225,6 +228,103 @@ describe('private CDS design workspace', () => {
       body: JSON.stringify({ type, requestId, ...fields }),
     });
   }
+
+  describe('automatic design library covers', () => {
+    function pausedCover() {
+      const image = png(1280, 800);
+      let finish!: (bytes: Buffer) => void;
+      const capture = new Promise<Buffer>(resolve => { finish = resolve; });
+      return { image, captureCover: vi.fn(async (_prototype: Buffer, _target: DesignReferenceTarget) => capture),
+        finish: () => finish(image) };
+    }
+
+    it('queues a private cover after publication without waiting for a library read or modifying the submitted ZIP', async () => {
+      const { image, captureCover, finish } = pausedCover();
+      base = await openApi(openWorkspace(undefined, directory, captureCover));
+      const archive = draft('A design with no cover in its package');
+      const route = { sourceMode: 'private', intent: 'create', designKey: 'fixture/cover', sourcePath: 'design/cover' };
+      let designId: string;
+      try {
+        const published = await publish('cover-first', archive, route, { actor: 'git-designer' });
+        expect(published.status).toBe(201);
+        ({ designId } = (await published.json()).result);
+        await vi.waitFor(() => expect(captureCover).toHaveBeenCalledTimes(1));
+        expect(captureCover).toHaveBeenCalledWith(Buffer.from(html), expect.objectContaining({
+          screen: expect.objectContaining({ id: 'members', route: '#members', viewport: 'desktop' }), theme: 'light',
+        }));
+        const replay = await publish('cover-first', archive, route, { actor: 'git-designer' });
+        expect(replay.status).toBe(200);
+        const pending = await (await get('?view=summary', 'read-designer')).json();
+        expect(pending.coverPending).toBe(true);
+        expect(pending.designs[0].versions[0]).not.toHaveProperty('cover');
+      } finally {
+        finish();
+      }
+
+      const version = await vi.waitFor(async () => {
+        const { designs } = await (await get('?view=summary', 'read-designer')).json();
+        expect(designs[0].versions[0].cover).toMatchObject({ id: expect.any(String), screenId: 'members', theme: 'light',
+          sha256: createHash('sha256').update(image).digest('hex') });
+        return designs[0].versions[0];
+      });
+      expect(captureCover).toHaveBeenCalledTimes(1);
+      const cover = await get(`/artifacts/${version.cover.id}`, 'read-designer');
+      expect(cover.status).toBe(200);
+      expect(cover.headers.get('content-type')).toContain('image/png');
+      expect(cover.headers.get('cache-control')).toContain('private');
+      expect(Buffer.from(await cover.arrayBuffer())).toEqual(image);
+      expect((await get(`/artifacts/${version.cover.id}`, 'outside')).status).toBe(404);
+      expect((await get(`/artifacts/${version.cover.id}`, 'author', otherProjectId)).status).toBe(404);
+
+      const detail = await (await get(`?designId=${designId}&version=1`, 'read-designer')).json();
+      const delivered = detail.designs[0].versions[0];
+      expect(delivered.sha256).toBe(createHash('sha256').update(archive).digest('hex'));
+      expect(delivered.delivery.files.some((file: { path: string }) => file.path.endsWith('.png'))).toBe(false);
+      expect(Buffer.from(await (await get(`/artifacts/${delivered.delivery.archiveId}`, 'read-designer')).arrayBuffer())).toEqual(archive);
+      const thumbnail = await (await get(`?view=thumbnails&designId=${designId}&version=1`, 'read-designer')).json();
+      expect(thumbnail).toMatchObject({ completed: 0, renders: {} });
+    });
+
+    it('backfills an existing draft once for concurrent library readers and persists its cover separately from a delivered reference', async () => {
+      const deliveredReference = png(1280, 800, Buffer.alloc((1280 * 3 + 1) * 800, 1));
+      const archive = draft('An earlier design', {}, [{ name: 'bundle/screens/members.dark.png', data: deliveredReference }]);
+      const published = await publish('existing-cover', archive);
+      expect(published.status).toBe(201);
+      const { designId } = (await published.json()).result;
+      const before = await (await get('?view=summary')).json();
+      expect(before.designs[0].versions[0]).not.toHaveProperty('cover');
+      const reference = before.designs[0].versions[0].renders.members.dark;
+
+      const { image, captureCover, finish } = pausedCover();
+      base = await openApi(openWorkspace(undefined, directory, captureCover));
+      try {
+        expect((await get('?view=summary', 'outside')).status).toBe(404);
+        expect((await (await get('?view=summary', 'author', otherProjectId)).json()).designs).toEqual([]);
+        expect(captureCover).not.toHaveBeenCalled();
+        const readers = await Promise.all(['read-designer', 'reading-member', 'author'].map(actor => get('?view=summary', actor)));
+        expect(readers.map(response => response.status)).toEqual([200, 200, 200]);
+        await vi.waitFor(() => expect(captureCover).toHaveBeenCalledTimes(1));
+      } finally {
+        finish();
+      }
+
+      const cover = await vi.waitFor(async () => {
+        const { designs } = await (await get('?view=summary')).json();
+        expect(designs[0].versions[0].cover).toMatchObject({ id: expect.any(String), screenId: 'members', theme: 'light' });
+        return designs[0].versions[0].cover;
+      });
+      expect(cover.id).not.toBe(reference.id);
+      expect(captureCover).toHaveBeenCalledTimes(1);
+
+      base = await openApi(openWorkspace());
+      const persisted = await (await get('?view=summary', 'read-designer')).json();
+      expect(persisted.designs[0].versions[0].cover).toEqual(cover);
+      expect(Buffer.from(await (await get(`/artifacts/${cover.id}`, 'read-designer')).arrayBuffer())).toEqual(image);
+      const thumbnail = await (await get(`?view=thumbnails&designId=${designId}&version=1`, 'read-designer')).json();
+      expect(thumbnail.renders).toEqual({ members: { dark: reference } });
+      expect(Buffer.from(await (await get(`/artifacts/${reference.id}`, 'read-designer')).arrayBuffer())).toEqual(deliveredReference);
+    });
+  });
 
   it('lets design credentials read and reply to one explicit planning handoff before publishing a draft', async () => {
     const fields = { designKey: 'fixture/brief', planId: 'PLN-approved', expectedVersion: 2 };

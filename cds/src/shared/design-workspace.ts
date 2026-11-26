@@ -122,6 +122,8 @@ export type DesignSystem = {
   modules: Array<{ id: string; name: string; framework?: string; note?: string }>;
 };
 
+export type DesignCover = { id: string; sha256: string; screenId: string; theme: DesignTheme };
+
 export type DesignVersion = {
   version: number; title: string; sourceCommit: string; sha256: string; prototypeId: string; createdAt: string;
   sourcePath?: string; sourceVerification?: 'git' | 'declared' | 'private-upload'; prototypeSha256?: string;
@@ -131,6 +133,7 @@ export type DesignVersion = {
   frameworkCheck?: DesignFrameworkCheck;
   group?: string; scope?: DesignScope; tags: string[]; decisionIds: string[]; resolves: Record<string, string>;
   renders?: Record<string, Partial<Record<DesignTheme, { id: string; sha256: string }>>>;
+  cover?: DesignCover;
   demo?: DesignDemoStep[];
   goals?: DesignGoal[];
   demoData?: DesignDemoData;
@@ -328,6 +331,7 @@ export type DesignThumbnailStatus = {
 
 export type DesignWorkspace = {
   projectId: string; designs: DesignEntry[]; frameworks: DesignFramework[];
+  coverPending?: boolean;
   requirements?: DesignRequirement[];
   systems?: DesignSystem[];
   viewer?: DesignViewerState;

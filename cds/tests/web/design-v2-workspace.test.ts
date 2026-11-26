@@ -412,6 +412,75 @@ describe('已发布的演示、评论和交付布局', () => {
     });
   }, 30_000);
 
+  it('设计库自动读取新封面，稿件和文件夹共用私有图片并保持正常打开入口', async () => {
+    const title = '自动生成封面的稿件';
+    const group = '接入与授权示例';
+    const draft: DesignEntry = { id: 'DSN-fixture-auto-cover', projectId, versions: [
+      { ...first, title, group, screens: [currentScreen] },
+    ], comments: [], runs: [] };
+    const library = { ...workspace, designs: [draft] };
+    const cover = { id: 'fixture-library-cover', sha256: 'e'.repeat(64), screenId: currentScreen.id, theme: 'light' as const };
+    const libraryWithCover = { ...library, designs: [{ ...draft, versions: [{ ...draft.versions[0], cover }] }] };
+    const css = await layoutStyles(design('', libraryWithCover), draftStyles);
+
+    await withDesignBrowser(() => library, async (page, commands) => {
+      const api = `/api/projects/${projectId}/design`;
+      const image = `${api}/artifacts/${cover.id}`;
+      const reads: URLSearchParams[] = [];
+      let finish!: () => void;
+      const coverFinished = new Promise<void>(resolve => { finish = resolve; });
+      await page.route(url => url.pathname === api, async route => {
+        const query = new URL(route.request().url()).searchParams;
+        reads.push(query);
+        if (query.get('view') === 'summary') {
+          if (reads.length === 1) return route.fulfill({ json: { ...library, coverPending: true } });
+          await coverFinished;
+          return route.fulfill({ json: libraryWithCover });
+        }
+        return route.fulfill({ json: libraryWithCover });
+      });
+      await page.route(url => url.pathname === image, route => route.fulfill({ contentType: 'image/png', body: thumbnailPng }));
+
+      const tile = page.locator('.dw-design-card').filter({ hasText: title });
+      const folder = page.locator('.dw-folder').filter({ hasText: group });
+      try {
+        await page.goto(browserDesignUrl());
+        await page.evaluate(styles => {
+          const style = document.createElement('style');
+          style.textContent = styles;
+          document.head.append(style);
+        }, css);
+        await tile.getByText('封面生成中', { exact: true }).waitFor();
+        await folder.getByText('封面生成中', { exact: true }).waitFor();
+      } finally {
+        finish();
+      }
+
+      for (const card of [tile, folder]) {
+        const img = card.locator('img');
+        await img.waitFor();
+        await img.scrollIntoViewIfNeeded();
+        expect(new URL((await img.getAttribute('src'))!, browserDesignOrigin).pathname).toBe(image);
+        await expect.poll(() => img.evaluate((node: HTMLImageElement) => node.naturalWidth)).toBeGreaterThan(0);
+      }
+      expect(reads.length).toBeGreaterThanOrEqual(2);
+      expect(reads.every(query => query.get('view') === 'summary')).toBe(true);
+      expect(await page.locator('.dw-library iframe').count()).toBe(0);
+      expect(commands).toHaveLength(0);
+
+      const open = tile.getByRole('link', { name: '打开稿件 ' + title, exact: true });
+      expect(new URL((await open.getAttribute('href'))!, browserDesignOrigin).searchParams.get('design')).toBe(draft.id);
+      await folder.click();
+      await page.waitForURL(url => url.searchParams.get('group') === group);
+      await open.click();
+      await page.waitForURL(url => url.searchParams.get('design') === draft.id);
+      await page.getByRole('heading', { name: title, exact: true }).waitFor();
+      expect(reads.some(query => query.get('designId') === draft.id)).toBe(true);
+      expect(reads.every(query => query.get('view') === 'summary' || query.get('designId') === draft.id)).toBe(true);
+      expect(commands).toHaveLength(0);
+    });
+  }, 20_000);
+
   it('新版桌面页头一行，手机保留完整版本文案和可用的三个页签', async () => {
     const markup = design(`&design=${guidedDraft.id}&version=18`, guidedWorkspace);
     await withLayout(markup, [...draftStyles, 'web/src/pages/design-workspace/design-v18.css'], async page => {

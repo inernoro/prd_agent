@@ -20,17 +20,15 @@ type LibraryQuery = {
 };
 const normalize = (value: string) => value.normalize('NFKC').toLowerCase();
 
-function DesignCover({ projectId, version, theme, thumbnail }: {
-  projectId: string; version: DesignVersion; theme: DesignTheme; thumbnail?: boolean;
+function DesignCover({ projectId, version, theme, pending }: {
+  projectId: string; version: DesignVersion; theme: DesignTheme; pending?: boolean;
 }) {
   const screen = version.screens.find(scene => version.renders?.[scene.id]?.[theme])
     ?? version.screens.find(scene => version.renders?.[scene.id]);
   const selectedTheme = screen?.themes.includes(theme) ? theme : screen?.themes[0] ?? theme;
-  const renderedScreen = thumbnail ? version.screens.find(scene => version.renders?.[scene.id]?.[theme]) : undefined;
-  const render = renderedScreen ? version.renders?.[renderedScreen.id]?.[theme]
-    : screen && version.renders?.[screen.id]?.[selectedTheme];
+  const render = version.cover ?? (screen && version.renders?.[screen.id]?.[selectedTheme]);
   if (render) return <img src={designArtifact(projectId, render.id)} alt="" loading="lazy" />;
-  return <span className="dw-mini-empty" aria-hidden><Layers size={16} /></span>;
+  return <span className="dw-mini-empty" aria-hidden>{pending ? '封面生成中' : <Layers size={16} />}</span>;
 }
 
 type CardProps = {
@@ -51,7 +49,7 @@ function DesignCard({ entry, workspace, viewer, theme, href, onLarge, task }: Ca
   const framework = workspace.frameworks.find(row => row.id === version.framework);
   return <article className="dw-design-card" data-state={status}>
     <div className="dw-thumb">
-      <DesignCover projectId={workspace.projectId} version={version} theme={theme} />
+      <DesignCover projectId={workspace.projectId} version={version} theme={theme} pending={workspace.coverPending} />
       {action && 'open' in action
         ? <button className="dw-card-cover" type="button" aria-label={'打开稿件 ' + version.title} aria-description={action.label} onClick={action.open} />
         : <Link className="dw-card-cover" to={target}
@@ -273,7 +271,8 @@ export function DesignLibrary({ workspace, query, onChange, mode, theme, viewer,
               const newVersions = folder.entries.filter(row => newDesignLabel(row, viewer)).length;
               return <button className="dw-folder dw-surface" type="button" key={key} onClick={() => openFolder(key, folder.scope)}>
                 <span className="dw-folder-art" data-count={Math.min(4, folder.entries.length)}>
-                  {folder.entries.slice(0, 4).map(row => <span key={row.id}><DesignCover projectId={projectId} version={latestDesign(row)} theme={theme} thumbnail /></span>)}
+                  {folder.entries.slice(0, 4).map(row => <span key={row.id}><DesignCover projectId={projectId} version={latestDesign(row)}
+                    theme={theme} pending={workspace.coverPending} /></span>)}
                   {!folder.entries.length && <span className="dw-mini-empty"><Folder size={20} /></span>}
                   {newVersions > 0 && <small className="dw-card-new">{newVersions} 份新</small>}
                 </span>

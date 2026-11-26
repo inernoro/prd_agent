@@ -196,6 +196,7 @@ async function measurePrototype(browserPath: string, prototype: Buffer, screens:
 }
 
 export type DesignReferenceTarget = { screen: DesignScreen; theme: DesignTheme };
+export type DesignCoverCapture = (prototype: Buffer, target: DesignReferenceTarget) => Promise<Buffer | undefined>;
 export type DesignReferenceCapture = (prototype: Buffer, targets: readonly DesignReferenceTarget[]) => AsyncIterable<DesignReferenceTarget & { bytes: Buffer }>;
 
 export function designBrowserPath(executablePath?: string) {

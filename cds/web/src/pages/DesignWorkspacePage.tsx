@@ -91,6 +91,12 @@ export function DesignWorkspacePage() {
     : designPath(project) + '?view=summary';
   const source = usePlanningRead<DesignWorkspace>(loadPath, reload);
   const workspace = source.data?.projectId === project ? source.data : undefined;
+  const coverPending = !draftId && workspace?.coverPending;
+  useEffect(() => {
+    if (!coverPending || source.loading || source.error) return;
+    const timer = window.setTimeout(refreshWorkspace, 2500);
+    return () => window.clearTimeout(timer);
+  }, [coverPending, project, loadPath, source.loading, source.error, refreshWorkspace]);
   const permissions = workspace?.permissions;
   const entry = workspace?.designs.find(row => row.id === draftId);
   const requirementKey = params.get('brief');

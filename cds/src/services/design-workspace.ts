@@ -13,7 +13,7 @@ import { designEvidenceStatus, designKnownIssues, designMethodApplicable, design
   type DesignMethodId, type DesignMethodSetting } from '../shared/design-methods.js';
 import { evaluateDesignAcceptance } from './design-acceptance.js';
 import { checkDesignFramework, type DesignFrameworkProbe } from './design-framework-check.js';
-import type { DesignReferenceCapture } from './design-framework-browser.js';
+import type { DesignCoverCapture, DesignReferenceCapture, DesignReferenceTarget } from './design-framework-browser.js';
 import type { DesignAcceptanceCapture } from './design-acceptance-browser.js';
 import { issueDesignShareHandoff, type DesignShareHandoffConfig } from './design-share-handoff.js';
 import { compareDesignVersions } from './design-version-diff.js';
@@ -40,6 +40,7 @@ export type DesignWorkspaceCommit = {
     reviewers?: DesignReviewer[]; notifyReviewersAt?: string; sharePreparation?: DesignSharePreparation;
     implementation?: { version: number; screens: DesignImplementation[] };
     generatedRender?: { version: number; screenId: string; theme: 'light' | 'dark'; id: string; sha256: string };
+    generatedCover?: { version: number; cover: NonNullable<DesignVersion['cover']> };
     upgrade?: DesignUpgrade; enabledMethods?: DesignEntry['enabledMethods'];
     methodSetting?: { version: number; method: DesignMethodId; setting: DesignMethodSetting }; knownIssue?: DesignKnownIssue };
   framework?: DesignFramework;
@@ -152,6 +153,10 @@ function apply(state: WorkspaceState, commit: DesignWorkspaceCommit) {
       const bindings = new Map(previous?.implementations?.[version]?.map(row => [row.screenId, row]));
       for (const screen of screens) bindings.set(screen.screenId, screen);
       design.implementations = { ...previous?.implementations, [version]: [...bindings.values()] };
+    }
+    if (update.generatedCover) {
+      const { version, cover } = update.generatedCover;
+      design.versions = design.versions.map(row => row.version === version ? { ...row, cover } : row);
     }
     if (update.generatedRender) {
       const { version, screenId, theme, id, sha256 } = update.generatedRender;
@@ -267,8 +272,19 @@ function designVersionSummary(version: DesignVersion, cover: boolean): DesignVer
     resolves, scope, sourcePath, sourceVerification, framework, frameworkVersion, prototypeId: '', rationale: '', spec: {},
     screens: coverScreen ? [{ id: coverScreen.id, name: coverScreen.name, viewport: coverScreen.viewport,
       themes: coverScreen.themes, route: '', impl: null }] : [],
-    acceptance: [], ...(coverScreen ? { renders: { [coverScreen.id]: version.renders![coverScreen.id] } } : {}) };
+    acceptance: [], ...(cover && version.cover ? { cover: version.cover } : {}),
+    ...(coverScreen ? { renders: { [coverScreen.id]: version.renders![coverScreen.id] } } : {}) };
 }
+
+function coverTarget(version: DesignVersion): DesignReferenceTarget | undefined {
+  const firstStep = version.demo?.[0]?.screen;
+  const screen = version.screens.find(row => row.id === firstStep) ?? version.screens[0];
+  if (!screen) return undefined;
+  const theme = screen.themes.includes('light') ? 'light' : screen.themes[0];
+  return theme ? { screen, theme } : undefined;
+}
+
+const coverActor: DesignActor = { kind: 'agent', id: 'service:design-cover', label: 'CDS 封面服务', permissions: ['read', 'write'] };
 
 function designRunSummary(run: DesignRun, includeCells: boolean): DesignRun {
   const { id, version, pullRequest, target, commit, createdAt, verdict, previewUrl, signed, upgradeId } = run;
@@ -393,12 +409,16 @@ export class DesignWorkspaceService {
   private readonly completedReferenceJobs = new Set<string>();
   private readonly acceptanceJobs = new Set<string>();
   private referenceQueue = Promise.resolve();
+  private readonly coverJobs = new Set<string>();
+  private readonly coverRetryAfter = new Map<string, number>();
+  private coverQueue = Promise.resolve();
 
   constructor(private readonly store: ProjectRevisionStore<DesignWorkspaceCommit>, private readonly deps: {
     reviewer?: (projectId: string, actorId: string) => Promise<DesignReviewer | undefined>;
     sourcePackage?: (projectId: string, commit: string, sourcePath: string) => Promise<Buffer | undefined>;
     frameworkProbe?: DesignFrameworkProbe;
     referenceCapture?: DesignReferenceCapture;
+    captureCover?: DesignCoverCapture;
     captureAcceptance?: DesignAcceptanceCapture;
     resolvePreview?: (projectId: string, pullRequest: number, commit?: string) => Promise<Preview | undefined>;
     resolveInstalled?: (projectId: string, commit?: string) => Promise<Preview | undefined>;
@@ -476,6 +496,12 @@ export class DesignWorkspaceService {
     const detail = projection && 'designId' in projection ? projection : undefined;
     const entries = detail ? [state.designs.get(detail.designId) ?? missing('该稿件不存在')]
       : [...state.designs.values()].sort((a, b) => b.versions.at(-1)!.createdAt.localeCompare(a.versions.at(-1)!.createdAt));
+    let coverPending = false;
+    if (projection && 'summary' in projection) {
+      for (const entry of entries) {
+        if (this.queueCover(projectId, entry.id, entry.versions.at(-1)!)) coverPending = true;
+      }
+    }
     const [signoffs, installed] = await Promise.all([this.currentSignoffs(projectId, entries),
       this.deps.resolveInstalled?.(projectId).catch(() => undefined)]);
     const visible = await Promise.all(entries.map(async entry => {
@@ -498,6 +524,7 @@ export class DesignWorkspaceService {
         ...(run === undefined ? {} : { currentSignoffRunId: run?.id ?? null }) };
     }));
     return { projectId, designs, frameworks: structuredClone([...state.frameworks.values()]),
+      ...(coverPending ? { coverPending: true } : {}),
       requirements: visibleRequirements(state),
       ...(state.systems.size ? { systems: structuredClone([...state.systems.values()]) } : {}),
       ...(actor.kind === 'human' ? { viewer: structuredClone(state.viewers.get(actor.id) ?? { designs: {}, briefs: {} }) } : {}),
@@ -876,8 +903,60 @@ export class DesignWorkspaceService {
       });
     if (receipt.result.designId && receipt.result.version) {
       this.queueReferences(projectId, actor, receipt.result.designId, receipt.result.version);
+      if (this.deps.captureCover) {
+        const { designId: id, version } = receipt.result;
+        const queuePublishedCover = async () => {
+          const entry = (await this.load(projectId)).designs.get(id);
+          const published = entry?.versions.find(row => row.version === version);
+          if (published) this.queueCover(projectId, id, published);
+        };
+        void queuePublishedCover().catch(() => console.warn('[design-cover] Failed to queue a published version'));
+      }
     }
     return receipt;
+  }
+
+  private queueCover(projectId: string, id: string, version: DesignVersion): boolean {
+    const capture = this.deps.captureCover;
+    const target = coverTarget(version);
+    if (!capture || version.cover || !target) return false;
+    const key = `${projectId}/${id}/${version.version}`;
+    if (this.coverJobs.has(key)) return true;
+    if ((this.coverRetryAfter.get(key) ?? 0) > Date.now() || this.coverJobs.size >= 16) return false;
+    this.coverJobs.add(key);
+    this.coverQueue = this.coverQueue.then(async () => {
+      const entry = (await this.load(projectId)).designs.get(id);
+      if (!entry || versionOf(entry, version.version).cover) return;
+      const prototype = await this.artifact(projectId, coverActor, version.prototypeId);
+      const prototypeSha = designDigest(prototype.bytes);
+      if (version.prototypeSha256 && prototypeSha !== version.prototypeSha256) throw new Error('Cover source digest mismatch');
+      const captureOnce = () => capture(prototype.bytes, target).catch(() => undefined);
+      const bytes = await captureOnce() ?? await captureOnce();
+      const dimensions = bytes && designPngDimensions(bytes);
+      const view = designViewports[target.screen.viewport];
+      if (!bytes || !dimensions || dimensions.width !== view.width || dimensions.height !== view.height) {
+        throw new Error('Cover capture is unavailable');
+      }
+      const cover = { id: randomUUID(), sha256: designDigest(bytes), screenId: target.screen.id, theme: target.theme };
+      const token = { designId: id, version: version.version, prototypeSha, screenId: cover.screenId, theme: cover.theme };
+      await this.mutate(projectId, coverActor, 'design-cover-' + designDigest(stableJson(token)), token, ({ state }) => {
+        const current = state.designs.get(id) ?? missing('该稿件不存在');
+        const check = versionOf(current, version.version);
+        const result = { type: 'cover.generated', designId: id, version: version.version, screenId: cover.screenId };
+        if (check.cover || check.prototypeId !== version.prototypeId) return { result, changes: {} };
+        return { result, changes: {
+          assets: [{ id: cover.id, mime: 'image/png', base64: bytes.toString('base64') }],
+          design: { id, generatedCover: { version: version.version, cover } },
+        } };
+      });
+      this.coverRetryAfter.delete(key);
+    }).catch(() => {
+      this.coverRetryAfter.delete(key);
+      this.coverRetryAfter.set(key, Date.now() + 60_000);
+      if (this.coverRetryAfter.size > 64) this.coverRetryAfter.delete(this.coverRetryAfter.keys().next().value!);
+      console.warn('[design-cover] Could not generate cover', { projectId, designId: id, version: version.version });
+    }).finally(() => this.coverJobs.delete(key));
+    return true;
   }
 
   private queueReferences(projectId: string, actor: DesignActor, id: string, versionNumber: number) {
