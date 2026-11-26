@@ -244,6 +244,23 @@ test('intake conflicts direct the agent to the authoritative baseline without ec
   });
 });
 
+test('design connection failures describe the affected workspace without echoing upstream messages', async t => {
+  for (const [status, code, hint] of [
+    [403, 'design_project_credential_required', /实例凭据.*工作区凭据/],
+    [404, 'design_not_found', /设计项目.*MCP 启动工作区/],
+  ]) {
+    const bridge = createDesignBridge({ host: 'https://cds.example.test', projectId: 'fixture', projectKey: 'fixture-key' }, {
+      fetchImpl: async () => Response.json({ error: code, message: 'sensitive upstream diagnostic' }, { status }),
+    });
+    t.after(() => bridge.close());
+    await assert.rejects(bridge.call('cds_design_read', { view: 'intake' }), error => {
+      assert.match(error.message, hint);
+      assert.doesNotMatch(error.message, /sensitive upstream diagnostic/);
+      return true;
+    });
+  }
+});
+
 test('publish preserves an actionable gate code without echoing archived contents', async t => {
   const { publisher, base, stored } = await intakeFixture(t);
   await assert.rejects(publisher.call('cds_design_publish', { ...base, intent: 'revise', designId: stored.designId,

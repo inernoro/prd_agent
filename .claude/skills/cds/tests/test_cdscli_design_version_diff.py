@@ -73,6 +73,12 @@ class DesignVersionCli(unittest.TestCase):
         self.assertEqual(payload['data'], self.diff)
         self.assertEqual(self.calls, [('GET', BASE + '/diff?designId=DSN-fixture&from=11&to=17', None)])
 
+    def test_freeze_uses_bound_project_without_member_login(self):
+        status, payload = self.command('freeze', DESIGN_ID, '17', '--expected-baseline', '0', '--request-id', 'fixture-freeze')
+        self.assertEqual(status, 0, payload)
+        self.assertEqual(self.calls, [('POST', BASE + '/commands', {'type': 'design.freeze', 'designId': DESIGN_ID,
+                         'version': 17, 'expectedBaseline': None, 'requestId': 'fixture-freeze'})])
+
     def test_diff_receipt_must_match_both_requested_versions_and_draft(self):
         for field, wrong in (('designId', 'DSN-other'), ('fromVersion', 12), ('toVersion', 18), ('projectId', 'other'), ('files', {})):
             with self.subTest(field=field), patch.dict(self.diff, {field: wrong}):
@@ -144,11 +150,26 @@ class DesignVersionCli(unittest.TestCase):
         self.assertEqual(self.calls[-1], ('POST', BASE + '/commands', {'type': 'design.freeze', 'designId': DESIGN_ID,
                           'version': 11, 'reason': '复验旧版', 'expectedBaseline': 17, 'requestId': 'freeze-fixture'}))
 
-    def test_freeze_does_not_use_an_agent_credential_even_with_a_reason(self):
-        status, payload = self.command('freeze', DESIGN_ID, '11', '--reason', '复验旧版')
+    def test_freeze_relays_member_requirement_from_server(self):
+        with patch.object(self.cli, '_request', return_value=(403, {'message': '此操作需要项目成员确认'}, {})) as request:
+            status, payload = self.command('freeze', DESIGN_ID, '11', '--reason', '复验旧版')
         self.assertNotEqual(status, 0, payload)
         self.assertIn('成员', payload['error'])
-        self.assertEqual(self.calls, [])
+        self.assertEqual(request.call_args.args[:2], ('POST', BASE + '/commands'))
+
+    def test_withdraw_baseline_and_bind_screens_use_the_same_project_binding(self):
+        status, payload = self.command('unfreeze', DESIGN_ID, '17', '--request-id', 'unfreeze-fixture')
+        self.assertEqual(status, 0, payload)
+        self.assertEqual(self.calls[-1], ('POST', BASE + '/commands', {
+            'type': 'design.unfreeze', 'designId': DESIGN_ID, 'version': 17, 'requestId': 'unfreeze-fixture'}))
+        screens = [{'screenId': 'fixture', 'path': '/fixture', 'readySelector': 'main'}]
+        with tempfile.TemporaryDirectory(dir=self.test_tmp) as directory:
+            file = Path(directory) / 'bindings.json'
+            file.write_text(json.dumps(screens), encoding='utf-8')
+            status, payload = self.command('bind', DESIGN_ID, '--version', '17', '--file', str(file), '--request-id', 'bind-fixture')
+        self.assertEqual(status, 0, payload)
+        self.assertEqual(self.calls[-1], ('POST', BASE + '/commands', {
+            'type': 'implementation.bind', 'designId': DESIGN_ID, 'version': 17, 'screens': screens, 'requestId': 'bind-fixture'}))
 
     def test_start_upgrade_fixes_a_selected_target_and_supports_a_missing_baseline(self):
         status, payload = self.command('start-upgrade', DESIGN_ID, '--version', '17', '--expected-baseline', '0',

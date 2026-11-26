@@ -342,11 +342,13 @@ node <技能根>/cds/scripts/design/release.mjs register --dir design/<目录> -
 ## 实施版本与升降级
 
 1. 从稿件读取最新版本、实施基线和最近签收的已实现版本。已实现版本只由 CDS 按签收更新。历史稿还没有签收时显示未知，实际分支和提交可用于独立核对升级起点。
-2. 有权成员在开始时锁定本轮目标。CLI 用 `cdscli design start-upgrade <稿件> --version <目标> --expected-baseline <当前基线> --as-user <账号>`。`--version` 省略时，服务端锁定当时的最新版本。基线缺失时 `--expected-baseline` 传 `0`。后续发布会更新最新稿件，进行中的目标继续沿用锁定版本。
+2. 在开始时锁定本轮目标。接入清单的 `permissions.implementation` 为 `true` 时，沿用现有项目凭据执行 `cdscli --workspace-credential design start-upgrade <稿件> --version <目标> --expected-baseline <当前基线>`。其他项目可由有权成员加 `--as-user <账号>` 执行。基线缺失时 `--expected-baseline` 传 `0`。`--version` 省略时由服务端读取当前目标或最新版本。新稿发布后，本轮继续使用已锁定的版本。
 3. 调 MCP `cds_design_read`，传 `{"view":"diff","id":"<稿件>","fromVersion":11,"toVersion":17}`，或运行 `cdscli design diff <稿件> --from 11 --to 17`。CDS 用两端清单计算画面、验收项和交付文件的新增、删除和改动。调换两端即可核对回退。稿件附源码差异时，从固定目标版读取对应目录，再在实际起点核对能否应用。
-4. 需要切到历史版本时，有权成员用 `cdscli design freeze <稿件> <历史版号> --reason "<原因>" --expected-baseline <当前基线> --as-user <账号>`。已有进行中的升级需要先完成，或凭升级编号和原因在页面取消，也可用 `design cancel-upgrade <稿件> --upgrade <编号> --reason "<原因>" --as-user <账号>`。
-5. 按锁定版绑定实际页面并完成验收。有权成员签收后回读运行和已实现版本。新版本发布后可按新的两端重复流程。
+4. `design freeze <稿件> <版号> --expected-baseline <当前基线>` 确认实施基线。选择历史版时加 `--reason <原因>`。`design unfreeze <稿件> <当前基线>` 撤回基线。已有进行中的升级可以完成后切换，或用 `design cancel-upgrade <稿件> --upgrade <编号> --reason <原因>` 取消本轮。
+5. `design bind <稿件> --version <目标> --file <页面绑定.json>` 绑定本轮实现画面。文件是包含 `screenId`、`path`、`readySelector` 的 JSON 数组。绑定和验收都使用固定的实施版本。有权成员签收后回读运行和已实现版本。
 6. 验收主用 CDS 自身代码时，`cdscli design accept <稿件> --installed --version <目标> --commit <已部署提交>` 只创建验收运行，锁定服务端实际读取到的构建。用 `design result` 回读运行、提交和入口后再取证。PR 预览沿用 `--pr`，两种入口分别选择。
+
+MCP 用 `cds_design_acceptance` 提交 `design.freeze`、`design.unfreeze`、`implementation.start`、`implementation.cancel` 或 `implementation.bind`。固定基线和升级带 `expectedBaseline`，尚无基线时传 `null`。HTTP 写入统一走当前项目的 `/design/commands`。程序核对交接回执、现行基线和目标版，并记录操作者。签收由项目成员确认。
 
 ## 发布门禁
 
