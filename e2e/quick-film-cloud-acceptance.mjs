@@ -60,6 +60,19 @@ try {
   assert.ok(fresh, 'The original owner cannot find the new cloud task.');
   await movies.selectOption(fresh.runId);
   await dialog.getByRole('status').first().waitFor();
+  if (['running', 'queued'].includes(fresh.status.toLowerCase())) {
+    const newFilmPath = `/api/design-artifacts/runs/${fresh.runId}/film.mp4`;
+    const [pendingMovie] = await Promise.all([
+      page.waitForResponse(requestMatches(newFilmPath, 'GET'), { timeout: 45_000 }),
+      dialog.getByRole('button', { name: '预览或取回成片', exact: true }).click(),
+    ]);
+    if (pendingMovie.status() === 404) {
+      await dialog.getByText('这条任务目前没有可取回的成片，请稍后查看。', { exact: true }).waitFor();
+      console.log('Unfinished task shows an actionable wait message; it does not start another model job.');
+    } else {
+      assert.ok(pendingMovie.ok(), `Pending run movie HTTP ${pendingMovie.status()}`);
+    }
+  }
   await page.reload();
   const [reloadedHistory] = await Promise.all([
     page.waitForResponse(requestMatches('/api/design-artifacts/code-films', 'GET')),
@@ -130,6 +143,34 @@ try {
   await share.waitFor();
   await share.getByText(/只有你本人打开有内容/).waitFor();
   console.log('Save verified twice against one private site; share settings opened with the owner-only default.');
+
+  const savedLinks = await responseData(await page.request.get(endpoint(`/api/web-pages/shares?siteId=${saved.siteId}`).href, apiAuth), 'List saved share links');
+  const link = savedLinks.items.find((item) => item.visibility === 'owner-only' && !item.isExpired && !item.isRevoked && !item.password);
+  assert.ok(link, 'The previously created owner-only share link was not found.');
+  const sharePath = '/api/web-pages/shares/view/' + encodeURIComponent(link.token);
+  const anonymousContext = await browser.newContext();
+  try {
+    const anonymous = await anonymousContext.request.get(endpoint(sharePath).href);
+    assert.ok([401, 403].includes(anonymous.status()), 'An unauthenticated viewer was not rejected.');
+  } finally {
+    await anonymousContext.close();
+  }
+  const ownerView = await responseData(await page.request.get(endpoint(sharePath).href, apiAuth), 'Read the share as owner');
+  assert.ok(ownerView.sites.some((item) => item.id === saved.siteId));
+  const shareUrl = endpoint('/s/wp/' + encodeURIComponent(link.token));
+  await page.goto(shareUrl.href).catch(() => { throw new Error('Owner share page did not open.'); });
+  const until = Date.now() + 40_000;
+  let hostedPlayer = false;
+  while (!hostedPlayer && Date.now() < until) {
+    for (const frame of page.frames()) {
+      const loaded = await frame.locator('video').first().evaluate((movie) =>
+        movie.readyState >= 1 && Math.abs(movie.duration - 90) < 0.15, null, { timeout: 250 }).catch(() => false);
+      if (loaded) { hostedPlayer = true; break; }
+    }
+    if (!hostedPlayer) await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  assert.ok(hostedPlayer, 'The owner share page did not load the original movie.');
+  console.log('Owner share plays the same hosted movie; anonymous access was denied.');
 
 } finally {
   await browser.close();
