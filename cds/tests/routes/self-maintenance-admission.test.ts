@@ -579,7 +579,8 @@ describe('同实例四入口维护准入与真实请求完成条件', () => {
     expect(reply.raw).not.toContain('fixture remote unavailable');
     expect(state.getSelfUpdateHistory(1)[0]).toMatchObject({ status: 'failed', failure: { stage: 'gate' } });
     expect(state.getReleaseRun('live-release')?.status).toBe('running');
-    expect(shell.commands.some(command => /^git (fetch|checkout|reset)/.test(command))).toBe(false);
+    expect(shell.commands).toContain("git ls-remote --exit-code --refs origin 'refs/heads/main'");
+    expect(ownedCommands.filter(command => /^git (fetch|checkout|reset)/.test(command))).toEqual([]);
     expect(restartSpawn).not.toHaveBeenCalled();
     expect(getRestartWait()).toBeNull();
     expect(selfUpdateDrainBlockReason(Date.now())).toBeNull();
