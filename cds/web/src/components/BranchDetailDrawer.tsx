@@ -44,6 +44,7 @@ import { BranchDbKeepList, type BranchDbChoice } from '@/components/branch/Branc
 import { DbProbePanel } from '@/components/branch/DbProbePanel';
 import { ReferencesPanel } from '@/components/branch/ReferencesPanel';
 import { RelationCard } from '@/components/branch/RelationCard';
+import { findCurrentDeploymentRunId } from '@/lib/deploymentMeta';
 import { deriveBranchPhases, type PhaseKey } from '@/lib/deploymentPhases';
 import { normalizeContainerLogsForDisplay } from '@/lib/containerLogs';
 import { pickActiveDeployment } from './branchDeploymentSelection';
@@ -122,7 +123,6 @@ interface BranchDetailData {
   pullCount?: number;
   stopCount?: number;
   errorMessage?: string;
-  lastDeploymentRunId?: string;
   currentVersionId?: string;
   deployRuntime?: {
     kind: 'source' | 'release' | 'mixed';
@@ -216,6 +216,7 @@ interface DeploymentRunSummary {
   seq: number;
   eventCount: number;
   commitSha?: string;
+  versionId?: string;
   operationId?: string;
   executorId?: string;
   startedAt: string;
@@ -2637,7 +2638,11 @@ export function BranchDetailDrawer({
                       </section>
                     ) : null}
 
-                    {!readFailures['部署记录'] || deploymentRuns.length > 0 ? <DeploymentRunLedger runs={deploymentRuns} activeRunId={branch.lastDeploymentRunId} now={now} /> : <p className="text-sm text-muted-foreground">部署记录尚未确认。</p>}
+                    {!readFailures['部署记录'] || deploymentRuns.length > 0 ? <DeploymentRunLedger
+                      runs={deploymentRuns}
+                      currentRunId={findCurrentDeploymentRunId(deploymentRuns, branch)}
+                      now={now}
+                    /> : <p className="text-sm text-muted-foreground">部署记录尚未确认。</p>}
                     {canManageConsole && (!readFailures['版本记录'] || deploymentVersions.length > 0) ? <DeploymentVersionLedger
                       versions={deploymentVersions}
                       currentVersionId={branch.currentVersionId}
@@ -3175,11 +3180,11 @@ function DeploymentVersionLedger({
 
 function DeploymentRunLedger({
   runs,
-  activeRunId,
+  currentRunId,
   now,
 }: {
   runs: DeploymentRunSummary[];
-  activeRunId?: string;
+  currentRunId?: string;
   now: number;
 }): JSX.Element | null {
   if (runs.length === 0) return null;
@@ -3206,7 +3211,7 @@ function DeploymentRunLedger({
               <div className="flex min-w-0 flex-wrap items-center gap-2">
                 <span className={`rounded border px-2 py-0.5 text-xs ${meta.className}`}>{meta.label}</span>
                 <span className="font-mono text-xs text-muted-foreground" title={run.id}>{run.id.slice(0, 15)}</span>
-                {run.id === activeRunId ? <span className="rounded border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-[0.6875rem] text-primary">分支当前运行</span> : null}
+                {run.id === currentRunId ? <span className="rounded border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-[0.6875rem] text-primary">分支当前运行</span> : null}
                 <span className="text-xs text-muted-foreground">{deploymentRunTriggerLabel(run.trigger)}</span>
                 {run.commitSha ? <span className="font-mono text-xs text-muted-foreground">{run.commitSha.slice(0, 7)}</span> : null}
               </div>
