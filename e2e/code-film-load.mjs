@@ -46,7 +46,9 @@ const baseline = await api('/api/design-artifacts/runs/' + sourceRun);
 assert.equal(baseline.status, 'Done');
 assert.equal(hash(baseline.instruction), originalInstruction);
 assert.equal(baseline.uploadedSources.length, 1);
-assert.equal(baseline.uploadedSources[0].contentHash, originalSource);
+const baselineSource = baseline.uploadedSources[0];
+assert.match(baselineSource.contentHash, /^[a-f0-9]{64}$/);
+assert.match(baselineSource.fileName, /\.md$/);
 assert.equal(baseline.resolvedModel, 'gpt-6.1-sol');
 const ticket = await api('/api/llm-gateway/sso/ticket', {method:'POST'});
 const gatewayLogin = await request(gateway, '/gw/auth/map-sso', {body:{code:ticket.code}});
@@ -56,7 +58,10 @@ const started = Date.now();
 const deadline = started + 57 * 60_000;
 const prefix = 'ADR 视觉笔记 CDS 压测 ' + identity;
 const cases = Array.from({length:lanes}, (_, index) => ({lane:index+1, title:prefix+'-'+(index+1)}));
-console.log(JSON.stringify({event:'batch-start',lanes,commit,at:new Date(started).toISOString(),originalInstruction,originalSource}));
+const sameAttachment = run => run?.uploadedSources?.[0]?.attachmentId===baselineSource.attachmentId
+  && run.uploadedSources[0].contentHash===baselineSource.contentHash;
+console.log(JSON.stringify({event:'batch-start',lanes,commit,at:new Date(started).toISOString(),originalInstruction,
+  expectedRawSourceHash:originalSource,attachmentTextHash:baselineSource.contentHash}));
 await Promise.all(cases.map(async item => {
   const began = performance.now();
   try {
@@ -69,7 +74,7 @@ await Promise.all(cases.map(async item => {
     item.run = run;
     item.admissionMs = Math.round(performance.now()-began);
     console.log(JSON.stringify({event:'admitted',lane:item.lane,runId:item.id,admissionMs:item.admissionMs,
-      sourceMatches:run.uploadedSources?.[0]?.contentHash===originalSource,promptMatches:hash(run.instruction)===originalInstruction,
+      sourceMatches:sameAttachment(run),promptMatches:hash(run.instruction)===originalInstruction,
       model:run.llmRequestPolicy?.model,effort:run.llmRequestPolicy?.reasoningEffort}));
   } catch (error) {
     item.admissionError = error.message;
@@ -129,7 +134,7 @@ for (const item of cases) {
     observedRunningSeconds:item.runningAt?Math.round((item.runningAt-Date.parse(run.createdAt))/1000):null,
     finalSeconds:run?.completedAt?Math.round((Date.parse(run.completedAt)-Date.parse(run.createdAt))/1000):null,
     calls:run?.runtimeModelCallCount,phaseCode:run?.phaseCode,failureCode:run?.failureCode,
-    sourceMatches:run?.uploadedSources?.[0]?.contentHash===originalSource,
+    sourceMatches:sameAttachment(run),
     promptMatches:typeof run?.instruction==='string'&&hash(run.instruction)===originalInstruction,
     modelMatches:run?.resolvedModel===baseline.resolvedModel,effort:run?.llmRequestPolicy?.reasoningEffort};
   if (run?.status==='Done') {
