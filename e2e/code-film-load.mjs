@@ -19,14 +19,14 @@ const hash = (text) => createHash('sha256').update(text).digest('hex');
 const originalInstruction = 'cfc8631202ec14fd5f88c61f65c4c0f0bb642d7802b6c622e5308db87e7fa7a1';
 const originalSource = '940ba09667ffdbabd5693a800e977ff4d287100309af306479c9ccd86667428b';
 
-async function request(host, path, {token, body, method, range} = {}) {
+async function request(host, path, {token, body, method, range, timeout = 25_000} = {}) {
   const response = await fetch(new URL(path, host), {
     method: method ?? (body ? 'POST' : 'GET'),
     headers: {'X-Client':'admin', ...(token ? {Authorization:'Bearer ' + token} : {}),
       ...(body ? {'Content-Type':'application/json'} : {}), ...(range ? {Range:range} : {})},
     body: body && JSON.stringify(body),
     redirect: 'error',
-    signal: AbortSignal.timeout(25_000),
+    signal: AbortSignal.timeout(timeout),
   });
   if (range && response.status === 206) return response;
   const json = await response.json().catch(() => ({}));
@@ -100,7 +100,7 @@ while (Date.now() < deadline && cases.some(item=>item.id&&!terminal.has(item.run
   for (let offset=0; offset<pending.length; offset+=5) {
     await Promise.all(pending.slice(offset,offset+5).map(async item => {
       try {
-        const next = await api('/api/design-artifacts/runs/'+item.id);
+        const next = await api('/api/design-artifacts/runs/'+item.id,{timeout:8_000});
         if (!item.runningAt && next.status==='Running') item.runningAt=Date.now();
         item.run=next;
       } catch { item.pollFailures=(item.pollFailures??0)+1; }
@@ -115,6 +115,19 @@ while (Date.now() < deadline && cases.some(item=>item.id&&!terminal.has(item.run
     nextLog=Date.now()+60_000;
   }
   if (cases.some(item=>item.id&&!terminal.has(item.run.status))) await delay(6_000);
+}
+
+const unsettled = cases.filter(item=>item.id&&!terminal.has(item.run.status));
+for (let offset=0; offset<unsettled.length; offset+=5) {
+  await Promise.all(unsettled.slice(offset,offset+5).map(async item => {
+    try { item.run=await api('/api/design-artifacts/runs/'+item.id,{timeout:8_000}); }
+    catch { /* Leave the observed status available for the timeout decision. */ }
+    if (terminal.has(item.run.status)) return;
+    try {
+      await api('/api/design-artifacts/runs/'+item.id+'/cancel',{method:'POST',timeout:10_000});
+      item.cancelAccepted=true;
+    } catch { item.cancelAccepted=false; }
+  }));
 }
 
 function summarizeModel(items) {
@@ -137,7 +150,9 @@ for (const item of cases) {
     sourceMatches:sameAttachment(run),
     promptMatches:typeof run?.instruction==='string'&&hash(run.instruction)===originalInstruction,
     modelMatches:run?.resolvedModel===baseline.resolvedModel,effort:run?.llmRequestPolicy?.reasoningEffort};
-  if (run?.status==='Done') {
+  if (run?.status==='Done' && Date.parse(run.completedAt)>deadline) {
+    row.status='Timeout';
+  } else if (run?.status==='Done') {
     try {
       const film=await api('/api/design-artifacts/runs/'+item.id+'/film.mp4',{range:'bytes=0-31'});
       const header=Buffer.from(await film.arrayBuffer());
@@ -146,8 +161,7 @@ for (const item of cases) {
     } catch { row.outputValid=false; }
   } else if (item.id && !terminal.has(run.status)) {
     row.status='Timeout';
-    try { await api('/api/design-artifacts/runs/'+item.id+'/cancel',{method:'POST'});row.cancelAccepted=true; }
-    catch { row.cancelAccepted=false; }
+    row.cancelAccepted=item.cancelAccepted;
   }
   if (item.id) {
     const filter=new URLSearchParams({runId:item.id,pageSize:'500',view:'logical',
