@@ -22,7 +22,7 @@ import { DesignRequirementView } from './design-workspace/DesignRequirements';
 import { DesignLibrary, libraryStatus } from './design-workspace/DesignLibrary';
 import { DesignShareDialog } from './design-workspace/DesignShareDialog';
 import { DesignFrameworkView, FrameworkBadge, frameworkTabs } from './design-workspace/DesignFramework';
-import { CopyDesignBuildPrompt, DesignSkillsMenu, SkillGuide } from './design-workspace/SkillGuide';
+import { CopyDesignBuildPrompt, designBuildPrompt, DesignSkillsMenu, SkillGuide } from './design-workspace/SkillGuide';
 import { defaultDesignScreen, designDate, designDetailPath, designFeedbackAwaitsViewer, designPath, designPublisherLabel, designSourceNames, designStatus, emptyDesignViewer, failedBaseline, latestDesign, legacyRequirementGroup, materialNames, openReviews, scopePath, statusNames, type DesignCommand } from './design-workspace/design-ui';
 import './engineering-planning/planning.css';
 import './design-workspace/design.css';
@@ -99,6 +99,7 @@ export function DesignWorkspacePage() {
   }, [coverPending, project, loadPath, source.loading, source.error, refreshWorkspace]);
   const permissions = workspace?.permissions;
   const entry = workspace?.designs.find(row => row.id === draftId);
+  const buildPrompt = entry ? designBuildPrompt(entry) : null;
   const requirementKey = params.get('brief');
   const requirement = workspace?.requirements?.find(row => row.designKey === requirementKey);
   const draftRequirement = entry?.designKey ? workspace?.requirements?.find(row => row.designKey === entry.designKey) : undefined;
@@ -367,7 +368,7 @@ export function DesignWorkspacePage() {
         return <option key={row.version} value={row.version}>{label}</option>;
       })}
     </select>
-    {tab === 'delivery' && <CopyDesignBuildPrompt key={entry.id} entry={entry} onCopied={target => {
+    {tab === 'delivery' && <CopyDesignBuildPrompt key={buildPrompt?.path ?? entry.id} prompt={buildPrompt} onCopied={target => {
       setIssue('');
       setNotice(`已复制 V${target} 实现提示词。`);
     }} />}
@@ -400,7 +401,7 @@ export function DesignWorkspacePage() {
           <dt>决策</dt><dd className="dw-draft-tags">{version.decisionIds.length ? version.decisionIds.map(id =>
             <Link className="ep-link" key={id} to={`/engineering-planning?project=${encodeURIComponent(project)}&kind=decision&item=${encodeURIComponent(id)}`}>{id}</Link>) : '未关联决策'}</dd>
         </dl>
-        <SkillGuide designId={entry.id} version={version.version} />
+        <SkillGuide designId={entry.id} version={version.version} buildPrompt={buildPrompt} handoffBlocks={handoffBlocks} />
         <footer className="dw-row">
           {version.handoff && version.handoff.status !== 'legacy' &&
             <button className="ep-button" type="button" onClick={event => openFull('delivery', { part: 'handoff' }, event.currentTarget)}>查看交接检查</button>}

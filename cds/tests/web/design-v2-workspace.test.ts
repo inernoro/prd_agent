@@ -367,7 +367,7 @@ describe('稿件通用验收手段', () => {
 });
 
 describe('V17 交付工作区', () => {
-  it('从设计库进入交付可复制实施基线的提示词和当前实例深链', async () => {
+  it('从设计库进入交付可在两个入口复制同一实施基线和当前实例深链', async () => {
     const input = { ...workspace, designs: [bound] };
     await withDesignBrowser(() => input, async (page, commands) => {
       await page.goto(browserDesignUrl());
@@ -381,6 +381,7 @@ describe('V17 交付工作区', () => {
       await copy.click();
       const link = await checkCopiedBuildPrompt(page, bound.id, 1);
       await page.getByRole('status').filter({ hasText: '已复制 V1 实现提示词。' }).waitFor();
+      expect(await copyBuildPromptFromDesignInfo(page, bound.id, 1)).toBe(link);
       await page.goto(link);
       expect(await page.getByRole('combobox', { name: '稿件版本' }).inputValue()).toBe('1');
       expect(await page.getByRole('navigation', { name: '稿件标签' }).getByRole('button', { name: /^交付/ }).getAttribute('aria-current')).toBe('true');
@@ -399,20 +400,23 @@ describe('V17 交付工作区', () => {
       await copy.waitFor();
       expect(await version.inputValue()).toBe('3');
       await copy.click();
-      await checkCopiedBuildPrompt(page, draft.id, 2);
+      const link = await checkCopiedBuildPrompt(page, draft.id, 2);
+      expect(await copyBuildPromptFromDesignInfo(page, draft.id, 2)).toBe(link);
 
       await version.selectOption('1');
       await page.waitForURL(url => url.searchParams.get('version') === '1');
       expect(await version.inputValue()).toBe('1');
       await page.evaluate(() => navigator.clipboard.writeText('fixture clipboard reset'));
       await copy.click();
-      await checkCopiedBuildPrompt(page, draft.id, 2);
+      expect(await checkCopiedBuildPrompt(page, draft.id, 2)).toBe(link);
+      expect(await copyBuildPromptFromDesignInfo(page, draft.id, 2)).toBe(link);
       expect(commands).toHaveLength(0);
     }, { permissions: ['clipboard-read', 'clipboard-write'], reducedMotion: 'reduce' });
   }, 30_000);
 
-  it('未确定实施版本时提示原因且无法复制实现提示词，验收和记录页没有该入口', async () => {
-    const input = { ...workspace, designs: [unbound] };
+  it('待定稿只能复制当前稿件的验收和续版提示词，并告知应由有权评审人定稿', async () => {
+    const input = { ...workspace, designs: [{ ...unbound, reviewers: [author] }],
+      permissions: { ...workspace.permissions, actorId: 'fixture-other-member' } };
     await withDesignBrowser(() => input, async (page, commands) => {
       await page.goto(browserDesignUrl({ design: unbound.id, version: '1', tab: 'delivery' }));
       const copy = page.getByRole('button', { name: '复制实现提示词', exact: true });
@@ -422,6 +426,20 @@ describe('V17 交付工作区', () => {
       const header = page.locator('.dw-head--draft');
       const explanation = [await copy.getAttribute('title'), await copy.getAttribute('aria-description'), await header.innerText()].join(' ');
       expect(explanation).toMatch(/先.*?(?:实施基线|实施版本|升级目标)/);
+      const info = page.getByLabel('更多稿件操作', { exact: true });
+      await info.click();
+      const guide = page.locator('[data-design-panel="design-info"] .dw-skill-guide');
+      expect(await guide.getByRole('listitem').filter({ has: page.getByText('实现', { exact: true }) }).innerText())
+        .toMatch(/有权评审人.*定为实施基线/);
+      expect(await guide.getByRole('button', { name: /帮我实现/ }).count()).toBe(0);
+      expect(await page.locator('.dw-info-panel').getByRole('button', { name: '定为实施基线', exact: true }).count()).toBe(0);
+      const followUps = [`/cds 跑 ${unbound.id} V1 的验收`, `/cds 改 ${unbound.id} V1 的设计`];
+      expect(await guide.locator('code').allTextContents()).toEqual(followUps);
+      for (const command of followUps) {
+        await guide.getByRole('button', { name: `复制「${command}」`, exact: true }).click();
+        await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(command);
+      }
+      await info.click();
       const tabs = page.getByRole('navigation', { name: '稿件标签' });
       for (const [tab, name] of [['accept', '验收'], ['log', '记录']]) {
         await tabs.getByRole('button', { name, exact: true }).click();
@@ -429,7 +447,7 @@ describe('V17 交付工作区', () => {
         expect(await page.locator('[data-action="copy-build-prompt"]').count()).toBe(0);
       }
       expect(commands).toHaveLength(0);
-    }, { reducedMotion: 'reduce' });
+    }, { permissions: ['clipboard-read', 'clipboard-write'], reducedMotion: 'reduce' });
   }, 30_000);
 
   it('375px 触屏可从设计库进入交付并复制实现提示词', async () => {
@@ -454,7 +472,7 @@ describe('V17 交付工作区', () => {
       permissions: ['clipboard-read', 'clipboard-write'], reducedMotion: 'reduce' });
   }, 35_000);
 
-  it('浏览器拒绝自动复制实现提示词时提供可选中的同一命令和深链', async () => {
+  it('浏览器拒绝自动复制时两个入口均提供可选中的同一命令和深链', async () => {
     const input = { ...workspace, designs: [bound] };
     await withDesignBrowser(() => input, async (page, commands) => {
       await page.addInitScript(() => {
@@ -464,13 +482,22 @@ describe('V17 交付工作区', () => {
         Object.defineProperty(document, 'execCommand', { value: () => false });
       });
       await page.goto(browserDesignUrl({ design: bound.id, version: '2', tab: 'delivery' }));
-      await page.getByRole('button', { name: '复制实现提示词', exact: true }).click();
+      const command = `/cds-build 帮我实现 ${bound.id} V1`;
+      const copy = page.getByRole('button', { name: '复制实现提示词', exact: true });
+      const copyFromGuide = page.getByRole('button', { name: `复制「${command}」`, exact: true });
       const dialog = page.getByRole('dialog', { name: '实现提示词' });
-      await dialog.getByText(/请选择下方文字手动复制/).waitFor();
       const prompt = dialog.getByRole('textbox', { name: '实现提示词' });
-      expect(await prompt.inputValue()).toBe(`/cds-build 帮我实现 ${bound.id} V1\n${browserDesignUrl({ design: bound.id, version: '1', tab: 'delivery' })}`);
-      await prompt.focus();
-      expect(await prompt.evaluate((node: HTMLTextAreaElement) => node.selectionStart === 0 && node.selectionEnd === node.textLength)).toBe(true);
+      const expected = `${command}\n${browserDesignUrl({ design: bound.id, version: '1', tab: 'delivery' })}`;
+      for (const trigger of [copy, copyFromGuide]) {
+        if (trigger === copyFromGuide) await page.getByLabel('更多稿件操作', { exact: true }).click();
+        await trigger.click();
+        await dialog.getByText(/请选择下方文字手动复制/).waitFor();
+        expect(await prompt.inputValue()).toBe(expected);
+        await prompt.focus();
+        expect(await prompt.evaluate((node: HTMLTextAreaElement) => node.selectionStart === 0 && node.selectionEnd === node.textLength)).toBe(true);
+        await page.keyboard.press('Escape');
+        await dialog.waitFor({ state: 'hidden' });
+      }
       expect(await page.getByText(/已复制 V1 实现提示词/).count()).toBe(0);
       expect(commands).toHaveLength(0);
     }, { reducedMotion: 'reduce' });
@@ -1293,6 +1320,19 @@ async function checkCopiedBuildPrompt(page: Page, designId: string, targetVersio
   expect(url.pathname).toBe('/design');
   expect(Object.fromEntries(url.searchParams)).toEqual({ project: projectId, design: designId, version: String(targetVersion), tab: 'delivery' });
   return url.href;
+}
+
+async function copyBuildPromptFromDesignInfo(page: Page, designId: string, targetVersion: number) {
+  const info = page.getByLabel('更多稿件操作', { exact: true });
+  await info.click();
+  const guide = page.locator('[data-design-panel="design-info"] .dw-skill-guide');
+  const command = `/cds-build 帮我实现 ${designId} V${targetVersion}`;
+  expect(await guide.locator('code').allTextContents()).toContain(command);
+  await page.evaluate(() => navigator.clipboard.writeText('fixture clipboard reset'));
+  await guide.getByRole('button', { name: `复制「${command}」`, exact: true }).click();
+  const link = await checkCopiedBuildPrompt(page, designId, targetVersion);
+  await info.click();
+  return link;
 }
 
 const draftStyles = ['web/src/pages/engineering-planning/planning.css', 'web/src/pages/design-workspace/design.css',

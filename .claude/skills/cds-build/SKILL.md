@@ -8,7 +8,9 @@ description: 实现 CDS 中获准的设计稿。用户说「/cds-build 帮我实
 ## 1. 接入当前项目
 
 - 从输入提取稿件编号和可选版本。稿件链接用于定位既有 CDS 实例、项目和固定版，编号或项目冲突时先核对。只有编号时使用当前仓库已绑定的 CDS 项目。
-- 加载同一技能包的 `cds` 技能。直接从仓库加载时，核心说明在 `.claude/skills/cds`。通过 CDS 分发安装时，在当前项目安装接入页提供的完整归档，再用已有授权自检。已有旧版技能时同样使用完整归档。仍缺读权限时，从当前 CDS 项目发起授权申请，由相应成员在页面批准。验收取证另需具备验收写权限的项目授权。
+- 加载同一技能包的 `cds` 技能。直接从仓库加载时，核心说明在 `.claude/skills/cds`。根据稿件所属实例和项目打开 `<CDS 地址>/api/agent/setup.md?target=existing&project=<项目 ID>&skills=cds-build`。缺少技能或版本过旧时，按接入说明下载、校验完整归档并安装到当前工作区。
+- 在当前工作区用 `cdscli setup-check --host <CDS 地址> --project <项目 ID> --skills cds-build --design-access read` 自检。已有该项目的设计只读权限时直接继续。只有自检明确报告缺少或失效的目标权限时，才运行 `cdscli connect --host <CDS 地址> --project <项目 ID> --design-access read --agent <智能体名称>`。系统所有者在项目列表右下角「授权申请」核对项目与智能体，点击「批准设计只读」。CLI 自动领取并保存后，再次自检。验收取证另需具备验收写权限的项目授权。
+- 主机绑定冲突时，用 `cdscli auth inspect --strict` 脱敏核对凭据来源、主机和项目，并按同一接入说明处理。若应使用原主机，在原主机同一项目重新自检。若确认目标是另一台 CDS，保留原绑定和凭据，在目标仓库的独立工作区及不继承原主机凭据的进程环境中继续。
 - 用 `cds_design_read` 的 `view: "intake"` 或 `cdscli design intake --project <项目>` 查找精确 `designId`。回读失败时报告实例、项目、动作和回执，凭据由 CDS 正常授权流程保存。
 
 ## 2. 固定实施目标

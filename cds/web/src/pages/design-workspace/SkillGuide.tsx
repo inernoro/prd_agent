@@ -13,30 +13,47 @@ import { designImplementationTargetVersion, type DesignEntry } from '../../../..
 import menuIntents from '../../../../../.claude/skills/cds/reference/menu-intents.json';
 import './design-skills.css';
 
-export function CopyDesignBuildPrompt({ entry, onCopied }: { entry: DesignEntry; onCopied: (version: number) => void }) {
+type DesignBuildPrompt = { version: number; command: string; path: string };
+const pendingBuildHint = '请有权评审人先在「更多稿件操作」中选择「定为实施基线」。';
+
+export function designBuildPrompt(entry: Pick<DesignEntry, 'id' | 'projectId' | 'frozen' | 'upgrade'>): DesignBuildPrompt | null {
   const version = designImplementationTargetVersion(entry);
+  if (version === null) return null;
+  const query = new URLSearchParams({ project: entry.projectId, design: entry.id, version: String(version), tab: 'delivery' });
+  return { version, command: `/cds-build 帮我实现 ${entry.id} V${version}`, path: `/design?${query}` };
+}
+
+export function CopyDesignBuildPrompt({ prompt, compact = false, onCopied }: {
+  prompt: DesignBuildPrompt | null; compact?: boolean; onCopied?: (version: number) => void;
+}) {
   const [manual, setManual] = useState('');
+  const [copied, setCopied] = useState(false);
 
   async function copy() {
-    if (version === null) return;
-    const link = new URL('/design', window.location.origin);
-    link.search = new URLSearchParams({ project: entry.projectId, design: entry.id, version: String(version), tab: 'delivery' }).toString();
-    const text = `/cds-build 帮我实现 ${entry.id} V${version}\n${link.href}`;
+    if (!prompt) return;
+    setCopied(false);
+    const link = new URL(prompt.path, window.location.origin);
+    const text = `${prompt.command}\n${link.href}`;
     try {
       await copyTextToClipboard(text);
-      onCopied(version);
+      setCopied(true);
+      onCopied?.(prompt.version);
     } catch {
       setManual(text);
     }
   }
 
+  const Icon = compact && copied ? Check : Copy;
   return <>
-    <button type="button" className="ep-button dw-copy-build" data-action="copy-build-prompt" aria-label="复制实现提示词"
-      title={version === null ? '请由评审人先在更多稿件操作中定为实施基线' : `复制 V${version} 实现提示词`}
-      disabled={version === null} onClick={() => void copy()}>
-      <Copy aria-hidden="true" /><span className="dw-copy-build-label">复制实现提示词</span>
-      <small>{version === null ? '待定稿' : `V${version}`}</small>
+    <button type="button" className={compact ? 'ep-button ep-icon-button' : 'ep-button dw-copy-build'}
+      data-action={compact ? 'copy-skill' : 'copy-build-prompt'}
+      aria-label={compact && prompt ? `复制「${prompt.command}」` : '复制实现提示词'}
+      title={prompt ? `复制 V${prompt.version} 实现提示词` : pendingBuildHint}
+      disabled={prompt === null} onClick={() => void copy()}>
+      <Icon aria-hidden="true" />
+      {!compact && <><span className="dw-copy-build-label">复制实现提示词</span><small>{prompt ? `V${prompt.version}` : '待定稿'}</small></>}
     </button>
+    {compact && <span role="status" className="sr-only">{copied ? '已复制' : ''}</span>}
     {manual && <Dialog open onOpenChange={open => { if (!open) setManual(''); }}>
       <DialogContent>
         <DialogTitle>实现提示词</DialogTitle>
@@ -69,13 +86,13 @@ export const lifecycle: Stage[] = [
     result: { title: 'PLN-0007 成员批量导出', badge: '截止 12-03', lines: ['挡住：ADR-021 待定', '关联：ATL-0270'] },
     done: ['时间线上能看到这条计划', '和决策、债务有编号关联'], ifNot: '没有编号关联，就不会出现在因果里', where: '工程规划' },
   { key: 'design', stage: '设计', icon: PenTool, who: '设计方', say: prompts.design,
-    steps: ['读设计接入清单和框架', '出原型，写目标和验收项', '过门禁 G-01 到 G-09，私有发布'],
+    steps: ['读设计接入清单和框架', '出原型，写目标和验收项', '运行发布门禁 G-01 至 G-11，通过后私有发布'],
     result: { title: 'DSN-0043 · V1', badge: '私有', lines: ['目标 6 条 · 验收项 24 条', '交接清单.md 已生成'] },
-    done: ['设计库出现这份稿件', '门禁通过，自检全绿', '交接清单按目标生成'], ifNot: '门禁不过不发布，按规则编号修完再发', where: '设计' },
+    done: ['设计库出现这份稿件', '门禁通过，验收计划与覆盖已校验', '交接清单按目标生成'], ifNot: '门禁不过不发布，按规则编号修完再发', where: '设计' },
   { key: 'build', stage: '实现', icon: Code2, who: '实现方', say: prompts.build,
-    steps: ['按交接清单逐条回复验收项编号', '定实施基线，整份应用源码差异', '用演示数据模式自测'],
+    steps: ['有权评审人定实施基线或锁定升级目标', '实现方逐条回复固定版本的验收项，检查并应用源码差异', '用演示数据模式自测'],
     result: { title: '交接回复', badge: '24/24', lines: ['接受 23 · 说明理由 1', '提交 a1b2c3 已部署到预览'] },
-    done: ['每个验收项都有回复', '偏离源码差异的文件写了理由'], ifNot: '没回复的编号视为没有接受', where: '设计 · 交付 · 反馈' },
+    done: ['每个验收项都有回复', '偏离源码差异的文件写了理由'], ifNot: '先请评审人锁定版本，再开始实现。没回复的编号视为没有接受', where: '设计 · 交付 · 反馈' },
   { key: 'accept', stage: '验收', icon: ClipboardCheck, who: '实现方跑，设计方复核', say: prompts.accept,
     steps: ['CDS 按提交、同一份演示数据截图', '程序重算测量，逐项写结论', '设计方独立重跑，一致才签收'],
     result: { title: '验收 · DSN-0043 V1', badge: '可签收', lines: ['目标达成 6/6', '验收项 24/24 通过'] },
@@ -89,8 +106,7 @@ export const lifecycle: Stage[] = [
     result: { title: '设计页首屏 < 2 秒', badge: '监控中', lines: ['告警 → 反馈 → 规划', '最近 7 天 0 次超阈值'] },
     done: ['监控中心能看到这条', '告警能变成下一个需求'], ifNot: '没有阈值就不会告警', where: '监控中心' },
 ];
-export const designHandoffPrompts = (id: string, version: number) => [
-  { stage: '实现', who: '实现方', say: prompts.build.replace('DSN-xxx', `${id} V${version}`), what: '按实施与验收清单执行' },
+const designFollowUpPrompts = (id: string, version: number) => [
   { stage: '验收', who: '实现方跑，设计方复核', say: prompts.accept.replace('DSN-xxx', `${id} V${version}`), what: '程序逐项判定，由设计方独立复跑' },
   { stage: '续版', who: '设计方', say: prompts.revise.replace('xx 模块', `${id} V${version} `), what: '在原稿件读反馈并提交新版本' },
 ];
@@ -111,8 +127,8 @@ function useCopy() {
   return { result, copy };
 }
 
-type SkillGuideProps = { designId: string; version: number; onAccess?: never }
-  | { designId?: undefined; version?: never; onAccess: () => void };
+type SkillGuideProps = { designId: string; version: number; buildPrompt: DesignBuildPrompt | null; handoffBlocks?: boolean; onAccess?: never }
+  | { designId?: undefined; onAccess: () => void };
 
 export function DesignSkillsMenu({ linked, dismiss, onAccess }: { linked: boolean; dismiss: () => void; onAccess: () => void }) {
   const [open, setOpen] = useState(linked);
@@ -146,11 +162,23 @@ export function SkillGuide(props: SkillGuideProps) {
   </button>;
   if (props.designId !== undefined) return <div className="dw-skill-guide" data-compact>
     <header><strong>让智能体接着做</strong><small>在接入的智能体里说这句话</small></header>
-    <ol className="dw-sg-mini">{designHandoffPrompts(props.designId, props.version).map(step => <li key={step.stage}>
-      <span className="dw-sg-tag">{step.stage}</span>
-      <div><code>{step.say}</code><small>{step.who} · {step.what}</small>{message(step.say)}</div>
-      {copyButton(step.say)}
-    </li>)}</ol>
+    <ol className="dw-sg-mini">
+      <li>
+        <span className="dw-sg-tag">实现</span>
+        {props.buildPrompt ? <>
+          <div><code>{props.buildPrompt.command}</code><small>实现方 · 按实施与验收清单执行</small></div>
+          <CopyDesignBuildPrompt key={props.buildPrompt.path} prompt={props.buildPrompt} compact />
+        </> : <div>
+          <strong>待定稿</strong>
+          <small>{props.handoffBlocks ? '请先查看交接检查。通过后请有权评审人选择「定为实施基线」。' : pendingBuildHint}</small>
+        </div>}
+      </li>
+      {designFollowUpPrompts(props.designId, props.version).map(step => <li key={step.stage}>
+        <span className="dw-sg-tag">{step.stage}</span>
+        <div><code>{step.say}</code><small>{step.who} · {step.what}</small>{message(step.say)}</div>
+        {copyButton(step.say)}
+      </li>)}
+    </ol>
   </div>;
   const stage = lifecycle[index];
   const Icon = stage.icon;

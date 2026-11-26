@@ -30,7 +30,14 @@ export interface AgentSetupSelection {
   stage: 'connect' | 'task';
 }
 
+export function getAgentSetupDesignAccess(selection: AgentSetupSelection): 'publish' | 'read' | undefined {
+  if (selection.mission === 'design-publish') return 'publish';
+  if (selection.target.kind === 'existing' && selection.skills.includes('cds-build')) return 'read';
+  return undefined;
+}
+
 export function getAgentSetupMinCliVersion(selection: AgentSetupSelection): string {
+  if (getAgentSetupDesignAccess(selection) === 'read') return '0.26.29';
   if (selection.skills.includes('cds-build')) return '0.26.28';
   return selection.mission === 'design-publish' ? '0.26.27' : AGENT_SETUP_MIN_CLI_VERSION;
 }
