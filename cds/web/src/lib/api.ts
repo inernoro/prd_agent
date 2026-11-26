@@ -631,6 +631,7 @@ export async function listKnowledgeBaseConnections(): Promise<KnowledgeBaseConne
 export type CdsAuthProvider = 'github' | 'local' | 'legacy' | 'sso';
 
 export interface CdsPublicUser {
+  canManageAccount?: boolean;
   id: string;
   username: string | null;
   githubLogin: string;
@@ -639,6 +640,11 @@ export interface CdsPublicUser {
   avatarUrl: string | null;
   authProvider: CdsAuthProvider;
   isSystemOwner: boolean;
+  role?: 'owner' | 'admin' | 'member';
+  externalLoginAllowed?: boolean;
+  linkedLogins?: Partial<Record<'github' | 'google', string>>;
+  hasPassword?: boolean;
+  invitationPending?: boolean;
   status: 'active' | 'disabled';
   lastLoginAt: string | null;
   createdAt: string;
@@ -660,6 +666,7 @@ export interface CdsAuthPublicStatus {
   preview?: { project?: string; branch?: string; pullRequest?: number; policyUrl?: string };
   mode: 'disabled' | 'basic' | 'github' | 'sso';
   enabled: boolean;
+  accountProviders?: { github: boolean; google: boolean };
   loginMethods: {
     github: boolean;
     local: boolean;
@@ -680,7 +687,17 @@ export interface CdsAuthPublicStatus {
 
 /** Public auth capability probe for the login page. Does not expose current user details. */
 export async function fetchAuthPublicStatus(): Promise<CdsAuthPublicStatus> {
-  return apiRequest<CdsAuthPublicStatus>('/api/auth/public-status');
+  const status = await apiRequest<CdsAuthPublicStatus>('/api/auth/public-status');
+  if (status.loginMethods) return status;
+  // An older instance may report only its configured authentication mode.
+  return {
+    ...status,
+    loginMethods: {
+      github: status.mode === 'github',
+      local: status.mode === 'basic',
+      sso: status.mode === 'sso' && status.sso?.enabled === true,
+    },
+  };
 }
 
 export async function exchangeTicketSso(input: {
@@ -788,26 +805,38 @@ export async function changeMyPassword(input: {
   await apiRequest('/api/auth/change-password', { method: 'POST', body: input });
 }
 
-/** List all users (system-owner only). */
-export async function listUsers(): Promise<CdsPublicUser[]> {
-  const res = await apiRequest<{ users: CdsPublicUser[] }>('/api/auth/users');
+/** List the accounts within the current manager's scope. */
+export async function listUsers(signal?: AbortSignal): Promise<CdsPublicUser[]> {
+  const res = await apiRequest<{ users: CdsPublicUser[] }>('/api/auth/users', { signal });
   return res.users;
 }
 
-/** Create a local user (system-owner only). */
+/** Provision an account within the current manager's role. */
 export async function createLocalUser(input: {
   username: string;
   password: string;
   name?: string;
+  role?: 'admin' | 'member';
+  externalLoginAllowed?: boolean;
+  temporaryPassword?: boolean;
 }): Promise<CdsPublicUser> {
   const res = await apiRequest<{ user: CdsPublicUser }>('/api/auth/users', { method: 'POST', body: input });
   return res.user;
 }
 
-/** Enable/disable or admin-reset a user (system-owner only). */
+export async function inviteLocalUser(input: {
+  username: string;
+  name?: string;
+  role: 'admin' | 'member';
+  externalLoginAllowed: boolean;
+}): Promise<{ user: CdsPublicUser; invitation: { path: string; expiresAt: string } }> {
+  return apiRequest('/api/auth/users', { method: 'POST', body: { ...input, invite: true } });
+}
+
+/** Enable an account or assign the administrator role (system-owner only). */
 export async function updateUser(
   id: string,
-  input: { status?: 'active' | 'disabled'; newPassword?: string },
+  input: { status?: 'active'; role?: 'admin'; externalLoginAllowed?: boolean },
 ): Promise<CdsPublicUser | null> {
   const res = await apiRequest<{ user: CdsPublicUser | null }>(
     `/api/auth/users/${encodeURIComponent(id)}`,

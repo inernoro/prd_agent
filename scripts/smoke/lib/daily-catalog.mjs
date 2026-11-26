@@ -58,6 +58,8 @@ export const DEEP_CHECK_MAP = Object.freeze({
     next: '运行二进制与部署目标不一致：在 CDS 重新部署 main 分支' },
   'model-leaderboard:staleness': { featureLine: 'llm-gateway', title: '模型排行榜按时同步',
     next: '去容器日志里搜 ModelLeaderboardSync 的告警，看是外站结构变了还是网络不通' },
+  'tapd-model-advisory:daily-check': { featureLine: 'llm-gateway', title: 'TAPD 淘汰检查近 48 小时内成功',
+    next: '核对 TAPD 每日模型检查日志和网关当前默认路由' },
   'model-catalog:selector-runtime-contract': { featureLine: 'llm-gateway', title: '业务可选模型与网关实际可调用的一致',
     next: '去模型网关修正对应业务的逻辑模型挂载（输出里点名了哪个业务、什么失配）' },
   'visual-image:default-route': { featureLine: 'visual-creation', title: '生图默认路由能解析到可用上游',

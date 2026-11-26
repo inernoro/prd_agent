@@ -183,6 +183,17 @@ export class EngineeringPlanningService {
     return debt?.source.type === 'test' && debt.source.ref === sourceRef && debt.status !== 'dropped' ? debt.id : undefined;
   }
 
+  async approvedDesignRequirement(projectId: string, planId: string) {
+    const state = await this.load(projectId);
+    const plan = state.plans.get(planId);
+    if (!plan) return undefined;
+    const proposal = [...state.proposals.values()].find(row => row.kind === 'plan' && row.status === 'accepted'
+      && row.result?.kind === 'plan' && row.result.id === plan.id);
+    if (!proposal?.draft.summary) return undefined;
+    return { planVersion: plan.version, proposalId: proposal.id, title: proposal.draft.title,
+      requirements: proposal.draft.summary };
+  }
+
   private async recheckGithubRemovals(projectId: string, state: PlanningState, decisionBranch?: string) {
     const checks = new Map<string, GithubRemovalCheck>();
     const repository = this.github?.repositoryFor(projectId);
@@ -371,21 +382,33 @@ export class EngineeringPlanningService {
     return rejectPlanning(409, 'write_contention', '项目正在接收其他更新，请用相同请求编号重试');
   }
 
-  async board(projectId: string, actor: PlanningActor): Promise<PlanningBoard> {
+  async board(projectId: string, actor: PlanningActor, includeTimeline = false): Promise<PlanningBoard> {
     const [state, designs] = await Promise.all([this.load(projectId), this.designLinksFor?.(projectId)]);
     const now = this.now();
     const today = planningToday(now);
     const pullRequests = this.projectPullRequests(projectId, state, now);
     const designById = new Map(designs?.map(design => [design.id, design]));
     const repository = this.github?.repositoryFor(projectId);
-    const hasCurrentSignature = (signature: NonNullable<PlanningDesignLink['signed']>) => Boolean(repository
-      && state.pullRequests.get(planningPullRequestKey(repository, signature.pullRequest))?.headSha === signature.commit);
+    const hasCurrentSignature = (signature: NonNullable<PlanningDesignLink['signed']>) => signature.target === 'installed'
+      || Boolean(repository && signature.pullRequest !== undefined
+        && state.pullRequests.get(planningPullRequestKey(repository, signature.pullRequest))?.headSha === signature.commit);
     const proposals = [...state.proposals.values()].sort(order);
     const match = proposals.some(row => row.kind === 'debt' && row.status === 'pending')
       ? duplicateDebtMatcher(state.debts.values()) : undefined;
+    const timelineStart = new Date(now.getTime() - 26 * 7 * DAY).toISOString();
+    const timeline = includeTimeline ? {
+      debts: [...state.debts.values()].map(({ id, title, status, priority, owner, createdAt, updatedAt, discoveredAt,
+        dueAt, reviewAt, decisionId, originDecisionId, repayment, outcome }) => ({
+        id, title, status, priority, owner, createdAt, updatedAt, discoveredAt, dueAt, reviewAt, decisionId, originDecisionId,
+        closedAt: repayment?.at ?? outcome?.closedAt,
+      })),
+      debtEvents: state.events.filter(event => event.entity === 'debt' && event.at >= timelineStart)
+        .map(({ entity, entityId, type, at }) => ({ entity, entityId, type, at })),
+    } : undefined;
     return {
       ...this.capabilities(projectId, actor),
       ...projectDebtNavigation(state, today),
+      ...(timeline ? { timeline } : {}),
       today,
       proposals: match ? proposals.map(row => projectProposalSuggestion(row, match)) : proposals,
       decisions: [...state.decisions.values()].sort(order).map(decision => {

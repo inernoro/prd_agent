@@ -60,6 +60,9 @@ export interface SelfUpdateFailureInput {
 
 /** 闸门 code → 恢复动作。message 本身已是中文，这里只补「下一步做什么」。 */
 const GATE_NEXT_ACTIONS: Record<string, string> = {
+  self_update_authorization_expired: '重新登录或取得更新授权后，再发起 CDS 更新。',
+  self_update_target_changed: '刷新 CDS 更新页面，确认当前和目标版本后重新发起更新。',
+  self_update_target_unconfirmed: '检查远端分支和仓库连接后重新发起 CDS 更新。',
   non_fast_forward_update_requires_intent:
     '这不是故障，是防覆盖闸门：目标版本不包含当前正在跑的提交，直接切过去会丢掉已部署的代码。'
     + '确认要切就走「CDS 系统设置 → 更新与重启 → 强制更新」，选「发布新版本」或「回滚旧版本」并填写原因；'

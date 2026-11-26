@@ -1,6 +1,9 @@
 
-import subprocess
-deadline=time.monotonic()+(900 if req['action']=='register' else 300 if req['action']=='reconcile' else 25)
+import re,subprocess
+action=req['action']
+retention_scan=action in ['preview','reconcile']
+lease_request=action in ['lease','release']
+deadline=time.monotonic()+(900 if action=='register' else 300 if action=='reconcile' else 75 if lease_request else 25)
 def backup_mount_references():
  def query(args):
   check();value=subprocess.run(['docker',*args],capture_output=True,text=True,timeout=8)
@@ -58,7 +61,24 @@ if root.stat().st_uid!=os.getuid() or root.stat().st_mode&0o077:raise ValueError
 root_fd=os.open(root,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
 if (os.fstat(root_fd).st_dev,os.fstat(root_fd).st_ino)!=root_identity:raise ValueError('catalog-directory-replaced')
 lock=os.open('lock',(os.O_RDONLY if req['action']=='preview' else os.O_CREAT|os.O_RDWR)|os.O_NOFOLLOW,0o600,dir_fd=root_fd)
-fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+mount_references=[];mount_query_error=False
+if retention_scan:
+ # The initial Docker inventory only classifies candidates. A fresh inventory
+ # is still required before any removal; leases can proceed during this read.
+ try:mount_references=backup_mount_references()
+ except Exception:mount_query_error=True
+def acquire_catalog(seconds,cancellable=True):
+ until=time.monotonic()+seconds
+ while True:
+  if cancellable:check()
+  try:
+   fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB);return
+  except BlockingIOError:
+   if time.monotonic()>=until:raise
+   time.sleep(.1)
+# Background inventory yields. Foreground backup/restore steps can wait for a
+# bounded metadata operation instead of treating incidental contention as loss.
+acquire_catalog(0 if retention_scan else 60 if lease_request else 15)
 db=root/'backups.json';state={'schema':1,'files':{},'leases':{}}
 if db.exists():
  if db.is_symlink():raise ValueError('catalog-alias')
@@ -76,12 +96,8 @@ def unlocked_proof(p,verify):
  fcntl.flock(lock,fcntl.LOCK_UN)
  try:return proof(p,verify)
  finally:
-  until=time.monotonic()+5
-  while True:
-   try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB);break
-   except BlockingIOError:
-    if time.monotonic()>until:os._exit(2) # Do not save stale state without the metadata lock.
-    time.sleep(.05)
+  try:acquire_catalog(5,False)
+  except BaseException:os._exit(2) # Never let the caller continue with an unlocked, stale catalog.
   fd=os.open('backups.json',os.O_RDONLY|os.O_NOFOLLOW,dir_fd=root_fd)
   with os.fdopen(fd) as f:state=json.load(f)
   if state.get('schema')!=1:os._exit(2)
@@ -90,7 +106,7 @@ def execution_owner(pid):
   p=pathlib.Path('/proc',str(pid));parts=(p/'stat').read_text().split(') ',1)[1].split()
   return {'pid':pid,'start':parts[19],'uid':p.stat().st_uid,'boot':pathlib.Path('/proc/sys/kernel/random/boot_id').read_text().strip()}
  except FileNotFoundError:return None
-now=req.get('nowMs',int(time.time()*1000));action=req['action']
+now=req.get('nowMs',int(time.time()*1000))
 state.setdefault('outputs',{})
 def key(project,service):return json.dumps([project,service],separators=(',',':'))
 if action=='output':
@@ -174,12 +190,11 @@ if action not in ['preview','reconcile']:raise ValueError('unsupported-retention
 automatic_policy=req.get('automaticPolicy',{'keepCount':7,'keepDays':14}) # Preserve the standalone adapter's existing bounds; CDS supplies its producer SSOT.
 if automatic_policy is not None:
  if not isinstance(automatic_policy,dict) or set(automatic_policy)!={'keepCount','keepDays'} or any(type(automatic_policy.get(k)) is not int or automatic_policy[k]<1 for k in ['keepCount','keepDays']) or automatic_policy['keepDays']>MAX_AGE//DAY:raise ValueError('automatic-retention-policy-unconfirmed')
-out={'maxAgeDays':15,'automaticPolicy':automatic_policy,'scanStatus':'complete','candidates':[],'held':[],'removed':[],'failed':[],'pending':[],'unknown':[],'policyConflicts':[],'filesystems':[]}
+out={'maxAgeDays':15,'automaticPolicy':automatic_policy,'scanStatus':'complete','candidates':[],'held':[],'removed':[],'failed':[],'pending':[],'unknown':[],'policyConflicts':[],'historicalCandidates':[],'filesystems':[]}
 def hold(p,reason):out['held'].append({'path':p,'reason':reason})
 active={key(v['projectId'],v['serviceId']) for v in req.get('activeServices',[])}
-try:mount_references=backup_mount_references();mount_query_error=False
-except Exception:
- mount_references=[];mount_query_error=True;out['scanStatus']='partial';out['unknown'].append({'path':str(req['directories'][0]),'reason':'container-or-stopped-container-references-unconfirmed'})
+if mount_query_error:
+ out['scanStatus']='partial';out['unknown'].append({'path':str(req['directories'][0]),'reason':'container-or-stopped-container-references-unconfirmed'})
 def backup_is_mounted(p):
  location=pathlib.Path(p);identities=[]
  for part in [location,*location.parents]:
@@ -189,7 +204,7 @@ def actual_location(row):
  retiring=row.get('retiringPath')
  return retiring if retiring and os.path.lexists(retiring) else row['path']
 leases={k for k,v in state['leases'].items() if v['until']>now}
-rows=[];before={};parents={};known_paths=set(state['files']);absent=[]
+rows=[];before={};parents={};known_paths=set(state['files']);absent=[];legacy_paths=[]
 for name in req['directories']:
  try:
   parent,identity=directory(name);parents[str(parent)]=identity
@@ -207,9 +222,60 @@ for name in req['directories']:
      known={r['path'] for r in state['outputs'].values() if pathlib.Path(r['path']).parent==child}
      if not known or any(str(entry) not in known for entry in child.iterdir()):out['unknown'].append({'path':str(child),'reason':'incomplete-outputs-need-writer-identity-and-retirement'})
     continue
-   if str(p) not in known_paths:out['unknown'].append({'path':str(p),'reason':'backup-ownership-not-registered'})
+   if str(p) not in known_paths:
+    out['unknown'].append({'path':str(p),'reason':'backup-ownership-not-registered'})
+    if req.get('discoverOffsiteCopies') and p.is_file() and not p.is_symlink():legacy_paths.append(str(p))
  except FileNotFoundError:continue
  except Exception as e:out['scanStatus']='partial';out['unknown'].append({'path':name,'reason':str(e)})
+
+def retained_recovery_points(project,service,older_mtime):
+ # Unregistered files cannot establish lineage or displace the seven recent
+ # local points. Require one verified series whose native file identities hold.
+ series={}
+ for p,row in state['files'].items():
+  if row.get('instanceId')!=req['instanceId'] or (row.get('projectId'),row.get('serviceId'))!=(project,service):continue
+  fingerprint=row.get('sourceFingerprint')
+  if row.get('origin')!='automatic' or not row.get('recoveryVerified') or not fingerprint or fingerprint=='unconfirmed':continue
+  if row.get('createdAt',0)<=now-MAX_AGE or row.get('signature',[0,0,0,0])[3]<=older_mtime:continue
+  try:
+   if proof(p)['signature']==row['signature']:series[fingerprint]=series.get(fingerprint,0)+1
+  except (OSError,ValueError):continue
+ return len(series)==1 and next(iter(series.values()))>=automatic_policy['keepCount']
+
+def offsite_proof(p,signature):
+ evidence=req.get('offsiteProofs',{}).get(p) or {}
+ age=int(time.time()*1000)-evidence.get('verifiedAt',0)
+ return evidence if 0<=age<=120000 and evidence.get('signature')==list(map(str,signature)) and evidence.get('bytes')==signature[2] and re.fullmatch(r'[a-f0-9]{64}',evidence.get('sha256','')) and re.fullmatch(r'[a-f0-9-]{36}',evidence.get('auditId','')) else None
+
+if req.get('discoverOffsiteCopies') and automatic_policy is not None:
+ owners={}
+ for owner in req['activeServices']:
+  hint=owner.get('backupKey')
+  if hint==owner['projectId']+'--'+owner['serviceId']:owners.setdefault(hint,[]).append(owner)
+ eligible=[]
+ legacy_paths.extend(p for p,row in state['files'].items() if row.get('offsiteHistoricalCopy'))
+ for p in sorted(set(legacy_paths)):
+  match=re.fullmatch(r'([a-zA-Z0-9._-]+)-auto-\d{8}T\d{6}Z\.(?:archive|sql)\.gz',pathlib.Path(p).name)
+  if not match or str(pathlib.Path(p).parent) not in parents or len(owners.get(match[1],[]))!=1:continue
+  owner=owners[match[1]][0];project,service=owner['projectId'],owner['serviceId']
+  old=state['files'].get(p)
+  if old and (not old.get('offsiteHistoricalCopy') or (old.get('projectId'),old.get('serviceId'))!=(project,service)):continue
+  try:q=proof(actual_location(old) if old else p)
+  except (OSError,ValueError):continue
+  if not retained_recovery_points(project,service,q['signature'][3]):continue
+  candidate={'path':p,'projectId':project,'serviceId':service,'signature':list(map(str,q['signature']))}
+  eligible.append(candidate)
+  evidence=offsite_proof(p,q['signature']) if action=='reconcile' else None
+  if not evidence or key(project,service) in leases or old:continue
+  # Persist identity before any rename. If interrupted, the next sweep needs
+  # fresh remote evidence before advancing the already quarantined local copy.
+  state['files'][p]={**q,'path':p,'instanceId':req['instanceId'],'projectId':project,'serviceId':service,
+   'createdAt':q['signature'][3]//1000000,'origin':'historical','offsiteHistoricalCopy':True,'sha256':evidence['sha256']}
+  save()
+  out['unknown']=[item for item in out['unknown'] if item['path']!=p]
+ offset=(now//3600000)*2%len(eligible) if eligible else 0
+ out['historicalCandidates']=(eligible[offset:]+eligible[:offset])[:2]
+
 for p,row in state['files'].items():
  try:
   check()
@@ -250,6 +316,10 @@ for owner,values in groups.items():
   if mount_query_error:hold(p,'container-or-stopped-container-references-unconfirmed')
   elif backup_is_mounted(actual_location(row)):hold(p,'running-or-stopped-container-mount')
   elif key(row['projectId'],row['serviceId']) in leases:hold(p,'active-backup-or-restore-lease');
+  elif row.get('offsiteHistoricalCopy'):
+   if offsite_proof(p,row['signature']) and retained_recovery_points(row['projectId'],row['serviceId'],row['signature'][3]):
+    out['candidates'].append(row)
+   else:hold(p,'historical-offsite-copy-needs-fresh-proof')
   elif expired and any(value['path']==p for value in out['unknown']):
    hold(p,'backup-replacement-proof-unconfirmed');out['policyConflicts'].append({'path':p,'projectId':row['projectId'],'serviceId':row['serviceId'],'reason':'15-day-limit-exceeded-original-source-still-unconfirmed'})
   elif expired and row.get('disposition','business-backup')!='reproducible-artifact' and not fresh:
@@ -326,7 +396,7 @@ if action=='reconcile':
    mount_references=backup_mount_references()
    if backup_is_mounted(actual_location(row)):hold(p,'running-or-stopped-container-mount');continue
    group=lineage(row)
-   if row.get('disposition','business-backup')!='reproducible-artifact' and (row.get('kind')!='temporary-output' or row['signature'][2]>0):
+   if not row.get('offsiteHistoricalCopy') and row.get('disposition','business-backup')!='reproducible-artifact' and (row.get('kind')!='temporary-output' or row['signature'][2]>0):
     if group not in verified_replacements:
      valid=False
      for replacement in groups.get(group,[]):
@@ -348,6 +418,9 @@ if action=='reconcile':
    clock_now=req.get('nowMs',int(time.time()*1000))
    if state['leases'].get(owner,{}).get('until',0)>clock_now:hold(p,'active-backup-or-restore-lease');continue
    if q['signature']!=row['signature'] or (row.get('kind')!='temporary-output' and q['sha256']!=row['sha256']):raise ValueError('identity-or-content-changed')
+   evidence=offsite_proof(p,q['signature']) if row.get('offsiteHistoricalCopy') else None
+   if row.get('offsiteHistoricalCopy') and (not evidence or evidence['sha256']!=q['sha256'] or not retained_recovery_points(row['projectId'],row['serviceId'],q['signature'][3])):
+    hold(p,'historical-offsite-copy-needs-fresh-proof');continue
    if tuple(q['signature'][:2]) in live_files():hold(p,'file-still-open');continue
    mount_references=backup_mount_references()
    if backup_is_mounted(physical):hold(p,'running-or-stopped-container-mount');continue
@@ -368,7 +441,7 @@ if action=='reconcile':
    if backup_is_mounted(parent/quarantine):hold(p,'running-or-stopped-container-mount');continue
    if tuple(q['signature'][:2]) in live_files():hold(p,'file-still-open');continue
    os.unlink(quarantine,dir_fd=fd);os.fsync(fd);del state['outputs' if row.get('kind')=='temporary-output' else 'files'][p]
-   state.setdefault('retired',[]).append({'path':p,'sha256':row.get('sha256'),'at':now});state['retired']=state['retired'][-2000:]
+   state.setdefault('retired',[]).append({'path':p,'sha256':row.get('sha256'),'at':now,**({'offsiteAuditId':evidence['auditId']} if evidence else {})});state['retired']=state['retired'][-2000:]
    save();out['removed'].append(p)
    if row.get('kind')=='temporary-output' and list(directory(parent)[1])==row['parentIdentity']:
     try:os.rmdir(parent)

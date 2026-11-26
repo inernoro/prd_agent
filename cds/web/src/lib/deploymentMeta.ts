@@ -11,6 +11,25 @@
 
 export type BuildTriggerSource = 'webhook' | 'manual' | 'retry' | 'cooldown-rewarm' | 'system';
 
+interface DeploymentRunVersionRef {
+  id: string;
+  status: string;
+  versionId?: string;
+  commitSha?: string;
+}
+
+/** 部署记录按开始时间倒序返回，同一版本重新部署时取最近一次成功记录。 */
+export function findCurrentDeploymentRunId(
+  runs: readonly DeploymentRunVersionRef[],
+  branch: { status: string; currentVersionId?: string; runningCommitSha?: string | null },
+): string | undefined {
+  if (branch.status !== 'running' || !branch.currentVersionId) return undefined;
+  const runningCommit = branch.runningCommitSha?.toLowerCase();
+  return runs.find(run => run.status === 'running'
+    && run.versionId === branch.currentVersionId
+    && (!runningCommit || run.commitSha?.toLowerCase() === runningCommit))?.id;
+}
+
 /** 触发器中文标签。未知/缺失返回空串（调用方据此决定是否渲染该字段）。 */
 export function triggerSourceLabel(source?: string): string {
   return (

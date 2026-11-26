@@ -11,26 +11,26 @@ import type {
   PlanningBoard, PlanningDebt, PlanningDebtList, PlanningDecision, PlanningDesignLink, PlanningEvent, PlanningPlan, PlanningProposal, PlanningSource, PlanningStep,
 } from '../../../../src/shared/engineering-planning';
 import { ConfigurationTrail, provenanceLabels } from './PlanningCompanion';
+import { PlanDesignHandoff } from './PlanDesignHandoff';
 import type { PlanningAction } from './PlanningDialogs';
 import { DecisionDocumentBadge, PlanningDecisionLinks, PlanningPullRequestBadge, PlanningPullRequestLink, PlanningPullRequestList } from './PlanningPullRequests';
 import { inactiveLabels, PlanningBadge, PlanningEmpty, type PlanningSelection } from './PlanningViews';
+import { activePullRequests, daysSince, onDay, planProgress, proposalIdleDays, pullStallReasons, stepIsLate } from './planning-progress';
 import { closedDebt, dateLabel, debtLabels, decisionLabels, events, kindLabels, planningPath, priorityLabels, shortId, sourceLabels,
   stepKindLabels, stepLabels, usePlanningRead } from './planning-ui';
 import './planning-decision.css';
 
 const DAY = 86_400_000;
-const planningDay = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Shanghai' });
 const calendarDay = new Intl.DateTimeFormat('zh-CN', { timeZone: 'UTC', month: 'long', day: 'numeric' });
 const calendarDate = new Intl.DateTimeFormat('zh-CN', { timeZone: 'UTC', dateStyle: 'long' });
-const onDay = (value: string) => value.length === 10 ? value : planningDay.format(new Date(value));
 const monthDay = (value: string) => calendarDay.format(new Date(onDay(value)));
 const fullDate = (value: string) => calendarDate.format(new Date(onDay(value)));
 
 const lanes = {
-  pending: { label: '待你确认', icon: Bot, empty: '没有等你确认的事', hint: '技能发现的决策和债务，以及到了复核时间的决策' },
-  stuck: { label: '卡住了', icon: TriangleAlert, empty: '没有卡住的决策' },
-  moving: { label: '推进中', icon: Play, empty: '没有正在推进的决策' },
-  done: { label: '已完结', icon: Check, empty: '没有已完结的决策' },
+  pending: { label: '待你确认', icon: Bot, empty: '没有等你确认的事', hint: '待确认的决策、债务和计划，以及到期复核的决策' },
+  stuck: { label: '卡住了', icon: TriangleAlert, empty: '没有卡住的事项' },
+  moving: { label: '推进中', icon: Play, empty: '没有正在推进的事项' },
+  done: { label: '已完结', icon: Check, empty: '没有已完结的事项' },
 } as const;
 const stepIcons = { task: Check, decision: Flag, debt: FileText, review: RotateCcw, design: Layers };
 const planLabels = { planned: '已排期', doing: '进行中', done: '已完成', cancelled: '步骤已取消' } as const;
@@ -47,21 +47,6 @@ type OpenAction = (action: PlanningAction, returnFocusTo?: HTMLElement | null) =
 type ConfirmProposal = (item: PlanningProposal, as?: 'hit' | 'new') => void;
 type Progress = { state: 'stuck' | 'moving' | 'done'; reasons: { text: string; blocked?: boolean }[] };
 
-function stepIsLate(step: PlanningStep, today: string) {
-  return step.status !== 'done' && step.status !== 'cancelled' && Boolean(step.dueAt && step.dueAt < today);
-}
-
-function planProgress(plan: PlanningPlan, today: string) {
-  const steps = plan.steps.filter(step => step.status !== 'cancelled');
-  const done = steps.filter(step => step.status === 'done').length;
-  const total = steps.length;
-  const late = steps.filter(step => stepIsLate(step, today)).length;
-  const active = plan.steps.length > 0 ? done < total : true;
-  const state: keyof typeof planLabels = !active ? (total ? 'done' : 'cancelled')
-    : done || steps.some(step => step.status === 'doing') ? 'doing' : 'planned';
-  return { done, total, late, active, state, percent: total ? Math.round(done * 100 / total) : 0 };
-}
-
 function planLabel(plan: PlanningPlan, state: keyof typeof planLabels) {
   const scheduled = plan.startAt || plan.dueAt || plan.steps.some(step => step.dueAt);
   return state === 'planned' && !scheduled ? '待安排' : planLabels[state];
@@ -69,14 +54,6 @@ function planLabel(plan: PlanningPlan, state: keyof typeof planLabels) {
 
 function branchTotal(branch: Branch) {
   return branch.unpaid + branch.repaid + branch.extinct + branch.other;
-}
-
-function activePullRequests(decision: PlanningDecision) {
-  return decision.pullRequests?.filter(pull => pull.state === 'open' || pull.state === 'draft') ?? [];
-}
-
-function daysSince(value: string, today: string) {
-  return Math.floor((Date.parse(today) - Date.parse(onDay(value))) / DAY);
 }
 
 function recentlyChanged(value: string, today: string) {
@@ -94,10 +71,9 @@ function decisionProgress(decision: PlanningDecision, plans: PlanningPlan[], tod
   const live = activePullRequests(decision);
   if (decision.pullRequest && !decision.pullRequests?.length) reasons.push({ text: '关联 PR 等待同步' });
   for (const pull of live) {
-    const idle = daysSince(pull.updatedAt, today);
-    if (pull.checks === 'fail') reasons.push({ text: `PR #${pull.number} 检查失败`, blocked: true });
-    if (idle >= 7) reasons.push({ text: `PR #${pull.number} ${idle} 天未更新`, blocked: true });
-    if (pull.checks !== 'fail' && idle < 7) reasons.push({ text: `PR #${pull.number} ${pull.state === 'draft' ? '草稿' : '评审中'}` });
+    const stalls = pullStallReasons(pull, today);
+    for (const stall of stalls) reasons.push({ text: `PR #${pull.number} ${stall}`, blocked: true });
+    if (!stalls.length) reasons.push({ text: `PR #${pull.number} ${pull.state === 'draft' ? '草稿' : '评审中'}` });
   }
   const merged = decision.pullRequests?.filter(pull => pull.state === 'merged').length ?? 0;
   if (merged) completed.push({ text: `${merged} 个 PR 已合并` });
@@ -111,7 +87,7 @@ function decisionProgress(decision: PlanningDecision, plans: PlanningPlan[], tod
     else if (progress.state === 'done') completed.push({ text: `${shortId(plan.id)} 已完成` });
   }
   if (decision.status === 'proposed') {
-    const idle = live.reduce((previous, pull) => Math.min(previous, daysSince(pull.updatedAt, today)), daysSince(decision.updatedAt, today));
+    const idle = proposalIdleDays(decision, today);
     reasons.push(idle >= 14 ? { text: `提议 ${idle} 天未形成结论`, blocked: true } : { text: '提议评审中' });
   }
   if (reasons.length) {
@@ -147,8 +123,17 @@ function advancement(data: PlanningBoard) {
     && (!decision.reviewedAt || onDay(decision.reviewedAt) < decision.reviewAt));
   const needsReview = new Set(review.map(({ decision }) => decision.id));
   const remaining = rows.filter(({ decision }) => !needsReview.has(decision.id));
+  const decisionIds = new Set(data.decisions.map(decision => decision.id));
+  const standalonePlans: Record<Progress['state'], PlanningPlan[]> = { stuck: [], moving: [], done: [] };
+  for (const plan of data.plans) {
+    if (plan.decisionId && decisionIds.has(plan.decisionId)) continue;
+    const progress = planProgress(plan, data.today);
+    const overdue = progress.late > 0 || Boolean(plan.dueAt && plan.dueAt < data.today);
+    const state = !progress.active ? 'done' : overdue ? 'stuck' : 'moving';
+    standalonePlans[state].push(plan);
+  }
   return {
-    pending: data.proposals.filter(item => item.status === 'pending'), review,
+    pending: data.proposals.filter(item => item.status === 'pending'), review, standalonePlans,
     stuck: remaining.filter(({ progress }) => progress.state === 'stuck'),
     moving: remaining.filter(({ progress }) => progress.state === 'moving'),
     done: remaining.filter(({ progress }) => progress.state === 'done'),
@@ -159,7 +144,7 @@ export function planningBoardSummary(data: PlanningBoard) {
   const grouped = advancement(data);
   const recentPulls = new Set(data.decisions.flatMap(decision => (decision.pullRequests ?? [])
     .filter(pull => recentlyChanged(pull.updatedAt, data.today)).map(pull => pull.url))).size;
-  return { pending: grouped.pending.length + grouped.review.length, stuck: grouped.stuck.length, recentPulls };
+  return { pending: grouped.pending.length + grouped.review.length, stuck: grouped.stuck.length + grouped.standalonePlans.stuck.length, recentPulls };
 }
 
 function RecordId({ id }: { id: string }) {
@@ -222,6 +207,24 @@ function DecisionCard({ decision, plans, progress, today, onSelect, review }: {
   </li>;
 }
 
+function StandalonePlanCard({ plan, today, state, onSelect }: {
+  plan: PlanningPlan; today: string; state: Progress['state']; onSelect: SelectRecord;
+}) {
+  const progress = planProgress(plan, today);
+  return <li className="ep-advancement-card" data-card={state}>
+    <div className="ep-decision-tags"><RecordId id={plan.id} /><PlanningBadge tone="info">落地计划</PlanningBadge>
+      <PlanningBadge tone={state === 'stuck' ? 'warning' : 'quiet'}>{planLabel(plan, progress.state)}</PlanningBadge>
+    </div>
+    <button type="button" className="ep-text-button ep-advancement-title" onClick={() => onSelect({ kind: 'plan', id: plan.id })}>{plan.title}</button>
+    <p className="ep-advancement-meta"><ListChecks aria-hidden />
+      {progress.total ? `${progress.done}/${progress.total} 步已完成` : '暂无落地步骤'}</p>
+    {state === 'stuck' && <Reasons reasons={[{
+      text: progress.late ? `${progress.late} 个步骤逾期` : '计划已逾期', blocked: true,
+    }]} />}
+    {plan.owner && <p className="ep-advancement-meta"><UserRound aria-hidden />{plan.owner}</p>}
+  </li>;
+}
+
 function ProposalCard({ proposal, decision, relatedDebts, approve, busy, onSelect, onConfirm, onReject }: {
   proposal: PlanningProposal; decision?: PlanningDecision; relatedDebts: PlanningBoard['relatedDebts']; approve: boolean; busy: boolean;
   onSelect: SelectRecord; onConfirm: ConfirmProposal; onReject: (item: PlanningProposal) => void;
@@ -278,7 +281,7 @@ export function PlanningBoardView({ data, busy, onSelect, onConfirm, onReject }:
   data: PlanningBoard; busy: boolean; onSelect: SelectRecord;
   onConfirm: ConfirmProposal; onReject: (item: PlanningProposal) => void;
 }) {
-  const { pending, review, ...progress } = useMemo(() => advancement(data), [data]);
+  const { pending, review, standalonePlans, ...progress } = useMemo(() => advancement(data), [data]);
   const decisions = useMemo(() => new Map(data.decisions.map(decision => [decision.id, decision])), [data.decisions]);
   const approve = data.permissions.includes('approve');
   return <div className="ep-advancement"><div className="ep-advancement-board" role="region" aria-label="推进看板">
@@ -290,8 +293,9 @@ export function PlanningBoardView({ data, busy, onSelect, onConfirm, onReject }:
       })}
       {review.map(row => <DecisionCard key={row.decision.id} {...row} today={data.today} onSelect={onSelect} review />)}
     </Lane>
-    {(['stuck', 'moving', 'done'] as const).map(kind => <Lane key={kind} kind={kind} count={progress[kind].length}>
+    {(['stuck', 'moving', 'done'] as const).map(kind => <Lane key={kind} kind={kind} count={progress[kind].length + standalonePlans[kind].length}>
       {progress[kind].map(row => <DecisionCard key={row.decision.id} {...row} today={data.today} onSelect={onSelect} />)}
+      {standalonePlans[kind].map(plan => <StandalonePlanCard key={plan.id} plan={plan} today={data.today} state={kind} onSelect={onSelect} />)}
     </Lane>)}
   </div></div>;
 }
@@ -815,6 +819,7 @@ function PlanStep({ step, plan, board, write, actionsDisabled, onSelect, onActio
 
 export function PlanDetails({ plan, board, write, actionsDisabled, onSelect, onAction }: DetailProps & { plan: PlanningPlan }) {
   const progress = planProgress(plan, board.today);
+  const approved = board.proposals.find(row => row.kind === 'plan' && row.status === 'accepted' && row.result?.id === plan.id);
   const decision = board.decisions.find(row => row.id === plan.decisionId);
   const debtSteps = plan.steps.filter(step => step.kind === 'debt' && step.relatedId);
   const open = debtSteps.filter(step => step.status === 'todo' || step.status === 'doing').length;
@@ -826,6 +831,7 @@ export function PlanDetails({ plan, board, write, actionsDisabled, onSelect, onA
       <div className="ep-record-main">
         <RecordSection title="目标">{plan.summary ? <p className="ep-record-callout"><Target aria-hidden /><span>{plan.summary}</span></p>
           : <p className="ep-record-muted">暂无目标说明</p>}
+          {approved?.draft.summary && <PlanDesignHandoff plan={plan} original={approved.draft.summary} />}
         </RecordSection>
         <RecordSection title="步骤" action={write && <button type="button" className="ep-button" disabled={actionsDisabled}
           onClick={event => onAction({ kind: 'step', plan }, event.currentTarget)}><Plus aria-hidden />添加步骤</button>}>

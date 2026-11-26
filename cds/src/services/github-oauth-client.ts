@@ -141,7 +141,7 @@ export class GitHubOAuthClient {
    * Build the GitHub OAuth authorization URL. The caller should 302 the
    * browser to this URL after generating and storing a CSRF state token.
    */
-  buildAuthorizeUrl(state: string, redirectUri: string): string {
+  buildAuthorizeUrl(state: string, redirectUri: string, codeChallenge?: string): string {
     const params = new URLSearchParams({
       client_id: this.clientId,
       redirect_uri: redirectUri,
@@ -150,6 +150,7 @@ export class GitHubOAuthClient {
       // Always force the consent screen when the set of requested scopes
       // changes across versions. Helps during P2→P5 when we add scopes.
       allow_signup: 'false',
+      ...(codeChallenge ? { code_challenge: codeChallenge, code_challenge_method: 'S256' } : {}),
     });
     return `${this.oauthBaseUrl}/login/oauth/authorize?${params.toString()}`;
   }
@@ -160,7 +161,7 @@ export class GitHubOAuthClient {
    * callers just keep it for the duration of the current request and
    * discard it.
    */
-  async exchangeCodeForToken(code: string, redirectUri: string): Promise<string> {
+  async exchangeCodeForToken(code: string, redirectUri: string, codeVerifier?: string): Promise<string> {
     let response;
     try {
       response = await this.fetchImpl(`${this.oauthBaseUrl}/login/oauth/access_token`, {
@@ -174,6 +175,7 @@ export class GitHubOAuthClient {
           client_secret: this.clientSecret,
           code,
           redirect_uri: redirectUri,
+          ...(codeVerifier ? { code_verifier: codeVerifier } : {}),
         }),
       });
     } catch (err) {

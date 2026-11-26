@@ -72,7 +72,7 @@ Agent 读 SKILL.md 里「维护者：我改了 CDS」段 → 知道要走 6 步
 Agent: $ cdscli sync-from-cds
  → 拿到 JSON: { newInCds: ["POST /api/projects/:X/archive"], ... }
  ↓
-Agent 用 plan-first 展示方案：
+Agent 用 `/cds-plan` 展示分阶段执行计划：
   "检测到 1 个新端点。建议：
    1. cli/cdscli.py 加 cmd_project_archive:
       def cmd_project_archive(args):

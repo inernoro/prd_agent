@@ -5,6 +5,7 @@ import { Activity, RefreshCw, ChevronRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ApiError, listUserActivity, type CdsUserActivity } from '@/lib/api';
 import { Section, LoadingBlock, ErrorBlock, EmptyBlock } from '../components';
+import { AccountAudit } from '../components/AccountAudit';
 
 const ACTION_LABEL: Record<string, string> = {
   login: '登录',
@@ -18,13 +19,16 @@ const ACTION_LABEL: Record<string, string> = {
   'enable-user': '启用用户',
   'grant-project': '授权项目',
   'revoke-project': '撤销项目授权',
+  'link-identity': '绑定登录身份',
+  'link-identity-denied': '绑定登录身份失败',
+  'unlink-identity': '解除登录身份绑定',
 };
 
 function actionLabel(action: string): string {
   return ACTION_LABEL[action] || action;
 }
 
-export function ActivityTab({ canViewAll }: { canViewAll: boolean }): JSX.Element {
+export function ActivityTab({ canViewAll, canFilterAccounts }: { canViewAll: boolean; canFilterAccounts?: boolean }): JSX.Element {
   const [rows, setRows] = useState<CdsUserActivity[] | null>(null);
   const [error, setError] = useState('');
   const [errorDetail, setErrorDetail] = useState('');
@@ -49,6 +53,8 @@ export function ActivityTab({ canViewAll }: { canViewAll: boolean }): JSX.Elemen
     return (rows || []).filter(row => !needle || [row.userLogin,row.userId,row.action,actionLabel(row.action),row.summary,row.targetId,row.ip].some(value => value?.toLocaleLowerCase().includes(needle)));
   }, [rows, query]);
   return (
+    <div className="space-y-6">
+    <AccountAudit canViewAll={canViewAll} canFilterAccounts={canFilterAccounts} />
     <Section
       title="用户操作痕迹"
       description={
@@ -107,5 +113,6 @@ export function ActivityTab({ canViewAll }: { canViewAll: boolean }): JSX.Elemen
         )}
       </div>
     </Section>
+    </div>
   );
 }

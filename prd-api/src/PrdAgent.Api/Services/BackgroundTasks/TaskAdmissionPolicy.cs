@@ -31,6 +31,8 @@ public static class TaskAdmissionPolicies
         Register("McpSpeechController", "Create", new[] { AppCallerRegistry.McpSpeech.Synthesize }, false, 1, 1);
         Register("SpeechOpenApiController", "Create", new[] { AppCallerRegistry.McpSpeech.Synthesize }, false, 1, 1);
         Add("ModelLabController", "RunStream", new[] { "prd-agent-web.model-lab." });
+        Register("TapdBugAgentController", "PreviewStream", new[] { AppCallerRegistry.TapdBugAgent.Extract.Chat },
+            false, 1, 1, timing: TaskAdmissionTiming.AuthenticatedPaidBranch);
         Register("LabController", "SimulateMessage",
             new[] { AppCallerRegistry.Desktop.Chat.SendMessageChat }, false, 128,
             timing: TaskAdmissionTiming.AuthenticatedPaidBranch);

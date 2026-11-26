@@ -123,6 +123,8 @@ cds/branch-claim-entry-output/
 # Local Codex/agent skill mirrors (machine-specific, generated locally)
 .agents/skills/*
 # 项目级交付技能入口使用仓库内相对链接，云端克隆后可直接发现
+!.agents/skills/cds-plan
+!.agents/skills/cds-build
 !.agents/skills/work-budget
 !.agents/skills/kill-debt
 !.agents/skills/create-debt

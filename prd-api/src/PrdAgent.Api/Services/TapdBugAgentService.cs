@@ -2,7 +2,9 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using PrdAgent.Core.Models;
+using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Core.LlmGateway;
 
@@ -30,24 +32,34 @@ public class TapdBugAgentService
         "逻辑错误", "不符方案", "功能遗漏", "历史缺陷", "产品缺陷"
     };
 
+    private static readonly Regex ExplicitExpectedResult = new(
+        @"(?:^|[。！？!?；;，,\r\n])[ \t]*(?>预期(?:结果)?|期望(?:结果)?|正确应该|正确应当|正确应|正常情况下应该|正常应该|(?:我)?希望|应该|应当)(?:是|为)?(?<result>[^。！？!?；;\r\n]+)",
+        RegexOptions.CultureInvariant);
+
     private readonly ILlmGateway _gateway;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<TapdBugAgentService> _logger;
+    private readonly string? _modelPublicId;
+
+    public const string ModelPublicIdKey = "TapdBugAgent:ModelPublicId";
 
     public TapdBugAgentService(
         ILlmGateway gateway,
         IHttpClientFactory httpClientFactory,
-        ILogger<TapdBugAgentService> logger)
+        ILogger<TapdBugAgentService> logger,
+        IConfiguration configuration)
     {
         _gateway = gateway;
         _httpClientFactory = httpClientFactory;
         _logger = logger;
+        _modelPublicId = configuration[ModelPublicIdKey]?.Trim();
     }
 
     public async Task<TapdBugDraft> StreamPreviewAsync(
         TapdBugPreviewRequest request,
         Func<string, object, Task> writeEvent,
-        CancellationToken ct)
+        CancellationToken ct,
+        Func<CancellationToken, Task<TaskExecutionIdentity>>? admitModelCall = null)
     {
         var naturalText = request.NaturalText?.Trim() ?? string.Empty;
         var userDraft = NormalizeDraft(request.Overrides, naturalText);
@@ -64,6 +76,7 @@ public class TapdBugAgentService
         {
             AppCallerCode = AppCallerRegistry.TapdBugAgent.Extract.Chat,
             ModelType = ModelTypes.Chat,
+            ExpectedModel = string.IsNullOrWhiteSpace(_modelPublicId) ? null : _modelPublicId,
             RequestBody = new JsonObject
             {
                 ["messages"] = new JsonArray
@@ -72,6 +85,7 @@ public class TapdBugAgentService
                     new JsonObject { ["role"] = "user", ["content"] = BuildUserPrompt(naturalText, userDraft) },
                 },
                 ["temperature"] = 0.2,
+                ["max_tokens"] = 4096,
             },
             TimeoutSeconds = 90,
             IncludeThinking = true,
@@ -81,6 +95,7 @@ public class TapdBugAgentService
         string? llmError = null;
         try
         {
+            using var execution = admitModelCall is null ? null : TaskExecutionContext.Enter(await admitModelCall(ct));
             await foreach (var chunk in _gateway.StreamAsync(gReq, CancellationToken.None))
             {
                 if (chunk.Type == GatewayChunkType.Start && chunk.Resolution != null)
@@ -268,6 +283,16 @@ public class TapdBugAgentService
         };
 
         normalized = AutoFillRequiredFields(normalized, naturalText);
+        if (normalized.ExpectedResult.Count == 0 && !string.IsNullOrWhiteSpace(naturalText))
+        {
+            var statedResults = ReadExpectedResultSection(naturalText) ?? ExplicitExpectedResult.Matches(naturalText)
+                .Select(match => match.Groups["result"].Value.Trim().TrimStart('：', ':').Trim());
+            normalized = normalized with
+            {
+                ExpectedResult = NormalizeLines(statedResults.Where(result =>
+                    result.TrimEnd('。', '！', '!', '？', '?').TrimEnd() is not ("待补充" or "待确认" or "未提供" or "不详")))
+            };
+        }
 
         var missing = new List<string>();
         if (string.IsNullOrWhiteSpace(normalized.Title)) missing.Add("标题");
@@ -332,7 +357,7 @@ public class TapdBugAgentService
             Preconditions = parsed.Preconditions.Count > 0 ? parsed.Preconditions : baseDraft.Preconditions,
             Steps = parsed.Steps.Count > 0 ? parsed.Steps : baseDraft.Steps,
             ActualResult = parsed.ActualResult.Count > 0 ? parsed.ActualResult : baseDraft.ActualResult,
-            ExpectedResult = parsed.ExpectedResult.Count > 0 ? parsed.ExpectedResult : baseDraft.ExpectedResult,
+            ExpectedResult = baseDraft.ExpectedResult,
         };
     }
 
@@ -351,7 +376,7 @@ public class TapdBugAgentService
             你是 TAPD 缺陷自动提报智能体，负责把用户口语化缺陷描述整理为标准缺陷草稿。
             严格规则：
             1. 只能输出严格 JSON，不要输出 Markdown、解释、代码围栏。
-            2. 必须尽量基于用户原话合理补齐四要素。信息不足时使用“进入出现该问题的页面/执行描述中的操作/观察异常结果/不应出现异常错误”等可核对表述，不要让四要素为空。
+            2. 根据用户原话整理前置条件、复现步骤和实际结果。只有原话或已填写表单明确给出预期结果时才填写 expectedResult；未提供时返回空数组，不能从故障现象推断预期。
             3. 标题格式为“场景 + 问题现象”，不超过 30 个中文字符。
             4. 四要素必须拆成数组：preconditions、steps、actualResult、expectedResult。
             5. 默认 module/versionReport 为“附近门店组件精准筛选”，currentOwner 为“黄卫杰;”。
@@ -403,9 +428,6 @@ public class TapdBugAgentService
             ActualResult = draft.ActualResult.Count > 0
                 ? draft.ActualResult
                 : BuildInferredActualResult(source),
-            ExpectedResult = draft.ExpectedResult.Count > 0
-                ? draft.ExpectedResult
-                : BuildInferredExpectedResult(source),
         };
     }
 
@@ -452,29 +474,30 @@ public class TapdBugAgentService
         };
     }
 
-    private static List<string> BuildInferredExpectedResult(string source)
+    private static IEnumerable<string>? ReadExpectedResultSection(string description)
     {
-        if (source.Contains("502", StringComparison.Ordinal))
+        // 只把单独一行的显式字段标题视为多行表单，避免从普通描述中猜测预期。
+        using var reader = new StringReader(description);
+        while (reader.ReadLine() is { } heading)
         {
-            return new List<string>
-            {
-                "系统应正常处理该输入或给出明确的业务校验提示",
-                "页面不应出现 502 错误"
-            };
-        }
+            if (heading.Trim() is not ("预期结果：" or "预期结果:")) continue;
 
-        if (source.Contains("筛选", StringComparison.Ordinal))
-        {
-            return new List<string>
+            var results = new List<string>();
+            while (reader.ReadLine() is { } value)
             {
-                "系统应按照所选条件正确过滤并展示匹配结果"
-            };
+                var line = value.Trim();
+                if (line.Length == 0 && results.Count == 0) continue;
+                if (line.Length == 0) break;
+                var delimiter = line.IndexOfAny(['：', ':']);
+                if (delimiter >= 0 && line[..delimiter].Trim() is
+                    "标题" or "所属模块" or "所属版本" or "严重程度" or "优先级" or "缺陷类型" or "处理人"
+                    or "前置条件" or "复现步骤" or "实际结果" or "预期结果")
+                    break;
+                results.Add(line);
+            }
+            return results;
         }
-
-        return new List<string>
-        {
-            "系统应按业务规则正常完成该操作，并给出清晰结果反馈"
-        };
+        return null;
     }
 
     private static List<string> NormalizeLines(IEnumerable<string>? lines)

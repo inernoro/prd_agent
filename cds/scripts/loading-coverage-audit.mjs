@@ -19,6 +19,8 @@ const progressOwners = new Map([
   ['SelfUpdateStatusPanel', '真实 self-update 排空与进程切换阶段，保留后端阶段说明'],
   ['ReleaseGovernancePanel', '已加载申请的待独立审批业务状态；批准与撤销操作不属于请求占位'],
   ['IdentityRecoveryPanel', '已加载申请的待人工批准业务状态；保留原项目、账号选择与批准拒绝操作'],
+  ['AccountActionFacts', '已读到账号申请后显示人工确认截止时间'],
+  ['HandoffCheck', '已读取稿件，本版交接检查尚未启动'],
 ]);
 export const loadingCondition = text => {
   const positive = text.replace(/(['"])(.*?)\1/g, (match, quote, value) => ['loading', 'checking', 'pending'].includes(value) ? match : '""').replace(/!\s*(?:\w+\.)*\w*[Ll]oading\w*/g, 'false');
@@ -73,6 +75,10 @@ export function auditLoadingCoverage(root = sourceRoot) {
           record.owner === 'ReleaseGovernancePanel' && record.condition.startsWith("current.status === 'pending'") && markup.includes("decide('approve')") ||
           record.owner === 'IdentityRecoveryPanel' && record.condition === "r.status === 'pending'"
             && /<select\b/.test(markup) && markup.includes('/approve') && markup.includes('/reject') ||
+          record.owner === 'AccountActionFacts' && record.condition === "entry.expiresAt && entry.status === 'pending'"
+            && markup.includes('确认截止') ||
+          record.owner === 'HandoffCheck' && record.condition === "status.status === 'pending'"
+            && markup.includes('运行检查后，才能从本版开始实施') ||
           record.owner === 'PreviewActionSplitButton' || record.owner === 'ApiProbe'
         )) { record.category = 'progress'; record.reason = progressOwners.get(record.owner); }
         else if (/^<Loader2\b/.test(markup) && record.owner === 'CommandPalette') { record.category = 'progress'; record.reason = '搜索输入框刷新指示，结果区域另有骨架'; }

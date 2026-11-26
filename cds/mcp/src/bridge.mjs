@@ -3,6 +3,23 @@ import path from 'node:path';
 import { fetch, FormData, EnvHttpProxyAgent } from 'undici';
 import { z } from 'zod';
 
+const designAcceptanceIssueCodes = new Set([
+  'missing_acceptance_plan', 'missing_method', 'invalid_method', 'required_method', 'missing_reason',
+  'missing_rule', 'invalid_dimension', 'missing_coverage', 'invalid_risk', 'coverage_conflict',
+]);
+const designAcceptanceIssueField = /^(?:acceptancePlan(?:\.(?:mece|compare|visual|regress|flow|human|smoke|debt)(?:\.reason)?)?|acceptance(?:\[[0-5]?[0-9]\]\.dimension)?|risks(?:\.(?:correctness|compatibility|performance|security|operations|experience)|\[[0-5]?[0-9]\](?:\.ruleIds)?)?)$/;
+
+function designAcceptanceHints(issues) {
+  if (!Array.isArray(issues)) return '';
+  const hints = issues.slice(0, 100).flatMap(issue => {
+    if (!issue || typeof issue.field !== 'string' || issue.field !== issue.field.trim() || !designAcceptanceIssueField.test(issue.field)
+      || !designAcceptanceIssueCodes.has(issue.code)) return [];
+    if (Object.hasOwn(issue, 'ruleId') && (typeof issue.ruleId !== 'string' || issue.ruleId !== issue.ruleId.trim() || !/^A-[0-9]{2,3}$/.test(issue.ruleId))) return [];
+    return [`${issue.field}${issue.ruleId ? '（' + issue.ruleId + '）' : ''} ${issue.code}`];
+  });
+  return hints.length ? '。请检查 ' + hints.join('、') : '';
+}
+
 export const MAX_ZIP_BYTES = 100 * 1024 * 1024;
 export const MAX_REPORT_BYTES = 10 * 1024 * 1024;
 const MAX_RESPONSE_BYTES = 12 * 1024 * 1024;
@@ -194,6 +211,12 @@ export function createProjectApiClient(credentials, { fetchImpl = fetch, dispatc
       if (response.status === 409 && parsed.error === 'plan_debt_closed') throw new Error('CDS HTTP 409: 请重新读取债务并选择仍未偿还的记录');
       if (response.status === 409 && parsed.error === 'design_intake_conflict') throw new Error('CDS HTTP 409: 请重新读取设计接入 intake，核对稿件、Git 目录和最新版本后再决定续版或新建');
       if (response.status === 409 && parsed.error === 'design_git_source_required') throw new Error('CDS HTTP 409: 项目 Git 尚找不到该稿件的提交与目录，请同步提交后重试');
+      if (response.status === 400 && parsed.error === 'G-11') {
+        throw new Error('CDS HTTP 400: 稿件门禁 G-11 未通过，请补齐验收计划与覆盖维度' + designAcceptanceHints(parsed.issues) + '。');
+      }
+      if ((response.status === 400 || response.status === 413) && typeof parsed.error === 'string' && /^G-(?:0[1-9]|10)$/.test(parsed.error)) {
+        throw new Error(`CDS HTTP ${response.status}: 稿件门禁 ${parsed.error} 未通过，请按设计接入规则修正后重试`);
+      }
       const details = { 400: '参数不符合要求', 401: '项目凭据无效或已过期', 403: '当前项目无权访问此资源', 404: '任务或报告不存在', 409: '任务状态或幂等键冲突', 413: '上传超过大小限制', 429: '请求过于频繁', 502: '上游服务失败', 503: '服务未配置或不可用' };
       throw new Error(`CDS HTTP ${response.status}: ${details[response.status] ?? '请求失败，请查看 CDS 任务详情'}`);
     }

@@ -2,6 +2,33 @@ import type { DesignMaterial, DesignVersion } from '../../../../src/shared/desig
 
 export type StructureChange = { id: string; label: string; kind: '新增' | '修改' | '移除'; text: string };
 
+const attributeNames: Record<string, string> = {
+  name: '名称', value: '值', light: '浅色', dark: '深色', use: '用途', size: '字号', weight: '字重',
+  colors: '颜色', typography: '字阶', font: '字体', spacing: '间距', radius: '圆角',
+};
+
+export function describeDesignValue(value: unknown): string {
+  if (Array.isArray(value)) return value.map(describeDesignValue).join('、');
+  if (value && typeof value === 'object') {
+    return Object.entries(value).map(([key, item]) => `${attributeNames[key] ?? key} ${describeDesignValue(item)}`).join(' · ');
+  }
+  return String(value ?? '');
+}
+
+export function describeMaterialChange(row: StructureChange): { label: string; detail: string } | undefined {
+  const group = row.label.split(' · ')[0];
+  if (group === '令牌') {
+    const key = row.label.split(' · ')[1].split('/').at(-1)!;
+    return { label: group + ' · ' + (attributeNames[key] ?? key), detail: describeDesignValue(JSON.parse(row.text)) };
+  }
+  if (row.text.startsWith('|')) {
+    const [title, ...details] = row.text.split('|').map(cell => cell.trim()).filter(Boolean);
+    if (!title || /^(编号|名称|规则编号|组件)$/.test(title)) return;
+    return { label: `${group} · ${title}`, detail: details.join(' · ') };
+  }
+  return { label: group, detail: row.text };
+}
+
 function compare(label: string, before: Map<string, string>, after: Map<string, string>) {
   const changed: StructureChange[] = [];
   for (const [key, value] of before) {

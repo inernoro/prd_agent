@@ -1,3 +1,7 @@
+import type { designAcceptancePolicy } from './design-acceptance-standard.mjs';
+import type { designHandoffPolicy, DesignHandoffPlan, DesignHandoffState } from './design-handoff.js';
+import type { DesignAcceptancePlan, DesignCoverageRecord, DesignDimension, DesignFlow, DesignKnownIssue, DesignMethodId, DesignMethodSettings, DesignRegression, DesignSmoke } from './design-methods.js';
+import type { DesignVisualRow } from './design-visual.js';
 import type { DesignVerdict, DesignCellStatus } from '../services/design-acceptance.js';
 
 export const designSlots = ['desktop-light', 'desktop-dark', 'phone-light', 'phone-dark'] as const;
@@ -9,13 +13,47 @@ export type DesignScreen = {
   readySelector?: string;
   entryActions?: string[];
   entryReadySelector?: string;
+  entryTimeoutMs?: number;
 };
 export type DesignRule = {
   id: string; rule: string; how: 'measure' | 'screenshot' | 'human'; priority: 'high' | 'normal';
-  slots: readonly DesignSlot[]; screenId?: string; expected?: string;
+  slots: readonly DesignSlot[]; screenId?: string; expected?: string; dimension?: DesignDimension; requirementRef?: string;
   probe?: { type: 'horizontal-overflow'; tolerance?: number };
+  interaction?: true;
 };
 export type DesignMaterial = { tokens?: Record<string, unknown>; rules?: string; components?: string; skeleton?: string };
+export const designMaterialKeys = ['tokens', 'rules', 'components', 'skeleton'] as const;
+export type DesignMaterialKey = typeof designMaterialKeys[number];
+export type FrameworkResolutions = Partial<Record<DesignMaterialKey, 'keep' | 'adopt'>>;
+
+export type DesignFrameworkCharter = {
+  status: 'adopted' | 'draft' | 'deprecated';
+  intent: string;
+  problems: string[];
+  nonGoals: string[];
+  scope: { system: string; modules: string[] };
+  owner: string;
+  example?: { designId: string; version: number };
+  ruleSources?: Array<{ rule: string; from: string; evidence: string }>;
+  moduleDiffs?: Array<{ module: string; diff: string; reason: string; decision: 'module' | 'framework' | 'pending' }>;
+};
+
+function comparableMaterial(value: unknown) {
+  if (typeof value === 'string') return value.replace(/\r\n/g, '\n').trim();
+  return JSON.stringify(value, (_key, item: unknown) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return item;
+    return Object.fromEntries(Object.entries(item).sort(([left], [right]) => left.localeCompare(right)));
+  });
+}
+
+export function frameworkMaterialCandidates(proposed: DesignMaterial, existing?: DesignMaterial) {
+  return designMaterialKeys.flatMap(key => {
+    if (proposed[key] === undefined) return [];
+    const state = existing?.[key] === undefined ? 'new'
+      : comparableMaterial(proposed[key]) === comparableMaterial(existing[key]) ? 'same' : 'conflict';
+    return [{ key, state }];
+  });
+}
 export type DesignNestedScroll = { status: 'passed' }
   | { status: 'failed' | 'unverified'; element: string; width: number; contentWidth: number };
 export type DesignFrameworkMeasurement = {
@@ -50,9 +88,19 @@ export type DesignDelivery = {
   notes?: string;
   warnings: string[];
 };
+export type DesignDemoStep = { screen: string; title?: string; tip?: string };
+export type DesignGoal = { id: string; goal: string; doneWhen: string; items: string[]; where?: string };
+export type DesignDemoData = { files: string[]; sha256: string; note?: string };
+export type DesignCaptureProvenance = { dataset?: string; commit?: string; capturedBy?: 'cds' };
+export type DesignVideoChapter = { method: DesignMethodId; title: string; start: number };
+export type DesignVideo = { page: 'accept'; file: string; artifactId: string; title: string; chapters: DesignVideoChapter[] };
 export const designFeedbackCategories = ['reuse', 'implementation', 'gap', 'constraint', 'acceptance'] as const;
 export type DesignFeedbackCategory = typeof designFeedbackCategories[number];
 type DesignFeedbackAuthor = { id: string; label: string };
+export type DesignFeedbackAttachment = {
+  id: string; title: string; size: number; sha256: string; author: DesignFeedbackAuthor; at: string;
+  version?: number; screenId?: string; slot?: DesignSlot;
+};
 export type DesignFeedback = {
   id: string;
   version: number;
@@ -64,35 +112,101 @@ export type DesignFeedback = {
   author: DesignFeedbackAuthor;
   createdAt: string;
   status: 'open' | 'responded' | 'closed';
-  replies: Array<{ body: string; revision?: number; author: DesignFeedbackAuthor; at: string }>;
+  filePath?: string;
+  attachments?: DesignFeedbackAttachment[];
+  replies: Array<{ body: string; revision?: number; author: DesignFeedbackAuthor; at: string; supplement?: true }>;
   decisions: Array<{ decision: 'close' | 'reopen'; body: string; author: DesignFeedbackAuthor; at: string }>;
 };
+
+export type DesignModuleRef = { systemId: string; moduleId: string };
+export type DesignScope = DesignModuleRef & { related?: DesignModuleRef[] };
+export type DesignSystem = {
+  id: string; name: string; framework?: string;
+  modules: Array<{ id: string; name: string; framework?: string; note?: string }>;
+};
+
+export type DesignCover = { id: string; sha256: string; screenId: string; theme: DesignTheme };
 
 export type DesignVersion = {
   version: number; title: string; sourceCommit: string; sha256: string; prototypeId: string; createdAt: string;
   sourcePath?: string; sourceVerification?: 'git' | 'declared' | 'private-upload'; prototypeSha256?: string;
   publisher: { id: string; label: string }; note?: string; screens: DesignScreen[]; acceptance: DesignRule[];
   rationale: string; spec: DesignMaterial; checks?: Record<string, unknown>; framework?: string; frameworkVersion?: number;
+  frameworkCharter?: DesignFrameworkCharter;
   frameworkCheck?: DesignFrameworkCheck;
-  group?: string; tags: string[]; decisionIds: string[]; resolves: Record<string, string>;
+  group?: string; scope?: DesignScope; tags: string[]; decisionIds: string[]; resolves: Record<string, string>;
   renders?: Record<string, Partial<Record<DesignTheme, { id: string; sha256: string }>>>;
+  cover?: DesignCover;
+  handoffPlan?: DesignHandoffPlan;
+  handoff?: DesignHandoffState;
+  demo?: DesignDemoStep[];
+  goals?: DesignGoal[];
+  demoData?: DesignDemoData;
+  videos?: DesignVideo[];
+  acceptancePlan?: DesignAcceptancePlan;
+  acceptanceMode?: 'objective';
+  evidenceProtocol?: 'program-v1';
+  risks?: DesignCoverageRecord[];
   delivery?: DesignDelivery;
 };
+
+export function designAcceptanceTarget(version: DesignVersion, rule: DesignRule, slot: DesignSlot): DesignScreen | undefined {
+  const [viewport, theme] = slot.split('-') as ['desktop' | 'phone', DesignTheme];
+  const matches = version.screens.filter(screen => screen.impl && screen.themes.includes(theme)
+    && (rule.screenId ? screen.id === rule.screenId : screen.viewport === viewport));
+  return new Set(matches.map(screen => JSON.stringify([screen.impl, screen.readySelector ?? null]))).size === 1
+    ? matches[0] : undefined;
+}
 export type DesignComment = {
   id: string; version: number; screenId: string; body: string; x: number; y: number; createdAt: string;
   author: { id: string; label: string }; closed: boolean;
   replies: Array<{ body: string; createdAt: string; author: { id: string; label: string } }>;
   reviews: Array<{ version: number; decision: 'resolved' | 'rejected'; body: string; by: string; at: string }>;
 };
-export type DesignCell = {
+export type DesignCell = DesignCaptureProvenance & {
   itemId: string; slot: DesignSlot; status: DesignCellStatus; actual: string; imageId?: string; recordedBy?: string;
   debtId?: string; measured?: { width: number; height: number; theme: DesignTheme; path: string };
 };
+export type DesignProgramEvidence = DesignCaptureProvenance & {
+  commit: string;
+  fixtureDigest: string;
+  digest: string;
+  by: string;
+  at: string;
+  review?: { by: string; at: string; matched: boolean; digest: string; fixtureDigest: string };
+};
+
+// The published program-evidence requirement is immutable. Older releases keep their acceptance contract.
+export function designProgramEvidenceRequired(version: DesignVersion): boolean {
+  return Boolean(version.demoData) || version.evidenceProtocol === 'program-v1' || version.acceptance.some(rule => rule.id === 'A-71'
+    && rule.expected?.includes('证据只认程序产生') && rule.expected.includes('独立重跑'));
+}
+
+export function designDatasetRequired(version: DesignVersion): boolean {
+  return Boolean(version.demoData) || version.acceptance.some(rule => rule.id === 'A-71' && rule.expected?.includes('demoData.sha256'));
+}
+
+export function designDemoImplementationPath(screen: DesignScreen): string | undefined {
+  return screen.route.startsWith('#/design?') ? screen.route.slice(1) : undefined;
+}
+
 export type DesignRun = {
-  id: string; version: number; pullRequest: number; commit: string; createdAt: string;
+  id: string; version: number; pullRequest?: number; target?: 'installed'; commit: string; createdAt: string;
   cells: DesignCell[]; verdict: DesignVerdict; previewUrl: string;
+  visual?: Record<`${string}/${DesignSlot}`, DesignVisualRow>;
+  programEvidence?: Partial<Record<`${string}/${DesignSlot}`, DesignProgramEvidence>>;
+  flows?: DesignFlow[];
+  smoke?: DesignSmoke[];
+  coverage?: Partial<Record<DesignDimension, DesignCoverageRecord>>;
+  regress?: Record<string, DesignRegression>;
+  enabledMethods?: DesignMethodId[];
+  methodSettings?: DesignMethodSettings;
+  upgradeId?: string;
   signed?: { by: string; at: string; verdict: 'passed' | 'conditional' };
   issues: Record<string, { id: string; pending: boolean }>;
+};
+export type DesignImplementation = {
+  screenId: string; path: string; readySelector: string; by: string; at: string;
 };
 export type DesignReviewer = { id: string; label: string };
 export type DesignSharePreparation = {
@@ -105,38 +219,134 @@ export type DesignReviewNotice = {
   id: string; projectId: string; designId: string; version: number; title: string;
   createdAt: string; updatedAt: string; occurrences: number;
 };
+export type DesignUpgrade = {
+  id: string; fromVersion?: number; targetVersion: number; startedAt: string; startedBy: string;
+  status: 'active' | 'completed' | 'cancelled'; completedAt?: string; signoffRunId?: string; reason?: string;
+};
+export type DesignVersionGap = { direction: 'behind' | 'ahead' | 'aligned'; count: number };
+
+export function designVersionGap(baseline?: number, implemented?: number): DesignVersionGap | undefined {
+  if (baseline === undefined || implemented === undefined) return undefined;
+  const difference = baseline - implemented;
+  return { direction: difference > 0 ? 'behind' : difference < 0 ? 'ahead' : 'aligned', count: Math.abs(difference) };
+}
+
 export type DesignEntry = {
   id: string; projectId: string; designKey?: string; versions: DesignVersion[]; frozen?: number; pullRequest?: number;
+  scope?: DesignScope;
   comments: DesignComment[]; runs: DesignRun[]; feedback?: DesignFeedback[]; reviewRequested?: boolean;
   currentSignoffRunId?: string | null;
   reviewers?: DesignReviewer[];
   sharePreparations?: DesignSharePreparation[];
-  freezes?: Array<{ version: number; by: string; at: string }>;
+  freezes?: Array<{ version: number; by: string; at: string; reason?: string }>;
+  unfreezes?: Array<{ version: number; by: string; at: string }>;
+  implementations?: Record<number, DesignImplementation[]>;
+  generatedRenders?: Record<number, NonNullable<DesignVersion['renders']>>;
+  implementedVersion?: number;
+  versionGap?: DesignVersionGap;
+  upgrade?: DesignUpgrade;
+  enabledMethods?: Record<number, DesignMethodId[]>;
+  methodSettings?: Record<number, DesignMethodSettings>;
+  knownIssues?: DesignKnownIssue[];
+  librarySummary?: {
+    publisherIds: string[];
+    reviewVersions: Record<string, number>;
+    baselineFramework?: Pick<DesignVersion, 'framework' | 'frameworkVersion'>;
+  };
 };
 
+export function designImplementationTargetVersion(entry: Pick<DesignEntry, 'frozen' | 'upgrade'>): number | null {
+  return entry.upgrade?.status === 'active' ? entry.upgrade.targetVersion : entry.frozen ?? null;
+}
+
 export function currentDesignRun(entry: DesignEntry): DesignRun | undefined {
-  if (!entry.pullRequest || entry.frozen !== entry.versions.at(-1)?.version) return undefined;
-  return entry.runs.slice().reverse().find(run => run.version === entry.frozen && run.pullRequest === entry.pullRequest);
+  if (entry.frozen === undefined) return undefined;
+  return entry.runs.slice().reverse().find(run => run.version === entry.frozen
+    && (run.target === 'installed' || !!entry.pullRequest && run.pullRequest === entry.pullRequest)
+    && (entry.upgrade?.status !== 'active' || run.upgradeId === entry.upgrade.id));
 }
 export type FrameworkRevision = {
   version: number; title: string; sourceCommit: string; at: string; by: string;
   sourcePath?: string; sourceVerification?: 'git' | 'declared';
   from?: { designId: string; version: number }; material: DesignMaterial; note?: string;
+  charter?: DesignFrameworkCharter;
+  resolutions?: FrameworkResolutions;
+  /** Omitted for legacy revisions. Null means published and awaiting adoption. */
+  adoption?: { at: string; by: string } | null;
 };
 export type DesignFramework = { id: string; projectId: string; versions: FrameworkRevision[] };
+
+export function adoptedFrameworkVersion(framework?: DesignFramework): number | undefined {
+  return framework?.versions.filter(revision => revision.adoption !== null
+    && (!revision.charter || revision.charter.status === 'adopted')).at(-1)?.version;
+}
+
+export function frameworkInUse(id: string, revision: FrameworkRevision | undefined, designs: Iterable<DesignEntry>) {
+  if (!revision) return false;
+  if (revision.adoption || revision.charter?.status === 'adopted') return true;
+  for (const design of designs) {
+    if (design.versions.at(-1)?.framework === id
+      || design.versions.find(version => version.version === design.frozen)?.framework === id
+      || design.librarySummary?.baselineFramework?.framework === id) return true;
+  }
+  return false;
+}
+/** Project members explicitly release one accepted requirement to the design workspace. */
+export type DesignRequirement = {
+  designKey: string; planId: string; planVersion: number; proposalId: string;
+  title: string; requirements: string; sharedAt: string;
+  scope?: DesignScope; owner?: DesignReviewer; assignee?: DesignReviewer;
+  replies?: Array<{ id: string; author: DesignFeedbackAuthor; body: string; at: string; planVersion: number }>;
+};
 export type DesignIntake = {
+  acceptancePolicy?: typeof designAcceptancePolicy;
+  handoffPolicy?: typeof designHandoffPolicy;
   protocolVersion: 1;
   projectId: string;
-  permissions: { write: boolean; feedback?: boolean };
+  permissions: { write: boolean; feedback?: boolean; frameworkPublish?: boolean };
+  systems?: DesignSystem[];
   keyFormat: 'module/draft';
   intents: readonly ['create', 'revise'];
+  requirements: DesignRequirement[];
   designs: Array<{
     designId: string; designKey?: string; title: string; latestVersion: number;
-    sourceCommit: string; sourcePaths: string[]; canRevise: boolean; openFeedbackCount?: number;
+    sourceCommit: string; sourcePaths: string[]; scope?: DesignScope; canRevise: boolean; openFeedbackCount?: number;
+    baselineVersion?: number; implementationTargetVersion: number | null; handoffStatus?: DesignHandoffState['status'];
+    implementedVersion?: number; versionGap?: DesignVersionGap; upgrade?: DesignUpgrade;
+    versionHistory?: Array<{ version: number; sourceCommit: string }>;
   }>;
-  frameworks: Array<{ id: string; title: string; latestVersion: number }>;
+  frameworks: Array<{ id: string; title: string; latestVersion: number; adoptedVersion?: number }>;
 };
+export type DesignReadMark = { version: number; feedbackAt?: string };
+export type DesignViewerState = {
+  firstVisitAt?: string; lastVisitAt?: string;
+  designs: Record<string, DesignReadMark>;
+  briefs: Record<string, string>;
+};
+
+export function latestDesignFeedbackAt(entry: DesignEntry): string {
+  let latest = '';
+  for (const item of entry.feedback ?? []) {
+    for (const at of [item.createdAt, item.replies.at(-1)?.at, item.decisions.at(-1)?.at, item.attachments?.at(-1)?.at]) {
+      if (at && at > latest) latest = at;
+    }
+  }
+  return latest;
+}
+
+export type DesignThumbnailStatus = {
+  designId: string; version: number;
+  state: 'unavailable' | 'idle' | 'running' | 'incomplete' | 'ready' | 'locked';
+  total: number; completed: number;
+  renders: NonNullable<DesignVersion['renders']>;
+};
+
 export type DesignWorkspace = {
   projectId: string; designs: DesignEntry[]; frameworks: DesignFramework[];
-  permissions: { write: boolean; feedback?: boolean; review: boolean; sign?: boolean; steward: boolean; actorId: string };
+  coverPending?: boolean;
+  requirements?: DesignRequirement[];
+  systems?: DesignSystem[];
+  viewer?: DesignViewerState;
+  permissions: { write: boolean; feedback?: boolean; feedbackSupplement?: boolean; frameworkPublish?: boolean; handoffCheck?: boolean; visual?: boolean; review: boolean; sign?: boolean;
+    installedAcceptance?: boolean; programRecheck?: boolean; steward: boolean; actorId: string };
 };

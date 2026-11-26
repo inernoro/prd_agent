@@ -1,5 +1,6 @@
 import type { Request, Response, NextFunction } from 'express';
 import type { StateService } from '../services/state.js';
+import { ACCOUNT_NOTIFICATION_SCOPE } from '../services/key-notification-routing.js';
 import { canHumanAccessProject, isScopedHuman, humanPrincipalId, isHumanProjectGrantUpdatePending, logPayloadForHumanView } from '../services/human-project-access.js';
 
 /** Members enter only project-scoped product routes. Unknown/system routes fail closed. */
@@ -21,6 +22,8 @@ export function createHumanProjectAccessMiddleware(state: StateService) {
       message: '你没有此项目或系统操作的权限，请联系系统所有者分配项目授权。',
     });
     if ((method === 'GET' && ['/api/me', '/api/auth/status', '/api/auth/activity', '/api/auth/design/notices'].includes(path))
+      || (method === 'GET' && path === '/api/access-requests' && req.query.queue === 'mine')
+      || (method === 'GET' && path === '/api/cds-events' && req.query.scope === ACCOUNT_NOTIFICATION_SCOPE)
       || (method === 'POST' && ['/api/auth/logout', '/api/logout', '/api/auth/change-password', '/api/auth/sso/logout'].includes(path))) {
       next(); return;
     }
@@ -43,6 +46,9 @@ export function createHumanProjectAccessMiddleware(state: StateService) {
       if (!project || !canHumanAccessProject(req, state, project.id)) return false;
       return true;
     };
+    // The account router bounds both the subject and the operation against current administrator grants.
+    if (kind === 'auth' && id === 'users' && segments.length === 4 && segments[3] === 'projects'
+      && (method === 'GET' || method === 'PUT')) { next(); return; }
     if (kind === 'auth' && id === 'users' && segments.length === 5 && segments[3] === 'projects'
       && method === 'POST' && typeof req.body?.previewRequestId === 'string' && checkProject(segments[4])) {
       next(); return;
@@ -106,9 +112,10 @@ export function createHumanProjectAccessMiddleware(state: StateService) {
       if (action?.toLowerCase() === 'design') {
         const tail = segments.slice(3);
         const read = (method === 'GET' || method === 'HEAD') && (tail.length === 0
-          || (tail.length === 1 && /^reviewers$/i.test(tail[0]))
+          || (tail.length === 1 && /^(reviewers|intake)$/i.test(tail[0]))
           || (tail.length === 2 && /^artifacts$/i.test(tail[0])));
-        const write = method === 'POST' && ((tail.length === 1 && /^(commands|packages)$/i.test(tail[0]))
+        const write = method === 'POST' && ((tail.length === 1 && /^(commands|packages|feedback|viewed)$/i.test(tail[0]))
+          || (tail.length === 2 && /^(feedback\/attachments|handoff\/check)$/i.test(tail.join('/')))
           || (tail.length === 3 && /^shares$/i.test(tail[0]) && /^handoff$/i.test(tail[2])));
         if ((read || write) && checkProject(id)) { next(); return; }
         res.status(404).json({ error: 'design_not_found', message: '没有可访问的设计项目' }); return;

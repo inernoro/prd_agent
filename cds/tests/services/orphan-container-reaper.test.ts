@@ -64,6 +64,30 @@ describe('isOrphanReaperEnabled', () => {
 });
 
 describe('sweepOrphanCdsContainers', () => {
+  it.each(['runtime-only', 'has-data', 'new-reference'])('retires an exited application only after final checks (%s)', async (scenario) => {
+    const shell = new MockShellExecutor();
+    const id = '1'.repeat(64), image = 'sha256:' + '2'.repeat(64);
+    const old = '2026-01-01T00:00:00Z';
+    const labels = { 'cds.managed': 'true', 'cds.type': 'app', 'cds.instance': 'instance',
+      'cds.branch.id': 'retired', 'cds.project.id': 'p1', 'cds.profile.id': 'web' };
+    mockPs(shell, [], [`old-app|exited|${OLD_CREATED}|${Object.entries(labels).map(e => e.join('=')).join(',')}`]);
+    shell.addResponsePattern(/^docker inspect --type container/, () => ({ exitCode: 0, stderr: '', stdout: JSON.stringify({
+      id, name: '/old-app', image, labels, state: { Status: 'exited', Running: false, FinishedAt: old }, mounts: [], createdAt: old,
+    }) }));
+    shell.addResponsePattern(/^docker image inspect/, () => ({ exitCode: 0, stderr: '', stdout: '{"tags":[],"digests":[]}' }));
+    shell.addResponsePattern(/^docker diff/, () => ({ exitCode: 0, stderr: '', stdout: scenario === 'has-data' ? 'A /app/data' : 'C /usr' }));
+    const remove = vi.fn(async (_command: string, options: { beforeStart: () => void }) => {
+      options.beforeStart();
+      return { exitCode: 0, stderr: '', stdout: id };
+    });
+    let observations = 0;
+    const result = await sweepOrphanCdsContainers({ shell: Object.assign(shell, { execOwnedOperation: remove }), state: makeState(),
+      instanceId: 'instance', mayRetireApp: () => ++observations === 1 || scenario !== 'new-reference',
+    });
+    expect(result.actions.some(row => row.action === 'retired')).toBe(scenario === 'runtime-only');
+    if (scenario === 'runtime-only') expect(remove.mock.calls[0][0]).toBe(`docker rm '${id}'`);
+    if (scenario === 'has-data') expect(remove).not.toHaveBeenCalled();
+  });
   it('stops running orphan infra + app containers, spares known owners', async () => {
     const shell = new MockShellExecutor();
     const exec = vi.spyOn(shell, 'exec');

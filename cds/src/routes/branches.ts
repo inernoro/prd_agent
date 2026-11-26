@@ -10,6 +10,7 @@ import { createPreviewAddressRouter } from './preview-address.js';
 import { computePublishedBranchWebEntries, publicPreviewHost } from '../services/branch-web-entrypoints.js';
 import { preserveServingRuntime, runtimeRef } from '../services/service-runtime.js';
 import { buildCdsSkillManifest, copyCdsSkillSource } from '../services/cds-skill-manifest.js';
+import { CDS_SKILL_KEYS } from '../shared/agent-setup.js';
 import { recoverBranchRuntime } from '../services/branch-runtime-recovery.js';
 import { prepareServiceReplacement, commitServiceReplacements, preserveReplacementNames, reserveServiceReplacements, replacementLaunchEntry } from '../services/service-replacement.js';
 import { deploymentPhaseBudget, type SourceStartAdmission } from '../services/deployment-phase-budget.js';
@@ -45,6 +46,7 @@ import { appendEnvironmentAudit, freezeEnvironmentAudit } from '../services/envi
 import { admittedArtifactProfile, artifactInspectionContext, verifyArtifactAdmission, type ArtifactAdmission } from '../services/artifact-admission.js';
 import { resolveArtifactCommitIdentity } from '../services/artifact-commit-identity.js';
 import { refreshArtifactWaiters, registerArtifactWaitRefresher, requestArtifactWaitRefresh } from '../services/artifact-admission-wait.js';
+import { diagnoseCiImage, mapArtifactProducer } from '../services/ci-image-diagnosis.js';
 import { ContainerStopUnconfirmedError, resolveEffectiveProfile, resolveDeployReadinessFloorSeconds, applyDeployReadinessFloor } from '../services/container.js';
 import { diskGuard } from '../services/disk-guard.js';
 import { createJanitorObservationRouter } from './janitor-observation.js';
@@ -54,7 +56,7 @@ import { shellQuote } from '../services/sidecar/sidecar-deployer.js';
 import { isCommitShaLike } from '../services/release-commit-clock.js';
 import {
   drainInFlightDeploys, beginSelfUpdateDrain, endSelfUpdateDrain, collectDrainableRuns,
-  DRAIN_GATE_MAX_HOLD_MS, resolveSelfUpdateDrainTimeoutMs, SelfUpdateRestartBlockedError,
+  DRAIN_GATE_MAX_HOLD_MS, resolveSelfUpdateDrainTimeoutMs, SelfUpdateRestartBlockedError, SELF_UPDATE_SAFE_WINDOW_MS,
   type DrainableRun, type DrainableReleaseRunSource,
 } from '../services/deploy-drain.js';
 import { classifyDeployRuntime, computeServiceDrift, applyDefaultDeployModesToBranch, branchUsesPrebuiltMode, assertValidDefaultDeployModes, InvalidDefaultDeployModeError } from '../services/deploy-runtime.js';
@@ -2060,6 +2062,7 @@ export interface RouterDeps {
   managedProjectService?: ManagedProjectService;
   /** 同一createServer的维护写者与状态投影；直接router消费者独立构造。 */
   selfMaintenanceRuntime?: SelfMaintenanceRuntime;
+  revalidateSelfUpdate?: (req: Request) => Promise<boolean>;
 }
 
 export function shouldSkipFencedDeployCleanupForNewerRuntime(
@@ -2528,15 +2531,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
     toSha?: string;
     source: string;
     timeoutMs?: number;
+    waitForIdleWindow?: boolean;
+    onFirstWait?: () => Promise<void>;
     ownerActive?: () => boolean;
     isQueuedPreserved?: (id: string) => boolean;
     onProgress?: (status: 'running' | 'done' | 'warning', title: string) => void;
   }): Promise<void> {
     const timeoutMs = context.timeoutMs ?? resolveSelfUpdateDrainTimeoutMs({});
-    // Close admission before observing work, including when the wait limit is 0.
     const holdMs = Math.max(DRAIN_GATE_MAX_HOLD_MS, timeoutMs + 60_000);
-    const ownerActive = context.ownerActive;
-    beginSelfUpdateDrain(Date.now(), holdMs, ownerActive);
+    const closeAdmission = () => beginSelfUpdateDrain(Date.now(), holdMs, context.ownerActive);
+    if (!context.waitForIdleWindow) closeAdmission();
     const drainSince = Date.now();
     let lastProgressAt = -Infinity;
     const outcome = await drainInFlightDeploys({
@@ -2553,6 +2557,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       now: () => Date.now(),
       sleep: (ms) => new Promise((r) => { setTimeout(r, ms).unref?.(); }),
       timeoutMs,
+      onIdle: closeAdmission,
       onWait: (pending, waitedMs) => {
         const state = {
           source: context.source,
@@ -2561,11 +2566,18 @@ export function createBranchRouter(deps: RouterDeps): Router {
           waitedMs,
           timeoutMs,
           pendingRuns: pending.map((r) => r.id),
+          blockers: [...new Set(pending.map(run => {
+            const branch = run.branchId ? stateService.getBranch(run.branchId) : undefined;
+            const project = branch && stateService.getProject(branch.projectId || 'default');
+            return branch ? [project?.name, branch.branch].filter(Boolean).join(' / ') : run.id;
+          }))].slice(0, 3),
         };
         setRestartWait(state);
         if (waitedMs - lastProgressAt >= 10_000) {
+          const first = lastProgressAt === -Infinity;
           lastProgressAt = waitedMs;
           context.onProgress?.('running', describeRestartWait(state));
+          if (first) return context.onFirstWait?.();
         }
       },
     });
@@ -2580,7 +2592,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
       context.onProgress?.('warning', error.message);
       throw error;
     }
-    beginSelfUpdateDrain(Date.now(), holdMs, ownerActive);
     setRestartWait({ source: context.source, phase: 'flushing', since: drainSince, waitedMs: outcome.waitedMs, timeoutMs, pendingRuns: [] });
     context.onProgress?.('done', outcome.skipped ? '没有在途操作，可安全更新' : '在途操作已全部结束，可安全更新');
   }
@@ -3229,8 +3240,68 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   if (branchOperationCoordinator) registerArtifactWaitRefresher(branchOperationCoordinator, async () => {
     const ready = await refreshArtifactWaiters({ coordinator: branchOperationCoordinator, containerService,
-      getBranch: id => stateService.getBranch(id), inspect: (pending, input, entry, assertCurrent) =>
-        inspectArtifactInput(entry, input, pending.request.profileId, assertCurrent),
+      getBranch: id => stateService.getBranch(id), inspect: async (pending, input, entry, assertCurrent) => {
+        const result = await inspectArtifactInput(entry, input, pending.request.profileId, assertCurrent)
+          .catch((): ArtifactAdmission => {
+            assertCurrent();
+            return { state: 'waiting', targetCommitSha: input.artifactAdmission!.targetCommitSha,
+              checkedAt: new Date().toISOString(), reason: 'verification-unavailable', artifacts: [] };
+          });
+        if (result.state !== 'waiting' || !deploymentRunService) return result;
+        const run = deploymentRunService.getForOperation(pending.operationId, pending.generation);
+        if (!run || run.status !== 'queued' || run.commitSha?.toLowerCase() !== result.targetCommitSha) return result;
+        const project = stateService.getProject(run.projectId);
+        const repository = project?.githubRepoFullName || '';
+        const installationId = entry.githubInstallationId || project?.githubInstallationId;
+        const waitedMs = Date.now() - Date.parse(run.startedAt);
+        const waitLimitMs = 6 * 60 * 60_000;
+        let unresolvedCi = false;
+        if (result.reason === 'missing' && result.profileIds?.length && serverEventLogStore && repository) {
+          const captured = deploymentInputBranch(input, entry);
+          const profile = input.profiles.find(profile => result.profileIds!.includes(profile.id));
+          const image = profile ? resolveEffectiveProfile(profile, captured).dockerImage : '';
+          const artifactProducer = mapArtifactProducer(repository, image || '', result.targetCommitSha);
+          if (artifactProducer) {
+            const branch = entry.branch;
+            const diagnosis = await diagnoseCiImage({
+              repository, branch, targetSha: result.targetCommitSha, projectId: run.projectId, branchId: run.branchId,
+              authorization: async () => {
+                const token = githubApp && installationId
+                  ? await githubApp.getInstallationToken(installationId)
+                  : stateService.getGithubDeviceAuth(project?.githubCredentialUserId)?.token;
+                return token ? `Bearer ${token}` : '';
+              },
+              waitedMs, timeoutMs: waitLimitMs, audit: serverEventLogStore, requestId: run.id, artifactProducer,
+            }).catch(() => undefined);
+            assertCurrent();
+            if (entry.branch !== branch || stateService.getProject(run.projectId)?.githubRepoFullName !== repository
+              || (entry.githubInstallationId || stateService.getProject(run.projectId)?.githubInstallationId) !== installationId) return result;
+            const ci = diagnosis?.ciDiagnosis;
+            if (ci && diagnosis?.ciWorkflowRunUrl
+              && ['startup_failed', 'build_failed', 'cancelled', 'build_timed_out'].includes(ci.code)) {
+              await finishWait(`upstream.ci.${ci.code}`, 'external', ci.title, ci.message, [diagnosis.ciWorkflowRunUrl]);
+              return result;
+            }
+            unresolvedCi = ci?.code === 'unknown' || !ci;
+          }
+        }
+        if (waitedMs >= waitLimitMs) {
+          const summary = unresolvedCi ? '等待部署产物超时，GitHub 构建状态未确认' : '等待部署产物超时';
+          await finishWait('deployment.artifact_wait_timeout', 'unknown', summary, '请先查看构建和镜像状态，确认产物可用后重新部署。', []);
+        }
+        return result;
+
+        async function finishWait(code: string, owner: 'external' | 'unknown', summary: string,
+          suggestedAction: string, evidenceRefs: string[]): Promise<void> {
+          assertCurrent();
+          if (!run || run.status !== 'queued') return;
+          deploymentRunService!.fail(run.id, { code, owner, retryable: true, phase: 'artifact-wait-ended',
+            summary, evidenceRefs, suggestedAction });
+          branchOperationCoordinator!.finishArtifactWait(pending, code);
+          await stateService.flushDeploymentRun(run.id);
+          branchEvents.emitEvent({ type: 'branch.updated', payload: { branchId: run.branchId, projectId: run.projectId, patch: {}, ts: nowIso() } });
+        }
+      },
       onChecked: (pending, previous, result) => {
         if (previous.state === result.state && previous.reason === result.reason
           && previous.profileIds?.join(',') === result.profileIds?.join(',')) return;
@@ -4626,7 +4697,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
    * extraProfiles、漏了 profileOverrides）。状态层保持明文供 deploy 直读。
    */
   function branchForView<T extends BranchEntry>(branch: T): T {
-    return maskBranchExtraProfilesEnv({ ...branch, ...branchVersionFacts(branch, branch.currentVersionId ? stateService.getDeploymentVersion(branch.currentVersionId) : undefined) });
+    const run = branch.lastDeploymentRunId ? deploymentRunService?.get(branch.lastDeploymentRunId) : undefined;
+    const failure = run?.failure;
+    const target = branch.pinnedCommit || branch.githubCommitSha || branch.ciTargetSha;
+    const lastDeploymentCiFailure = run?.status === 'failed' && run.branchId === branch.id
+      && run.projectId === (branch.projectId || 'default') && run.commitSha
+      && (!target || run.commitSha.toLowerCase() === target.toLowerCase())
+      && failure?.owner === 'external' && failure.code.startsWith('upstream.ci.')
+      ? { title: failure.summary, message: failure.suggestedAction, actionUrl: failure.evidenceRefs[0], checkedAt: run.updatedAt }
+      : null;
+    return maskBranchExtraProfilesEnv({ ...branch, lastDeploymentCiFailure,
+      ...branchVersionFacts(branch, branch.currentVersionId ? stateService.getDeploymentVersion(branch.currentVersionId) : undefined) });
   }
 
   function isSqlInitInfra(service: InfraService): boolean {
@@ -22831,9 +22912,9 @@ router.post('/branches/:id/storage/provision',async(req,res)=>{
       const packDir = path.join(tmpDir, packName);
 
       // 要打包的技能列表
-      const skillsToCopy: string[] = useLegacy
+      const skillsToCopy: readonly string[] = useLegacy
         ? ['cds-project-scan']
-        : ['cds', 'cds-project-scan', 'cds-deploy-pipeline', 'cds-release', 'preview-url'];
+        : CDS_SKILL_KEYS;
 
       let copiedCount = 0;
       for (const skillName of skillsToCopy) {
@@ -22859,12 +22940,12 @@ router.post('/branches/:id/storage/provision',async(req,res)=>{
         ? `# CDS 部署技能包 (legacy: cds-project-scan)\n\n将 \`skills/cds-project-scan/\` 复制到当前 Agent 支持的项目级技能目录。\n`
         : `# CDS 技能包（全套，共 ${copiedCount} 个技能）
 
-包含：cds（主技能）、cds-project-scan（扫描）、cds-deploy-pipeline（部署流水线）、cds-release（正式发布）、preview-url（真实预览地址）。
+包含 cds（主技能）、cds-design（设计发布）、cds-build（设计实施）、cds-project-scan（扫描）、cds-deploy-pipeline（部署流水线）、cds-release（正式发布）和 preview-url（真实预览地址）。
 覆盖 CDS 全生命周期：扫描项目 → Agent 鉴权 → 部署 → 就绪检测 → 分层冒烟 → 真实预览地址 → 故障诊断 → 正式发布与回滚。
 
 ## 安装
 
-解压后，将 \`skills/\` 下的五个目录复制到当前项目的 Agent Skills 目录；缺少任一目录即视为接入未完成：
+解压后，将 \`skills/\` 下的完整技能目录复制到当前项目的 Agent Skills 目录；缺少任一目录即视为接入未完成：
 
 | Agent | 项目级目录 |
 |------|-----------|
@@ -22906,6 +22987,8 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
 | 文件 | 何时看 |
 |------|--------|
 | \`skills/cds/SKILL.md\` | 主入口 |
+| \`skills/cds-design/SKILL.md\` | 设计发布与修订 |
+| \`skills/cds-build/SKILL.md\` | 按获准稿件版本实施 |
 | \`skills/cds/reference/api.md\` | 需要 curl 直调 API |
 | \`skills/cds/reference/auth.md\` | 401 / 403 排查 |
 | \`skills/cds/reference/scan.md\` | 扫描规则 & compose YAML 契约 |
@@ -25108,6 +25191,8 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
     };
     const forceMode = force === true;
     const restartDrainTimeoutMs = resolveSelfUpdateDrainTimeoutMs(req.body);
+    const safeWindowMs = Math.min(SELF_UPDATE_SAFE_WINDOW_MS,
+      resolveSelfUpdateDrainTimeoutMs(req.body, process.env, SELF_UPDATE_SAFE_WINDOW_MS));
 
     initSSE(res);
     // 2026-05-07 actor 真名修复(用户反馈"七八轮还是 actor: unknown"):
@@ -25184,6 +25269,9 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
     const timingRecorder = createSelfUpdateTimingRecorder(startedAt);
     let transitionMode: string | undefined;
     let acceptedTransitionReason: string | undefined;
+    let requestedTargetSha = '';
+    let requestedBaseSha: string | undefined;
+    const targetUnconfirmed = new Error('无法核对等待开始时的远端版本。');
     let checkpoint: Awaited<ReturnType<typeof createSelfUpdateCheckpoint>> | undefined, keepUpdate = false;
     const rollbackCheckpoint = async (): Promise<void> => {
       maintenanceComplete = false;
@@ -25292,16 +25380,36 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
     };
 
     try {
+      const repoRoot = config.repoRoot;
+      if (!branch || !isSafeGitRef(branch)) {
+        const message = branch
+          ? `分支名 ${branch.slice(0, 80)} 含不安全字符，已拒绝执行。`
+          : '无法确认目标分支，请选择有效的分支后重新更新。';
+        send('checkout', 'error', message);
+        failWith('checkout', { message });
+        return;
+      }
+      const selectedBranch = branch;
       const drainStartedAt = Date.now();
       selfMaintenance.setPhase(maintenanceOwner, 'drain');
       await drainDeploysBeforeSelfUpdateRestart({
-        trigger: 'manual', branch: branch || '', source: 'api.self-update', timeoutMs: restartDrainTimeoutMs,
+        trigger: 'manual', branch: selectedBranch, source: 'api.self-update',
+        timeoutMs: safeWindowMs, waitForIdleWindow: true,
         ownerActive: () => selfMaintenance.observe()?.id === maintenanceOwner.id,
         isQueuedPreserved: id => Boolean(branchOperationCoordinator && deploymentRunService?.canPreserveQueuedRun(id, branchOperationCoordinator)),
         onProgress: (status, title) => send('drain-deploys', status, title),
+        onFirstWait: async () => {
+          requestedBaseSha = (await shell.exec('git rev-parse HEAD', { cwd: repoRoot })).stdout.trim().toLowerCase();
+          requestedTargetSha = await worktreeService.resolveLatestRemoteHead(
+            repoRoot, selectedBranch, AbortSignal.timeout(Math.ceil(safeWindowMs)),
+          ).catch(() => { throw targetUnconfirmed; });
+        },
       });
       timingRecorder.merge({ drainMs: Date.now() - drainStartedAt });
-      const repoRoot = config.repoRoot;
+      if (requestedBaseSha !== undefined && deps.revalidateSelfUpdate && !await deps.revalidateSelfUpdate(req)) {
+        failWith('gate', { code: 'self_update_authorization_expired', message: '本次更新的授权已到期或被撤销。请重新登录或取得授权后，再发起 CDS 更新。' });
+        return;
+      }
 
       // Step 1: fetch latest
       send('fetch', 'running', '正在拉取远程更新...');
@@ -25320,17 +25428,6 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
 
       // Step 2: switch branch if specified
       if (branch) {
-        // Defense-in-depth: even though /api/self-update sits behind
-        // cookie/AI-key auth, an authenticated user supplying
-        // `branch='main; rm -rf /'` would otherwise run arbitrary
-        // commands. Reject shell-unsafe refs before they reach
-        // `shell.exec()`.
-        if (!isSafeGitRef(branch)) {
-          send('checkout', 'error', `拒绝不安全分支名: ${branch.slice(0, 80)}`);
-          failWith('checkout', { message: `分支名 ${branch.slice(0, 80)} 含不安全字符，已拒绝执行。` });
-          return;
-        }
-
         // 在 checkout/reset 之前完成版本继承门禁。旧技能仍可执行同 SHA 或
         // 快进更新；只有会丢掉当前控制面提交的非快进切换，才要求明确声明
         // release/rollback、当前 SHA 和原因。
@@ -25353,6 +25450,10 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
           const message = '无法解析当前或目标 CDS 的完整提交 SHA，已在切换代码前停止。';
           send('transition-guard', 'error', message);
           failWith('gate', { code: 'invalid_transition_sha', message });
+          return;
+        }
+        if (requestedTargetSha && (currentFullSha.toLowerCase() !== requestedBaseSha || targetFullSha.toLowerCase() !== requestedTargetSha)) {
+          failWith('gate', { code: 'self_update_target_changed', message: '等待期间当前版本或目标版本已变化。请刷新 CDS 更新页面后重新确认。' });
           return;
         }
         const ancestorResult = await shell.exec(
@@ -25381,6 +25482,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
           });
           return;
         }
+        requestedTargetSha = targetFullSha;
         transitionMode = transition.mode;
         acceptedTransitionReason = transition.reason;
         send(
@@ -25539,6 +25641,10 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         return;
       }
       const newFullHead = (await shell.exec('git rev-parse HEAD', { cwd: repoRoot })).stdout.trim();
+      if (requestedTargetSha && newFullHead !== requestedTargetSha) {
+        failWith('gate', { code: 'self_update_target_changed', message: '目标版本已变化。请刷新 CDS 更新页面后重新确认。' });
+        return;
+      }
       const newHead = newFullHead.slice(0, 8);
       send('pull', 'done', `已对齐到 origin/${targetBranch} @ ${newHead}`);
 
@@ -25919,6 +26025,10 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       // argument) leave a forensic trail. Without this, the whole CDS cluster
       // goes dark with no clue why.
     } catch (err) {
+      if (err === targetUnconfirmed) {
+        failWith('gate', { code: 'self_update_target_unconfirmed', message: targetUnconfirmed.message });
+        return;
+      }
       if (err instanceof SelfUpdateRestartBlockedError) {
         failWith('restart-drain', { code: err.code, message: err.message,
           raw: err.remaining.join(', '), extra: { pendingRuns: err.remaining, waitedMs: err.waitedMs } });

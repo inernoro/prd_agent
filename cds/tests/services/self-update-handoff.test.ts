@@ -421,13 +421,16 @@ describe('CDS 可撤销重启交接', () => {
   it.each([1, 20])('撤回待交接成功行在已有%i条历史时保留其它原件并真实落盘', async count => {
     const root = ownedRoot(), stateFile = path.join(root, 'state.json');
     const state = new StateService(stateFile, root); state.load();
+    const save = vi.spyOn(state.getBackingStore(), 'save');
     const record = { ts: '2026-11-09T00:00:00.000Z', branch: 'main', fromSha: 'aaaaaaaa',
       toSha: 'bbbbbbbb', trigger: 'manual' as const, status: 'success' as const, durationMs: 10 };
     for (let i = 0; i < count; i++) state.recordSelfUpdate(record);
     const others = state.getSelfUpdateHistory(20, { includeSteps: true });
     const undo = state.recordProvisionalSelfUpdateSuccess(record);
+    expect(save).toHaveBeenLastCalledWith(expect.any(Object), [{ kind: 'selfUpdateHistory' }]);
     expect(state.getSelfUpdateHistory(20)).toHaveLength(Math.min(count + 1, StateService.SELF_UPDATE_HISTORY_MAX));
     undo(); undo();
+    expect(save).toHaveBeenLastCalledWith(expect.any(Object), [{ kind: 'selfUpdateHistory' }]);
     expect(state.getSelfUpdateHistory(20, { includeSteps: true })).toEqual(others);
     await state.flush();
     const reopened = new StateService(stateFile, root); reopened.load();

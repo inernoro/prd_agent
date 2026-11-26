@@ -18,12 +18,15 @@
  * doc/plan.cds.multi-project-phases.md P2.
  */
 
-import { randomBytes, randomUUID } from 'node:crypto';
+import { accountNoticeRetentionMs, accountSignoutDigest, readAccountSignoutProof } from './account-signout-proof.js';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type {
   AuthStore,
 } from '../infra/auth-store/memory-store.js';
 import { DEFAULT_SESSION_TTL_MS } from '../infra/auth-store/memory-store.js';
-import type { CdsSession, CdsUser, CdsWorkspace, UserActivityRecord } from '../domain/auth.js';
+import type { AccountIdentityProvider, AccountInvitationProof, CdsSession, CdsUser, CdsWorkspace, CreateLocalUserInput, UserActivityRecord } from '../domain/auth.js';
+import { GithubIdentityDetachedError } from '../domain/auth.js';
+import type { AccountAction, AccountActionRequest, AccountActionStore, AccountSecurityChange } from '../domain/account-actions.js';
 import { hashPassword, verifyPassword, MIN_PASSWORD_LENGTH } from './password.js';
 import type {
   GitHubOAuthClient,
@@ -49,7 +52,8 @@ export class AuthServiceError extends Error {
       | 'oauth_upstream'
       | 'oauth_disabled'
       | 'bootstrap_failed'
-      | 'account_disabled',
+      | 'account_disabled'
+      | 'identity_detached',
     message: string,
     public readonly cause?: unknown,
   ) {
@@ -65,8 +69,10 @@ export class LocalAuthError extends Error {
       | 'username_taken'
       | 'username_invalid'
       | 'password_too_short'
+      | 'password_reused'
       | 'invalid_credentials'
       | 'user_not_found'
+      | 'account_changed'
       | 'not_local_account'
       | 'disabled',
     message: string,
@@ -228,14 +234,22 @@ export class AuthService {
     }
 
     const now = new Date();
-    const user = await this.store.upsertUser({
-      githubId: profile.id,
-      githubLogin: profile.login,
-      email: profile.email,
-      name: profile.name || profile.login,
-      avatarUrl: profile.avatarUrl,
-      orgs: orgLogins,
-    }, now);
+    let user: CdsUser;
+    try {
+      user = await this.store.upsertUser({
+        githubId: profile.id,
+        githubLogin: profile.login,
+        email: profile.email,
+        name: profile.name || profile.login,
+        avatarUrl: profile.avatarUrl,
+        orgs: orgLogins,
+      }, now);
+    } catch (err) {
+      if (err instanceof GithubIdentityDetachedError) {
+        throw new AuthServiceError('identity_detached', '使用另一种方式登录 CDS 后重新绑定 GitHub');
+      }
+      throw err;
+    }
 
     // 被 owner 禁用的账号不得再通过 GitHub OAuth 登录——upsert 只同步资料，禁用
     // 状态要在发会话前拦掉，否则禁用形同虚设、且会签出一个下次 validateSession 即失效
@@ -261,6 +275,7 @@ export class AuthService {
     const session = await this.store.createSession(
       {
         userId: user.id,
+        sessionRevision: user.sessionRevision,
         ttlMs: this.config.sessionTtlMs,
         userAgent: params.userAgent,
         ipAddress: params.ipAddress,
@@ -309,27 +324,103 @@ export class AuthService {
     name?: string;
     email?: string | null;
     isSystemOwner?: boolean;
+    isAdministrator?: boolean;
+    createdByAccountId?: string;
+    externalLoginAllowed?: boolean;
+    temporaryPassword?: boolean;
   }): Promise<CdsUser> {
+    if (typeof input.password !== 'string' || input.password.length < MIN_PASSWORD_LENGTH) {
+      throw new LocalAuthError('password_too_short', `密码长度至少 ${MIN_PASSWORD_LENGTH} 位`);
+    }
+    const { hash, salt } = hashPassword(input.password);
+    return this.provisionAccount({
+      username: input.username,
+      passwordHash: hash,
+      passwordSalt: salt,
+      temporaryPassword: input.temporaryPassword,
+      name: input.name,
+      email: input.email ?? null,
+      isSystemOwner: input.isSystemOwner ?? false,
+      isAdministrator: input.isAdministrator === true && !input.isSystemOwner,
+      externalLoginAllowed: input.externalLoginAllowed === true,
+      createdByAccountId: input.createdByAccountId,
+    });
+  }
+
+  async completeTemporaryPassword(user: CdsUser, newPassword: unknown): Promise<CdsUser> {
+    if (user.authProvider !== 'local' || !user.temporaryPassword || !user.passwordHash || !user.passwordSalt) {
+      throw new LocalAuthError('account_changed', '初始口令已使用，请用个人口令重新登录');
+    }
+    if (typeof newPassword !== 'string' || newPassword.length < MIN_PASSWORD_LENGTH || newPassword.length > 512
+        || /[\u0000\r\n]/.test(newPassword)) {
+      throw new LocalAuthError('password_too_short', `个人口令需为 ${MIN_PASSWORD_LENGTH}–512 位且不含换行`);
+    }
+    if (verifyPassword(newPassword, { hash: user.passwordHash, salt: user.passwordSalt })) {
+      throw new LocalAuthError('password_reused', '个人口令须与初始口令不同');
+    }
+    const { hash, salt } = hashPassword(newPassword);
+    const change = { passwordHash: hash, passwordSalt: salt, temporaryPassword: false, sessionRevision: randomUUID() };
+    if (!await this.store.applyAccountSecurityChange(user, change, new Date())) {
+      throw new LocalAuthError('account_changed', '账号状态已改变，请用当前口令重新登录');
+    }
+    return { ...user, ...change };
+  }
+
+  private async provisionAccount(input: CreateLocalUserInput): Promise<CdsUser> {
     const username = String(input.username || '').trim().toLowerCase();
     if (!USERNAME_RE.test(username)) {
       throw new LocalAuthError('username_invalid', '用户名需为 3-32 位，仅含小写字母、数字、点、连字符或下划线');
     }
-    if (typeof input.password !== 'string' || input.password.length < MIN_PASSWORD_LENGTH) {
-      throw new LocalAuthError('password_too_short', `密码长度至少 ${MIN_PASSWORD_LENGTH} 位`);
+    if (await this.store.findUserByUsername(username)) throw new LocalAuthError('username_taken', `用户名 ${username} 已存在`);
+    try { return await this.store.createLocalUser({ ...input, username }); }
+    catch (error) {
+      if (await this.store.findUserByUsername(username)) throw new LocalAuthError('username_taken', `用户名 ${username} 已存在`);
+      throw error;
     }
-    const existing = await this.store.findUserByUsername(username);
-    if (existing) {
-      throw new LocalAuthError('username_taken', `用户名 ${username} 已存在`);
-    }
-    const { hash, salt } = hashPassword(input.password);
-    return this.store.createLocalUser({
-      username,
-      passwordHash: hash,
-      passwordSalt: salt,
-      name: input.name,
-      email: input.email ?? null,
-      isSystemOwner: input.isSystemOwner ?? false,
+  }
+
+  async createAccountInvitation(input: Pick<CreateLocalUserInput, 'username' | 'name' | 'isAdministrator' | 'externalLoginAllowed' | 'createdByAccountId'>) {
+    const invitation = randomBytes(32).toString('base64url');
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60_000).toISOString();
+    const user = await this.provisionAccount({
+      ...input, invitationHash: createHash('sha256').update(invitation).digest('hex'), invitationExpiresAt: expiresAt,
     });
+    return { user, invitation, expiresAt };
+  }
+
+  async findAccountInvitation(invitation: unknown): Promise<CdsUser | null> {
+    if (typeof invitation !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(invitation)) return null;
+    return this.store.findAccountInvitation(createHash('sha256').update(invitation).digest('hex'), new Date());
+  }
+
+  async acceptAccountInvitation(user: CdsUser, proof: AccountInvitationProof | string): Promise<CdsUser | null> {
+    let verified: AccountInvitationProof;
+    if (typeof proof === 'string') {
+      if (proof.length < MIN_PASSWORD_LENGTH || proof.length > 512 || /[\u0000\r\n]/.test(proof)) {
+        throw new LocalAuthError('password_too_short', `口令需为 ${MIN_PASSWORD_LENGTH}–512 位且不含换行`);
+      }
+      const { hash, salt } = hashPassword(proof);
+      verified = { passwordHash: hash, passwordSalt: salt };
+    } else verified = proof;
+    const now = new Date();
+    const recovery = user.invitationForRecovery
+      ? await this.sessionRevocation(user, randomUUID(), 'recover-identity', now) : undefined;
+    return this.store.consumeAccountInvitation(user, verified, now, recovery);
+  }
+
+  async findAccountByUsername(username: string): Promise<CdsUser | null> {
+    return this.store.findUserByUsername(username.trim().toLowerCase());
+  }
+
+  async issueRecoveryInvitation(user: CdsUser) {
+    const now = new Date();
+    const invitation = randomBytes(32).toString('base64url');
+    const expiresAt = new Date(now.getTime() + 24 * 60 * 60_000).toISOString();
+    const saved = await this.store.applyAccountSecurityChange(user, {
+      invitationHash: createHash('sha256').update(invitation).digest('hex'),
+      invitationExpiresAt: expiresAt, invitationForRecovery: true,
+    }, now);
+    return saved ? { path: `/login#invite=${invitation}`, expiresAt } : null;
   }
 
   /**
@@ -385,14 +476,17 @@ export class AuthService {
    * the OAuth callback's session creation + lastLogin touch).
    */
   async createSessionForUser(
-    userId: string,
+    identity: string | CdsUser,
     meta: { userAgent: string | null; ipAddress: string | null; passkeyAuthenticated?: true },
     now = new Date(),
   ): Promise<CdsSession> {
-    await this.store.touchUserLastLogin(userId, now);
+    const user = typeof identity === 'string' ? await this.store.findUserById(identity) : identity;
+    if (!user || user.status !== 'active') throw new LocalAuthError('disabled', '账号不可用');
+    await this.store.touchUserLastLogin(user.id, now);
     return this.store.createSession(
       {
-        userId,
+        userId: user.id,
+        sessionRevision: user.sessionRevision,
         ttlMs: this.config.sessionTtlMs,
         userAgent: meta.userAgent,
         ipAddress: meta.ipAddress,
@@ -426,9 +520,17 @@ export class AuthService {
       if (!ok) throw new LocalAuthError('invalid_credentials', '原密码不正确');
     }
     const { hash, salt } = hashPassword(newPassword);
-    await this.store.updateUserPassword(userId, hash, salt);
-    // Revoke all other sessions on password change to be safe.
-    await this.store.deleteSessionsForUser(userId);
+    if (!this.store.accountActions) {
+      await this.store.updateUserPassword(userId, hash, salt);
+      await this.store.deleteSessionsForUser(userId);
+      return;
+    }
+    const at = new Date();
+    const id = randomUUID();
+    const changed = await this.store.applyAccountSecurityChange(user, {
+      ...await this.sessionRevocation(user, id, 'reset-password', at), passwordHash: hash, passwordSalt: salt,
+    }, at);
+    if (!changed) throw new LocalAuthError('account_changed', '账号状态已改变，请重新登录后再试');
   }
 
   /** List all users (system-owner management view). Callers must redact secrets. */
@@ -439,6 +541,131 @@ export class AuthService {
   /** Look up a single user by CDS id. */
   async findUserById(id: string): Promise<CdsUser | null> {
     return this.store.findUserById(id);
+  }
+
+  async setUserAdministrator(id: string, isAdministrator: boolean): Promise<CdsUser | null> {
+    return this.store.setUserAdministrator(id, isAdministrator);
+  }
+
+  async setExternalLoginAllowed(user: CdsUser, allowed: boolean): Promise<CdsUser | null> {
+    return this.store.setExternalLoginAllowed(user, allowed);
+  }
+
+  async findUserByExternalIdentity(provider: AccountIdentityProvider, subject: string): Promise<CdsUser | null> {
+    return provider === 'github' ? this.store.findUserByGithubId(Number(subject)) : this.store.findUserByGoogleSubject(subject);
+  }
+
+  async linkIdentity(user: CdsUser, provider: AccountIdentityProvider, subject: string, label: string) {
+    return this.store.linkIdentity(user, provider, subject, label);
+  }
+
+  async detachIdentity(user: CdsUser, provider: AccountIdentityProvider, receipt: string = randomUUID()): Promise<CdsUser | null> {
+    const now = new Date();
+    const change = await this.sessionRevocation(user, receipt, provider === 'github' ? 'unlink-github' : 'unlink-google', now);
+    if (!await this.store.detachIdentity(user, provider, change, now)) return null;
+    return this.store.findUserById(user.id);
+  }
+
+  get accountActions(): AccountActionStore | undefined {
+    return this.store.accountActions;
+  }
+
+  async countAccountSessions(user: CdsUser): Promise<number> {
+    return this.store.countAccountSessions(user, new Date());
+  }
+
+  async accountSessionSnapshot(user: Pick<CdsUser, 'id' | 'sessionRevision'>): Promise<string[]> {
+    const sessions = await this.store.listAccountSessions(user.id, user.sessionRevision, new Date());
+    return sessions.map(row => accountSignoutDigest(row.token)).sort();
+  }
+
+  /** Track a verified shared system browser with a separate, non-login proof. */
+  async rememberSystemBrowser(userId: string, revision: string | undefined, proof: string | undefined, meta: {
+    userAgent: string | null; ipAddress: string | null;
+  }): Promise<CdsSession> {
+    const prior = proof ? await this.store.findSessionByToken(proof) : null;
+    if (prior && prior.userId === userId && prior.sessionRevision === revision) {
+      return (await this.renewIfNeeded(prior)) ?? prior;
+    }
+    return this.store.createSession({ userId, sessionRevision: revision, ttlMs: this.config.sessionTtlMs, ...meta });
+  }
+
+  async systemBrowserSessions(userId: string, revision?: string): Promise<Array<{
+    device: string; location: string | null; createdAt: string; lastSeenAt: string;
+  }>> {
+    const sessions = await this.store.listAccountSessions(userId, revision, new Date());
+    return sessions.map(browserSessionView);
+  }
+
+  async personalBrowserSessions(user: CdsUser, currentToken: string | null) {
+    const sessions = await this.store.listAccountSessions(user.id, user.sessionRevision, new Date());
+    const cutoff = new Date(Date.now() - accountNoticeRetentionMs).toISOString();
+    return {
+      sessions: sessions.map(session => ({ ...browserSessionView(session), current: session.token === currentToken })),
+      revocations: (user.sessionRevocationNotices ?? []).filter(notice => notice.at >= cutoff)
+        .map(({ action, at, receiptId }) => ({ action, at, receiptId })).reverse(),
+    };
+  }
+
+  async systemSignInNotice(userId: string, revision: string | undefined, proof: string | undefined, browserProof?: string) {
+    if (!this.store.accountActions) return null;
+    const durable = readAccountSignoutProof(browserProof);
+    const browser = proof ? await this.store.findSessionByToken(proof) : undefined;
+    const previous = browser?.userId === userId && browser.sessionRevision !== revision ? browser : undefined;
+    const digest = durable?.accountId === userId ? durable.digest : undefined;
+    if (!previous && !digest) return null;
+    const cutoff = new Date(Date.now() - accountNoticeRetentionMs).toISOString();
+    const records = await this.store.accountActions.list({ targetId: userId, action: 'rotate-system-password', from: cutoff }, 100);
+    const event = records.find(item => item.status === 'completed' && item.decidedAt && item.decidedAt >= cutoff
+      && ((previous && (item.targetRevision || undefined) === previous.sessionRevision)
+        || (digest && item.sessionSnapshot?.includes(digest))));
+    return event?.decidedAt ? { action: event.action, at: event.decidedAt, receiptId: event.id } : null;
+  }
+
+  async applyAccountAction(user: CdsUser, request: AccountActionRequest, newPassword?: string): Promise<boolean> {
+    const now = new Date();
+    if (request.action === 'unlink-github' || request.action === 'unlink-google') {
+      return Boolean(await this.detachIdentity(user, request.action === 'unlink-github' ? 'github' : 'google', request.id));
+    }
+    const change = await this.sessionRevocation(user, request.id, request.action, now);
+    if (request.action === 'disable-user') change.status = 'disabled';
+    if (request.action === 'revoke-admin') change.isAdministrator = false;
+    if (request.action === 'reset-password') {
+      if (!newPassword || newPassword.length < MIN_PASSWORD_LENGTH) {
+        throw new LocalAuthError('password_too_short', `新口令至少 ${MIN_PASSWORD_LENGTH} 位`);
+      }
+      const { hash, salt } = hashPassword(newPassword);
+      change.passwordHash = hash;
+      change.passwordSalt = salt;
+    }
+    return this.store.applyAccountSecurityChange(user, change, now);
+  }
+
+  private async sessionRevocation(user: CdsUser, id: string, action: AccountAction, now: Date): Promise<AccountSecurityChange> {
+    const at = now.toISOString();
+    const cutoff = new Date(now.getTime() - accountNoticeRetentionMs).toISOString();
+    const recent = (user.sessionRevocationNotices ?? []).filter(notice => notice.at >= cutoff).slice(-39);
+    const sessions = await this.store.listAccountSessions(user.id, user.sessionRevision, now);
+    const browserProofDigests = sessions.map(session => accountSignoutDigest(session.token));
+    return {
+      sessionRevision: id, lastAccountAction: { id, action, at },
+      sessionRevocationNotices: [...recent, { previousRevision: user.sessionRevision ?? null, action, at, receiptId: id, browserProofDigests }],
+    };
+  }
+
+  async signInNotice(token: string | null, browserProof?: string): Promise<{ action: AccountAction; at: string; receiptId?: string } | null> {
+    const proof = readAccountSignoutProof(browserProof);
+    const session = token ? await this.store.findSessionByToken(token) : null;
+    const accountId = session?.userId ?? proof?.accountId;
+    if (!accountId) return null;
+    const user = await this.store.findUserById(accountId);
+    if (!user || (session && session.sessionRevision === user.sessionRevision)) return null;
+    const cutoff = new Date(Date.now() - accountNoticeRetentionMs).toISOString();
+    const notice = user.sessionRevocationNotices?.find(note => note.at >= cutoff && (
+      session ? note.previousRevision === (session.sessionRevision ?? null) : note.browserProofDigests?.includes(proof!.digest)));
+    if (!notice) return null;
+    const receiptId = notice.receiptId ?? (user.lastAccountAction?.at === notice.at ? user.lastAccountAction.id : undefined);
+    return { action: notice.action, at: notice.at, ...(receiptId ? { receiptId } : {}) };
   }
 
   /** Enable/disable an account; disabling also revokes its sessions. */
@@ -515,7 +742,7 @@ export class AuthService {
     const session = await this.store.findSessionByToken(token);
     if (!session) return null;
     const user = await this.store.findUserById(session.userId);
-    if (!user || user.status !== 'active') return null;
+    if (!user || user.status !== 'active' || session.sessionRevision !== user.sessionRevision) return null;
 
     // Sliding renewal: an in-use session never runs out. Only refresh once the
     // remaining life has dropped below the threshold so we don't write on every
@@ -593,4 +820,11 @@ export class AuthService {
   _stateStoreSize(): number {
     return this.stateStore.size();
   }
+}
+
+function browserSessionView(session: CdsSession) {
+  const agent = session.userAgent || '';
+  const device = /Windows/i.test(agent) ? 'Windows' : /iPhone|iPad/i.test(agent) ? 'iOS'
+    : /Android/i.test(agent) ? 'Android' : /Macintosh/i.test(agent) ? 'macOS' : /Linux/i.test(agent) ? 'Linux' : '未知设备';
+  return { device, location: session.ipAddress, createdAt: session.createdAt, lastSeenAt: session.lastSeenAt };
 }

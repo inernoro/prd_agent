@@ -159,9 +159,9 @@ export const STARTER_SKILL_BUNDLES = {
           recommendedFor: ['pm', 'owner', 'domain-expert', 'dev', 'qa'],
         },
         {
-          key: 'plan-first',
-          name: '先出方案',
-          description: '动手前先说明路径、影响和取舍。',
+          key: 'cds-plan',
+          name: '执行计划与进度',
+          description: '分阶段列验收待办，执行时更新进度和阻塞。',
           roles: ['pm', 'owner', 'domain-expert', 'dev'],
           recommendedFor: ['pm', 'owner', 'domain-expert', 'dev'],
         },

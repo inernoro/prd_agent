@@ -1825,6 +1825,7 @@ export class ContainerService {
       if (!target || !/^[0-9a-f]{40}$/i.test(target)) throw new Error('本地产物目标尚未确认，请选择完整部署版本后重试');
       const admitted = await this.inspectDeploymentArtifacts([profile], target,
         () => context.assertCurrent?.(`local artifact identity ${profile.id}`), { inspectLocalArtifacts: true,
+          localStorageImageId: storageAdmission?.imageId,
           isComponentUnchangedSince: context.isComponentUnchangedSince });
       if (admitted.state !== 'ready') throw new Error('本地产物的实际提交、平台或访问无法确认，请检查执行器或重新生成该版本');
       // 已有仓库内容摘要保留其可跨执行器取回的引用；可变本地标签才收敛为本机固定ID。

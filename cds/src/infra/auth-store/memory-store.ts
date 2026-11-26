@@ -24,7 +24,11 @@ import type {
   UpsertUserInput,
   CreateLocalUserInput,
   UserActivityRecord,
+  AccountIdentityLinkResult,
+  AccountIdentityProvider,
+  AccountInvitationProof,
 } from '../../domain/auth.js';
+import { GithubIdentityDetachedError } from '../../domain/auth.js';
 // 2026-06-20：本文件是 ESM 模块（package.json "type":"module"），运行时
 // 不存在 require()。原先三处 require('node:crypto') 在 vitest（CJS interop）
 // 下能跑，但真实运行（尤其 CDS_AUTH_BACKEND=memory）会抛 "require is not
@@ -33,16 +37,26 @@ import { randomUUID, randomBytes } from 'node:crypto';
 import type { CdsPasskeyStore } from '../../domain/passkey.js';
 import type { Collection } from 'mongodb';
 import type { OidcArtifact } from './oidc-store.js';
+import type { AccountActionRequest, AccountActionStore, AccountSecurityChange } from '../../domain/account-actions.js';
 
 /** The stable contract every AuthStore implementation must satisfy. */
 export interface AuthStore {
   readonly passkeys?: CdsPasskeyStore;
   readonly oidcArtifacts?: Collection<OidcArtifact>;
+  readonly accountActions?: AccountActionStore;
   // — Users —
   upsertUser(input: UpsertUserInput, now?: Date): Promise<CdsUser>;
   findUserByGithubId(githubId: number): Promise<CdsUser | null>;
   findUserById(id: string): Promise<CdsUser | null>;
   setUserStatus(id: string, status: CdsUser['status']): Promise<CdsUser | null>;
+  setUserAdministrator(id: string, isAdministrator: boolean): Promise<CdsUser | null>;
+  setExternalLoginAllowed(user: CdsUser, allowed: boolean): Promise<CdsUser | null>;
+  findUserByGoogleSubject(subject: string): Promise<CdsUser | null>;
+  linkIdentity(user: CdsUser, provider: AccountIdentityProvider, subject: string, label: string): Promise<AccountIdentityLinkResult>;
+  detachIdentity(user: CdsUser, provider: AccountIdentityProvider, change: AccountSecurityChange, now: Date): Promise<boolean>;
+  findAccountInvitation(hash: string, now: Date): Promise<CdsUser | null>;
+  consumeAccountInvitation(user: CdsUser, proof: AccountInvitationProof, now: Date, security?: AccountSecurityChange): Promise<CdsUser | null>;
+  applyAccountSecurityChange(user: CdsUser, change: AccountSecurityChange, now: Date): Promise<boolean>;
   touchUserLastLogin(id: string, now?: Date): Promise<void>;
   countUsers(): Promise<number>;
   /** All users (system-owner management view). Password fields included — callers must redact. */
@@ -64,6 +78,7 @@ export interface AuthStore {
   // — Sessions —
   createSession(input: {
     userId: string;
+    sessionRevision?: string;
     ttlMs: number;
     passkeyAuthenticated?: true;
     userAgent: string | null;
@@ -77,6 +92,8 @@ export interface AuthStore {
   extendSession(token: string, ttlMs: number, now?: Date): Promise<CdsSession | null>;
   deleteSession(token: string): Promise<void>;
   deleteSessionsForUser(userId: string): Promise<number>;
+  countAccountSessions(user: CdsUser, now: Date): Promise<number>;
+  listAccountSessions(userId: string, revision: string | undefined, now: Date): Promise<CdsSession[]>;
 
   // — Workspaces —
   createWorkspace(input: {
@@ -156,6 +173,28 @@ export class MemoryAuthStore implements AuthStore {
   /** Newest-last ring buffer of activity records, capped at ACTIVITY_RING_CAPACITY. */
   private activity: UserActivityRecord[] = [];
   private readonly sessionsByToken = new Map<string, CdsSession>();
+  private readonly accountRequests = new Map<string, AccountActionRequest>();
+  readonly accountActions: AccountActionStore = {
+    insert: async request => {
+      if (this.accountRequests.has(request.id)) throw new Error('Account request exists');
+      this.accountRequests.set(request.id, request);
+    },
+    get: async id => this.accountRequests.get(id) ?? null,
+    list: async (filter, limit) => Array.from(this.accountRequests.values()).reverse()
+      .filter(item => (!filter.id || filter.id === item.id) &&
+        (!filter.targetId || filter.targetId === item.targetId) &&
+        (!filter.targetIds || filter.targetIds.includes(item.targetId)) &&
+        (!filter.requestedByAccountId || filter.requestedByAccountId === item.requestedByAccountId) &&
+        (!filter.action || filter.action === item.action) &&
+        (!filter.from || item.createdAt >= filter.from) &&
+        (!filter.until || item.createdAt <= filter.until))
+      .slice(0, limit),
+    transition: async (request, from) => {
+      if (this.accountRequests.get(request.id)?.status !== from) return false;
+      this.accountRequests.set(request.id, request);
+      return true;
+    },
+  };
   private readonly workspacesById = new Map<string, CdsWorkspace>();
   private readonly workspaceIdBySlug = new Map<string, string>();
   // P5: workspace members — keyed by `workspaceId:userId`
@@ -170,10 +209,9 @@ export class MemoryAuthStore implements AuthStore {
       const existing = this.usersById.get(existingId)!;
       const updated: CdsUser = {
         ...existing,
-        githubLogin: input.githubLogin,
-        email: input.email,
-        name: input.name,
-        avatarUrl: input.avatarUrl,
+        ...(existing.authProvider === 'local'
+          ? { linkedGithubLogin: input.githubLogin }
+          : { githubLogin: input.githubLogin, email: input.email, name: input.name, avatarUrl: input.avatarUrl }),
         orgs: [...input.orgs],
         orgsCheckedAt: now.toISOString(),
         updatedAt: now.toISOString(),
@@ -182,6 +220,9 @@ export class MemoryAuthStore implements AuthStore {
       return updated;
     }
 
+    if (Array.from(this.usersById.values()).some(user => user.detachedGithubIds?.includes(input.githubId))) {
+      throw new GithubIdentityDetachedError();
+    }
     const id = genUuid();
     const user: CdsUser = {
       id,
@@ -222,6 +263,108 @@ export class MemoryAuthStore implements AuthStore {
     return updated;
   }
 
+  async setUserAdministrator(id: string, isAdministrator: boolean): Promise<CdsUser | null> {
+    const user = this.usersById.get(id);
+    if (!user || user.isSystemOwner) return null;
+    const updated = { ...user, isAdministrator, updatedAt: new Date().toISOString() };
+    this.usersById.set(id, updated);
+    return updated;
+  }
+
+  async setExternalLoginAllowed(expected: CdsUser, allowed: boolean): Promise<CdsUser | null> {
+    const user = this.usersById.get(expected.id);
+    if (!user || user.status !== 'active' || user.isSystemOwner !== expected.isSystemOwner ||
+        Boolean(user.isAdministrator) !== Boolean(expected.isAdministrator)) return null;
+    const updated = { ...user, externalLoginAllowed: allowed, updatedAt: new Date().toISOString() };
+    this.usersById.set(user.id, updated);
+    return updated;
+  }
+
+  async findUserByGoogleSubject(subject: string): Promise<CdsUser | null> {
+    return Array.from(this.usersById.values()).find(user => user.googleSubject === subject) ?? null;
+  }
+
+  async linkIdentity(expected: CdsUser, provider: AccountIdentityProvider, subject: string, label: string): Promise<AccountIdentityLinkResult> {
+    const user = this.usersById.get(expected.id);
+    if (!user || user.status !== 'active' || !user.externalLoginAllowed ||
+        user.sessionRevision !== expected.sessionRevision) return 'account_changed';
+    if (provider === 'github') {
+      const id = Number(subject);
+      if (this.usersByGithubId.has(id) && this.usersByGithubId.get(id) !== user.id) return 'identity_taken';
+      if (user.githubId > 0 && user.githubId !== id) return 'provider_already_linked';
+      this.usersByGithubId.delete(user.githubId);
+      this.usersByGithubId.set(id, user.id);
+      this.usersById.set(user.id, { ...user, githubId: id, linkedGithubLogin: label, updatedAt: new Date().toISOString() });
+      return 'linked';
+    }
+    if (Array.from(this.usersById.values()).some(item => item.id !== user.id && item.googleSubject === subject)) return 'identity_taken';
+    if (user.googleSubject && user.googleSubject !== subject) return 'provider_already_linked';
+    this.usersById.set(user.id, { ...user, googleSubject: subject, linkedGoogleLabel: label, updatedAt: new Date().toISOString() });
+    return 'linked';
+  }
+
+  async findAccountInvitation(hash: string, now: Date): Promise<CdsUser | null> {
+    return Array.from(this.usersById.values()).find(user =>
+      user.status === 'active' && user.invitationHash === hash && (user.invitationExpiresAt ?? '') > now.toISOString()) ?? null;
+  }
+
+  async detachIdentity(expected: CdsUser, provider: AccountIdentityProvider, change: AccountSecurityChange, now: Date): Promise<boolean> {
+    const user = this.usersById.get(expected.id);
+    if (!user || user.status !== 'active' || user.sessionRevision !== expected.sessionRevision ||
+        user.passwordHash !== expected.passwordHash || user.githubId !== expected.githubId || user.googleSubject !== expected.googleSubject) return false;
+    const updated = { ...user, ...change, updatedAt: now.toISOString() };
+    if (provider === 'github') {
+      this.usersByGithubId.delete(user.githubId);
+      updated.githubId = localPlaceholderGithubId();
+      updated.detachedGithubIds = Array.from(new Set([...(user.detachedGithubIds ?? []), user.githubId]));
+      delete updated.linkedGithubLogin;
+    } else {
+      delete updated.googleSubject;
+      delete updated.linkedGoogleLabel;
+    }
+    this.usersById.set(user.id, updated);
+    return true;
+  }
+
+  async consumeAccountInvitation(expected: CdsUser, proof: AccountInvitationProof, now: Date, security?: AccountSecurityChange): Promise<CdsUser | null> {
+    const user = this.usersById.get(expected.id);
+    if (!user || user.status !== 'active' || !user.invitationHash || user.invitationHash !== expected.invitationHash ||
+        user.sessionRevision !== expected.sessionRevision || (user.invitationExpiresAt ?? '') <= now.toISOString()) return null;
+    const { invitationHash: _hash, invitationExpiresAt: _expires, invitationForRecovery: _recovery, ...rest } = user;
+    const updated = { ...rest, ...security, updatedAt: now.toISOString() };
+    if ('passwordHash' in proof) {
+      updated.passwordHash = proof.passwordHash;
+      updated.passwordSalt = proof.passwordSalt;
+      if (user.temporaryPassword) updated.temporaryPassword = false;
+    } else {
+      if (!user.externalLoginAllowed) return null;
+      if (proof.provider === 'github') {
+        const id = Number(proof.subject);
+        if (this.usersByGithubId.has(id) && this.usersByGithubId.get(id) !== user.id) return null;
+        this.usersByGithubId.delete(user.githubId);
+        this.usersByGithubId.set(id, user.id);
+        updated.githubId = id;
+        updated.linkedGithubLogin = proof.label;
+      } else {
+        if (Array.from(this.usersById.values()).some(existing => existing.googleSubject === proof.subject)) return null;
+        updated.googleSubject = proof.subject;
+        updated.linkedGoogleLabel = proof.label;
+      }
+    }
+    this.usersById.set(user.id, updated);
+    return updated;
+  }
+
+  async applyAccountSecurityChange(expected: CdsUser, change: AccountSecurityChange, now: Date): Promise<boolean> {
+    const user = this.usersById.get(expected.id);
+    if (!user || user.sessionRevision !== expected.sessionRevision ||
+        user.status !== expected.status || user.lastLoginAt !== expected.lastLoginAt || user.passwordHash !== expected.passwordHash ||
+        Boolean(user.isAdministrator) !== Boolean(expected.isAdministrator) ||
+        user.isSystemOwner !== expected.isSystemOwner) return false;
+    this.usersById.set(user.id, { ...user, ...change, updatedAt: now.toISOString() });
+    return true;
+  }
+
   async touchUserLastLogin(id: string, now = new Date()): Promise<void> {
     const user = this.usersById.get(id);
     if (!user) return;
@@ -257,14 +400,18 @@ export class MemoryAuthStore implements AuthStore {
       githubLogin: username,
       authProvider: 'local',
       username,
-      passwordHash: input.passwordHash,
-      passwordSalt: input.passwordSalt,
+      ...(input.passwordHash && input.passwordSalt ? { passwordHash: input.passwordHash, passwordSalt: input.passwordSalt } : {}),
+      ...(input.temporaryPassword ? { temporaryPassword: true } : {}),
+      ...(input.invitationHash ? { invitationHash: input.invitationHash, invitationExpiresAt: input.invitationExpiresAt } : {}),
       email: input.email ?? null,
       name: input.name?.trim() || input.username,
       avatarUrl: null,
       orgs: [],
       orgsCheckedAt: now.toISOString(),
       isSystemOwner: input.isSystemOwner ?? false,
+      ...(input.isAdministrator ? { isAdministrator: true } : {}),
+      ...(input.createdByAccountId ? { createdByAccountId: input.createdByAccountId } : {}),
+      ...(input.externalLoginAllowed ? { externalLoginAllowed: true } : {}),
       status: 'active',
       lastLoginAt: null,
       createdAt: now.toISOString(),
@@ -314,6 +461,7 @@ export class MemoryAuthStore implements AuthStore {
 
   async createSession(input: {
     userId: string;
+    sessionRevision?: string;
     ttlMs: number;
     passkeyAuthenticated?: true;
     userAgent: string | null;
@@ -323,6 +471,7 @@ export class MemoryAuthStore implements AuthStore {
     const session: CdsSession = {
       token,
       userId: input.userId,
+      ...(input.sessionRevision ? { sessionRevision: input.sessionRevision } : {}),
       createdAt: now.toISOString(),
       ...(input.passkeyAuthenticated ? { passkeyAuthenticated: true } : {}),
       expiresAt: new Date(now.getTime() + input.ttlMs).toISOString(),
@@ -378,6 +527,19 @@ export class MemoryAuthStore implements AuthStore {
       }
     }
     return count;
+  }
+
+  async countAccountSessions(user: CdsUser, now: Date): Promise<number> {
+    let count = 0;
+    for (const session of this.sessionsByToken.values()) {
+      if (session.userId === user.id && session.sessionRevision === user.sessionRevision && session.expiresAt > now.toISOString()) count++;
+    }
+    return count;
+  }
+
+  async listAccountSessions(userId: string, revision: string | undefined, now: Date): Promise<CdsSession[]> {
+    return Array.from(this.sessionsByToken.values()).filter(session => session.userId === userId &&
+      session.sessionRevision === revision && session.expiresAt > now.toISOString());
   }
 
   async createWorkspace(input: {

@@ -7,17 +7,25 @@
  *   - no session + no key           -> 401
  *   - valid cookie session          -> next(), key resolver NOT consulted
  */
-import { describe, it, expect, vi } from 'vitest';
+import type { OutgoingHttpHeaders } from 'node:http';
 import type { Request, Response } from 'express';
+import { describe, it, expect, vi } from 'vitest';
+import { MemoryAuthStore } from '../../src/infra/auth-store/memory-store.js';
 import { createGithubAuthMiddleware } from '../../src/middleware/github-auth.js';
+import { accountSignoutDigest, readAccountSignoutProof } from '../../src/services/account-signout-proof.js';
+import { AuthService } from '../../src/services/auth-service.js';
+
+const daySeconds = 24 * 60 * 60;
+const sessionTtlMs = 7 * daySeconds * 1000;
 
 function mockRes() {
-  const res: any = { statusCode: 0, body: undefined, redirectedTo: undefined, headers: {} as Record<string, string> };
+  const headers: OutgoingHttpHeaders = {};
+  const res: any = { statusCode: 0, body: undefined, redirectedTo: undefined, headers };
   res.status = (c: number) => { res.statusCode = c; return res; };
   res.json = (b: unknown) => { res.body = b; return res; };
   res.redirect = (_c: number, url: string) => { res.redirectedTo = url; return res; };
-  res.setHeader = (name: string, value: string) => { res.headers[name] = value; return res; };
-  return res as Response & { statusCode: number; body: any; redirectedTo?: string; headers: Record<string, string> };
+  res.setHeader = (name: string, value: number | string | string[]) => { headers[name] = value; return res; };
+  return res as Response & { statusCode: number; body: any; redirectedTo?: string; headers: OutgoingHttpHeaders };
 }
 
 function apiReq(headers: Record<string, string> = {}): Request {
@@ -27,6 +35,17 @@ function apiReq(headers: Record<string, string> = {}): Request {
     originalUrl: '/api/reports',
     headers: { accept: 'application/json', ...headers },
   } as unknown as Request;
+}
+
+async function storedSession(ageDays = 0) {
+  const store = new MemoryAuthStore();
+  const authService = new AuthService({ store, config: { allowedOrgs: [], sessionTtlMs } });
+  const user = await store.createLocalUser({ username: 'fixture-session-renewal' });
+  const issuedAt = new Date(Date.now() - ageDays * daySeconds * 1000);
+  const session = await store.createSession({
+    userId: user.id, sessionRevision: user.sessionRevision, ttlMs: sessionTtlMs, userAgent: null, ipAddress: null,
+  }, issuedAt);
+  return { authService, session, user, store };
 }
 
 describe('github auth middleware — agent key coexistence', () => {
@@ -94,41 +113,57 @@ describe('github auth middleware — agent key coexistence', () => {
   });
 
   it.each([
-    { hostSessionCookies: false, name: 'cds_gh_session' },
-    { hostSessionCookies: true, name: '__Host-cds_gh_session' },
-  ])('renews an HTTPS session as $name', async ({ hostSessionCookies, name }) => {
-    const expiresAt = new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString();
-    const authService = {
-      validateSession: vi.fn(async () => ({
-        user: { id: 'u1' },
-        session: { token: 'valid', expiresAt },
-        renewed: true,
-      })),
-    } as any;
-    const mw = createGithubAuthMiddleware({ authService, cookieSecure: true, hostSessionCookies });
-    const req = apiReq({ cookie: `${name}=valid` });
-    const res = mockRes();
-    const next = vi.fn();
+    { hostSessionCookies: false, name: 'cds_gh_session', proofName: 'cds_signout_proof' },
+    { hostSessionCookies: true, name: '__Host-cds_gh_session', proofName: '__Host-cds_signout_proof' },
+  ])('renews an HTTPS session as $name with a separate sign-out receipt proof', async ({ hostSessionCookies, name, proofName }) => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-01-02T03:04:05Z'));
+    try {
+      const { authService, session, user, store } = await storedSession(4);
+      const mw = createGithubAuthMiddleware({ authService, cookieSecure: true, hostSessionCookies });
+      const res = mockRes();
+      const next = vi.fn();
 
-    await mw(req, res, next);
+      await mw(apiReq({ cookie: `${name}=${session.token}` }), res, next);
 
-    expect(next).toHaveBeenCalledOnce();
-    const cookie = res.headers['Set-Cookie'];
-    expect(cookie.startsWith(`${name}=valid;`)).toBe(true);
-    expect(cookie).toContain('Secure');
-    expect(cookie).toContain(`Expires=${new Date(expiresAt).toUTCString()}`);
+      expect(next).toHaveBeenCalledOnce();
+      const renewed = await store.findSessionByToken(session.token);
+      const expiresAt = new Date(Date.now() + sessionTtlMs);
+      expect(renewed?.expiresAt).toBe(expiresAt.toISOString());
+      const cookies = res.headers['Set-Cookie'];
+      if (!Array.isArray(cookies) || cookies.length !== 2) throw new Error('Expected two separate Set-Cookie headers');
+      const sessionHeader = cookies.find(cookie => cookie.startsWith(`${name}=`));
+      const proofHeader = cookies.find(cookie => cookie.startsWith(`${proofName}=`));
+      if (!sessionHeader || !proofHeader) throw new Error('Expected the session cookie and its receipt proof');
+      const [sessionCookie, ...sessionAttributes] = sessionHeader.split('; ');
+      const [proofCookie, ...proofAttributes] = proofHeader.split('; ');
+      const privateAttributes = ['Path=/', 'HttpOnly', 'SameSite=Lax', 'Secure'];
+      expect(sessionCookie === `${name}=${session.token}`).toBe(true);
+      expect(sessionAttributes).toEqual(expect.arrayContaining([
+        ...privateAttributes, `Max-Age=${sessionTtlMs / 1000}`, `Expires=${expiresAt.toUTCString()}`,
+      ]));
+      expect(proofAttributes).toEqual(expect.arrayContaining([...privateAttributes, `Max-Age=${37 * daySeconds}`]));
+      expect([...sessionAttributes, ...proofAttributes].some(attribute => /^domain=/i.test(attribute))).toBe(false);
+
+      const proofValue = proofCookie.slice(proofName.length + 1);
+      const proof = readAccountSignoutProof(proofValue);
+      expect(proof?.accountId).toBe(user.id);
+      expect(proof?.digest === accountSignoutDigest(session.token)).toBe(true);
+      expect(proofValue === session.token).toBe(false);
+      const proofOnlyResponse = mockRes();
+      const nextWithProof = vi.fn();
+      await mw(apiReq({ cookie: proofCookie }), proofOnlyResponse, nextWithProof);
+      expect(nextWithProof).not.toHaveBeenCalled();
+      expect(proofOnlyResponse.statusCode).toBe(401);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('does not touch the cookie when the session was not renewed', async () => {
-    const authService = {
-      validateSession: vi.fn(async () => ({
-        user: { id: 'u1' },
-        session: { token: 'valid', expiresAt: new Date().toISOString() },
-        renewed: false,
-      })),
-    } as any;
+    const { authService, session } = await storedSession();
     const mw = createGithubAuthMiddleware({ authService });
-    const req = apiReq({ cookie: 'cds_gh_session=valid' });
+    const req = apiReq({ cookie: `cds_gh_session=${session.token}` });
     const res = mockRes();
     const next = vi.fn();
 

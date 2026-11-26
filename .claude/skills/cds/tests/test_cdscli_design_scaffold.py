@@ -75,16 +75,23 @@ def test_scaffold_pins_framework_and_preserves_rule_check_modes(workspace, monke
     monkeypatch.setattr(cli, '_request', lambda *_args, **_kwargs: (
         200, {'projectId': 'fixture', 'frameworks': [framework], 'designs': []}, {}))
     destination = root / 'draft'
-    code, output = run('design', 'scaffold', '--legacy-template', '--framework', 'FW-01', '--title', 'Fixture', '--dir', str(destination))
+    code, output = run('design', 'scaffold', '--framework', 'FW-01', '--title', 'Fixture', '--dir', str(destination))
     assert code == 0, output
     manifest = json.loads((destination / 'design.json').read_text())
     assert manifest['frameworkVersion'] == 4
-    assert [(row['id'], row['how']) for row in manifest['acceptance']] == [('R-01', 'measure'), ('R-02', 'human'), ('R-03', 'human')]
-    assert manifest['acceptance'][0]['expected'] == 'measure the same page header'
+    # 验收项编号是 A-xx（CDS 只认这种），ruleId 记框架规则；每条引用画面，测量项的预期以「检查：」开头
+    assert [(row['id'], row['ruleId'], row['how']) for row in manifest['acceptance']] == [
+        ('A-01', 'R-01', 'measure'), ('A-02', 'R-02', 'human'), ('A-03', 'R-03', 'human')]
+    assert manifest['acceptance'][0]['expected'] == '检查：measure the same page header'
+    assert {row['screenId'] for row in manifest['acceptance']} == {'home'}
+    assert manifest['screens'][0]['entryReadySelector'] == '.cds-main'
     result = json.loads((destination / 'checks/result.json').read_text())
     assert result['passed'] == 0
-    assert [row['id'] for row in result['items']] == ['R-01', 'R-02', 'R-03']
+    assert [(row['id'], row['ruleId']) for row in result['items']] == [('A-01', 'R-01'), ('A-02', 'R-02'), ('A-03', 'R-03')]
     assert {row['status'] for row in result['items']} == {'unverified'}
+    # 原型由正式前端构建（门禁 G-10）：不再从 skeleton.html 生成静态页，写构建配置和入口
+    assert (destination / 'prototype.json').exists() and (destination / 'src/main.tsx').exists()
+    assert not (destination / 'dist/index.html').exists()
 
 
 def test_scaffold_starts_with_the_v1_gate_layout_and_no_invented_results(workspace, monkeypatch):
@@ -101,10 +108,12 @@ def test_scaffold_starts_with_the_v1_gate_layout_and_no_invented_results(workspa
     assert manifest['project'] == 'fixture' and manifest['title'] == '首稿'
     assert manifest['frameworkVersion'] == 4 and manifest['prototypeVersion'] == 1
     assert len(manifest['date']) == 10 and isinstance(manifest['notes'], str)
-    assert manifest['acceptance'] == []
+    assert [(item['id'], item['ruleId']) for item in manifest['acceptance']] == [('A-01', 'R-01')]
     screen = manifest['screens'][0]
-    assert screen['route'] == '#/home' and screen['entryReadySelector'] == '[data-cds-design-ready]'
-    assert 'data-cds-design-ready' in (destination / manifest['prototype']).read_text(encoding='utf-8')
+    assert screen['route'] == '#/' and screen['entryReadySelector'] == '.cds-main'
+    assert not (destination / manifest['prototype']).exists()
+    assert (destination / 'prototype.json').exists()
+    assert (destination / 'src/main.tsx').exists()
     assert all((destination / name).is_file() for name in [manifest['rationale'], manifest['checks'], *manifest['docs']])
     assert '（V1）' in (destination / '交付说明.md').read_text(encoding='utf-8').splitlines()[0]
     assert '（V1）' in (destination / manifest['rationale']).read_text(encoding='utf-8').splitlines()[0]
@@ -112,7 +121,7 @@ def test_scaffold_starts_with_the_v1_gate_layout_and_no_invented_results(workspa
     assert json.loads((destination / 'changes/index.json').read_text()) == {'to': 1, 'from': []}
     results = json.loads((destination / manifest['checks']).read_text(encoding='utf-8'))
     assert results['total'] == len(results['items']) == 1 and results['passed'] == 0
-    assert results['items'][0]['id'] == 'R-01'
+    assert results['items'][0]['id'] == 'A-01' and results['items'][0]['ruleId'] == 'R-01'
     assert results['items'][0]['pass'] is False and results['items'][0]['status'] == 'unverified'
     assert not (destination / 'tools/gate-allow.json').exists()
 

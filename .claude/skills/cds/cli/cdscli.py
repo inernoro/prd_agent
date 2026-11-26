@@ -56,7 +56,9 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Optional
 
-VERSION = "0.26.25"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.26.28"  # ← bundled cli 变更时 bump；服务端自动读这一行
+
+CDS_SKILLS = ("cds", "cds-design", "cds-build", "cds-project-scan", "cds-deploy-pipeline", "cds-release", "preview-url")
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -901,7 +903,7 @@ def cmd_setup_check(args: argparse.Namespace) -> None:
         fail("project", "project_mismatch", "当前仓库绑定了其他项目，先确认项目范围；尚未发送任何请求。")
     checks.append({"stage": "credentials", "passed": True})
 
-    skill_keys = ("cds", "cds-design", "cds-project-scan", "cds-deploy-pipeline", "cds-release", "preview-url")
+    skill_keys = CDS_SKILLS
     selected = [key.strip() for key in args.skills.split(",")]
     if not selected or any(key not in skill_keys for key in selected):
         fail("skills", "unknown_skill", "从接入页面重新复制当前任务的技能选择。")
@@ -920,7 +922,7 @@ def cmd_setup_check(args: argparse.Namespace) -> None:
             or not isinstance(bundle.get("skills"), list)
             or any(not isinstance(key, str) for key in bundle["skills"])
             or set(bundle["skills"]) != set(skill_keys)):
-        fail("skills", "invalid_bundle_manifest", "技能包 manifest 未覆盖完整技能包。" + install_bundle)
+        fail("skills", "invalid_bundle_manifest", "技能包 manifest 未覆盖完整的 CDS 技能包。" + install_bundle)
     if bundle.get("version") != VERSION:
         fail("skills", "stale_bundle", "技能包与核心 CLI 版本不一致。" + install_bundle)
     file_hashes = bundle.get("files")
@@ -4365,6 +4367,36 @@ def _design_git_package(directory: Path, *, allow_root: bool = True) -> tuple[st
         die("无法读取已提交的稿件，请核对目录和 Git 提交")
 
 
+_DESIGN_ACCEPTANCE_ISSUE_CODES = {
+    "missing_acceptance_plan", "missing_method", "invalid_method", "required_method", "missing_reason",
+    "missing_rule", "invalid_dimension", "missing_coverage", "invalid_risk", "coverage_conflict",
+}
+_DESIGN_ACCEPTANCE_ISSUE_FIELD = re.compile(
+    r"acceptancePlan(?:\.(?:mece|compare|visual|regress|flow|human|smoke|debt)(?:\.reason)?)?"
+    r"|acceptance(?:\[[0-5]?[0-9]\]\.dimension)?"
+    r"|risks(?:\.(?:correctness|compatibility|performance|security|operations|experience)"
+    r"|\[[0-5]?[0-9]\](?:\.ruleIds)?)?"
+)
+
+
+def _design_acceptance_issues(value: Any) -> list[dict[str, str]]:
+    if not isinstance(value, list):
+        return []
+    safe = []
+    for issue in value[:100]:
+        if not isinstance(issue, dict):
+            continue
+        field, kind, rule_id = issue.get("field"), issue.get("code"), issue.get("ruleId")
+        if not isinstance(field, str) or not _DESIGN_ACCEPTANCE_ISSUE_FIELD.fullmatch(field):
+            continue
+        if not isinstance(kind, str) or kind not in _DESIGN_ACCEPTANCE_ISSUE_CODES:
+            continue
+        if "ruleId" in issue and (not isinstance(rule_id, str) or not re.fullmatch(r"A-[0-9]{2,3}", rule_id)):
+            continue
+        safe.append({"field": field, "code": kind, **({"ruleId": rule_id} if rule_id else {})})
+    return safe
+
+
 def _human_session_headers(username: str) -> dict[str, str]:
     if not sys.stdin.isatty():
         die("--as-user 需要交互终端，由操作者本人输入密码")
@@ -4504,20 +4536,26 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
         die("请在 CDS 确认，或使用 --as-user 由有权成员在终端登录")
 
     def request(method: str, endpoint: str = "", body: Any = None, headers: dict[str, str] | None = None,
-                retry_id: str | None = None) -> dict:
+                retry_id: str | None = None, *, artifact_receipt: bool = False) -> dict:
         status, result, _ = _request(method, base + endpoint, body, timeout=60,
                                      extra_headers={**identity_headers, **(headers or {})}, follow_redirects=False, fatal_network_errors=False)
         if not 200 <= status < 300:
             message = result.get("message") if isinstance(result, dict) else None
             retry = {"retry": {"requestId": retry_id}} if retry_id and (status == 0 or status >= 500) else None
             error = result.get("error") if isinstance(result, dict) else None
-            if status in (400, 413) and isinstance(error, str) and re.fullmatch(r"G-0[1-9]", error):
+            if status == 400 and error == "G-11":
+                issues = _design_acceptance_issues(result.get("issues"))
+                fields = "、".join(row["field"] for row in issues[:6])
+                suffix = f"。请检查 {fields}" if fields else ""
+                die("稿件门禁 G-11 未通过，请补齐验收计划与覆盖维度" + suffix + "。", code=2,
+                    extra={"gate": "G-11", "issues": issues})
+            if status in (400, 413) and isinstance(error, str) and re.fullmatch(r"G-(?:0[1-9]|10)", error):
                 die(f"稿件门禁 {error} 未通过。请按设计接入规则修正后重试。", code=2, extra={"gate": error})
             message = message or "CDS 暂未确认本次操作，请检查连接并保留原请求编号"
             if retry and _HUMAN:
                 message = f"{message}\n本次请求编号 {retry_id}"
             die(message, code=2 if 400 <= status < 500 else 3, extra=retry)
-        if not isinstance(result, dict) or result.get("projectId") != project:
+        if not isinstance(result, dict) or (not artifact_receipt and result.get("projectId") != project):
             die("CDS 返回的设计记录不属于当前项目")
         return result
 
@@ -4558,12 +4596,54 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
             die("CDS 设计接入协议版本不符，请检查当前安装的技能与 CDS 版本")
         ok(intake)
 
-    if action == "handoff":
+    if action in ("handoff", "delivery"):
+        if args.version < 1:
+            die("请指定已发布的正整数版本")
         query = urllib.parse.urlencode({"designId": args.id, "version": args.version})
         workspace = request("GET", "?" + query)
         design = next((row for row in workspace.get("designs", []) if row.get("id") == args.id and row.get("projectId") == project), None)
         selected = next((row for row in (design or {}).get("versions", []) if row.get("version") == args.version), None)
-        if not selected or not isinstance(selected.get("handoff"), dict):
+        if not selected:
+            die("未找到指定稿件版本，请核对当前项目和版本号")
+        if action == "delivery":
+            metadata = {"projectId": project, "designId": args.id, "version": args.version, "sourceCommit": selected.get("sourceCommit")}
+            delivery = selected.get("delivery") or {}
+            if args.file is None:
+                ok({**metadata, "delivery": delivery, "screens": selected.get("screens", []),
+                    "acceptance": selected.get("acceptance", []), "handoff": selected.get("handoff")})
+            file = next((row for row in delivery.get("files", []) if row.get("path") == args.file), None)
+            if not file or not file.get("id") or not file.get("sha256"):
+                die("所选版本没有此文件，请先回读固定版交付索引")
+            if not file.get("text") and not re.search(r"\.(?:diff|patch)$", args.file, re.I):
+                die("此附件为二进制文件，请从固定版交付页下载")
+            artifact_path = "/artifacts/" + urllib.parse.quote(file["id"], safe="")
+            offset = 0
+            text_parts = []
+            length = 0
+            while True:
+                params = urllib.parse.urlencode({"view": "text", "offset": offset})
+                receipt = request("GET", artifact_path + "?" + params, artifact_receipt=True)
+                text = receipt.get("text")
+                if (receipt.get("artifactId") != file["id"] or receipt.get("path") != args.file
+                        or receipt.get("sha256") != file["sha256"] or receipt.get("offset") != offset
+                        or not isinstance(text, str) or "nextOffset" not in receipt):
+                    die("交付资料回执与固定版本的文件不一致")
+                try:
+                    length += len(text.encode("utf-8"))
+                    next_position = offset + len(text.encode("utf-16-le")) // 2
+                except UnicodeError:
+                    die("交付资料含无效的文本编码")
+                if length > 8 * 1024 * 1024:
+                    die("单份交付文本超过 8 MiB，请使用固定版附件下载")
+                text_parts.append(text)
+                next_offset = receipt["nextOffset"]
+                if next_offset is None:
+                    break
+                if type(next_offset) is not int or next_offset <= offset or next_offset != next_position:
+                    die("交付资料分页回执无效")
+                offset = next_offset
+            ok({**metadata, "path": args.file, "sha256": file["sha256"], "text": "".join(text_parts)})
+        if not isinstance(selected.get("handoff"), dict):
             die("请核对稿件版本及 CDS 交接能力")
         if args.run:
             receipt = send({"type": "handoff.check", "designId": args.id, "version": args.version}, endpoint="/handoff/check")
@@ -4795,49 +4875,99 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
             die("框架规则超过单份稿件的 60 条上限")
         if not args.legacy_template and (not args.title.strip() or len(args.title) > 120 or re.search(r"[\r\n]", args.title)):
             die("首稿标题须为一行且不超过 120 个字符")
+        policy = None
+        if not args.legacy_template:
+            try:
+                policy = json.loads(Path(__file__).with_name("design-acceptance-policy.json").read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                die("找不到设计验收契约，请更新完整 CDS 技能包。")
         directory.mkdir(parents=True)
         spec = directory / "spec"
         spec.mkdir()
         (directory / "dist").mkdir()
         (directory / "checks").mkdir()
-        screen = {"id": "home", "name": args.title, "route": "#home", "viewport": "desktop", "themes": ["light", "dark"], "impl": None}
-        manifest = {"project": project, "title": args.title, "framework": args.framework, "frameworkVersion": revision["version"],
-                    "screens": [screen], "acceptance": rules}
-        checks = {"total": len(rules), "passed": 0, "items": [{**rule, "status": "unverified"} for rule in rules]}
+        scaffold_manifest = {"project": project, "title": args.title, "framework": args.framework,
+                             "frameworkVersion": revision["version"]}
+        screen = {"id": "home", "name": args.title, "route": "#home", "viewport": "desktop",
+                  "themes": ["light", "dark"], "impl": None}
         rationale = "## 目标\n\n## 关键取舍\n\n## 依据的规则\n\n## 待定问题\n"
         documents = {}
-        if not args.legacy_template:
-            screen.update(route="#/home", entryReadySelector="body" if material.get("skeleton") else "[data-cds-design-ready]")
-            manifest.update(rationale="思路.md", prototype="dist/index.html", checks="checks/result.json", docs=["交付说明.md"],
-                            prototypeVersion=1, date=time.strftime("%Y-%m-%d"), notes="首稿脚手架，尚无自检结果", acceptance=[])
-            entries = [{**rule, "name": f"{rule['id']} {rule['rule']}", "status": "unverified", "pass": False} for rule in rules]
+        prototype_entry = "dist/index.html"
+
+        if args.legacy_template:
+            acceptance = rules
+            entries = [{**rule, "status": "unverified"} for rule in rules]
+            template = material.get("skeleton") or (
+                '<!doctype html><html lang="zh-CN"><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">'
+                '<style>:root{color-scheme:light dark}body{margin:32px;font:15px system-ui}h1{font-size:20px}</style>'
+                '<main id="home"><h1>{{title}}</h1></main></html>'
+            )
+            (directory / prototype_entry).write_text(template.replace("{{title}}", html.escape(args.title)), encoding="utf-8", newline="\n")
+        else:
+            screen.update(route="#/", entryReadySelector=".cds-main")
+            # 框架规则成为验收项，用 ruleId 保留每条规则的来源。
+            acceptance = []
+            for index, rule in enumerate(rules, start=1):
+                expected = rule.get("expected") or rule.get("rule") or rule["id"]
+                if rule.get("how") == "measure" and not expected.startswith("检查："):
+                    expected = f"检查：{expected}"
+                acceptance.append({**rule, "id": f"A-{index:02d}", "ruleId": rule["id"], "screenId": "home",
+                                   "slots": ["desktop-light", "desktop-dark"], "expected": expected})
+            entries = [{"id": row["id"], "ruleId": row["ruleId"],
+                        "name": f'{row["id"]} {row["ruleId"]} {row.get("rule", "")}'.strip(),
+                        "status": "unverified", "pass": False} for row in acceptance]
             if not entries:
                 entries = [{"name": "首画面打开并出现就绪标志", "status": "unverified", "pass": False}]
-            checks = {"total": len(entries), "passed": 0, "items": entries}
+
+            required_methods = {"mece", "compare", "visual"}
+            if any(rule["how"] == "human" for rule in acceptance):
+                required_methods.add("human")
+            if any(rule.get("interaction") for rule in acceptance):
+                required_methods.add("flow")
+            acceptance_plan = {method["id"]: {"applicable": True if method["id"] in required_methods else None}
+                               for method in policy["methods"]}
+            scaffold_manifest.update(acceptanceMode="objective", acceptancePlan=acceptance_plan,
+                                     prototypeVersion=1, date=time.strftime("%Y-%m-%d"),
+                                     prototype=prototype_entry, rationale="思路.md", checks="checks/result.json",
+                                     docs=["交付说明.md"], notes="首稿脚手架，尚无自检结果")
             rationale = f"# {args.title} · 设计思路（V1）\n\n{rationale}"
             guide = (f"# {args.title} · 交付说明（V1）\n\n"
-                     "打开 `dist/index.html` 预览首画面。使用原型内能确认实际渲染完成的就绪标志。\n\n"
-                     "撰写设计思路，按画面补充适用的验收项和检查预期，再将实际自检结果写入 `checks/result.json`。\n")
+                     "在正式前端壳内挂载页面，使用 prototype-build.mjs 生成原型后打开 `dist/index.html` 核对首画面。\n\n"
+                     "撰写设计思路，按画面补充验收项的预期与覆盖维度，完成验收计划。"
+                     "不适用的手段和未覆盖的维度须说明原因，再将实际自检结果写入 `checks/result.json`。\n")
             (directory / "changes").mkdir()
-            (directory / "交付说明.md").write_bytes(guide.encode("utf-8"))
-            documents = {"versions.json": {"versions": []}, "changes/index.json": {"to": 1, "from": []}}
-        for name, data in {"design.json": manifest, "checks/result.json": checks, **documents}.items():
-            (directory / name).write_bytes((json.dumps(data, indent=2, ensure_ascii=False) + "\n").encode("utf-8"))
-        (directory / "思路.md").write_bytes(rationale.encode("utf-8"))
+            (directory / "交付说明.md").write_text(guide, encoding="utf-8", newline="\n")
+            (directory / "src" / "overrides").mkdir(parents=True)
+            try:
+                baseline = subprocess.run(["git", "-C", str(directory), "rev-parse", "HEAD"],
+                                          capture_output=True, text=True, check=True).stdout.strip()
+            except (OSError, subprocess.CalledProcessError):
+                baseline = ""
+            documents = {"versions.json": {"versions": []}, "changes/index.json": {"to": 1, "from": []},
+                         "prototype.json": {"web": "cds/web", "baseline": baseline, "entry": "src/main.tsx",
+                                            "shared": "cds/src/shared", "overrides": {}, "added": {},
+                                            "skipPreloads": [], "title": args.title}}
+            (directory / "src" / "main.tsx").write_text(
+                "/* 在正式 AppShell 中挂载要演示的页面，用演示数据提供请求响应。\n"
+                " * 改动的正式文件复制到 src/overrides，在 prototype.json 注册副本和新增文件。\n"
+                " * node <技能根>/cds/scripts/design/prototype-build.mjs --dir <本目录> --checkout <正式仓库检出>\n"
+                " * 门禁 G-10 核对构建指纹、正式壳体（.cds-main）和每条框架规则的自检。 */\n",
+                encoding="utf-8", newline="\n")
+
+        scaffold_manifest.update(screens=[screen], acceptance=acceptance)
+        checks = {"total": len(entries), "passed": 0, "items": entries}
+        for name, data in {"design.json": scaffold_manifest, "checks/result.json": checks, **documents}.items():
+            (directory / name).write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n",
+                                          encoding="utf-8", newline="\n")
+        (directory / "思路.md").write_text(rationale, encoding="utf-8", newline="\n")
         for field, name in (("rules", "rules.md"), ("components", "components.md"), ("skeleton", "skeleton.html")):
             if material.get(field):
                 (spec / name).write_bytes(material[field].encode("utf-8"))
         if material.get("tokens"):
-            (spec / "tokens.json").write_bytes((json.dumps(material["tokens"], ensure_ascii=False, indent=2) + "\n").encode("utf-8"))
-        ready_marker = "" if args.legacy_template else " data-cds-design-ready"
-        template = material.get("skeleton") or (
-            '<!doctype html><html lang="zh-CN"><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">'
-            '<style>:root{color-scheme:light dark}body{margin:32px;font:15px system-ui}h1{font-size:20px}</style>'
-            f'<main id="home"{ready_marker}>' '<h1>{{title}}</h1></main></html>'
-        )
-        (directory / "dist" / "index.html").write_bytes(template.replace("{{title}}", html.escape(args.title)).encode("utf-8"))
+            (spec / "tokens.json").write_text(json.dumps(material["tokens"], ensure_ascii=False, indent=2) + "\n",
+                                              encoding="utf-8", newline="\n")
         ok({"projectId": project, "directory": str(directory), "framework": args.framework, "version": revision["version"]},
-           note=None if args.legacy_template else "已创建 V1 脚手架。补齐设计思路、验收预期和实际自检结果后发布。")
+           note=None if args.legacy_template else "已创建 V1 脚手架。构建原型并补齐验收和实际自检结果后发布。")
 
     design = next((item for item in designs if item["id"] == args.id), None)
     if not design:
@@ -5048,7 +5178,7 @@ def _register_design_parser(sub: Any) -> None:
     preview.add_argument("--theme", choices=("light", "dark"), default="light")
     preview.add_argument("--port", type=int, default=0, help="环回端口，默认自动选择")
     framework = sub.add_parser("framework", help="项目设计框架").add_subparsers(dest="design_action", required=True)
-    for routes, actions in ((design, ("intake", "handoff", "brief-reply", "brief-claim", "brief-release", "feedback", "feedback-create", "feedback-reply", "feedback-resolve", "attach-evidence", "publish", "list", "reviewers", "request-review", "comments", "diff", "accept", "record", "visual", "capture", "recheck", "flow", "smoke", "coverage", "regress", "known-create", "result", "freeze", "start-upgrade", "cancel-upgrade", "sign", "scaffold", "extract", "enable-method", "disable-method")),
+    for routes, actions in ((design, ("intake", "delivery", "handoff", "brief-reply", "brief-claim", "brief-release", "feedback", "feedback-create", "feedback-reply", "feedback-resolve", "attach-evidence", "publish", "list", "reviewers", "request-review", "comments", "diff", "accept", "record", "visual", "capture", "recheck", "flow", "smoke", "coverage", "regress", "known-create", "result", "freeze", "start-upgrade", "cancel-upgrade", "sign", "scaffold", "extract", "enable-method", "disable-method")),
                             (framework, ("show", "list", "publish", "import"))):
         for action in actions:
             parser = routes.add_parser(action, help="发布项目框架版本" if action == "publish" and routes is framework else None)
@@ -5059,8 +5189,11 @@ def _register_design_parser(sub: Any) -> None:
                 parser.add_argument("id")
             if action in ("publish", "request-review", "accept", "record", "visual", "capture", "recheck", "flow", "smoke", "coverage", "regress", "known-create", "freeze", "start-upgrade", "cancel-upgrade", "sign", "extract", "import"):
                 parser.add_argument("--request-id")
-            if action == "handoff":
+            if action in ("handoff", "delivery"):
                 parser.add_argument("--version", required=True, type=int, help="已发布的稿件版本")
+            if action == "delivery":
+                parser.add_argument("--file", help="按固定交付索引回读当版的包内文本路径")
+            if action == "handoff":
                 parser.add_argument("--run", action="store_true", help="启动检查或重试未通过场景，默认只回读")
                 parser.add_argument("--request-id")
             if action in ("enable-method", "disable-method"):
@@ -11409,7 +11542,7 @@ def cmd_update(args: argparse.Namespace) -> None:
         die(f"cdscli.py 不在期望的 <skills>/cds/cli/ 位置（实际: {cli_path}）。"
             f"请用 Dashboard 的 (zip) 按钮重新下载完整包。", code=1)
     skills_root = os.path.dirname(skill_root)
-    bundle_skills = ["cds", "cds-design", "cds-project-scan", "cds-deploy-pipeline", "cds-release", "preview-url"]
+    bundle_skills = list(CDS_SKILLS)
 
     # 1. 下载
     url = _cds_base() + "/api/export-skill"
@@ -11461,7 +11594,7 @@ def cmd_update(args: argparse.Namespace) -> None:
                 src_skills_dir = root
                 break
         if not src_skills_dir:
-            die("tar.gz 内找不到完整的五技能包。升级失败（已保留备份）。",
+            die("tar.gz 内找不到完整的技能包（六个技能）。升级失败（已保留备份）。",
                 code=3, extra={"backupAt": bak_root})
 
         # 5. 用内容同步：六个技能统一更新，保留用户自定义的额外文件。

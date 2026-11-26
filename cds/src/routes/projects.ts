@@ -86,7 +86,7 @@ import type { IShellExecutor, Project, ProjectAgentProfile, CdsConfig, AgentKey,
 import { isAgentKeyExpiryDays, isLegacyProjectAgentKey, type ProjectAgentKeyIssuer, type ProjectAgentKeyPermissions } from '../shared/project-agent-key.js';
 import { combinedOutput } from '../types.js';
 import { workloadCgroupFlags } from '../services/workload-cgroup.js';
-import { isAuthenticatedHuman, isHumanSystemOwner, type HumanAuthContext } from '../services/human-auth.js';
+import { isAuthenticatedHuman, isHumanSystemOwner, verifiedHumanAccountId, type HumanAuthContext } from '../services/human-auth.js';
 import { canHumanAccessProject, isScopedHuman } from '../services/human-project-access.js';
 
 type OnboardingRuntime = NonNullable<Project['onboardingRuntime']>;
@@ -341,7 +341,7 @@ function mintProjectAgentKey(
   label: string,
   issuer: ProjectAgentKeyIssuer,
   createdBy?: string,
-  permissions: ProjectAgentKeyPermissions = {},
+  { issuedByAccountId = null, ...permissions }: ProjectAgentKeyPermissions & Pick<AgentKey, 'issuedByAccountId'> = {},
   expiresAt?: string,
 ): { keyId: string; plaintext: string; preview: string; expiresAt?: string } {
   const slugHead = project.slug.slice(0, 12).toLowerCase();
@@ -356,6 +356,7 @@ function mintProjectAgentKey(
     scope: 'rw',
     ...(isLegacyProjectAgentKey(permissions) ? { projectAccess: 'rw' } : permissions),
     ...(expiresAt ? { expiresAt, expiryMode: 'fixed' } : {}),
+    issuedByAccountId,
     createdAt: new Date().toISOString(),
     issuer,
     createdBy: createdBy || undefined,
@@ -3445,7 +3446,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
             `建项目时签发 ${new Date().toISOString().replace('T', ' ').slice(0, 16)}`,
             'agent',
             undefined,
-            {},
+            { issuedByAccountId: verifiedHumanAccountId(req) ?? creationKey?.issuedByAccountId ?? null },
             creationKey?.oneTime ? undefined : creationKey?.expiresAt,
           );
         } catch {
@@ -4617,6 +4618,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     try {
       minted = mintProjectAgentKey(stateService, project, label, issuer, createdBy, {
         projectAccess: body.projectAccess, planningAccess: body.planningAccess, designAccess: body.designAccess,
+        issuedByAccountId: verifiedHumanAccountId(req),
       }, expiresAt);
     } catch (err) {
       res.status(500).json({
@@ -4651,6 +4653,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         createdAt: e.createdAt,
         createdBy: e.createdBy,
         issuer: agentKeyIssuer(e),
+        issuedByAccountId: e.issuedByAccountId,
         lastUsedAt: e.lastUsedAt,
         expiresAt: e.expiresAt,
         expiryMode: e.expiryMode,
@@ -4800,6 +4803,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       expiresAt,
       createdAt: now.toISOString(),
       ...agentKeySigner(req),
+      issuedByAccountId: verifiedHumanAccountId(req) ?? null,
     };
     try {
       stateService.addGlobalAgentKey(entry);
@@ -4834,6 +4838,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         createdBy: e.createdBy,
         issuer: agentKeyIssuer(e),
         expiresAt: e.expiresAt,
+        issuedByAccountId: e.issuedByAccountId,
         lastUsedAt: e.lastUsedAt,
         revokedAt: e.revokedAt,
         status: e.revokedAt ? 'revoked' : 'active',

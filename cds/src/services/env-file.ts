@@ -308,7 +308,8 @@ export function updateEnvFileWhileLocked(
 
 /** Rotate the startup password only when its authoritative file still contains the active value. */
 export function rotateBasicPasswordInEnv(
-  envFilePath: string, current: string, replacement: string, audit: UserActivityRecord,
+  envFilePath: string, current: string, replacement: string,
+  { sessionGeneration, audit }: { sessionGeneration: string; audit?: UserActivityRecord },
 ): boolean {
   return withEnvFileLock(envFilePath, () => {
     if (!fs.lstatSync(envFilePath, { throwIfNoEntry: false })?.isFile()) return false;
@@ -322,10 +323,16 @@ export function rotateBasicPasswordInEnv(
     if (assignments.length !== 1 || assignments[0].entry.value !== current) return false;
     const [{ index, entry }] = assignments;
     lines[index] = applyEnvUpdates([entry], { CDS_PASSWORD: replacement })[0].raw;
-    // Persist the password and its audit together. A failed write cannot leave
-    // a successful rotation with no record, or an audit for a rejected change.
-    const auditIndex = lines.at(-1) === '' ? lines.length - 1 : lines.length;
-    lines.splice(auditIndex, 0, PASSWORD_AUDIT_PREFIX + JSON.stringify(audit));
+    const generationLines = lines.map((line, index) => ({ line, index }))
+      .filter(({ line }) => /^(?:export\s+)?CDS_BASIC_SESSION_GENERATION=/.test(line.trim()));
+    if (generationLines.length > 1) return false;
+    const assignment = `CDS_BASIC_SESSION_GENERATION=${sessionGeneration}`;
+    if (generationLines.length) lines[generationLines[0].index] = assignment;
+    else lines.splice(lines.at(-1) === '' ? lines.length - 1 : lines.length, 0, assignment);
+    if (audit) {
+      const auditIndex = lines.at(-1) === '' ? lines.length - 1 : lines.length;
+      lines.splice(auditIndex, 0, PASSWORD_AUDIT_PREFIX + JSON.stringify(audit));
+    }
     writeEnvFileAtomic(envFilePath, lines.join('\n'));
     return true;
   });

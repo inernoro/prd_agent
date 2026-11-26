@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Api.Services;
+using PrdAgent.Api.Services.BackgroundTasks;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
@@ -30,7 +31,9 @@ public class TapdBugAgentController : ControllerBase
     }
 
     [HttpPost("preview/stream")]
-    public async Task PreviewStream([FromBody] TapdBugPreviewRequest request)
+    public async Task PreviewStream(
+        [FromBody] TapdBugPreviewRequest request,
+        [FromServices] TaskAdmissionService admission)
     {
         Response.ContentType = "text/event-stream; charset=utf-8";
         Response.Headers.CacheControl = "no-cache";
@@ -51,7 +54,8 @@ public class TapdBugAgentController : ControllerBase
         try
         {
             await WriteSseEvent("stage", new { stage = "started", message = "已开始整理 TAPD 缺陷草稿" });
-            await _service.StreamPreviewAsync(request, WriteSseEvent, CancellationToken.None);
+            await _service.StreamPreviewAsync(request, WriteSseEvent, CancellationToken.None,
+                ct => admission.AdmitAuthenticatedPaidBranchAsync(HttpContext, ct));
             await WriteSseEvent("done", new { });
         }
         catch (Exception ex)

@@ -18,6 +18,28 @@ export interface VerifiedRemoteBackup {
   sha256: string;
 }
 
+/** Recheck an independently retained copy without downloading a database dump. */
+export async function inspectR2BackupObject(opts: {
+  config: R2BackupConfig; fileName: string; fetchImpl?: typeof fetch;
+}): Promise<VerifiedRemoteBackup> {
+  const objectKey = [opts.config.prefix, opts.fileName].filter(Boolean).join('/');
+  const url = objectUrl(opts.config, objectKey);
+  const response = await (opts.fetchImpl ?? fetch)(url, {
+    method: 'HEAD', redirect: 'error', signal: AbortSignal.timeout(8000),
+    headers: {
+      ...signedHeaders({ config: opts.config, method: 'HEAD', url, now: new Date(),
+        payloadHash: crypto.createHash('sha256').update('').digest('hex') }),
+      'accept-encoding': 'identity',
+    },
+  });
+  const bytes = Number(response.headers.get('content-length'));
+  const sha256 = response.headers.get('x-amz-meta-sha256')?.trim().toLowerCase() || '';
+  if (!response.ok || !Number.isSafeInteger(bytes) || bytes <= 0 || !/^[a-f0-9]{64}$/.test(sha256)) {
+    throw new Error('离机备份副本的大小和校验和未确认');
+  }
+  return { objectKey, bytes, sha256 };
+}
+
 async function r2HttpFailure(action: string, response: Response): Promise<Error> {
   const body = await response.text().catch(() => '');
   const code = body.match(/<Code>([^<]+)<\/Code>/i)?.[1]?.trim();

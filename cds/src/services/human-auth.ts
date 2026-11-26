@@ -6,13 +6,22 @@
 export interface HumanAuthContext {
   _cdsBasicHumanAuth?: boolean;
   cdsUser?: {
+    id?: string;
     isSystemOwner?: boolean;
+    isAdministrator?: boolean;
     authProvider?: string;
     username?: string;
     githubLogin?: string;
     login?: string;
   };
   cdsSession?: unknown;
+}
+
+/** Canonical ID from verified session stamps, never from a display name or body. */
+export function verifiedHumanAccountId(request: unknown): string | undefined {
+  const auth = request as HumanAuthContext;
+  return isAuthenticatedHuman(auth) && typeof auth.cdsUser?.id === 'string' && auth.cdsUser.id
+    ? auth.cdsUser.id : undefined;
 }
 
 /** True only when middleware attached a verified human identity and session. */

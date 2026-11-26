@@ -11,6 +11,25 @@ export function humanPrincipalId(userId: string): string {
   return `human:${userId}`;
 }
 
+/** The current project assignments define the upper bound for managing ordinary accounts. */
+export function accountAdministrationScope(state: StateService | undefined, accountId: string): Set<string> {
+  const principalId = humanPrincipalId(accountId);
+  if (!state || isHumanProjectGrantUpdatePending(state, principalId) || state.getPrincipal(principalId)?.status !== 'active') return new Set();
+  return new Set(state.getProjectGrants().filter(row => row.principalId === principalId && !row.revokedAt).map(row => row.projectId));
+}
+
+export function canManageAccountScope(state: StateService | undefined, actor: import('../domain/auth.js').CdsUser, target: import('../domain/auth.js').CdsUser): boolean {
+  if (actor.id === target.id || target.isSystemOwner) return false;
+  if (actor.isSystemOwner) return true;
+  if (!actor.isAdministrator || target.isAdministrator) return false;
+  const scope = accountAdministrationScope(state, actor.id);
+  const principalId = humanPrincipalId(target.id);
+  if (state && isHumanProjectGrantUpdatePending(state, principalId)) return false;
+  // A disabled account retains its assignments so the same scoped administrator can restore it.
+  const assigned = (state?.getProjectGrants() ?? []).filter(row => row.principalId === principalId && !row.revokedAt);
+  return assigned.length ? assigned.every(row => scope.has(row.projectId)) : target.createdByAccountId === actor.id;
+}
+
 export function isScopedHuman(req: unknown): boolean {
   // Ticket SSO is synthesized by verified authentication middleware, not a
   // persisted account that the owner can grant. Preserve its existing project

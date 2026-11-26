@@ -103,6 +103,7 @@ public sealed class TaskAdmissionPolicyTests
         }).ToArray();
         Assert.Equal(new[]
         {
+            "PrdAgent.Api.Controllers.Api.TapdBugAgentController.PreviewStream",
             "PrdAgent.Api.Controllers.Api.LabController.SimulateMessage",
             "PrdAgent.Api.Controllers.GroupsController.Create",
             "PrdAgent.Api.Controllers.Api.DocumentStoreController.UpdateEntryContent",

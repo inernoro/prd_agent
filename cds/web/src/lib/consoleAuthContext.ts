@@ -5,6 +5,7 @@ export type ShellAuthStatus = {
   approvalCapabilities?: ApprovalCapabilities;
   previewAccessNotices?: boolean;
   designReviewNotices?: boolean;
+  accountApprovalNotices?: boolean;
   enabled?: boolean;
   canUsePasskeys?: boolean;
   mode?: string;
@@ -22,6 +23,7 @@ export type ShellUser = {
   name?: string | null;
   avatarUrl?: string | null;
   isSystemOwner?: boolean;
+  role?: 'owner' | 'admin' | 'member';
 };
 
 export const ConsoleAuthContext = createContext<{

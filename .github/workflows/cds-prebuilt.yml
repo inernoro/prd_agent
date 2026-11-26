@@ -15,6 +15,8 @@ on:
       - "cds-instances.json"
       - ".github/workflows/cds-prebuilt.yml"
       - ".claude/skills/cds/**"
+      - ".claude/skills/cds-design/**"
+      - ".claude/skills/cds-build/**"
       - ".claude/skills/cds-project-scan/**"
       - ".claude/skills/cds-deploy-pipeline/**"
       - ".claude/skills/cds-release/**"
@@ -140,6 +142,25 @@ jobs:
             type=raw,value=sha-${{ github.sha }}
             type=ref,event=branch,prefix=branch-
 
+      - name: Build isolated design cover renderer
+        uses: docker/build-push-action@v5
+        with:
+          context: ./cds
+          file: ./cds/Dockerfile.design-cover
+          load: true
+          push: false
+          tags: ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}/cds-design-cover:sha-${{ github.sha }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Verify isolated design cover capture
+        run: node cds/scripts/verify-design-cover-container.mjs ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}/cds-design-cover:sha-${{ github.sha }}
+
+      - name: Verify design handoff counterexamples in Chromium
+        run: node cds/scripts/verify-design-handoff-browser.mjs
+
+      - name: Publish verified design cover renderer
+        run: docker push ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}/cds-design-cover:sha-${{ github.sha }}
+
       - name: Build & push CDS prebuilt image
         uses: docker/build-push-action@v5
         with:
@@ -152,7 +173,7 @@ jobs:
       - name: Stage canonical CDS onboarding skills
         run: |
           mkdir -p cds/agent-skills
-          for skill in cds cds-project-scan cds-deploy-pipeline cds-release preview-url; do
+          for skill in cds cds-design cds-build cds-project-scan cds-deploy-pipeline cds-release preview-url; do
             cp -R ".claude/skills/$skill" "cds/agent-skills/$skill"
           done
 

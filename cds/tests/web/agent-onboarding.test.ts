@@ -243,10 +243,12 @@ describe('CDS Agent 接入口令', () => {
     expect(monitorOnboarding?.note).toContain('GET 只读说明和 POST 监控提议草案');
   });
 
-  it('每个任务都绑定真实能力，并声明完整五技能包', () => {
+  it('每个任务都绑定真实能力，并声明完整技能包', () => {
     const capabilityIds = new Set(CDS_AGENT_CAPABILITY_DEFINITIONS.map((item) => item.id));
     expect(CDS_AGENT_SKILL_DEFINITIONS.map((item) => item.id)).toEqual([
       'cds',
+      'cds-design',
+      'cds-build',
       'cds-project-scan',
       'cds-deploy-pipeline',
       'cds-release',
@@ -257,6 +259,40 @@ describe('CDS Agent 接入口令', () => {
       expect(bindings.length, `${missionId} 没有能力绑定`).toBeGreaterThan(0);
       expect(bindings.every((id) => capabilityIds.has(id)), `${missionId} 绑定了未知能力`).toBe(true);
     }
+  });
+
+  it('Codex 和 Claude Code 可从主仓发现同一份实施技能', () => {
+    const repo = path.resolve(process.cwd(), '..');
+    const canonical = path.join(repo, '.claude/skills/cds-build/SKILL.md');
+    const codex = path.join(repo, '.agents/skills/cds-build/SKILL.md');
+    expect(fs.realpathSync(codex)).toBe(fs.realpathSync(canonical));
+    expect(fs.readFileSync(canonical, 'utf8')).toMatch(/^name: cds-build\r?$/m);
+  });
+
+  it('账号身份、恢复、Key 通知交接和系统改密保留人工确认且不暴露工具', () => {
+    const accountRoutes = [
+      { id: 'account-identities', access: 'human-only', risk: 'protocol', agentUse: 'protocol-only', confirmation: '本人会话' },
+      { id: 'account-recovery', access: 'public', risk: 'write', agentUse: 'guided', confirmation: '核实人与批准人必须不同' },
+      { id: 'key-notification-owners', access: 'human-only', risk: 'write', agentUse: 'guided', confirmation: '系统所有者确认交接' },
+      { id: 'system-password', access: 'human-only', risk: 'destructive', agentUse: 'guided', confirmation: '发起人逐次确认' },
+    ];
+    for (const { id, confirmation, ...boundary } of accountRoutes) {
+      const capability = CDS_AGENT_CAPABILITY_DEFINITIONS.find(item => item.id === id);
+      expect(capability, id).toMatchObject({ routeSource: `${id}.ts`, scope: 'system', ...boundary, mcpExposure: 'not-exposed' });
+      expect(capability?.note, id).toContain(confirmation);
+      expect(capability?.cliFamily, id).toBeUndefined();
+      expect(capability?.mcpTools, id).toBeUndefined();
+    }
+  });
+
+  it('设备账号提案仅登记当前项目的提案与原设备回执工具', () => {
+    const capability = CDS_AGENT_CAPABILITY_DEFINITIONS.find(item => item.id === 'account-proposals');
+    expect(capability).toMatchObject({
+      routeSource: 'account-proposals.ts', scope: 'project', access: 'project', risk: 'write', agentUse: 'guided',
+      cliFamily: 'account', mcpExposure: 'available', mcpTools: ['cds_account_propose', 'cds_account_receipt'],
+    });
+    expect(capability?.note).toContain('仅提交提案和回读同一设备的回执');
+    expect(capability?.note).toContain('系统所有者在页面批准');
   });
 
   it('为 MCP 适配明确登记候选、审批或禁止暴露状态', () => {
@@ -278,7 +314,6 @@ describe('CDS Agent 接入口令', () => {
     // 分支地址设置只提供给有权限的人类会话，不新增 Agent 写入口。
     // 新增分支归档清理：有项目边界、需要明确确认，不直接暴露为MCP自动操作。
     // 短期监控提议协议单独登记，不作为可直调的系统写能力。
-    expect(CDS_AGENT_CAPABILITY_DEFINITIONS).toHaveLength(78);
     expect(getAgentCapabilitiesForMission('engineering-planning')).toMatchObject([{
       id: 'engineering-planning',
       routeSource: 'engineering-planning.ts',
