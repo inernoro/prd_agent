@@ -1982,6 +1982,7 @@ function projectKeyAllowsRequest(
   const method = req.method;
   const read = method === 'GET' || method === 'HEAD';
   if (collaboration) {
+    if (suffix === '' && method === 'DELETE') return legacy || key.projectAccess === 'admin';
     if (/^\/migrat(?:e|ion)(?:\/|$)/.test(suffix) || !read && /^\/github\/(?:link|unlink)$/.test(suffix)) return false;
     if (!hasProjectAccess && !legacy && /^\/clone(?:\/|$)/.test(suffix)) return false;
     if (!/^\/agent-keys(?:\/|$)/.test(suffix)) return true;

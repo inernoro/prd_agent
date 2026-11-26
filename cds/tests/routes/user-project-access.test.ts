@@ -1774,6 +1774,7 @@ describe('human project grants through the production server', () => {
       expect((await credentialCall('PUT', project, key, { inheritGlobalEnv: true })).status).toBe(403);
       expect((await credentialCall('PUT', project, key, { gitRepoUrl: 'https://fixture.test/repository.git' })).status).toBe(403);
       expect((await credentialCall('POST', project + '/clone', key, {})).status).toBe(403);
+      expect((await credentialCall('DELETE', project, key)).status).toBe(403);
     }
     expect(await credentialCall('PUT', project + '/preview-mode', designKey, { mode: 'port' })).toMatchObject({
       status: 200, body: { mode: 'port' },
@@ -1817,11 +1818,17 @@ describe('human project grants through the production server', () => {
     const issued = await call('POST', project + '/agent-keys', owner, { designAccess: 'read' });
     expect((await call('PUT', project, owner, { agentKeyCollaboration: true })).status).toBe(200);
     const key = issued.body.plaintext;
-    expect(await credentialCall('PUT', '/api/env/FIXTURE_PROJECT_SETTING?scope=project-a', key, { value: 'in-project' }))
+    state.updateProject('project-a', { slug: 'branch-project-b' });
+    expect(await credentialCall('PUT', '/api/env/FIXTURE_PROJECT_SETTING?scope=branch-project-b', key, { value: 'in-project' }))
       .toMatchObject({ status: 200, body: { scope: 'project-a' } });
-    expect(await credentialCall('GET', '/api/env', key))
-      .toMatchObject({ status: 200, body: { scope: 'project-a', env: { FIXTURE_PROJECT_SETTING: 'in-project' }, globalEnv: {} } });
+    const ownEnvironment = await credentialCall('GET', '/api/env', key);
+    expect(ownEnvironment).toMatchObject({ status: 200, body: { scope: 'project-a', env: { FIXTURE_PROJECT_SETTING: 'in-project' } } });
+    expect(ownEnvironment.body.globalEnv).toEqual({});
     expect(await credentialCall('GET', '/api/env/audit', key)).toMatchObject({ status: 200, body: { scope: 'project-a' } });
+    expect(state.getCustomEnvScope('branch-project-b')).not.toHaveProperty('FIXTURE_PROJECT_SETTING');
+    expect(await credentialCall('PUT', '/api/env/FIXTURE_BRANCH_SETTING?scope=branch-project-a', key, { value: 'in-branch' }))
+      .toMatchObject({ status: 200, body: { scope: 'branch-project-a' } });
+    expect(state.getCustomEnvScope('branch-project-a')).toEqual({ FIXTURE_BRANCH_SETTING: 'in-branch' });
     for (const scope of ['_global', '_all', 'project-b']) {
       expect((await credentialCall('GET', `/api/env?scope=${scope}`, key)).status).toBe(403);
     }
@@ -1845,9 +1852,17 @@ describe('human project grants through the production server', () => {
     const yaml = 'services:\n  fixture-project-service:\n    image: fixture\n';
     fs.mkdirSync(repoPath);
     fs.writeFileSync(path.join(repoPath, 'cds-compose.yml'), yaml);
-    state.updateProject('project-a', { repoPath });
-    expect(await credentialCall('GET', project + '/infra/resync/sources', key))
+    const slug = 'project-fixture-slug';
+    const bySlug = `/api/projects/${slug}`;
+    state.updateProject('project-a', { repoPath, slug });
+    expect(await credentialCall('GET', bySlug + '/infra/resync/sources', key))
       .toMatchObject({ status: 200, body: { repoCompose: { found: true, yaml } } });
+    fs.renameSync(path.join(repoPath, 'cds-compose.yml'), path.join(repoPath, 'example.yml'));
+    fs.symlinkSync('example.yml', path.join(repoPath, 'cds-compose.yml'));
+    expect(await credentialCall('GET', bySlug + '/infra/resync/sources', key))
+      .toMatchObject({ status: 200, body: { repoCompose: { found: false } } });
+    expect(await credentialCall('POST', bySlug + '/compose-drift-scan', key, { createImport: true }))
+      .toMatchObject({ status: 200, body: { report: { hasRepoCompose: false }, createdImportId: null } });
   });
 
   it('lists keys newest first and separates verified user, agent, and unconfirmed sources', async () => {

@@ -20419,13 +20419,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // 用作 meta 时才需要剥。
     const raw = req.query.scope;
     const queryScope = typeof raw === 'string' ? raw.trim() : '';
-    if (queryScope) return { scope: queryScope, fromBody: false };
     const bodyScope = req.body && typeof req.body === 'object' && typeof (req.body as Record<string, unknown>).scope === 'string'
       ? ((req.body as Record<string, string>).scope).trim()
       : '';
     const key = (req as Parameters<typeof assertProjectAccess>[0]).cdsProjectKey;
     const sharedProjectId = key && stateService.getProject(key.projectId)?.agentKeyCollaboration ? key.projectId : undefined;
-    return { scope: bodyScope || sharedProjectId || '_global', fromBody: !!bodyScope };
+    const supplied = queryScope || bodyScope || sharedProjectId || '_global';
+    const project = stateService.getProject(supplied);
+    const scope = project && (!stateService.getBranch(supplied) || key?.projectId === project.id) ? project.id : supplied;
+    return { scope, fromBody: !queryScope && !!bodyScope };
   }
 
   function resolveScope(req: import('express').Request): string {
@@ -20493,7 +20495,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const env = ownerOkFor(scope) ? rawEnv : maskValues(rawEnv);
     if (scope !== '_global') {
       const project = stateService.getProject(scope);
-      if (project) {
+      if (project?.id === scope) {
         const envMeta = stateService.getEnvMeta(scope);
         const missingRequiredEnvKeys = stateService.getMissingRequiredEnvKeys(scope);
         const rawGlobal = stateService.getCustomEnvScope('_global');
@@ -20571,7 +20573,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return true;
     }
     const project = stateService.getProject(scope);
-    const branch = project ? undefined : stateService.getBranch(scope);
+    const branch = stateService.getBranch(scope);
+    if (project && branch && project.id !== (branch.projectId || 'default')) {
+      res.status(409).json({ error: 'ambiguous_env_scope', message: '此环境变量范围不唯一，请使用项目编号或分支详情页。' });
+      return false;
+    }
     const projectId = project?.id ?? (branch ? branch.projectId || 'default' : undefined);
     if (!projectId || !stateService.getProject(projectId) || project?.mirror || branch?.mirror) {
       res.status(404).json({ error: 'env_scope_not_found', message: '没有可操作的配置范围' });
@@ -20707,21 +20713,22 @@ export function createBranchRouter(deps: RouterDeps): Router {
   // dryRun=true 只返回 plan 不改 state；false 则按 plan 真改 + save。
   router.post('/env/categorize', (req, res) => {
     const body = (req.body || {}) as { targetProjectId?: string; dryRun?: boolean };
-    const targetProjectId = (body.targetProjectId || '').trim();
+    const projectSelector = (body.targetProjectId || '').trim();
     const dryRun = body.dryRun === true;
-    if (!targetProjectId) {
+    if (!projectSelector) {
       res.status(400).json({ error: '缺少 targetProjectId（移到哪个项目）' });
       return;
     }
-    if (targetProjectId === '_global' || targetProjectId === '_all') {
+    if (projectSelector === '_global' || projectSelector === '_all') {
       res.status(400).json({ error: 'targetProjectId 不能是 _global 或 _all' });
       return;
     }
-    const targetProject = stateService.getProject(targetProjectId);
+    const targetProject = stateService.getProject(projectSelector);
     if (!targetProject) {
-      res.status(404).json({ error: `项目 "${targetProjectId}" 不存在` });
+      res.status(404).json({ error: `项目 "${projectSelector}" 不存在` });
       return;
     }
+    const targetProjectId = targetProject.id;
 
     const globalEnv = stateService.getCustomEnvScope('_global');
     const projectEnv = stateService.getCustomEnvScope(targetProjectId);

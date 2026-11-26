@@ -30,7 +30,6 @@ import { projectResourceNamespace } from '../services/preview-slug.js';
 //   - 全程审计写 serverEventLogStore + cds-events bus
 
 import { Router } from 'express';
-import nodeFs from 'node:fs';
 import nodePath from 'node:path';
 import type { StateService } from '../services/state.js';
 import type { InfraService, IShellExecutor } from '../types.js';
@@ -41,7 +40,7 @@ import {infraStoragePlan,stableStorageVolumeName} from '../services/deployment-s
 import {assertInfraStorageBoundary} from '../services/deployment-storage-boundary.js';
 import {recommendedVolumePathsFromCatalog} from '../services/infra-catalog.js';
 import {assertInfraAuthenticationConfigured} from '../services/infra-auth-policy.js';
-import { parseCdsCompose, discoverComposeFiles, resolveEnvTemplates, resolveCommandTemplate } from '../services/compose-parser.js';
+import { parseCdsCompose, discoverComposeFiles, readRepositoryComposeFile, resolveEnvTemplates, resolveCommandTemplate } from '../services/compose-parser.js';
 import { cdsEventsBus } from '../services/cds-events-bus.js';
 import type { ContainerService } from '../services/container.js';
 import type { ServerEventLogSink } from '../services/server-event-log-store.js';
@@ -204,10 +203,10 @@ export function createProjectInfraResyncRouter(deps: InfraResyncDeps): Router {
   // GET 列出可用 yaml 来源:① 项目根目录的 cds-compose.yml(默认)
   // ② 最近 3 条已审批 PendingImport ③ 上传(前端自己处理,这里不返回)
   router.get('/projects/:id/infra/resync/sources', (req, res) => {
-    const projectId = req.params.id;
+    const project = stateService.getProject(req.params.id);
+    const projectId = project?.id ?? req.params.id;
     const access = deps.assertProjectAccess(req, projectId);
     if (access) { res.status(access.status).json(access.body); return; }
-    const project = stateService.getProject(projectId);
     if (!project) { res.status(404).json({ error: '项目不存在' }); return; }
 
     // 来源 1:项目根目录
@@ -215,9 +214,11 @@ export function createProjectInfraResyncRouter(deps: InfraResyncDeps): Router {
     try {
       const repoRoot = stateService.getProjectSourceRoot(projectId, config.repoRoot);
       const files = repoRoot ? discoverComposeFiles(repoRoot) : [];
-      if (files.length > 0) {
-        const yaml = nodeFs.readFileSync(files[0], 'utf-8');
-        repoCompose = { found: true, fileName: nodePath.basename(files[0]), yaml };
+      for (const file of files) {
+        const yaml = readRepositoryComposeFile(file);
+        if (yaml === null) continue;
+        repoCompose = { found: true, fileName: nodePath.basename(file), yaml };
+        break;
       }
     } catch (err) {
       repoCompose = { found: false, error: (err as Error).message };

@@ -24,13 +24,12 @@
 //       走既有的 infra resync(POST .../infra/resync/execute),职责分离。
 
 import { Router } from 'express';
-import fs from 'node:fs';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import yaml from 'js-yaml';
 import type { StateService } from '../services/state.js';
 import type { BuildProfile, InfraService, PendingImport } from '../types.js';
-import { parseCdsCompose } from '../services/compose-parser.js';
+import { parseCdsCompose, readRepositoryComposeFile } from '../services/compose-parser.js';
 import { annotateComposeAuthority, validateComposePatch, classifyComposeField, escapeSeg } from '../services/config-authority.js';
 import { computeComposeDrift, type LiveComposeSnapshot } from '../services/compose-drift.js';
 import { cdsEventsBus } from '../services/cds-events-bus.js';
@@ -59,10 +58,9 @@ function readRepoComposeYaml(repoRoot: string): string | null {
     path.join(repoRoot, 'cds-compose.yaml'),
     path.join(repoRoot, 'cds-compose.yml'),
   ];
-  for (const p of candidates) {
-    try {
-      if (fs.existsSync(p)) return fs.readFileSync(p, 'utf8');
-    } catch { /* try next */ }
+  for (const file of candidates) {
+    const yaml = readRepositoryComposeFile(file);
+    if (yaml !== null) return yaml;
   }
   return null;
 }
@@ -247,10 +245,10 @@ export function createProjectComposeRouter(deps: ProjectComposeDeps): Router {
   //   - 密钥/占位符键出现在 repo → 报「应剥离」违规(偿还 D1)
   //   - CDS 运行时独占的 env 键 → 标注「CDS 权威,不回写 repo」
   router.post('/projects/:id/compose-drift-scan', (req, res) => {
-    const projectId = req.params.id;
+    const project = stateService.getProject(req.params.id);
+    const projectId = project?.id ?? req.params.id;
     const access = deps.assertProjectAccess(req, projectId);
     if (access) { res.status(access.status).json(access.body); return; }
-    const project = stateService.getProject(projectId);
     if (!project) { res.status(404).json({ error: '项目不存在' }); return; }
 
     const repoRoot = stateService.getProjectSourceRoot(projectId, deps.repoRootFallback);
