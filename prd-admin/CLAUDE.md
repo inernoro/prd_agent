@@ -13,8 +13,7 @@ pnpm test         # vitest
 
 | 组件 | 路径 | 数据源 |
 |------|------|--------|
-| `ModelTypePicker` | `components/model/ModelTypePicker.tsx` | `lib/appCallerUtils.ts → MODEL_TYPE_DEFINITIONS` |
-| `ModelTypeFilterBar` | `components/model/ModelTypePicker.tsx` | 同上 |
+| `ModelTypePicker` / `ModelTypeFilterBar` | `components/model/ModelTypePicker.tsx` | `lib/appCallerUtils.ts → MODEL_TYPE_DEFINITIONS` |
 | `UserSearchSelect` | `components/UserSearchSelect.tsx` | `getUsers()` API（自动获取）或外部传入 `users` |
 | `useSseStream` | `lib/useSseStream.ts` | 通用 SSE 流式 hook（连接管理、认证、状态追踪） |
 | `ListDisplayOptions` / `SegmentPills` / `ToolbarPopover` | `components/design/` | 网页创作与海鲜市场共用显示面板、分段选项和锚定入口；页面传入业务选项，附加筛选通过 children 扩展，避免各页另写样式 |
