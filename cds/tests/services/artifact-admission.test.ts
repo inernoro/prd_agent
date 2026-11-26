@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { configureImageCacheGovernance, ImageCacheGovernance, ImageCacheBudgetError } from '../../src/services/image-cache-governance.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import { admittedArtifactProfile, inspectDeploymentArtifacts } from '../../src/services/artifact-admission.js';
+import { ArtifactVerificationAttempt, readArtifactVerificationProbe } from '../../src/services/artifact-verification-probe.js';
 import type { BuildProfile } from '../../src/types.js';
 
 const target = 'b'.repeat(40);
@@ -124,14 +125,29 @@ describe('完整预构建产物准入', () => {
     expired = false;
     prepare.mockClear();
     execute.mockClear();
+    const measurement = new ArtifactVerificationAttempt(true);
     const retried = await inspectDeploymentArtifacts(shell, [profile('api'), web], target, () => {}, {
-      remainingMs, retry: { profileId: first.profileIds?.[0] },
+      remainingMs, retry: { profileId: first.profileIds?.[0] }, measurement,
     });
     expect(prepare.mock.calls.map(([ref]) => ref)).toEqual([web.dockerImage, image]);
     expect(execute.mock.calls.map(([, ref]) => ref)).toEqual([web.dockerImage]);
+    expect(measurement.snapshot()).toMatchObject({ pullRequests: 1, pullsSucceeded: 1, reusedImages: 1, lastStep: 'compare' });
     expect(retried).toMatchObject({ state: 'ready', artifacts: [
       { profileIds: ['web'], image: webDigest, revision: target }, { profileIds: ['api'], image: digest, revision: target },
     ] });
+  });
+
+  it('只接收远端探针的有界数值与已识别阶段和原因', () => {
+    expect(readArtifactVerificationProbe({
+      pullRequests: 2, pullsSucceeded: 1, reusedImages: 1,
+      lastStep: 'receipt', signals: ['private diagnostic', 'receipt-unconfirmed', 'receipt-unconfirmed'],
+      stepsMs: { pull: 120, receipt: -1, daemon: 4_000_000, command: 'private output' },
+      token: 'private token',
+    })).toEqual({
+      pullRequests: 2, pullsSucceeded: 1, reusedImages: 1, stepsMs: { pull: 120 },
+      lastStep: 'receipt', signals: ['receipt-unconfirmed'],
+    });
+    expect(readArtifactVerificationProbe({ pullRequests: 1, pullsSucceeded: 2, reusedImages: 0, stepsMs: {} })).toBeUndefined();
   });
 
   it('全量部署已预检的固定镜像使用只读通道复核内容，不会在并发启动时再抢账本', async () => {

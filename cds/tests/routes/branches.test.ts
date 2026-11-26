@@ -413,6 +413,7 @@ describe('Branch Routes', () => {
   });
 
   afterEach(async () => {
+    vi.unstubAllEnvs();
     await flushAllJsonStateStores();
     delete process.env.CDS_DELETE_STATE_FLUSH_TIMEOUT_MS;
     delete process.env.CDS_BRANCHES_SLOW_MS;
@@ -5282,7 +5283,8 @@ describe('Branch Routes', () => {
       } finally { github.mockRestore(); }
     });
 
-    it('最后一个必需产物缺失时保留旧入口与孤儿服务，不初始化数据库或准备源码，原任务持久等待', async () => {
+    it.each(['0', '1'])('最后一个必需产物缺失时保留旧入口与原等待，监控开关=%s', async (monitor) => {
+      vi.stubEnv('CDS_ARTIFACT_VERIFICATION_MONITOR', monitor);
       const target = 'b'.repeat(40); const imageId = `sha256:${'c'.repeat(64)}`;
       for (const role of ['api', 'web']) await request(server, 'POST', '/api/build-profiles', { id: role, name: role,
         dockerImage: `ghcr.io/owned/${role}:sha-${target}`, workDir: '.', command: '', containerPort: 3000, prebuiltImage: true });
@@ -5313,6 +5315,15 @@ describe('Branch Routes', () => {
       expect(branchOperationCoordinator.getArtifactWaiters()[0]).toMatchObject({ pending: { operationId: run.operationId, generation: run.operationGeneration },
         input: { targetCommitSha: target, artifactAdmission: { state: 'waiting', reason: 'missing', profileIds: ['web'] } } });
       expect(run.events.some(event => event.detail?.reason === 'missing')).toBe(true);
+      const observations = operationEvents.filter(event => event.source === 'artifact-verification');
+      if (monitor === '0') expect(observations).toEqual([]);
+      else expect(observations).toContainEqual(expect.objectContaining({
+        action: 'artifact-verification.attempt', branchId: id, commitSha: target, operationId: run.operationId,
+        details: expect.objectContaining({
+          runId: run.id, outcome: 'waiting', reason: 'missing', requiredProfiles: 2, executorId: 'local',
+          pullRequests: 2, pullsSucceeded: 1, reusedImages: 0, lastStep: 'pull',
+        }),
+      }));
       mock.addResponsePatternFirst(/docker pull/, () => ({ stdout: 'now published', stderr: '', exitCode: 0 }));
       const { refreshArtifactWaiters } = await import('../../src/services/artifact-admission-wait.js');
       const [pending] = await refreshArtifactWaiters({ coordinator: branchOperationCoordinator, containerService, getBranch: id => stateService.getBranch(id), recheckMs: 0 });

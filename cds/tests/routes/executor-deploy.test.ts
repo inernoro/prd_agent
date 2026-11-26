@@ -212,6 +212,7 @@ describe('Executor /exec/deploy', () => {
   });
 
   afterEach(async () => {
+    vi.unstubAllEnvs();
     await flushAllJsonStateStores();
     await new Promise<void>((resolve) => server.close(() => resolve()));
     if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
@@ -427,9 +428,12 @@ describe('Executor /exec/deploy', () => {
     setBuildGateHostLoadProvider(() => ({ cores: 1, load1: 2 }));
     try {
       if (mode === 'preflight') {
-        const result = await artifactPost({ profiles, commitSha: target, remainingMs: 120_000,
+        vi.stubEnv('CDS_ARTIFACT_VERIFICATION_MONITOR', '1');
+        const result = await artifactPost({ profiles, commitSha: target, remainingMs: 120_000, measure: true,
           owner: { branchId, branchName: 'main', projectId } });
-        expect(result.status).toBe(200); expect(result.body).toMatchObject({ state: 'ready', targetCommitSha: target });
+        expect(result.status).toBe(200); expect(result.body).toMatchObject({ state: 'ready', targetCommitSha: target,
+          probe: { pullRequests: 2, pullsSucceeded: 2, reusedImages: 0, lastStep: 'compare' },
+        });
         expect(result.body.artifacts.flatMap((artifact: { profileIds: string[] }) => artifact.profileIds)).toEqual(['api', 'web']);
         expect(stateService.getBranch(branchId)).toBeUndefined();
       } else {

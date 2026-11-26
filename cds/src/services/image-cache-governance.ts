@@ -14,6 +14,7 @@ import type { ServerEventLogSink } from './server-event-log-store.js';
 import { resumedReclaimExecution, recordReclaimExecution, type ReclaimExecutionJournal } from './reclaim-execution-journal.js';
 
 export class ImageCacheBudgetError extends Error {}
+export class ImageCachePullSlotLimitError extends Error {}
 const IMAGE_CACHE_REQUEST_TIMEOUT_MS = 30_000;
 const IMAGE_CACHE_LOCK_RETRY_MS = 150;
 const NATIVE_PULL_LIMIT_MS = 90_000;
@@ -104,6 +105,9 @@ export class ImageCacheGovernance {
       if (wait > 0) await delay(wait);
     }
     if (result && result.exitCode !== 0 && result.stderr.includes('ValueError: host-image-cache-budget-exceeded')) throw new ImageCacheBudgetError('宿主镜像总量预算不足，等待回收或容量调整。');
+    if (result && result.exitCode !== 0 && result.stderr.includes('ValueError: unsettled-image-pull-budget-reached')) {
+      throw new ImageCachePullSlotLimitError('宿主未结清拉取笔数达到上限。');
+    }
     if (result?.exitCode !== 0 || result.stdout.length > 4 * 1024 * 1024) throw new Error('镜像总量预算、对象身份或引用未确认，未允许新的大批量拉取或删除。');
     try { return JSON.parse(result.stdout); } catch { throw new Error('镜像盘点不完整，不能判断零占用。'); }
   }

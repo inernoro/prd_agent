@@ -11,6 +11,7 @@ import { worktreePathActivity } from '../services/worktree-path-activity.js';
 import type { CdsConfig, IShellExecutor, BranchEntry, OperationLog, OperationLogEvent } from '../types.js';
 import { topoSortLayers } from '../services/topo-sort.js';
 import { admittedArtifactProfile, artifactInspectionContext, type ArtifactAdmission } from '../services/artifact-admission.js';
+import { ArtifactVerificationAttempt, artifactVerificationMonitorEnabled } from '../services/artifact-verification-probe.js';
 import { componentInputComparator } from '../services/prebuilt-reuse.js';
 import { BranchOperationCoordinator, BranchOperationSupersededError, type BranchOperationTrigger } from '../services/branch-operation-coordinator.js';
 import { normalizeProjectProfileDependencies } from '../services/project-profile-dependencies.js';
@@ -90,7 +91,7 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
 
   // 只核验产物，不创建worktree、容器或修改项目/分支状态；使用本执行器daemon及registry访问。
   router.post('/artifact-preflight', async (req, res) => {
-    const { profiles, commitSha, owner, remainingMs, retry } = req.body || {};
+    const { profiles, commitSha, owner, remainingMs, retry, measure } = req.body || {};
     if (!Array.isArray(profiles) || profiles.length > 256 || typeof commitSha !== 'string' || !/^[0-9a-f]{40}$/i.test(commitSha)
       || !profiles.every(profile => profile && typeof profile.id === 'string' && profile.id.length <= 256
         && typeof profile.dockerImage === 'string' && profile.dockerImage.length <= 4096)) {
@@ -110,13 +111,14 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
       assertCurrent();
       if (owner) preparation = preparations.beginDeploymentPreparation({ branchId: owner.branchId, projectId: owner.projectId,
         kind: 'deploy', trigger: 'system', commitSha, commitPinned: true, source: 'executor.artifact-preflight' });
-      const context = artifactInspectionContext(shell, qualification.worktree, config.repoRoot, assertCurrent, owner ? remainingMs : 120_000);
+      const measurement = owner && measure === true && artifactVerificationMonitorEnabled() ? new ArtifactVerificationAttempt() : undefined;
+      const context = artifactInspectionContext(shell, qualification.worktree, config.repoRoot, assertCurrent, owner ? remainingMs : 120_000, measurement);
       const retryContext = owner && retry && typeof retry === 'object' && !Array.isArray(retry)
         ? { profileId: typeof retry.profileId === 'string' && retry.profileId.length <= 256 ? retry.profileId : undefined } : undefined;
       const result = await containerService.inspectDeploymentArtifacts(profiles as BuildProfile[], commitSha, assertCurrent,
         { ...context, retry: retryContext });
       context.remainingMs();
-      res.json(result);
+      res.json(measurement ? { ...result, probe: measurement.snapshot() } : result);
     } catch {
       res.status(503).json({ error: '产物核验暂不可用，尚未开始部署' });
     } finally { preparation?.release(); res.off('close', onClose); }
