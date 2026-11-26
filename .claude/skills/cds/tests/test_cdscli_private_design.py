@@ -34,9 +34,11 @@ class PrivatePublishCliTest(unittest.TestCase):
         self.run = {'id': 'RUN-fixture', 'version': 9, 'commit': 'a' * 40, 'pullRequest': 42, 'cells': []}
         self.returned_slot = None
         self.returned_record_id = None
+        self.handoff_response_version = None
         self.can_record = True
         self.can_recheck = False
         self.program_receipt = {}
+        self.handoff = {'status': 'failed', 'cases': [{'ruleIds': ['A-01'], 'code': 'expectation', 'step': 2, 'owner': 'design'}]}
         self.program_receipt_project = PROJECT
         fixture = self
 
@@ -59,7 +61,7 @@ class PrivatePublishCliTest(unittest.TestCase):
                 self.respond(200, {'projectId': PROJECT, 'permissions': {'write': True, 'visual': fixture.can_record,
                                                                         'programRecheck': fixture.can_recheck},
                                    'frameworks': [], 'designs': [{'projectId': PROJECT, 'id': DESIGN,
-                                   'versions': [{'version': 9, 'title': 'Fixture'}], 'runs': [fixture.run]}]})
+                                   'versions': [{'version': 9, 'title': 'Fixture', 'handoff': fixture.handoff}], 'runs': [fixture.run]}]})
 
             def do_POST(self):
                 target = urlsplit(self.path)
@@ -77,6 +79,8 @@ class PrivatePublishCliTest(unittest.TestCase):
                     result = {field: payload[field] for field in ('type', 'designId')}
                     if action in ('enable', 'disable'):
                         result.update(version=payload['version'], id=fixture.returned_record_id or payload['method'])
+                    elif action == 'check':
+                        result.update(version=fixture.handoff_response_version or payload['version'])
                     else:
                         result.update(runId=payload['runId'], version=fixture.run['version'])
                     if action == 'visual':
@@ -179,6 +183,23 @@ class PrivatePublishCliTest(unittest.TestCase):
             found = {item.filename: archive.read(item) for item in archive.infolist() if not item.is_dir()}
         self.assertEqual(found, self.files)
         self.assertTrue(any('archive' in command for command in self.git_ops))
+
+    def test_handoff_reads_and_retries_only_the_fixed_version(self):
+        code, output, error = self.invoke('handoff', DESIGN, '--version', '9')
+        self.assertEqual(code, 0, output or error)
+        self.assertEqual(json.loads(output)['data'], {'projectId': PROJECT, 'designId': DESIGN, 'version': 9, 'handoff': self.handoff})
+        self.assertEqual(self.writes, [])
+        for reused in (False, True):
+            code, output, error = self.invoke('handoff', DESIGN, '--version', '9', '--run', '--request-id', 'fixture-handoff')
+            self.assertEqual(code, 0, output or error)
+            self.assertEqual(json.loads(output)['data']['reused'], reused)
+        self.assertEqual(self.writes[0], self.writes[1])
+        self.assertEqual(json.loads(self.writes[0][-1]), {'type': 'handoff.check',
+            'designId': DESIGN, 'version': 9, 'requestId': 'fixture-handoff'})
+        self.handoff_response_version = 10
+        code, output, error = self.invoke('handoff', DESIGN, '--version', '9', '--run')
+        self.assertNotEqual(code, 0)
+        self.assertIn('不同稿件或版本', output + error)
 
     def test_private_directory_revision_keeps_local_bytes_and_replays_original_id(self):
         self.check_receipts('--private', '--request-id', 'private-cli-fixture', mode='private')

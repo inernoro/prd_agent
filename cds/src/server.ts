@@ -69,7 +69,7 @@ import { rejectPlanning } from './services/engineering-planning-input.js';
 import { createDesignWorkspaceRouter, normalizedDesignPath } from './routes/design-workspace.js';
 import { DesignWorkspaceService, type DesignWorkspaceCommit } from './services/design-workspace.js';
 import { createDesignFrameworkBrowser, createDesignReferenceBrowser } from './services/design-framework-browser.js';
-import { createDesignCoverContainer } from './services/design-cover-container.js';
+import { createDesignCoverContainer, createDesignHandoffContainer, createDesignReferenceContainer } from './services/design-cover-container.js';
 import { computeCdsPrebuiltImageRef } from './services/cds-prebuilt.js';
 import { createDesignAcceptanceBrowser } from './services/design-acceptance-browser.js';
 import { createDesignPreviewBuild } from './services/design-preview-build.js';
@@ -5766,22 +5766,24 @@ export function createServer(deps: ServerDeps): express.Express {
     ? new MongoProjectRevisionStore<DesignWorkspaceCommit>(planningMongoUri, process.env.CDS_MONGO_DB || 'cds_state_db', 'cds_design_workspace_commits')
     : new FileProjectRevisionStore<DesignWorkspaceCommit>(path.join(
       path.dirname(deps.stateFile ?? path.join(deps.config.repoRoot, '.cds', 'state.json')), 'design-workspace'));
+  const isolatedDesignBrowser = !isPreviewInstance() && clusterIdentity.getConfig()?.role !== 'member'
+    && fs.existsSync(path.join(deps.config.repoRoot, 'cds', 'web', 'dist', '.build-sha'));
+  const resolveDesignBrowserImage = async () => {
+    const cwd = deps.config.repoRoot;
+    const sha = await fs.promises.readFile(path.join(cwd, 'cds', 'web', 'dist', '.build-sha'), 'utf8').catch(() => '');
+    if (!sha || deps.stateService.getActiveSelfUpdate()) return undefined;
+    const origin = await deps.shell.exec('git remote get-url origin', { cwd, timeout: 3000 });
+    const image = origin.exitCode === 0 && computeCdsPrebuiltImageRef(parseGitHubRepoFullName(origin.stdout), sha);
+    return image ? image.replace('/cds-dist:', '/cds-design-cover:') : undefined;
+  };
   designWorkspace = new DesignWorkspaceService(designStore, {
     publicBaseUrl,
     approvedPlanFor: (projectId, planId) => planning.approvedDesignRequirement(projectId, planId),
     frameworkProbe: createDesignFrameworkBrowser(process.env.CDS_DESIGN_BROWSER_EXECUTABLE),
-    referenceCapture: createDesignReferenceBrowser(process.env.CDS_DESIGN_BROWSER_EXECUTABLE),
-    ...(!isPreviewInstance() && clusterIdentity.getConfig()?.role !== 'member'
-      && fs.existsSync(path.join(deps.config.repoRoot, 'cds', 'web', 'dist', '.build-sha')) ? {
-      captureCover: createDesignCoverContainer(deps.shell, async () => {
-        const cwd = deps.config.repoRoot;
-        const sha = await fs.promises.readFile(path.join(cwd, 'cds', 'web', 'dist', '.build-sha'), 'utf8').catch(() => '');
-        if (!sha || deps.stateService.getActiveSelfUpdate()) return undefined;
-        const origin = await deps.shell.exec('git remote get-url origin', { cwd, timeout: 3000 });
-        const image = origin.exitCode === 0 && computeCdsPrebuiltImageRef(parseGitHubRepoFullName(origin.stdout), sha);
-        return image ? image.replace('/cds-dist:', '/cds-design-cover:') : undefined;
-      }),
-    } : {}),
+    referenceCapture: isolatedDesignBrowser ? createDesignReferenceContainer(deps.shell, resolveDesignBrowserImage)
+      : createDesignReferenceBrowser(process.env.CDS_DESIGN_BROWSER_EXECUTABLE),
+    handoff: isolatedDesignBrowser ? { check: createDesignHandoffContainer(deps.shell, resolveDesignBrowserImage) } : {},
+    ...(isolatedDesignBrowser ? { captureCover: createDesignCoverContainer(deps.shell, resolveDesignBrowserImage) } : {}),
     captureAcceptance: createDesignAcceptanceBrowser(path.join(deps.config.repoRoot, 'cds', 'web', 'dist'),
       process.env.CDS_DESIGN_BROWSER_EXECUTABLE,
       createDesignPreviewBuild(async ({ projectId, commit, preview }) => {

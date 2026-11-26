@@ -6,6 +6,7 @@ import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import {
   designFeedbackCategories, designSlots, type DesignFeedbackAttachment, type DesignSlot, type DesignDeliveryFile, type DesignEntry, type DesignFeedback, type DesignVersion, type DesignWorkspace,
 } from '../../../../src/shared/design-workspace';
+import { designHandoffStatusNames } from '../../../../src/shared/design-handoff';
 import { feedbackSummary } from '../../../../src/shared/design-feedback';
 import { usePlanningRead } from '../engineering-planning/planning-ui';
 import { ReadableNotes } from './DesignMarkdown';
@@ -22,7 +23,7 @@ const feedbackStates: Record<DesignFeedback['status'], string> = { open: '待回
 type FileChunk = { artifactId: string; path: string; sha256: string; offset: number; nextOffset: number | null; text: string };
 type OpenScreen = (version: number, screenId: string, from: string) => void;
 type Permissions = DesignWorkspace['permissions'];
-type Part = 'feedback' | 'files';
+type Part = 'feedback' | 'files' | 'handoff';
 type Go = (fields: Record<string, string>) => void;
 
 const figuresOf = (row: DesignFeedback) => row.attachments ?? [];
@@ -426,6 +427,30 @@ function FilesPart({ entry, version, selected, onSelect, onFeedback, onBack, go 
   </div>;
 }
 
+function HandoffCheck({ entry, version, permissions, busy, command, openScreen }: {
+  entry: DesignEntry; version: DesignVersion; permissions: Permissions; busy: boolean; command: DesignCommand; openScreen: OpenScreen;
+}) {
+  const status = version.handoff!;
+  const issues = status.cases?.filter(item => item.status !== 'passed');
+  return <section className="dw-surface dw-dl-checks" aria-label="交接检查">
+    <h3 role="status">{designHandoffStatusNames[status.status]}</h3>
+    {status.status === 'missing-plan' && <p>请设计方在同一稿件续版，补上关键任务的操作和预期结果。</p>}
+    {status.status === 'pending' && <p>运行检查后，才能从本版开始实施。</p>}
+    {status.status === 'running' && <p>CDS 正在打开原型并执行操作。可以继续查看稿件。</p>}
+    {status.status === 'unavailable' && !status.cases && <p>请在主用 CDS 中重试检查。</p>}
+    {status.cases && <p>已通过 {status.cases.length - (issues?.length ?? 0)} / {status.cases.length} 个场景 · {designDate(status.checkedAt)}</p>}
+    {!!issues?.length && <ul>{issues.map(item => <li key={item.caseId}>
+      <button type="button" className="ep-link" onClick={() => openScreen(version.version, item.screenId, 'handoff-' + item.caseId)}>{item.title}</button>
+      {' · '}{item.ruleIds.join('、')}{item.step && item.step > 0 ? ` · 第 ${item.step} 步` : ''}
+      <p>{item.owner === 'cds' ? 'CDS' : '设计方'} · {item.message}</p>
+    </li>)}</ul>}
+    {permissions.handoffCheck && version.handoffPlan && (status.status === 'pending' || status.status === 'unavailable' || status.status === 'failed') &&
+      <button type="button" className="ep-button" disabled={busy} onClick={() => void command('handoff.check', {
+        designId: entry.id, version: version.version,
+      })}>{status.status === 'pending' ? '运行检查' : '重新检查'}</button>}
+  </section>;
+}
+
 export function DesignDeliveryPanel({ entry, version, permissions, busy, command, openScreen, openVersion }: {
   entry: DesignEntry; version: DesignVersion; permissions: Permissions; busy: boolean; command: DesignCommand;
   openScreen: OpenScreen; openVersion: (version: number) => void;
@@ -448,7 +473,7 @@ export function DesignDeliveryPanel({ entry, version, permissions, busy, command
   const anchorPrefix = '#dw-feedback-';
   const fb = params.get('fb') ?? (hash.startsWith(anchorPrefix) ? hash.slice(anchorPrefix.length) : '');
   const requestedPart = params.get('part');
-  const part: Part = fb || hash === '#dw-delivery-feedback' || requestedPart === 'feedback' ? 'feedback'
+  const part: Part = requestedPart === 'handoff' && version.handoff ? 'handoff' : fb || hash === '#dw-delivery-feedback' || requestedPart === 'feedback' ? 'feedback'
     : requestedPart === 'files' || params.has('file') ? 'files' : mine.length || !delivery ? 'feedback' : 'files';
   const fileParam = params.get('file') ?? '';
   /* 从资料「对这个文件提反馈」进来时带上文件路径，刷新或发给别人也保留 */
@@ -471,17 +496,21 @@ export function DesignDeliveryPanel({ entry, version, permissions, busy, command
   const creating = fb === 'new' && permissions.feedback;
   const draftScreen = version.screens.find(screen => screen.id === params.get('screen'))?.id;
   const tabs: [Part, string, number][] = [['feedback', '反馈', mine.length], ['files', '资料', 0]];
+  if (version.handoff && version.handoff.status !== 'legacy') tabs.push(['handoff', '交接检查',
+    version.handoff.cases?.filter(item => item.status !== 'passed').length ?? 0]);
   return <div className="dw-delivery-panel dw-dl">
     <div className="dw-dl-top">
       <nav className="dw-dl-parts" role="tablist" aria-label="交付内容">
         {tabs.map(([key, label, count]) => <button key={key} type="button" role="tab" aria-selected={part === key} data-part={key}
           data-todo={count > 0 || undefined} onClick={() => go({ part: key, fb: '', file: '', about: '' })}>
-          {label}{count > 0 && <small className="dw-tab-todo" title={`${count} 条反馈等你处理`}>{count}</small>}</button>)}
+          {label}{count > 0 && <small className="dw-tab-todo" title={key === 'handoff' ? `${count} 个场景待修正` : `${count} 条反馈等你处理`}>{count}</small>}</button>)}
       </nav>
       <DeliveryFacts entry={entry} version={version} />
     </div>
     <DeliveryNote version={version} />
     <div ref={panel} role="tabpanel" aria-label={tabs.find(item => item[0] === part)?.[1]} className="dw-dl-panel">
+      {part === 'handoff' && <HandoffCheck entry={entry} version={version} permissions={permissions} busy={busy}
+        command={command} openScreen={openScreen} />}
       {part === 'feedback' && <div id="dw-delivery-feedback" className="dw-dl-split" data-has-detail={Boolean(row || creating) || undefined}>
         <FeedbackList rows={rows} selected={creating ? undefined : selectedFb} filter={filter} setFilter={setFilter} entry={entry} permissions={permissions}
           onSelect={id => go({ part: 'feedback', fb: id, about: '' })} onCreate={() => go({ part: 'feedback', fb: 'new', about: '' })} />

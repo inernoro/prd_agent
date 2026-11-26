@@ -1,3 +1,5 @@
+import { designHandoffFailureMessages, designHandoffPolicy, type DesignHandoffCaseResult, type DesignHandoffReceipt, type DesignHandoffState } from '../shared/design-handoff.js';
+import type { DesignHandoffExecutor } from './design-handoff-browser.js';
 import { randomUUID } from 'node:crypto';
 import type {
   DesignCell, DesignComment, DesignEntry, DesignFramework, DesignFrameworkCheck, DesignMaterial, DesignReviewer, DesignReviewNotice, DesignRun, DesignSlot, DesignVersion, DesignWorkspace,
@@ -29,7 +31,7 @@ type Receipt = {
   projectId: string; reused: boolean;
   result: { type: string; designId?: string; version?: number; id?: string; frameworkId?: string; runId?: string;
     state?: DesignSharePreparation['state']; sourceCommit?: string; designKey?: string; planId?: string; artifactId?: string; screenId?: string; slot?: DesignSlot;
-    upgradeId?: string; implementedVersion?: number };
+    upgradeId?: string; implementedVersion?: number; previousCheck?: string | null };
 };
 type RequestReceipt = { key: string; fingerprint: string; result: Receipt['result'] };
 export type DesignWorkspaceCommit = {
@@ -41,6 +43,7 @@ export type DesignWorkspaceCommit = {
     implementation?: { version: number; screens: DesignImplementation[] };
     generatedRender?: { version: number; screenId: string; theme: 'light' | 'dark'; id: string; sha256: string };
     generatedCover?: { version: number; cover: NonNullable<DesignVersion['cover']> };
+    handoffCheck?: { version: number; receipt: DesignHandoffReceipt };
     upgrade?: DesignUpgrade; enabledMethods?: DesignEntry['enabledMethods'];
     methodSetting?: { version: number; method: DesignMethodId; setting: DesignMethodSetting }; knownIssue?: DesignKnownIssue };
   framework?: DesignFramework;
@@ -153,6 +156,10 @@ function apply(state: WorkspaceState, commit: DesignWorkspaceCommit) {
       const bindings = new Map(previous?.implementations?.[version]?.map(row => [row.screenId, row]));
       for (const screen of screens) bindings.set(screen.screenId, screen);
       design.implementations = { ...previous?.implementations, [version]: [...bindings.values()] };
+    }
+    if (update.handoffCheck) {
+      const { version, receipt } = update.handoffCheck;
+      design.versions = design.versions.map(row => row.version === version ? { ...row, handoff: receipt } : row);
     }
     if (update.generatedCover) {
       const { version, cover } = update.generatedCover;
@@ -285,6 +292,32 @@ function coverTarget(version: DesignVersion): DesignReferenceTarget | undefined 
 }
 
 const coverActor: DesignActor = { kind: 'agent', id: 'service:design-cover', label: 'CDS 封面服务', permissions: ['read', 'write'] };
+
+const handoffActor: DesignActor = { kind: 'agent', id: 'service:design-handoff', label: 'CDS 交接检查', permissions: ['read', 'write'] };
+
+function handoffBinding(version: DesignVersion) {
+  return designDigest(stableJson([designHandoffPolicy, version.sha256, version.prototypeSha256, version.handoffPlan]));
+}
+
+function currentHandoff(version: DesignVersion): DesignHandoffReceipt | undefined {
+  const result = version.handoff;
+  return result && 'policy' in result && result.policy === designHandoffPolicy && result.binding === handoffBinding(version)
+    ? result : undefined;
+}
+
+function readHandoffOutcome(observed: DesignHandoffCaseResult[] | undefined, caseId: string, steps: number): DesignHandoffCaseResult {
+  const outcomes = Array.isArray(observed) ? observed.filter(row => row?.caseId === caseId) : [];
+  const row = outcomes.length === 1 ? outcomes[0] : undefined;
+  if (row?.status === 'passed') return { caseId, status: 'passed' };
+  if (row?.status === 'failed' && Number.isInteger(row.step) && row.step >= 0 && row.step <= steps
+    && (row.code === 'control' || row.code === 'expectation' || row.code === 'entry')) {
+    return { caseId, status: 'failed', step: row.step, code: row.code };
+  }
+  if (row?.status === 'unavailable' && row.code === 'host-capability' && row.step && row.step <= steps) {
+    return { caseId, status: 'unavailable', step: row.step, code: row.code };
+  }
+  return { caseId, status: 'unavailable', code: 'runtime' };
+}
 
 function designRunSummary(run: DesignRun, includeCells: boolean): DesignRun {
   const { id, version, pullRequest, target, commit, createdAt, verdict, previewUrl, signed, upgradeId } = run;
@@ -419,6 +452,7 @@ export class DesignWorkspaceService {
     frameworkProbe?: DesignFrameworkProbe;
     referenceCapture?: DesignReferenceCapture;
     captureCover?: DesignCoverCapture;
+    handoff?: { check?: DesignHandoffExecutor };
     captureAcceptance?: DesignAcceptanceCapture;
     resolvePreview?: (projectId: string, pullRequest: number, commit?: string) => Promise<Preview | undefined>;
     resolveInstalled?: (projectId: string, commit?: string) => Promise<Preview | undefined>;
@@ -431,6 +465,103 @@ export class DesignWorkspaceService {
     publicBaseUrl?: string;
     now?: () => Date;
   } = {}) {}
+
+  private readonly handoffJobs = new Set<string>();
+  private handoffQueue = Promise.resolve();
+
+  private handoffKey(projectId: string, id: string, version: number) {
+    return JSON.stringify([projectId, id, version]);
+  }
+
+  private handoffStatus(projectId: string, entry: DesignEntry, version: DesignVersion): DesignHandoffState | undefined {
+    if (!this.deps.handoff || !version.screens.length) return undefined;
+    if (!version.handoffPlan && (entry.frozen === version.version || entry.freezes?.some(record => record.version === version.version))) {
+      return { status: 'legacy' };
+    }
+    if (this.handoffJobs.has(this.handoffKey(projectId, entry.id, version.version))) return { status: 'running' };
+    const receipt = currentHandoff(version);
+    if (receipt) return receipt;
+    if (!version.handoffPlan) return { status: 'missing-plan' };
+    return { status: this.deps.handoff.check ? 'pending' : 'unavailable' };
+  }
+
+  private requireHandoff(projectId: string, entry: DesignEntry, number: number) {
+    const version = versionOf(entry, number);
+    // Baselines established with the previous policy keep their historical eligibility.
+    if (entry.frozen === number || (!version.handoffPlan && entry.freezes?.some(record => record.version === number))) return;
+    const status = this.handoffStatus(projectId, entry, version)?.status;
+    if (status && status !== 'passed' && status !== 'legacy') rejectPlanning(409, 'design_handoff_required',
+      status === 'missing-plan' ? '交接检查缺少场景。请设计方在同一稿件发布补充交接场景的版本。'
+        : '本版交接检查尚未通过。请查看交付页的检查结果并完成复验。');
+  }
+
+  private queueHandoff(projectId: string, id: string, version: DesignVersion, checkId: string = randomUUID()): boolean {
+    const execute = this.deps.handoff?.check;
+    const plan = version.handoffPlan;
+    if (!execute || !plan) return false;
+    const key = this.handoffKey(projectId, id, version.version);
+    if (this.handoffJobs.has(key) || currentHandoff(version)?.status === 'passed') return true;
+    if (this.handoffJobs.size >= 8) return false;
+    this.handoffJobs.add(key);
+    this.handoffQueue = this.handoffQueue.then(async () => {
+      const binding = handoffBinding(version);
+      const active = versionOf((await this.load(projectId)).designs.get(id) ?? missing('该稿件不存在'), version.version);
+      if (handoffBinding(active) !== binding || currentHandoff(active)?.status === 'passed') return;
+      const previous = currentHandoff(active);
+      const before = new Map(previous?.cases.filter(row => row.status === 'passed').map(row => [row.caseId, row]));
+      const remaining = plan.cases.filter(test => !before.has(test.id));
+      let observed: DesignHandoffCaseResult[] | undefined;
+      try {
+        const { bytes } = await this.artifact(projectId, handoffActor, version.prototypeId);
+        if (version.prototypeSha256 && designDigest(bytes) === version.prototypeSha256) {
+          observed = await execute({ prototype: bytes, screens: version.screens, cases: remaining });
+        }
+      } catch { /* The platform failure is recorded as a retryable receipt below. */ }
+      const cases = plan.cases.map(test => {
+        const previous = before.get(test.id);
+        if (previous) return previous;
+        const result = readHandoffOutcome(observed, test.id, test.steps.length);
+        return { ...result, title: test.title, screenId: test.screenId, theme: test.theme, ruleIds: test.ruleIds,
+          ...(result.code ? { owner: result.status === 'failed' ? 'design' as const : 'cds' as const,
+            message: designHandoffFailureMessages[result.code] } : {}) };
+      });
+      const receipt: DesignHandoffReceipt = { id: checkId, policy: designHandoffPolicy, binding, cases,
+        status: cases.some(row => row.status === 'failed') ? 'failed'
+          : cases.some(row => row.status === 'unavailable') ? 'unavailable' : 'passed',
+        checkedAt: (this.deps.now ?? (() => new Date()))().toISOString() };
+      await this.mutate(projectId, handoffActor, 'handoff-' + checkId, { id, version: version.version, receipt }, ({ state }) => {
+        const current = versionOf(state.designs.get(id) ?? missing('该稿件不存在'), version.version);
+        const result = { type: 'handoff.result', designId: id, version: version.version };
+        if (handoffBinding(current) !== binding || currentHandoff(current)?.id !== previous?.id) return { result, changes: {} };
+        return { result, changes: { design: { id, handoffCheck: { version: version.version, receipt } } } };
+      });
+    }).catch(() => console.warn('[design-handoff] Could not store the handoff receipt')).finally(() => this.handoffJobs.delete(key));
+    return true;
+  }
+
+  private async requestHandoff(projectId: string, actor: DesignActor, requestId: string, input: Record<string, unknown>) {
+    designRecord(input, '交接检查请求', ['type', 'requestId', 'designId', 'version']);
+    const id = designId(input.designId, '稿件编号');
+    const state = await this.load(projectId);
+    const entry = state.designs.get(id) ?? missing('该稿件不存在');
+    const version = versionOf(entry, input.version);
+    if (actor.gitPublishOnly) authored(actor, version.publisher);
+    write(actor);
+    if (!version.handoffPlan) return conflict('请在同一稿件发布含交接场景的版本，再运行检查');
+    if (!this.deps.handoff?.check) return rejectPlanning(503, 'design_handoff_unavailable', '交接检查环境暂不可用，请在具备隔离预览的 CDS 实例重试。');
+    const receipt = await this.mutate(projectId, actor, requestId, input, ({ state: latest }) => {
+      const current = versionOf(latest.designs.get(id) ?? missing('该稿件不存在'), version.version);
+      return { result: { type: 'handoff.check', designId: id, version: version.version, id: randomUUID(),
+        previousCheck: currentHandoff(current)?.id ?? null }, changes: {} };
+    });
+    const latest = versionOf((await this.load(projectId)).designs.get(id) ?? missing('该稿件不存在'), version.version);
+    // Another request may already have completed this version. If admission failed, the same request can still queue it.
+    if (receipt.result.previousCheck === (currentHandoff(latest)?.id ?? null) &&
+      !this.queueHandoff(projectId, id, latest, receipt.result.id)) {
+      return rejectPlanning(503, 'design_handoff_busy', '交接检查正在排队，请沿用原请求编号重试。');
+    }
+    return receipt;
+  }
 
   private async load(projectId: string): Promise<WorkspaceState> {
     const base = this.latest.get(projectId);
@@ -514,7 +645,8 @@ export class DesignWorkspaceService {
         versions: await Promise.all(entry.versions.map(async version => {
           if (expanded && !expanded.has(version.version)) return designVersionSummary(version, false);
           const applied = implementationVersion(entry, version);
-          return expanded ? { ...applied, ...await this.readPresentation(projectId, state, applied) } : applied;
+          const handoff = this.handoffStatus(projectId, entry, applied);
+          return { ...applied, ...(expanded ? await this.readPresentation(projectId, state, applied) : {}), ...(handoff ? { handoff } : {}) };
         })),
         runs: expanded ? entry.runs.map(run => expanded.has(run.version) ? run : designRunSummary(run, true)) : entry.runs };
     }));
@@ -530,6 +662,7 @@ export class DesignWorkspaceService {
       ...(actor.kind === 'human' ? { viewer: structuredClone(state.viewers.get(actor.id) ?? { designs: {}, briefs: {} }) } : {}),
       permissions: { write: actor.permissions.includes('write'), feedback: canLeaveFeedback(actor), visual: !actor.gitPublishOnly && actor.permissions.includes('write'), review: actor.kind === 'human' && actor.permissions.includes('approve'),
         frameworkPublish: actor.permissions.includes('write'),
+      ...(this.deps.handoff && actor.permissions.includes('write') ? { handoffCheck: true } : {}),
         sign: actor.kind === 'human' && actor.permissions.includes('write'),
         ...((actor.gitPublishOnly || actor.kind === 'human' && actor.permissions.includes('approve')) ? { programRecheck: true } : {}),
         ...(installed ? { installedAcceptance: true } : {}),
@@ -555,6 +688,10 @@ export class DesignWorkspaceService {
     else if (!this.deps.referenceCapture) state = 'unavailable';
     else if (wasRunning || this.referenceJobs.has(key)) state = 'running';
     else if (this.completedReferenceJobs.has(key)) state = 'incomplete';
+    else {
+      this.queueReferences(projectId, coverActor, id, versionNumber);
+      if (this.referenceJobs.has(key)) state = 'running';
+    }
     return { designId: id, version: versionNumber, total, completed, state, renders: structuredClone(renders) };
   }
 
@@ -597,6 +734,7 @@ export class DesignWorkspaceService {
     return {
       protocolVersion: 1, projectId, permissions: { write: canWrite, feedback: canLeaveFeedback(actor), frameworkPublish: canWrite },
       keyFormat: 'module/draft', intents: ['create', 'revise'],
+      ...(this.deps.handoff ? { handoffPolicy: designHandoffPolicy } : {}),
       requirements: visibleRequirements(state),
       ...(state.systems.size ? { systems: structuredClone([...state.systems.values()]) } : {}),
       designs: [...state.designs.values()].map(entry => {
@@ -604,6 +742,7 @@ export class DesignWorkspaceService {
         return { designId: entry.id, designKey: entry.designKey, title: latest.title, latestVersion: latest.version,
           sourceCommit: latest.sourceCommit, sourcePaths: registeredDesignPaths(entry),
           baselineVersion: entry.frozen, implementedVersion: entry.implementedVersion, upgrade: entry.upgrade,
+          handoffStatus: this.handoffStatus(projectId, entry, latest)?.status,
           versionGap: designVersionGap(entry.frozen, entry.implementedVersion),
           versionHistory: entry.versions.map(({ version, sourceCommit }) => ({ version, sourceCommit })),
           ...(entry.scope ? { scope: structuredClone(entry.scope) } : {}),
@@ -895,6 +1034,7 @@ export class DesignWorkspaceService {
           ...(loaded.videos ? { videos: loaded.videos.map(video => ({ ...video, artifactId: byPath.get(video.file)!.id })) } : {}),
           ...(loaded.risks ? { risks: loaded.risks } : {}),
           ...(frameworkCheck ? { frameworkCheck } : {}),
+          ...(loaded.handoffPlan ? { handoffPlan: loaded.handoffPlan } : {}),
           ...(loaded.renders.length ? { renders } : {}) };
         return { result: { type: 'package', designId: id, version: version.version },
           changes: { design: { id, version, reviewers, ...(scope ? { scope } : {}), ...(designKey && !existing?.designKey ? { designKey } : {}),
@@ -903,6 +1043,13 @@ export class DesignWorkspaceService {
       });
     if (receipt.result.designId && receipt.result.version) {
       this.queueReferences(projectId, actor, receipt.result.designId, receipt.result.version);
+      if (this.deps.handoff?.check && loaded.handoffPlan) {
+        const { designId: id, version } = receipt.result;
+        void this.load(projectId).then(state => {
+          const published = state.designs.get(id)?.versions.find(row => row.version === version);
+          if (published && !currentHandoff(published)) this.queueHandoff(projectId, id, published);
+        }).catch(() => console.warn('[design-handoff] Failed to queue a published draft'));
+      }
       if (this.deps.captureCover) {
         const { designId: id, version } = receipt.result;
         const queuePublishedCover = async () => {
@@ -1131,6 +1278,7 @@ export class DesignWorkspaceService {
     const input = designRecord(value, '设计命令');
     const type = planningText(input.type, '命令类型', 60);
     const requestId = designId(input.requestId, '请求编号');
+    if (type === 'handoff.check') return this.requestHandoff(projectId, actor, requestId, input);
     if (type === 'acceptance.capture' || type === 'acceptance.recheck') {
       return this.captureProgramAcceptance(type, input, projectId, actor, requestId);
     }
@@ -1196,6 +1344,7 @@ export class DesignWorkspaceService {
         if (entry.upgrade?.status === 'active' && entry.upgrade.targetVersion !== version) conflict('升级目标已锁定，请先完成签收或取消本次升级');
         if (entry.frozen === version) return { result: { ...result, version }, changes: {} };
         if (entry.versions.at(-1)!.version !== version && !reason) conflict('选择历史版本作为基线时，请说明回退或固定版本的理由');
+        this.requireHandoff(projectId, entry, version);
         return { result: { ...result, version }, changes: { design: { id, frozen: version,
           freeze: { version, at: context.now, by: actor.label, ...(reason ? { reason } : {}) }, reviewRequested: false } } };
       }
@@ -1254,6 +1403,7 @@ export class DesignWorkspaceService {
       return { result: { type, designId, version, upgradeId: active.id }, changes: {} };
     }
     if (version !== latest && version !== entry.frozen) conflict('锁定历史目标前，请先说明理由并设为实施基线');
+    this.requireHandoff(context.projectId, entry, version);
     const upgrade = newUpgrade(entry, version, context);
     return { result: { type, designId, version, upgradeId: upgrade.id }, changes: {
       design: { id: designId, upgrade, ...(entry.frozen === version ? {} : {

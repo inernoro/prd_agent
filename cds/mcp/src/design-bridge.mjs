@@ -61,6 +61,7 @@ const schemas = {
     z.object({ view: z.literal('run'), id, runId: id.optional() }).strict(),
     z.object({ view: z.literal('framework'), id, version }).strict(),
     z.object({ view: z.literal('delivery'), id, version }).strict(),
+    z.object({ view: z.literal('handoff'), id, version: positiveVersion }).strict(),
     z.object({ view: z.literal('feedback'), id, version }).strict(),
     z.object({ view: z.literal('file'), id, version: positiveVersion, path: z.string().min(1).max(400),
       offset: z.number().int().nonnegative().optional(), limit: z.number().int().min(1).max(16_000).optional() }).strict(),
@@ -81,6 +82,7 @@ const schemas = {
       decision: z.enum(['close', 'reopen']) }).strict(),
   ]),
   [acceptanceTool]: z.discriminatedUnion('type', [
+    z.object({ ...feedbackBase, type: z.literal('handoff.check'), version: positiveVersion }).strict(),
     z.object({ ...feedbackBase, type: z.literal('acceptance.capture'), runId: id, screenId: id, slot }).strict(),
     z.object({ ...feedbackBase, type: z.literal('acceptance.recheck'), runId: id, screenId: id, slot }).strict(),
     z.object({ ...acceptanceBase, type: z.literal('acceptance.visual'), screenId: id, slot,
@@ -137,9 +139,9 @@ const schemas = {
   }),
 };
 const descriptions = {
-  [readTool]: '用 intake 读取系统、模块、框架和已交给设计的原始需求、稿件标识、当前版本和权限。固定稿件或框架后，用 delivery 读交付资料、file 分段读原文、feedback 查处理记录。用 diff 固定两个版号查询 CDS 计算的画面、验收与文件净变化，调换顺序可查回退。稿件发布前可用 brief.reply 在当前需求下澄清。用 run 回读指定或最新验收运行。',
+  [readTool]: '用 intake 读取系统、模块、框架和已交给设计的原始需求、稿件标识、当前版本和权限。固定稿件或框架后，用 delivery 读交付资料、file 分段读原文、feedback 查处理记录。用 diff 固定两个版号查询 CDS 计算的画面、验收与文件净变化，调换顺序可查回退。稿件发布前可用 brief.reply 在当前需求下澄清。用 handoff 读取固定版本的交接检查。用 run 回读指定或最新验收运行。',
   [feedbackTool]: '稿件发布前用 brief.claim 认领需求，brief.reply 在原需求下澄清，brief.release 交回未出稿需求。在原稿登记实施反馈并回复，可以用 feedback.attach 提交当前工作区的私有 PNG。原反馈者或项目管理者核对处理结果。重试沿用 requestId。',
-  [acceptanceTool]: '先回读运行和提交。程序证据稿件用 acceptance.capture 同条件取证，稿件作者用 acceptance.recheck 独立重跑。旧稿沿用 visual、flow、smoke 和 regress 回填。coverage 关联维度风险与验收项，known.create 登记历史易错。重试沿用 requestId。',
+  [acceptanceTool]: '用 handoff.check 启动或重试固定版本的原型交接检查。实施时先回读运行和提交。程序证据稿件用 acceptance.capture 同条件取证，稿件作者用 acceptance.recheck 独立重跑。旧稿沿用 visual、flow、smoke 和 regress 回填。coverage 关联维度风险与验收项，known.create 登记历史易错。重试沿用 requestId。',
   [publishTool]: '先查询 intake。新稿或新模块用 intent=create、独立的 module/draft 标识和 Git 目录。同稿用 intent=revise、原 designId 和读到的 expectedVersion。续版权限或基线不清楚时先澄清。本地稿件用 sourceMode=private 进入项目私有归档。已获授权且已同步的稿件可以核验项目 Git。重试沿用 requestId 和相同内容。',
   [frameworkPublishTool]: '用当前项目的设计发布授权提交框架材料。先读 intake。同一框架沿用 frameworkId，首发 expectedVersion 为 0，续版填写 latestVersion。回执可回读固定版。新版本可预览与试用，项目采用版本由成员在框架页切换。重试沿用 requestId。',
 };
@@ -177,7 +179,7 @@ export function createDesignBridge(credentials, options = {}) {
       return tools.filter(tool => tool.name === readTool || (tool.name === publishTool && result.permissions.write)
         || (tool.name === frameworkPublishTool && result.permissions.write && result.permissions.frameworkPublish === true)
         || (tool.name === feedbackTool && result.permissions.feedback === true)
-        || (tool.name === acceptanceTool && (result.permissions.visual === true || result.permissions.programRecheck === true)));
+        || (tool.name === acceptanceTool && (result.permissions.visual === true || result.permissions.programRecheck === true || result.permissions.handoffCheck === true)));
     },
     async call(name, input = {}) {
       if (!Object.hasOwn(schemas, name)) throw new Error('未知 CDS 设计工具');
@@ -199,7 +201,7 @@ export function createDesignBridge(credentials, options = {}) {
           }
           return result;
         }
-        const readVersion = ['design', 'delivery', 'file'].includes(args.view);
+        const readVersion = ['design', 'delivery', 'file', 'handoff'].includes(args.view);
         const query = readVersion ? new URLSearchParams({ designId: args.id,
           ...(args.version === undefined ? {} : { version: args.version }) }) : undefined;
         const data = await workspace(query);
@@ -220,6 +222,12 @@ export function createDesignBridge(credentials, options = {}) {
         if (!item || !selected) {
           throw new Error(`请先通过 ${isFramework ? 'frameworks' : 'intake'} 查询当前项目，再核对编号和版本。无法唯一确定时，先确认本轮基线。`);
         }
+        if (args.view === 'handoff') {
+          if (!selected.handoff || !['legacy', 'missing-plan', 'pending', 'running', 'passed', 'failed', 'unavailable'].includes(selected.handoff.status)) {
+            throw new Error('请核对稿件版本及 CDS 交接能力');
+          }
+          return { projectId, designId: item.id, version: selected.version, handoff: selected.handoff };
+        }
         if (args.view === 'delivery') {
           const screens = selected.screens ?? [];
           const renders = selected.renders ?? {};
@@ -227,6 +235,7 @@ export function createDesignBridge(credentials, options = {}) {
             sourceCommit: selected.sourceCommit, sourcePath: selected.sourcePath, sourceVerification: selected.sourceVerification,
             ...(selected.goals ? { goals: selected.goals } : {}),
             ...(selected.demoData ? { demoData: selected.demoData } : {}),
+            ...(selected.handoff ? { handoff: selected.handoff } : {}),
             sha256: selected.sha256, screens, acceptance: selected.acceptance, acceptancePlan: selected.acceptancePlan, checks: selected.checks,
             ...(selected.demo ? { demo: selected.demo } : {}), ...(selected.videos ? { videos: selected.videos } : {}),
             ...(item.methodSettings?.[selected.version] ? { methodSettings: item.methodSettings[selected.version] } : {}),
@@ -278,6 +287,16 @@ export function createDesignBridge(credentials, options = {}) {
         return receipt;
       }
       if (name === acceptanceTool) {
+        if (args.type === 'handoff.check') {
+          const data = await workspace(new URLSearchParams({ designId: args.designId, version: args.version }));
+          if (!data.permissions.handoffCheck) throw new Error('请使用本项目设计发布或实施授权运行交接检查');
+          const receipt = await client.request('POST', path + '/commands', args);
+          if (receipt.projectId !== projectId || typeof receipt.reused !== 'boolean'
+            || receipt.result?.type !== args.type || receipt.result.designId !== args.designId || receipt.result.version !== args.version) {
+            throw new Error('CDS 返回了不同稿件或版本的检查回执');
+          }
+          return receipt;
+        }
         const data = await workspace();
         const programRecheck = args.type === 'acceptance.recheck';
         if (programRecheck ? data.permissions.programRecheck !== true && data.permissions.visual !== true : data.permissions.visual !== true) {

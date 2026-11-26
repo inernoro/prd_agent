@@ -7,7 +7,7 @@ import {
 import type { DesignCell, DesignEntry, DesignRun, DesignVersion } from '../../../../src/shared/design-workspace';
 import { cellNames, designArtifact, designPublisherLabel, ruleModes, slotNames } from './design-ui';
 
-export type AcceptanceCheck = 'overview' | DesignMethodId;
+export type AcceptanceCheck = 'overview' | 'rules' | DesignMethodId;
 export type MethodData = ReturnType<typeof designMethodsState>;
 export type Method = MethodData['methods'][number];
 const names: Record<DesignMethodStatus, string> = { passed: '通过', failed: '有问题', missing: '缺证据',
@@ -17,10 +17,12 @@ function MethodStatus({ status }: { status: DesignMethodStatus }) {
   return <span className="dw-ac-state" data-status={status}>{names[status]}</span>;
 }
 
-export function AcceptanceMethodTabs({ active, methods, overall, objective, go }: {
-  active: AcceptanceCheck; methods: MethodData['methods']; overall: DesignMethodStatus; objective?: boolean; go: (check: AcceptanceCheck) => void;
+export function AcceptanceMethodTabs({ active, methods, overall, objective, ruleCount, fallbackComparison, go }: {
+  active: AcceptanceCheck; methods: MethodData['methods']; overall: DesignMethodStatus; objective?: boolean; ruleCount: number; fallbackComparison?: boolean; go: (check: AcceptanceCheck) => void;
 }) {
-  const tabs = [{ id: 'overview' as const, name: '总览', status: overall, progress: undefined, setting: undefined }, ...methods];
+  const tabs = [{ id: 'overview' as const, name: '总览', status: overall, progress: undefined, setting: undefined },
+    ...(ruleCount ? [{ id: 'rules' as const, name: '全部验收项', status: overall, progress: undefined, setting: undefined }] : []),
+    ...(fallbackComparison ? [{ id: 'compare' as const, name: '对照图', status: 'notrun' as const, progress: undefined, setting: undefined }] : []), ...methods];
   return <div className="dw-ac-methods" role="tablist" aria-label="验收手段">
     {tabs.map(({ id, name, status, progress, setting }, index) => <button key={id} type="button" role="tab" data-check={id} id={`dw-ac-tab-${id}`}
       data-status={objective ? status : undefined}
@@ -38,7 +40,7 @@ export function AcceptanceMethodTabs({ active, methods, overall, objective, go }
       }}>
       {objective && status === 'disabled' ? <Lock className="dw-ac-lock" role="img" aria-label={setting?.enabled === false ? '已停用' : '未启用'} />
         : objective && status === 'passed' ? <CheckSquare className="dw-ac-done" role="img" aria-label="已完成" /> : null}
-      {name}{(!objective || (status !== 'disabled' && status !== 'passed')) && <span className="dw-ac-dot" data-status={status} role="img" aria-label={names[status]} />}
+      {name}{id === 'rules' ? <small className="dw-ac-count">{ruleCount}</small> : (!objective || (status !== 'disabled' && status !== 'passed')) && <span className="dw-ac-dot" data-status={status} role="img" aria-label={names[status]} />}
       {objective && progress && progress.done > 0 && progress.done < progress.total && status !== 'disabled' && status !== 'not_applicable'
         && <small className="dw-ac-count">{progress.done}/{progress.total}</small>}
     </button>)}

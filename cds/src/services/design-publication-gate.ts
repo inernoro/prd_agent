@@ -172,7 +172,7 @@ function validateHistory(input: GateInput, context: DesignPublicationGateContext
       || !integer(row.sourceFiles, 0) || sources?.files !== row.sourceFiles || !integer(sources.bytes, 0)
       || (patchSize !== undefined && (!row.files.includes(patchPath) || sources.bytes !== patchSize))
       || !validDelta(row.screens, summary.screens, deltaIds(old.screens, input.screens, ['name', 'route', 'viewport', 'entryActions']))
-      || !validDelta(row.acceptance, summary.acceptance, deltaIds(old.acceptance, input.acceptance, ['rule', 'expected', 'how', 'screenId', 'priority', 'slots']))) {
+      || !validDelta(row.acceptance, summary.acceptance, deltaIds(old.acceptance, input.acceptance, ['rule', 'expected', 'how', 'screenId', 'priority', 'slots', 'interaction']))) {
       rejectDesignGate('G-07', `V${old.version} 的差异摘要与实际稿件变化不符`);
     }
     if (old.delivery) {

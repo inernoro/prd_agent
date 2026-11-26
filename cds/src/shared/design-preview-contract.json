@@ -6,6 +6,7 @@
     "style-src 'unsafe-inline'",
     "img-src data: blob:",
     "font-src data:",
+    "media-src data: blob:",
     "base-uri 'none'",
     "form-action 'none'",
     "frame-ancestors 'self'"
