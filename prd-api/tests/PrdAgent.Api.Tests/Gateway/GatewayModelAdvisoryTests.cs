@@ -189,6 +189,7 @@ public sealed class GatewayModelAdvisoryTests
             var persisted = await states.Find(_ => true).SingleAsync();
             Assert.Equal("unknown", persisted["Status"].AsString);
             Assert.Equal(Model, persisted["ActualModel"].AsString);
+            Assert.Equal(persisted["LastAttemptAt"].ToUniversalTime().AddHours(1), persisted["NextCheckAt"].ToUniversalTime());
             Assert.False(await TapdModelAdvisoryWorker.IsCheckHealthyAsync(database, DateTime.UtcNow, config, default));
             Assert.Equal(1, await database.AdminNotifications.CountDocumentsAsync(_ => true));
         }

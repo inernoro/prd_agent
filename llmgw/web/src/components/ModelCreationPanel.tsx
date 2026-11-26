@@ -7,6 +7,10 @@ import { FormGrid, HelpPopover } from '@/components/PageShell';
 import { FIELD_INPUT, FIELD_LABEL, HINT_TEXT } from '@/lib/typography';
 
 const IMAGE_CAPABILITIES = ['image_generation', 'text2img', 'img2img', 'vision_generation'];
+const CATALOG_CAPABILITY_BY_MODEL_TYPE: Record<string, string> = {
+  generation: 'image_generation',
+  'video-gen': 'video_generation',
+};
 
 /** 同一个创建入口完成自定义命名、上游登记与首次绑定，不额外生成同型号公开模型。 */
 export function ModelCreationPanel({ models, exchanges, modelTypes, onCreated, onCancel }: {
@@ -44,8 +48,9 @@ export function ModelCreationPanel({ models, exchanges, modelTypes, onCreated, o
     return () => { current = false; };
   }, [mode, kind, sourceId]);
   const daily = catalog?.sourceId === sourceId ? catalog.data : undefined;
+  const catalogCapability = CATALOG_CAPABILITY_BY_MODEL_TYPE[modelType] ?? modelType;
   const suggested = daily?.status === 'fresh' ? daily.models.filter(item =>
-    item.suggestedCapabilities.includes(modelType === 'generation' ? 'image_generation' : modelType)).map(item => item.modelId) : [];
+    item.suggestedCapabilities.includes(catalogCapability)).map(item => item.modelId) : [];
   const exchange = kind === 'exchange' ? exchanges.find(item => item.id === sourceId) : undefined;
   const available = kind === 'platform' ? [...new Set([
     ...models.filter(item => item.platformId === sourceId).map(item => item.modelName),

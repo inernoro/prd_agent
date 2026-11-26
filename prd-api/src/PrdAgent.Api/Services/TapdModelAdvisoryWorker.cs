@@ -93,8 +93,8 @@ public sealed class TapdModelAdvisoryWorker(
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (Exception ex)
         {
-            update = update.Set("Status", "unknown").Set("LastQuerySucceeded", false);
-            logger.LogWarning("TAPD 淘汰检查或通知失败，保留上次路由配置。错误类型 {ErrorType}", ex.GetType().Name);
+            update = update.Set("NextCheckAt", now.AddHours(1)).Set("Status", "unknown").Set("LastQuerySucceeded", false);
+            logger.LogWarning("TAPD 淘汰检查失败，保留上次路由配置并在一小时后重试。错误类型 {ErrorType}", ex.GetType().Name);
         }
         await states.UpdateOneAsync(key & Filter.Eq("LeaseToken", token), update, cancellationToken: ct);
     }
