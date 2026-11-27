@@ -15,6 +15,7 @@ namespace PrdAgent.Api.Controllers.Api;
 public sealed partial class DesignArtifactsController
 {
     private const string BriefDelimiter = "\n<<<BRIEF>>>\n";
+    private const string BriefEndMarker = "\n<<<END>>>";
     private const int MaxBriefTurns = 20;
     private static readonly JsonSerializerOptions BriefJson = new(JsonSerializerDefaults.Web);
 
@@ -143,13 +144,7 @@ public sealed partial class DesignArtifactsController
                 }
             }
 
-            var output = buffer.ToString();
-            var separator = output.IndexOf(BriefDelimiter, StringComparison.Ordinal);
-            if (separator <= 0) throw new JsonException("Brief response delimiter missing");
-            var update = JsonSerializer.Deserialize<BriefModelUpdate>(output[(separator + BriefDelimiter.Length)..], BriefJson)
-                ?? throw new JsonException("Brief structured data missing");
-            var reply = output[..separator].Trim();
-            if (reply.Length == 0 || reply.Length > 2500) throw new JsonException("Invalid brief reply length");
+            var (reply, update) = ParseBriefReply(buffer.ToString());
             if (request.Mode == "message" && !wasReady && AllowsBriefStart(text, true))
                 reply = "还不能开始，请先说说这次想讲什么。";
             else
@@ -342,6 +337,22 @@ public sealed partial class DesignArtifactsController
         };
     }
 
+    internal static (string Reply, BriefModelUpdate Update) ParseBriefReply(string output)
+    {
+        var separator = output.IndexOf(BriefDelimiter, StringComparison.Ordinal);
+        if (separator <= 0) throw new JsonException("Brief response delimiter missing");
+        var reply = output[..separator].Trim();
+        if (reply.Length == 0 || reply.Length > 2500) throw new JsonException("Invalid brief reply length");
+
+        var payload = output[(separator + BriefDelimiter.Length)..].Trim();
+        // The model can append this terminator to an otherwise valid JSON object.
+        if (payload.EndsWith(BriefEndMarker, StringComparison.Ordinal))
+            payload = payload[..^BriefEndMarker.Length];
+        var update = JsonSerializer.Deserialize<BriefModelUpdate>(payload, BriefJson)
+            ?? throw new JsonException("Brief structured data missing");
+        return (reply, update);
+    }
+
     private static void ApplyBriefModelUpdate(QuickCreationBrief brief, BriefModelUpdate update, string mode, string text)
     {
         if (mode == "message")
@@ -407,7 +418,7 @@ public sealed partial class DesignArtifactsController
         }
     }
 
-    private sealed record BriefModelUpdate(string? Kind, string? Title, string? Manuscript, string? Audience, string? Duration,
+    internal sealed record BriefModelUpdate(string? Kind, string? Title, string? Manuscript, string? Audience, string? Duration,
         string? SelectedStyleId, List<string>? QuickReplies, List<QuickCreationStyleRecommendation>? Recommendations,
         bool StartRequested, List<QuickCreationScriptScene>? Scenes);
 }
