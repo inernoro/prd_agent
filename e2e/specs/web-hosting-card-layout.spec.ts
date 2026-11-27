@@ -5,6 +5,86 @@ import { createRequire } from 'node:module';
 // 布局与阅读回归使用静止背景；动态画布单独由三档演示用例验证。
 test.beforeEach(async ({ page }) => { await page.emulateMedia({ reducedMotion: 'reduce' }); });
 
+test('网页托管生成入口与 V8 手机输入框', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.addInitScript(() => {
+    localStorage.setItem('prd-admin-auth', JSON.stringify({ state: {
+      isAuthenticated: true, user: { userId: 'hosting-v8-qa', username: 'hosting-v8-qa', role: 'ADMIN' },
+      token: 'hosting-v8-qa-session', permissions: ['access', 'web-pages.read'], permissionsLoaded: true,
+      menuCatalog: [], menuCatalogLoaded: true,
+    }, version: 0 }));
+    Object.defineProperty(window, 'SpeechRecognition', { configurable: true, value: class {
+      onresult?: (event: unknown) => void;
+      onend?: () => void;
+      start() {
+        queueMicrotask(() => this.onresult?.({ resultIndex: 0, results: [{ isFinal: true, 0: { transcript: '使用温和的配色' } }] }));
+      }
+      stop() { this.onend?.(); }
+      abort() { this.onend?.(); }
+    } });
+  });
+  const base = '/api/quick-creation';
+  await page.route('**/api/**', async route => {
+    const path = new URL(route.request().url()).pathname;
+    let data: unknown = { items: [], total: 0, folders: [], tags: [], teams: [], fragments: [] };
+    if (path === '/api/authz/me') data = { effectivePermissions: ['access', 'web-pages.read'], menuCatalog: [], isRoot: false };
+    if (path === `${base}/templates`) data = {
+      items: [{ id: 'sketchnote', name: '视觉笔记', nameEn: 'Sketchnote', categoryId: 'presentation', line: '纸面笔记' }],
+      categories: [{ id: 'presentation', name: '知识讲解' }],
+      source: { name: 'Lemo-Opuscar by Lemomo (LemoLab)', url: 'https://example.invalid/', posterLicense: 'CC BY 4.0' },
+    };
+    if (path === `${base}/attachments/knowledge`) data = { id: 'a'.repeat(32), name: '需求评审的三个习惯.md', kind: 'knowledge', status: 'ready', meta: '示例稿件', chars: 193 };
+    await route.fulfill({ json: { success: true, data, error: null } });
+  });
+  await page.goto('/web-pages');
+  const toolbar = page.locator('.web-hosting-toolbar-actions');
+  await expect(toolbar.getByRole('button', { name: '合集', exact: true })).toHaveCount(0);
+  await expect(toolbar.getByRole('button', { name: '上传网页', exact: true })).toBeVisible();
+  await testInfo.attach('网页托管工具条', { body: await toolbar.screenshot(), contentType: 'image/png' });
+  await toolbar.getByRole('button', { name: '生成', exact: true }).click();
+  await expect(page.locator('[data-qc-ready=compose]')).toHaveAttribute('data-output', 'web');
+  await page.getByRole('button', { name: '返回网页托管', exact: true }).click();
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole('button', { name: '生成', exact: true }).click();
+  await expect(page.locator('[data-qc-ready=compose]')).toHaveAttribute('data-output', 'web');
+  const tools = page.locator('[data-qc=composer-tools]');
+  await expect(tools.getByRole('button')).toHaveCount(4);
+  await expect(tools.locator('[data-qc=brief-send]')).toBeDisabled();
+  await expect(page.locator('[data-qc=block-reason]')).toHaveCount(0);
+  await tools.locator('[data-qc=composer-plus]').click();
+  const plus = page.locator('[data-qc=plus-menu]');
+  await expect(plus.getByRole('button')).toHaveText(['上传稿件或图片', '从知识库选择']);
+  await testInfo.attach('手机添加资料', { body: await page.screenshot(), contentType: 'image/png' });
+  await plus.getByRole('button', { name: '从知识库选择' }).click();
+  const docs = page.getByRole('dialog', { name: '选择知识库稿件' });
+  await expect(docs).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(docs).toBeHidden();
+  await tools.locator('[data-qc=composer-plus]').click();
+  const [chooser] = await Promise.all([
+    page.waitForEvent('filechooser'),
+    plus.getByRole('button', { name: '上传稿件或图片' }).click(),
+  ]);
+  expect(chooser.isMultiple()).toBe(true);
+  await tools.locator('[data-qc=style-chip]').click();
+  const output = page.locator('[data-qc=style-popover]').getByRole('radiogroup', { name: '选择产出' });
+  await expect(output).toBeVisible();
+  await testInfo.attach('手机切换产出和风格', { body: await page.screenshot(), contentType: 'image/png' });
+  await output.getByRole('radio', { name: '视频', exact: true }).click();
+  await expect(tools.locator('[data-qc=style-chip]')).toContainText('视频 · 视觉笔记');
+  await page.keyboard.press('Escape');
+  await page.locator('[data-qc=sample-doc]').click();
+  await expect(tools.getByRole('button', { name: '生成', exact: true })).toBeEnabled();
+  await expect(tools.locator('[data-qc=brief-send]')).toHaveCount(0);
+  await tools.getByRole('button', { name: '语音输入', exact: true }).click();
+  const input = page.getByRole('textbox', { name: '发给快速创作', exact: true });
+  await expect(input).toHaveValue('使用温和的配色');
+  await expect(tools.locator('[data-qc=brief-send]')).toBeEnabled();
+  await expect(tools.locator('[data-qc=submit]')).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
+});
+
 for (const resume of ['点重试', '读回已保存回复']) {
   test(`快速创作${resume}后继续到分镜确认`, async ({ page }) => {
     const briefId = 'a'.repeat(32);

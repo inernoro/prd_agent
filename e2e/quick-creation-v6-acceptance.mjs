@@ -75,7 +75,7 @@ async function verifyHostingEntry(page, mobile = false) {
     .or(page.getByRole('button', { name: /^网页(?:托管)?$/ }).filter({ visible: true })).first();
   await hosting.click();
   const generate = mobile
-    ? page.getByRole('button', { name: '生成网页', exact: true }).filter({ visible: true })
+    ? page.getByRole('button', { name: '生成', exact: true }).filter({ visible: true })
     : page.locator('[data-tour-id=webpages-generate-primary]');
   await generate.click();
   await page.locator('[data-qc-ready=compose][data-output=web]').waitFor();

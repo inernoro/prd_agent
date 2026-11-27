@@ -1519,9 +1519,7 @@ export default function WebPagesPage() {
                     「从个人空间添加」只留左栏底部那一处，不在两个地方各摆一遍。 */}
                 {(currentSpace.kind !== 'team' || canEditInWebHosting(myWebHostingRole)) && (
                   <div className="web-hosting-toolbar-actions">
-                    {/* 设计稿 Main：「生成网页」是主操作，下拉选素材来源，旁边齿轮进设置；「上传网页」退为次操作。 */}
                     <Button size="sm" variant="ghost" onClick={() => navigate("/web-pages/new-document")}>按模版新建文档</Button>
-                    <Button size="sm" variant="ghost" onClick={() => navigate("/web-pages/collections")}>合集</Button>
                     <GenerateSiteMenu
                       onGenerate={openQuickCreation}
                       onOpenSettings={() => setShowGenerationSettings(true)}
@@ -1753,7 +1751,7 @@ export default function WebPagesPage() {
         ) : null}
 
         {isMobile && (currentSpace.kind !== 'team' || canEditInWebHosting(myWebHostingRole)) && (
-          <MobileFab onClick={openQuickCreation} icon={Sparkles} label="生成网页" />
+          <MobileFab onClick={openQuickCreation} icon={Sparkles} label="生成" />
         )}
 
         {/* Batch actions */}

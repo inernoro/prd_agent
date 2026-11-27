@@ -5,7 +5,7 @@
  * - 右栏的风格库：看大图、样片说明和全部风格，适合第一次挑。
  * 风格说明（给智能体的英文 STYLE.md）只按编号引用，界面不显示原文。
  */
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import * as Popover from '@radix-ui/react-popover';
 import { Check, ChevronDown, PanelRight, Search, X } from 'lucide-react';
 import { cn } from '@/lib/cn';
@@ -67,33 +67,36 @@ function CategoryRow({ categories, counts, total, value, onChange }: {
 }
 
 /** 输入框里的风格按钮 + 就地弹出的选择面板 */
-export function StylePickerChip({ templates, categories, selected, onSelect, onBrowse }: {
+export function StylePickerChip({ templates, categories, selected, onSelect, onBrowse, outputLabel, outputControl }: {
   templates: QcTemplate[];
   categories: QcTemplateCategory[];
   selected?: QcTemplate;
   onSelect: (id: string) => void;
   onBrowse: () => void;
+  outputLabel?: string;
+  outputControl?: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   const f = useStyleFilter(templates, categories);
   return (
     <Popover.Root open={open} onOpenChange={setOpen}>
       <Popover.Trigger asChild>
-        <button type="button" data-qc="style-chip" data-template={selected?.id ?? ''} aria-label={`风格：${selected?.name ?? '未选'}，点此更换`}
-          className="inline-flex h-8 min-w-0 max-w-full items-center gap-1.5 rounded-lg border border-token-subtle pl-1 pr-1.5 text-[12px] text-token-primary hover-bg-soft max-md:h-11">
+        <button type="button" data-qc="style-chip" data-template={selected?.id ?? ''} aria-label={`${outputLabel ? outputLabel + ' · ' : ''}风格：${selected?.name ?? '未选'}，点此更换`}
+          className="inline-flex h-8 min-w-0 max-w-full items-center gap-1.5 rounded-lg pl-1 pr-1.5 text-[12px] text-token-primary hover-bg-soft max-md:h-11">
           {selected && <span className="w-7 shrink-0 overflow-hidden rounded-[4px]"><StyleFrame template={{ ...selected, frame: undefined }} /></span>}
-          <span className="min-w-0 truncate">{selected?.name ?? '选风格'}</span>
+          <span className="min-w-0 truncate">{outputLabel && `${outputLabel} · `}{selected?.name ?? '选风格'}</span>
           <ChevronDown size={13} className="shrink-0 text-token-muted" aria-hidden />
         </button>
       </Popover.Trigger>
       <Popover.Portal>
         <Popover.Content side="top" align="start" sideOffset={8} collisionPadding={12} data-qc="style-popover"
-          className="z-[110] flex flex-col rounded-xl border border-[var(--border-default)] bg-[var(--bg-elevated)] p-2.5 shadow-lg"
+          className="qc-menu-surface z-[110] flex flex-col rounded-xl border border-[var(--border-default)] p-2.5 shadow-lg"
           style={{ width: 'min(440px, calc(100vw - 24px))', maxHeight: 'min(520px, var(--radix-popover-content-available-height))' }}>
           <div className="flex items-center justify-between px-1 pb-2">
             <span className="text-[13px] font-semibold text-token-primary">选风格</span>
             <span className="text-[11.5px] text-token-muted">{categories.length} 类 · {templates.length} 种</span>
           </div>
+          {outputControl && <div className="pb-2">{outputControl}</div>}
           <div className="flex items-center gap-1.5"><SearchBox id="qc-style-search-pop" value={f.query} onChange={f.setQuery} /></div>
           <div className="mt-2"><CategoryRow categories={categories} counts={f.counts} total={templates.length} value={f.category} onChange={f.setCategory} /></div>
           <div role="radiogroup" aria-label="选择风格" className="mt-1.5 grid min-h-0 flex-1 grid-cols-2 content-start gap-1 overflow-y-auto pr-0.5" style={{ overscrollBehavior: 'contain' }}>

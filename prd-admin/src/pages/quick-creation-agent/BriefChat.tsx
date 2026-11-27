@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { Check, Circle, Clapperboard, Play, Sparkles } from 'lucide-react';
+import { ArrowRight, Check, Circle, Clapperboard, Play, Sparkles } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { StreamingText } from '@/components/streaming';
 import { MapSpinner } from '@/components/ui/VideoLoader';
@@ -11,14 +11,19 @@ export const BRIEF_STARTERS = ['我想做一个宣传片', '给新同事做个�
 
 export function BriefStrip({ session }: { session: QcBriefSession }) {
   const { fields, ready, missing } = session.brief;
+  const required = fields.filter(field => field.required);
   return (
-    <div className="mb-2 flex items-center gap-1.5 overflow-x-auto px-1 pb-1 text-[12px]" aria-label="创作简报"
+    <div className="mb-2 flex items-center gap-2 overflow-x-auto px-1 pb-0.5 text-[12px] [scrollbar-width:none]" aria-label="创作简报"
       data-qc="brief" data-ready={ready} data-filled={3 - missing.length}>
-      <span className="shrink-0 font-medium text-token-primary">{ready ? '可以开工' : `必填 ${3 - missing.length}/3`}</span>
+      <span className="shrink-0 font-medium text-token-secondary max-md:hidden">创作简报</span>
+      <span className={`shrink-0 rounded-full px-1.5 leading-[18px] tabular-nums ${ready ? 'bg-[var(--semantic-success-soft)] text-[color:var(--accent-fg-success)]' : 'bg-[var(--bg-tertiary)] text-token-secondary'}`}>{ready ? '可以开工' : `必填 ${3 - missing.length}/3`}</span>
+      <span className="min-w-0 truncate text-token-secondary md:hidden" data-qc="brief-line">
+        {ready ? required.map(field => field.value).join(' · ') : `还缺${missing.join('、')}`}
+      </span>
       {fields.map(field => (
         <span key={field.key} data-brief-field={field.key} data-filled={!!field.value}
           title={field.value || (field.required ? '待补' : '可选')}
-          className="inline-flex h-6 max-w-[190px] shrink-0 items-center gap-1 rounded-md border border-token-subtle px-1.5 text-token-secondary">
+          className={`inline-flex h-6 max-w-[190px] shrink-0 items-center gap-1 rounded-md text-token-secondary max-md:hidden ${!field.value && field.required ? 'border border-dashed border-[var(--border-default)] px-1.5' : 'px-0.5'}`}>
           {field.value ? <Check size={12} aria-hidden /> : <Circle size={10} aria-hidden />}
           <span className="shrink-0 text-token-muted">{field.label}</span>
           <span className="truncate">{field.value || (field.required ? '待补' : '可选')}{field.source === 'default' && '（默认）'}</span>
@@ -63,8 +68,8 @@ export function BriefConversation({ session, pending, error, templates, disabled
             <p className="m-0 whitespace-pre-wrap text-[14px] leading-6">{message.text}</p>
             {message === lastMessage && !pending && !!message.quickReplies?.length && (
               <div className="flex flex-wrap gap-1.5" aria-label="可以直接点的回答">
-                {message.quickReplies.map(value => <Button key={value} variant="secondary" size="sm" className="max-md:min-h-11"
-                  data-qc="quick-reply" data-value={value} disabled={disabled} onClick={() => onSend(value)}>{value}</Button>)}
+                {message.quickReplies.map(value => <button key={value} type="button" className="qc-face qc-face-chip relative inline-flex items-center px-3 text-[12.5px] text-token-primary disabled:opacity-50"
+                  data-qc="quick-reply" data-value={value} disabled={disabled} onClick={() => onSend(value)}>{value}</button>)}
               </div>
             )}
             {!!message.recommendations?.length && (
@@ -73,15 +78,15 @@ export function BriefConversation({ session, pending, error, templates, disabled
                   const template = templates.find(style => style.id === item.templateId);
                   if (!template) return null;
                   return (
-                    <div key={template.id} className="qc-card overflow-hidden" data-qc="rec-style" data-style={template.id}>
-                      <StyleFrame template={{ ...template, frame: undefined }} />
-                      <div className="space-y-1 p-2.5">
+                    <div key={template.id} className={`qc-card flex flex-col overflow-hidden max-sm:flex-row ${session?.styleId === template.id ? 'ring-1 ring-[color:var(--accent-primary)]' : ''}`} data-qc="rec-style" data-style={template.id}>
+                      <div className="max-sm:w-28 max-sm:shrink-0 max-sm:self-stretch max-sm:[&>div]:!aspect-auto max-sm:[&>div]:!h-full"><StyleFrame template={{ ...template, frame: undefined }} /></div>
+                      <div className="min-w-0 flex-1 space-y-1 p-2.5">
                         <div className="text-[13px] font-medium">{index + 1}. {template.name}</div>
                         <p className="m-0 text-[12px] leading-5 text-token-secondary">{item.reason}</p>
-                        {message === lastMessage && <Button variant="secondary" size="xs" className="max-md:min-h-11" data-qc="rec-use"
+                        {message === lastMessage && <button type="button" className="-ml-1 inline-flex h-7 items-center gap-1 rounded-md px-1 text-[12.5px] font-medium text-[color:var(--accent-primary)] hover:underline disabled:no-underline max-md:h-11" data-qc="rec-use"
                           disabled={disabled || session?.styleId === template.id} onClick={() => onPick(template.id)}>
-                          {session?.styleId === template.id ? '已选' : '用这个'}
-                        </Button>}
+                          {session?.styleId === template.id ? <><Check size={13} aria-hidden />已选这个</> : <>用这个风格<ArrowRight size={13} aria-hidden /></>}
+                        </button>}
                       </div>
                     </div>
                   );
@@ -110,7 +115,7 @@ export function BriefConversation({ session, pending, error, templates, disabled
                 </li>)}
               </ol>
               <div className="flex flex-wrap items-center gap-2 p-2.5">
-                <Button size="sm" data-qc="script-confirm" className="max-md:min-h-11" disabled={disabled} onClick={() => onGenerate('confirm')}>按这个脚本开始生成</Button>
+                <Button size="sm" data-qc="script-confirm" className="qc-face qc-face-primary relative px-3.5" disabled={disabled} onClick={() => onGenerate('confirm')}><Play size={14} aria-hidden />按这个脚本开始生成</Button>
                 <span className="text-[12px] text-token-muted">想改的地方可以直接在对话里说</span>
               </div>
             </section>
@@ -119,7 +124,7 @@ export function BriefConversation({ session, pending, error, templates, disabled
               <div className="flex items-center gap-2 text-[14px] font-semibold"><Sparkles size={15} aria-hidden />准备好了</div>
               <p className="m-0 text-[13px] leading-5 text-token-secondary">{session.brief.summary.join(' · ')}</p>
               <div className="flex flex-wrap gap-2">
-                <Button size="sm" data-qc="brief-start" className="max-md:min-h-11" disabled={disabled}
+                <Button size="sm" data-qc="brief-start" className="qc-face qc-face-primary relative px-3.5" disabled={disabled}
                   onClick={session.kind === 'video' ? onScript : () => onGenerate('skip')}><Play size={14} />开始生成</Button>
                 {session.kind === 'video' && <Button size="sm" variant="ghost" data-qc="brief-skip-script" className="max-md:min-h-11"
                   disabled={disabled} onClick={() => onGenerate('skip')}>跳过脚本，直接开始</Button>}

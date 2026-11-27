@@ -39,7 +39,7 @@ describe('网页托管原版列表布局回归', () => {
     expect(source).toContain('data-tour-id="webpages-knowledge-generate"');
     expect(source).toContain('onClick={onGenerate}');
     expect(source).toContain('parseDesignArtifactLaunch(location.search)');
-    expect(source).toContain('<MobileFab onClick={openQuickCreation} icon={Sparkles} label="生成网页" />');
+    expect(source).toContain('<MobileFab onClick={openQuickCreation} icon={Sparkles} label="生成" />');
     expect(source).toContain('data-tour-id="webpages-mobile-upload"');
     expect(source).toContain('aria-label="上传网页"');
     expect(source).toContain("gridTemplateColumns: isMobile ? 'repeat(2, minmax(0, 1fr))'");
