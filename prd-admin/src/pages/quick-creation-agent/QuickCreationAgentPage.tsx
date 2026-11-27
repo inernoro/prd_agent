@@ -4,7 +4,7 @@
  * - 版式沿用网页生成工作台（WorkbenchLayout）：左栏一个对话 + 底部一个输入框；右栏是选模板、管理资料和预览。窄屏切成「对话 / 预览」。
  * - 与「视频创作智能体」的区别：那边用生成式视频模型出镜头，这里用文稿 + 配音 + 可复用的模板画面代码。
  */
-import { useCallback, useEffect, useRef, useState, type ClipboardEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ClipboardEvent, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { BookOpen, Check, ChevronLeft, ChevronRight, CircleCheck, ExternalLink, FileText, Globe, LayoutList, Paperclip, Plus, Send, Upload, Video } from 'lucide-react';
 import { toast } from '@/lib/toast';
@@ -23,13 +23,15 @@ import {
 } from '@/services/real/quickCreation';
 import { AttachmentTray, MaterialsPanel, SentAttachments } from './AttachmentTray';
 import { AgentTurn, UserTurn } from './Conversation';
+import { BRIEF_STARTERS, BriefConversation, BriefStrip } from './BriefChat';
+import { useQuickCreationBrief } from './useQuickCreationBrief';
 import { FailureCard, QueueCard, RunProgress } from './RunProgress';
 import { ProgressPreview, VideoPlayer, WebPreview } from './ResultPanel';
 import { StyleLibrary, StylePickerChip } from './StyleLibrary';
 import { AssetLibrary } from './AssetLibrary';
 import { WorksList } from './WorksList';
 import { CHAR_BUDGET, MAX_ATTACHMENTS, MAX_REFERENCE_IMAGES, formatChars, formatClock, summarizeAttachments } from './format';
-import type { AssetScope, OutputKind, QcAsset, QcAttachment, QcFailure, QcRun, QcTemplate, QcTemplateCategory, QcTemplateSource, QcWork } from './types';
+import type { AssetScope, OutputKind, QcAsset, QcAttachment, QcBriefContext, QcBriefSession, QcFailure, QcRun, QcTemplate, QcTemplateCategory, QcTemplateSource, QcWork } from './types';
 import './quickCreation.css';
 
 const OUTPUT_LABEL: Record<OutputKind, string> = { video: '视频', web: '网页' };
@@ -49,6 +51,7 @@ export function QuickCreationAgentPage() {
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const runId = params.get('run');
+  const briefId = params.get('brief');
   const view = params.get('view');
   const fromHosting = params.get('from') === 'web-pages';
   const requestedTeam = params.get('destTeam');
@@ -64,6 +67,7 @@ export function QuickCreationAgentPage() {
 
   const [kind, setKind] = useState<OutputKind>(fromHosting ? 'web' : 'video');
   const [templateId, setTemplateId] = useState<string>('');
+  const [stylePicked, setStylePicked] = useState(false);
   const [attachments, setAttachments] = useState<QcAttachment[]>([]);
   const [ask, setAsk] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -81,6 +85,14 @@ export function QuickCreationAgentPage() {
   const [assetsLoading, setAssetsLoading] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const askRef = useRef<HTMLTextAreaElement>(null);
+  const restoreBrief = useCallback((value: QcBriefSession) => {
+    setKind(value.kind);
+    setTemplateId(value.styleId);
+    setStylePicked(value.brief.fields.find(field => field.key === 'style')?.source === 'pick');
+    setAttachments(value.attachments);
+  }, []);
+  const briefFlow = useQuickCreationBrief(briefId, restoreBrief);
+  const { session: brief, pending: pendingBrief, restoring: restoringBrief, syncing: syncingBrief, sync: syncBrief, error: briefError } = briefFlow;
   useEffect(() => { if (askRef.current) fitComposerHeight(askRef.current); }, [ask]);
 
   useEffect(() => {
@@ -218,19 +230,69 @@ export function QuickCreationAgentPage() {
     : sum.chars > CHAR_BUDGET ? '稿件超过 20,000 字，请精简或分次生成'
     : attachments.filter(a => a.status === 'ready' && a.kind === 'image').length > MAX_REFERENCE_IMAGES ? '一次最多使用三张图片，请移除多余图片' : null;
   const draftTitle = attachments.find(a => a.status === 'ready' && a.kind !== 'image')?.name.replace(/\.(md|markdown|txt)$/i, '') ?? (template ? `未命名 · ${template.name}` : '未命名');
+  const briefContext = useMemo<QcBriefContext>(() => ({
+    revision: brief?.revision ?? 0, kind, templateId: template?.id ?? '', stylePicked,
+    attachmentIds: attachments.filter(a => a.status === 'ready').map(a => a.id),
+  }), [brief?.revision, kind, template?.id, stylePicked, attachments]);
+  const briefMatches = !!brief && brief.kind === kind && brief.styleId === template?.id
+    && brief.attachments.map(a => a.id).join(',') === briefContext.attachmentIds.join(',');
+  const syncAttempt = useRef('');
+  useEffect(() => {
+    if (!brief || briefMatches || pendingBrief || restoringBrief || syncingBrief || !briefContext.templateId) return;
+    const key = JSON.stringify([brief.id, briefContext]);
+    if (key === syncAttempt.current) return;
+    syncAttempt.current = key;
+    void syncBrief(briefContext);
+  }, [brief, briefContext, briefMatches, pendingBrief, restoringBrief, syncingBrief, syncBrief]);
 
-  const submit = async () => {
-    if (blockReason || !template || submitting) return;
+  const submitLock = useRef(false);
+  const submit = async (fromBrief?: QcBriefSession, mode: 'confirm' | 'skip' = 'skip', extraAsk = ask) => {
+    if (submitLock.current || (!fromBrief && (blockReason || pendingBrief || restoringBrief)) || !template
+      || (fromBrief && (adding || sum.reading || !fromBrief.brief.ready))) return;
+    submitLock.current = true;
     setSubmitting(true);
+    const output = fromBrief?.kind ?? kind;
     const res = await createQuickCreationRun({
-      kind, templateId: template.id, ask: ask.trim(),
-      attachmentIds: attachments.filter(a => a.status === 'ready').map(a => a.id), title: draftTitle,
-      destinationTeamId: kind === 'web' ? destinationTeamId : undefined,
-    });
-    setSubmitting(false);
+      kind: output, templateId: fromBrief?.styleId ?? template.id, ask: extraAsk.trim(),
+      attachmentIds: fromBrief?.attachments.map(a => a.id) ?? briefContext.attachmentIds, title: fromBrief?.brief.title ?? draftTitle,
+      destinationTeamId: output === 'web' ? destinationTeamId : undefined,
+      ...(fromBrief ? { briefId: fromBrief.id, briefRevision: fromBrief.revision, briefMode: mode } : {}),
+    }).finally(() => { submitLock.current = false; setSubmitting(false); });
     if (!res.success) { toast.error('没有提交成功', `${res.error?.message || '请稍后重试'}，稿件仍在输入框里`); return; }
     openRun(res.data.id);
   };
+  const acceptBrief = (value: QcBriefSession) => {
+    setKind(value.kind);
+    setTemplateId(value.styleId);
+    setStylePicked(value.brief.fields.find(field => field.key === 'style')?.source === 'pick');
+  };
+  const requestScript = async (value: QcBriefSession) => {
+    const result = await briefFlow.send({
+      id: value.id, turnId: crypto.randomUUID().replaceAll('-', ''), mode: 'script', text: '',
+      context: { ...briefContext, kind: value.kind, templateId: value.styleId, revision: value.revision,
+        stylePicked: value.brief.fields.find(field => field.key === 'style')?.source === 'pick',
+        attachmentIds: value.attachments.map(a => a.id) },
+    });
+    if (result) acceptBrief(result.session);
+  };
+  const sendToBrief = async (value: string) => {
+    const text = value.trim();
+    if (!text || !template || pendingBrief || restoringBrief || syncingBrief || adding || submitLock.current) return;
+    const id = briefId ?? crypto.randomUUID().replaceAll('-', '');
+    if (!briefId) showPage({ brief: id }, true);
+    if (ask.trim() === text) setAsk('');
+    const result = await briefFlow.send({ id, turnId: crypto.randomUUID().replaceAll('-', ''), mode: 'message', text, context: briefContext });
+    if (!result) return;
+    acceptBrief(result.session);
+    if (!result.start) return;
+    if (result.session.kind === 'video') {
+      if (result.session.script.length === 0) await requestScript(result.session);
+    } else {
+      await submit(result.session, 'skip', '');
+    }
+  };
+  const selectStyle = (id: string) => { setStylePicked(true); setTemplateId(id); setPanel(null); };
+  const briefDisabled = !!pendingBrief || syncingBrief || restoringBrief || adding || submitting || !briefMatches;
 
   /* ---------- 任务动作 ---------- */
   const onRecover = async (action: QcFailure['actions'][number]) => {
@@ -306,6 +368,7 @@ export function QuickCreationAgentPage() {
     </div>
   );
   const composeConversation = (
+    <>
     <AgentTurn>
       <div>
         <p className="m-0 text-[15px] font-semibold leading-6 text-token-primary">把一份文档交给我</p>
@@ -314,6 +377,11 @@ export function QuickCreationAgentPage() {
       {!attachments.length ? (
         <>
           {startOptions}
+          {!brief && !pendingBrief && <div className="flex flex-wrap gap-1.5" aria-label="从一句话开始">
+            {BRIEF_STARTERS.map(text => <Button size="sm" variant="secondary" key={text} className="max-md:min-h-11"
+              data-qc="starter" data-value={text} disabled={!template || restoringBrief}
+              onClick={() => void sendToBrief(text)}>{text}</Button>)}
+          </div>}
           <p className="m-0 text-[12px] leading-5 text-token-muted">也可以把正文直接粘贴进下面的输入框，超过 300 字会自动变成一份稿件。</p>
         </>
       ) : (
@@ -324,17 +392,29 @@ export function QuickCreationAgentPage() {
         </div>
       )}
     </AgentTurn>
+    <BriefConversation session={brief} pending={pendingBrief} error={briefError} templates={templates} disabled={briefDisabled}
+      onRetry={() => void briefFlow.recover().then(result => { if (result) acceptBrief(result.session); })}
+      onSend={text => void sendToBrief(text)} onPick={selectStyle}
+      onScript={() => { if (brief && !briefDisabled) void requestScript(brief); }}
+      onGenerate={mode => { if (brief && !briefDisabled) void submit(brief, mode); }} />
+    </>
   );
 
   const composer = (
     <div>
+      {brief && <BriefStrip session={brief} />}
       <div className="flex flex-col rounded-2xl border border-[var(--border-default)] bg-[var(--bg-input)] shadow-[var(--shadow-input-inset)] transition-[border-color,box-shadow] has-[textarea:focus]:border-[color:var(--accent-primary)] has-[textarea:focus]:shadow-[0_0_0_3px_var(--selection-bg)]">
         <AttachmentTray items={attachments} managing={panel?.mode === 'manage'} onRemove={id => setAttachments(l => l.filter(a => a.id !== id))} onManage={openManage} />
         {attachments.length > 0 && <div className="mx-3 h-px bg-[var(--border-subtle)]" />}
-        <label htmlFor="qc-ask" className="sr-only">补充要求</label>
+        <label htmlFor="qc-ask" className="sr-only">发给快速创作</label>
         <textarea id="qc-ask" ref={askRef} rows={2} value={ask} onChange={e => setAsk(e.target.value)} onPaste={e => void onAskPaste(e)}
-          onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void submit(); } }}
-          placeholder="可选：加一句要求，例如「先提醒三个重点，给新同事看」"
+          onKeyDown={e => {
+            if (e.key !== 'Enter' || e.shiftKey || e.nativeEvent.isComposing) return;
+            e.preventDefault();
+            if (e.metaKey || e.ctrlKey) void submit();
+            else void sendToBrief(ask);
+          }}
+          placeholder="说说你想做什么，或者补充生成要求"
           className="block w-full resize-none overflow-y-auto bg-transparent px-3.5 pb-1 pt-3 text-base leading-relaxed text-token-primary outline-none placeholder:text-token-muted sm:text-[14px]" />
         <div className="flex flex-wrap items-center gap-1 px-2 pb-2 pt-1">
           <input ref={fileInput} type="file" accept=".md,.markdown,.txt,.png,.jpg,.jpeg,.webp" multiple hidden data-qc="file-input"
@@ -360,10 +440,13 @@ export function QuickCreationAgentPage() {
               <Segmented<OutputKind> label="选择产出" value={kind} onChange={setKind}
                 options={[{ value: 'video', label: '视频', title: '能播放的成片：配音、字幕与画面' }, { value: 'web', label: '网页', title: '能浏览的网页：桌面与手机都能读' }]} />
             </span>
-            <StylePickerChip templates={templates} categories={categories} selected={template} onSelect={id => { setTemplateId(id); setPanel(null); }}
+            <StylePickerChip templates={templates} categories={categories} selected={template} onSelect={selectStyle}
               onBrowse={() => { setPanel(null); setPane('preview'); }} />
           </div>
-          <Button variant="primary" size="sm" className="ml-auto shrink-0 max-md:min-h-11" disabled={!!blockReason || submitting} onClick={() => void submit()} data-qc="submit">
+          <button className="qc-icon-btn ml-auto" type="button" aria-label="发给快速创作" title="发给快速创作" data-qc="brief-send"
+            disabled={!ask.trim() || !!pendingBrief || restoringBrief || syncingBrief || adding || submitting}
+            onClick={() => void sendToBrief(ask)}><Send size={15} /></button>
+          <Button variant="primary" size="sm" className="shrink-0 max-md:min-h-11" disabled={!!blockReason || submitting || !!pendingBrief} onClick={() => void submit()} data-qc="submit">
             {submitting ? <MapSpinner size={13} /> : <Send size={13} />}快捷生成
           </Button>
         </div>
@@ -381,6 +464,7 @@ export function QuickCreationAgentPage() {
   const runConversation = run && (
     <>
       <UserTurn meta={<>{run.kind === 'video' ? <Video size={12} aria-hidden /> : <Globe size={12} aria-hidden />}{OUTPUT_LABEL[run.kind]} · {runTemplate?.name}</>}>
+        {run.contentSource === 'chat' && <p className="m-0 px-1 text-[12px] text-token-secondary">没有稿件，内容来自和快速创作的对话</p>}
         <p className="m-0 px-1 text-[14px] leading-6 text-token-primary">{run.ask || '没有补充要求，按模板默认节奏生成'}</p>
         <SentAttachments items={run.attachments} onOpenAll={() => openReview()} onOpen={id => openReview(id)} />
       </UserTurn>
@@ -497,7 +581,7 @@ export function QuickCreationAgentPage() {
       }}
       onOpenHosting={a => navigate(`/web-pages?focusSite=${encodeURIComponent(a.siteId ?? '')}`)} />;
   } else if (!run && template) {
-    body = <StyleLibrary templates={templates} categories={categories} source={styleSource} selected={template} onSelect={setTemplateId} kind={kind} />;
+    body = <StyleLibrary templates={templates} categories={categories} source={styleSource} selected={template} onSelect={selectStyle} kind={kind} />;
   } else if (run && runTemplate) {
     if (run.status === 'done') {
       previewTitle = run.kind === 'video' ? '成片' : '网页';

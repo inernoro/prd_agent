@@ -73,6 +73,8 @@ public static class TaskAdmissionPolicies
         Add("DesignArtifactsController", "CreateRun", new[] { "prd-agent-web.web-hosting.", "md-to-ppt-agent." }, maxCalls: 256);
         Register("DesignArtifactsController", "CreateQuickCreationRun RetryQuickCreationRun",
             new[] { AppCallerRegistry.Admin.WebHosting.GenerateHtml }, false, 256);
+        Register("DesignArtifactsController", "StreamQuickCreationBrief",
+            new[] { AppCallerRegistry.Admin.WebHosting.QuickCreationBrief }, false, 1);
         Register("DesignArtifactsController", "RestartRun",
             new[]
             {

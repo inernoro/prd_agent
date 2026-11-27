@@ -7,6 +7,9 @@ public sealed class QuickCreationInput
     public string StyleSha256 { get; set; } = string.Empty;
     public string Ask { get; set; } = string.Empty;
     public List<string> AttachmentIds { get; set; } = new();
+    public string? BriefId { get; set; }
+    public int? BriefRevision { get; set; }
+    public string? BriefContentSource { get; set; }
     public int? FilmTimeoutSeconds { get; set; }
 }
 

@@ -150,6 +150,7 @@ export interface QcPublish {
 export type RunStatus = 'queued' | 'running' | 'failed' | 'done';
 
 export interface QcRun {
+  contentSource?: 'chat' | 'doc';
   id: string;
   title: string;
   kind: OutputKind;
@@ -225,4 +226,54 @@ export interface CreateRunInput {
   attachmentIds: string[];
   title?: string;
   destinationTeamId?: string;
+  briefId?: string;
+  briefRevision?: number;
+  briefMode?: 'confirm' | 'skip';
 }
+
+export interface QcBriefContext {
+  revision: number;
+  kind: OutputKind;
+  templateId: string;
+  stylePicked: boolean;
+  attachmentIds: string[];
+}
+
+export interface QcBriefRecommendation {
+  templateId: string;
+  reason: string;
+}
+
+export interface QcBriefMessage {
+  id: string;
+  role: 'user' | 'agent';
+  text: string;
+  model?: string;
+  platform?: string;
+  quickReplies?: string[];
+  recommendations?: QcBriefRecommendation[];
+}
+
+export interface QcBriefSession {
+  id: string;
+  revision: number;
+  kind: OutputKind;
+  styleId: string;
+  attachments: QcAttachment[];
+  messages: QcBriefMessage[];
+  script: Array<{ index: number; visual: string; narration: string }>;
+  brief: {
+    fields: Array<{ key: string; label: string; required: boolean; value?: string; source?: string }>;
+    ready: boolean;
+    title?: string;
+    missing: string[];
+    summary: string[];
+  };
+}
+
+export type QcBriefEvent =
+  | { name: 'phase'; message: string }
+  | { name: 'model'; model: string; platform?: string }
+  | { name: 'text'; text: string }
+  | { name: 'session'; session: QcBriefSession; start: boolean }
+  | { name: 'error'; message: string };

@@ -169,10 +169,37 @@ public sealed partial class DesignArtifactsController
             return QuickCreationError("这个风格不在当前目录，请重新选择");
         if (request.Ask?.Length > 3500) return QuickCreationError("创作要求太长，请缩短后再提交");
         var ids = request.AttachmentIds?.Distinct(StringComparer.Ordinal).ToList() ?? [];
-        if (ids.Count is 0 or > DesignRunInputAttachments.QuickCreationAttachmentLimit
+        if (ids.Count > DesignRunInputAttachments.QuickCreationAttachmentLimit
             || ids.Any(id => string.IsNullOrWhiteSpace(id) || id.Length > 80))
             return QuickCreationError("请放入一至十份可用资料");
         var userId = this.GetRequiredUserId();
+        if (request.BriefId != null && (!Guid.TryParseExact(request.BriefId, "N", out _)
+            || request.BriefRevision is null or < 1 || request.BriefMode is not ("confirm" or "skip")))
+            return QuickCreationError("请确认当前创作简报");
+        await using var briefLease = request.BriefId == null ? null
+            : await VideoAssetMutationLease.AcquireAsync(_db, $"quick-creation-brief:{request.BriefId}:{request.BriefRevision}", ct);
+        QuickCreationBrief? brief = null;
+        if (request.BriefId != null)
+        {
+            brief = await _db.QuickCreationBriefs.Find(OwnedBrief(request.BriefId)).FirstOrDefaultAsync(ct);
+            if (brief == null) return NotFound();
+            var existing = await _db.DesignArtifactRuns.Find(QuickCreationScope()
+                & Builders<DesignArtifactRun>.Filter.Where(row => row.UserId == userId && row.QuickCreation != null
+                    && row.RetryOfRunId == null && row.QuickCreation.BriefId == request.BriefId
+                    && row.QuickCreation.BriefRevision == request.BriefRevision)).FirstOrDefaultAsync(ct);
+            if (existing != null) return Accepted(ApiResponse<object>.Ok(await ToQuickRunAsync(existing, ct)));
+            if (brief.Revision != request.BriefRevision || !BriefReady(brief) || brief.Kind != request.Kind
+                || brief.StyleId != template.Id || !brief.AttachmentIds.SequenceEqual(ids)
+                || (request.BriefMode == "confirm" && (brief.Kind != "video" || brief.Script.Count == 0)))
+                return BriefConflict();
+            if (brief.SourceTitle == null)
+            {
+                if (ids.Count >= DesignRunInputAttachments.QuickCreationAttachmentLimit)
+                    return QuickCreationError("请留出一份资料的位置，用于保存对话稿件");
+                ids.Add(await SaveBriefManuscriptAsync(brief, ct));
+            }
+        }
+        if (ids.Count == 0) return QuickCreationError("请放入至少一份可用稿件，或先完成创作简报");
         var rows = await _db.Attachments.Find(item => ids.Contains(item.AttachmentId) && item.UploaderId == userId
                 && item.QuickCreationKind != null).ToListAsync(ct);
         if (rows.Count != ids.Count || rows.Any(row => row.QuickCreationReadError != null))
@@ -195,9 +222,21 @@ public sealed partial class DesignArtifactsController
             return Conflict(ApiResponse<object>.Fail("RUNTIME_NOT_READY", "视频执行服务暂不可用，稿件仍可改做网页"));
         var guide = QuickCreationCatalog.ReadGuide(template);
         var ask = request.Ask?.Trim() ?? string.Empty;
+        if (brief != null)
+        {
+            var confirmed = new List<string> { ask };
+            if (!string.IsNullOrWhiteSpace(brief.Audience)) confirmed.Add($"受众：{brief.Audience}");
+            if (!string.IsNullOrWhiteSpace(brief.Duration)) confirmed.Add($"成品时长或篇幅：{brief.Duration}");
+            if (request.BriefMode == "confirm")
+                confirmed.Add("用户确认的分镜：\n" + string.Join("\n", brief.Script.Select(scene =>
+                    $"{scene.Index}. 画面：{scene.Visual}；旁白：{scene.Narration}")));
+            ask = string.Join("\n", confirmed.Where(value => !string.IsNullOrWhiteSpace(value)));
+            if (ask.Length > 3500) return QuickCreationError("确认的要求和分镜超过长度上限，请精简补充要求");
+        }
         var input = new QuickCreationInput
         {
             TemplateId = template.Id, StyleSha256 = QuickCreationCatalog.Hash(guide), Ask = ask, AttachmentIds = ids,
+            BriefId = brief?.Id, BriefRevision = brief?.Revision, BriefContentSource = brief == null ? null : brief.SourceTitle == null ? "chat" : "doc",
             FilmTimeoutSeconds = film ? Math.Clamp(_configuration.GetValue<int?>("DesignRuntime:QuickCreation:FilmTimeoutSeconds") ?? 7200, 3300, 7200) : null,
         };
         var instruction = film
@@ -207,7 +246,7 @@ public sealed partial class DesignArtifactsController
         {
             ArtifactType = film ? DesignArtifactTypes.CodeFilm : DesignArtifactTypes.WebPage,
             Instruction = ask.Length == 0 ? instruction : instruction + "\n\n用户要求：\n" + ask,
-            Title = request.Title ?? Path.GetFileNameWithoutExtension(byId[sourceIds[0]].FileName),
+            Title = brief?.SourceTitle ?? brief?.Title ?? request.Title ?? Path.GetFileNameWithoutExtension(byId[sourceIds[0]].FileName),
             AttachmentIds = sourceIds,
             DestinationTeamId = film ? null : request.DestinationTeamId,
         }, input, images, film ? null : QuickCreationCatalog.FreezeWebDirection(template));
@@ -428,6 +467,7 @@ public sealed partial class DesignArtifactsController
         return new
         {
             run.Id, run.Title, kind = QuickKind(run), templateId = input.TemplateId,
+            contentSource = includePrivate ? input.BriefContentSource : null,
             ask = includePrivate ? input.Ask : string.Empty,
             attachments = input.AttachmentIds.Where(byId.ContainsKey).Select(id => ToQuickAttachment(byId[id])),
             status, queue, elapsedSec = ElapsedSeconds(run, now), failure,
@@ -514,9 +554,24 @@ public sealed partial class DesignArtifactsController
 
     private BadRequestObjectResult QuickCreationError(string message) =>
         BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, message));
+
+    private async Task<string> SaveBriefManuscriptAsync(QuickCreationBrief brief, CancellationToken ct)
+    {
+        var text = brief.Manuscript!;
+        var key = QuickCreationCatalog.Hash(Encoding.UTF8.GetBytes($"brief/{brief.UserId}/{brief.Id}/{brief.Revision}"))[..32];
+        var attachment = new Attachment
+        {
+            AttachmentId = key, UploaderId = brief.UserId, FileName = "对话创作稿件.md",
+            MimeType = "text/markdown", Size = Encoding.UTF8.GetByteCount(text),
+            Type = AttachmentType.Document, QuickCreationKind = "doc", ExtractedText = text,
+        };
+        await _db.Attachments.ReplaceOneAsync(row => row.AttachmentId == key && row.UploaderId == brief.UserId,
+            attachment, new ReplaceOptions { IsUpsert = true }, ct);
+        return key;
+    }
 }
 
 public sealed record QuickCreationTextRequest(string? Name, string? Text);
 public sealed record QuickCreationRunRequest(string? Kind, string? TemplateId, string? Ask, List<string>? AttachmentIds, string? Title,
-    string? DestinationTeamId = null);
+    string? DestinationTeamId = null, string? BriefId = null, int? BriefRevision = null, string? BriefMode = null);
 public sealed record QuickCreationRetryRequest(string? Action);

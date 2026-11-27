@@ -1,7 +1,8 @@
 import { apiDownload, apiRequest, resolveApiUrl } from '@/services/real/apiClient';
 import { useAuthStore } from '@/stores/authStore';
+import { connectSse } from '@/lib/useSseStream';
 import { fail, type ApiResponse } from '@/types/api';
-import type { AssetScope, CreateRunInput, QcAsset, QcAttachment, QcRun, QcTemplate, QcTemplateCategory, QcTemplateSource, QcWork } from '@/pages/quick-creation-agent/types';
+import type { AssetScope, CreateRunInput, QcAsset, QcAttachment, QcBriefContext, QcBriefEvent, QcBriefSession, QcRun, QcTemplate, QcTemplateCategory, QcTemplateSource, QcWork } from '@/pages/quick-creation-agent/types';
 
 /**
  * 快速创作接口。生成在服务端排队与执行（Run/Worker），离开页面不取消；页面按任务编号恢复。
@@ -28,7 +29,28 @@ export function getQuickCreationRun(runId: string, signal?: AbortSignal) {
 }
 
 export function createQuickCreationRun(input: CreateRunInput) {
-  return apiRequest<QcRun>(`${base}/runs`, { method: 'POST', body: input });
+  const headers = input.briefId ? { 'Idempotency-Key': `${input.briefId}-${input.briefRevision}` } : undefined;
+  return apiRequest<QcRun>(`${base}/runs`, { method: 'POST', body: input, headers });
+}
+
+export function getQuickCreationBrief(id: string, signal?: AbortSignal) {
+  return apiRequest<QcBriefSession>(`${base}/brief/${encodeURIComponent(id)}`, { signal });
+}
+
+export function syncQuickCreationBrief(id: string, context: QcBriefContext) {
+  return apiRequest<QcBriefSession>(`${base}/brief/${encodeURIComponent(id)}/context`, { method: 'POST', body: context });
+}
+
+export function streamQuickCreationBrief(id: string, body: {
+  turnId: string; mode: 'message' | 'script'; text: string; context: QcBriefContext;
+}, signal: AbortSignal, onEvent: (event: QcBriefEvent) => void) {
+  return connectSse({
+    url: resolveApiUrl(`${base}/brief/${encodeURIComponent(id)}/messages`), method: 'POST', body, signal,
+    headers: { 'Idempotency-Key': body.turnId, 'X-Client': 'admin' },
+    onEvent(event) {
+      if (event.event && event.data) onEvent({ name: event.event, ...JSON.parse(event.data) } as QcBriefEvent);
+    },
+  });
 }
 
 /** 按任务当前支持的恢复动作提交，原稿与要求保存在原任务中。 */
