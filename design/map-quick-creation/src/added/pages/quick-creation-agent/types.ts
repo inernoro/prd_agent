@@ -172,6 +172,8 @@ export interface QcRun {
   targetSec?: number;
   /** 成片的可播放形态：画面代码 + 配音 + 时间轴。播放与导出都在用户浏览器里完成，服务器不渲染视频 */
   bundle?: QcPlayBundle;
+  /** 试看：先做片头和第 1 幕，满意再做完 */
+  trial?: QcTrial;
   keyPoints?: QcKeyPoint[];
   voice?: string;
   /** 成片媒体（视频产出完成后才有）：播放器直接播放它，字幕与重点随 currentTime 切换 */
@@ -261,6 +263,22 @@ export interface QcScriptScene {
   seconds?: number;
 }
 
+/**
+ * 试看：先只做片头和第 1 幕（带配音），约占整片一成的时间。最费资源的是智能体写画面代码，
+ * 方向不对时在这里拦下，只白做一成。等用户确认时任务暂停、不占排队名额；满意就从断点做完，试看的两幕沿用。
+ */
+export interface QcTrial {
+  status: 'making' | 'ready' | 'approved';
+  /** 试看包含几幕（片头 + 第 1 幕） */
+  scenes: number;
+  /** 试看的时长（秒） */
+  seconds: number;
+  /** 确认后还要做几幕 */
+  restScenes: number;
+  /** 确认后预计还要多久（分钟，下限与上限） */
+  restMin: [number, number];
+}
+
 /** 成片时长：自动（服务端按内容估算）或指定目标 */
 export type DurationChoice = 'auto' | 60 | 180 | 300 | 600;
 
@@ -280,6 +298,10 @@ export interface QcEstimate {
   generateMin: [number, number];
   /** 一句话依据，例如「稿件 1,840 字，全文念完约 7 分钟，自动取约 3 分钟讲重点」 */
   basis: string;
+  /** 默认要不要先试看（目标 3 分钟及以上默认要） */
+  trialDefault: boolean;
+  /** 试看预计多久出来（分钟，下限与上限） */
+  trialMin: [number, number];
 }
 
 /** 成片 = 一个可播放的网页包：画面代码（Canvas / WebGL，按时间逐帧画）+ 配音 + 时间轴 */
@@ -346,4 +368,6 @@ export interface CreateRunInput {
   script?: QcScriptScene[];
   /** 目标时长：自动或指定；服务端按它决定幕数与旁白字数 */
   duration?: DurationChoice;
+  /** 先试看片头和第 1 幕，满意再做完 */
+  trial?: boolean;
 }

@@ -265,6 +265,18 @@
       "impl": "/quick-creation-agent?run=run-done"
     },
     {
+      "id": "trial-ready",
+      "name": "试看好了：先看片头和第 1 幕，满意再做完",
+      "route": "#/quick-creation-agent?run=run-trial",
+      "viewport": "desktop",
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "entryReadySelector": "[data-qc=trial-card]",
+      "impl": "/quick-creation-agent?run=run-trial"
+    },
+    {
       "id": "duration-picker",
       "name": "开工前定时长：「时长 · 风格」按钮的面板顶部，自动写出估算值，可选 1 / 3 / 5 / 10 分钟",
       "route": "#/quick-creation-agent",
@@ -667,6 +679,13 @@
       "risk": "在用户浏览器里导出：手机发热、后台变慢、长片占内存",
       "ruleIds": [
         "A-57"
+      ]
+    },
+    {
+      "dimension": "performance",
+      "risk": "整片做完才发现风格不对，白花 30–60 分钟的生成资源",
+      "ruleIds": [
+        "A-59"
       ]
     },
     {
@@ -1428,6 +1447,19 @@
       "expected": "没有 WebCodecs 时写「这个浏览器不能在本机合成视频」并给「请服务器导出」；点它后写「已交给服务器导出：前面还有 2 个，预计 12 分钟后可以下载」",
       "dimension": "compatibility",
       "interaction": true
+    },
+    {
+      "id": "A-59",
+      "screenId": "trial-ready",
+      "how": "human",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "先试看再做完：3 分钟及以上默认先只做片头和第 1 幕（带配音），约占整片一成的时间；做好后在右边播放，满意就从断点接着做完（试看的两幕沿用），不满意回去换风格或改要求；等确认时任务暂停、不占排队名额；时长与风格面板和分镜脚本卡都能开关",
+      "expected": "trial-ready 左栏写「试看好了：片头和第 1 幕（约 28 秒）」与「满意，继续做完」「不满意，回去换风格或改要求」，右栏标题「试看」并能播放；点「满意，继续做完」后写「试看已确认，接着做剩下的 11 幕」；放入示例稿件（约 3 分钟）时面板里「先试看」默认开，改成约 1 分钟后默认关",
+      "dimension": "performance",
+      "interaction": true
     }
   ],
   "goals": [
@@ -1473,6 +1505,14 @@
       "items": [
         "A-57",
         "A-58"
+      ]
+    },
+    {
+      "id": "G-15",
+      "goal": "方向不对时只白做一成",
+      "doneWhen": "长片默认先出片头和第 1 幕的试看，满意再从断点做完；不满意回去换风格或改要求；等确认时不占排队名额",
+      "items": [
+        "A-59"
       ]
     },
     {
@@ -2179,6 +2219,73 @@
             "check": "attribute",
             "attribute": "data-target-sec",
             "equals": "180"
+          }
+        ]
+      },
+      {
+        "id": "trial-default-by-length",
+        "title": "3 分钟及以上默认先试看，改成约 1 分钟后默认不试看",
+        "screenId": "compose",
+        "theme": "light",
+        "ruleIds": [
+          "A-59"
+        ],
+        "steps": [
+          {
+            "action": "click",
+            "selector": "[data-qc=sample-doc]"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-qc=style-chip]",
+            "check": "visible"
+          },
+          {
+            "action": "click",
+            "selector": "[data-qc=style-chip]"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-qc=trial-toggle]",
+            "check": "attribute",
+            "attribute": "aria-checked",
+            "equals": "true"
+          },
+          {
+            "action": "click",
+            "selector": "[data-qc=duration-option][data-value=\"60\"]"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-qc=trial-toggle]",
+            "check": "attribute",
+            "attribute": "aria-checked",
+            "equals": "false"
+          }
+        ]
+      },
+      {
+        "id": "trial-approve",
+        "title": "试看满意，从断点接着做完",
+        "screenId": "trial-ready",
+        "theme": "light",
+        "ruleIds": [
+          "A-59"
+        ],
+        "steps": [
+          {
+            "action": "expect",
+            "selector": "[data-qc=trial-approve]",
+            "check": "visible"
+          },
+          {
+            "action": "click",
+            "selector": "[data-qc=trial-approve]"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-qc=trial-approved]",
+            "check": "visible"
           }
         ]
       },

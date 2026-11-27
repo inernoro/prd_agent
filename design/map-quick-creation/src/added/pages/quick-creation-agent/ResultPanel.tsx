@@ -141,6 +141,9 @@ export function VideoPlayer({ run, template }: { run: QcRun; template: QcTemplat
   const [captions, setCaptions] = useState(true);
   const [blocked, setBlocked] = useState<string | null>(null);
   const media = run.media;
+  /* 试看只放片头和第 1 幕：时长、进度条与重点都只到试看的长度 */
+  const limit = run.trial?.status === 'ready' ? run.trial.seconds : undefined;
+  const keyPoints = (run.keyPoints ?? []).filter(k => limit == null || (k.atSec ?? 0) < limit);
   const current = useMemo(() => [...scenes].reverse().find(s => t >= s.startSec) ?? scenes[0], [scenes, t]);
 
   const seek = (sec: number) => {
@@ -152,7 +155,7 @@ export function VideoPlayer({ run, template }: { run: QcRun; template: QcTemplat
   const play = async () => {
     const el = video.current;
     if (!el) return;
-    if (el.ended) el.currentTime = 0;
+    if (el.ended || (limit != null && el.currentTime >= limit)) el.currentTime = 0;
     try { await el.play(); setBlocked(null); } catch { setBlocked('浏览器拦下了自动播放，请再点一次播放'); }
   };
   const toggle = () => { const el = video.current; if (!el) return; if (el.paused) void play(); else el.pause(); };
@@ -170,8 +173,8 @@ export function VideoPlayer({ run, template }: { run: QcRun; template: QcTemplat
           {media ? (
             <video ref={video} src={media.url} preload="auto" playsInline muted={muted} data-qc="film"
               className="block aspect-video w-full bg-black" aria-label={`${run.title} 成片`}
-              onLoadedMetadata={e => setDuration(e.currentTarget.duration || run.durationSec || 0)}
-              onTimeUpdate={e => setT(e.currentTarget.currentTime)}
+              onLoadedMetadata={e => { const d = e.currentTarget.duration || run.durationSec || 0; setDuration(limit != null ? Math.min(limit, d) : d); }}
+              onTimeUpdate={e => { const el = e.currentTarget; if (limit != null && el.currentTime >= limit) { el.pause(); el.currentTime = limit; } setT(el.currentTime); }}
               onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onEnded={() => setPlaying(false)} />
           ) : (
             <StyleFrame template={template} scene={1} />
@@ -190,7 +193,7 @@ export function VideoPlayer({ run, template }: { run: QcRun; template: QcTemplat
           {/* 窄屏进度条单独占一行，按钮不挤压它 */}
           <div className="relative order-first h-6 max-md:h-11 basis-full px-1 sm:order-none sm:mx-2 sm:flex-1 sm:basis-auto sm:px-0">
             <input type="range" min={0} max={Math.max(1, Math.round(duration))} step={1} value={Math.round(t)} disabled={!media} onChange={e => seek(Number(e.target.value))} aria-label="播放进度" className="qc-range absolute inset-0 w-full" />
-            {duration > 0 && (run.keyPoints ?? []).map(k => k.atSec != null && (
+            {duration > 0 && keyPoints.map(k => k.atSec != null && (
               <span key={k.text} className="pointer-events-none absolute top-1/2 h-2.5 w-[2px] -translate-y-1/2 rounded bg-[color:var(--text-muted)]" style={{ left: `${(k.atSec / duration) * 100}%` }} />
             ))}
           </div>
@@ -203,11 +206,11 @@ export function VideoPlayer({ run, template }: { run: QcRun; template: QcTemplat
       </div>
       {!media && <div className="text-[12px] text-token-muted">成片文件正在写入，几秒后可以播放。</div>}
       {blocked && <div role="status" className="text-[12px] text-token-muted">{blocked}</div>}
-      {!!run.keyPoints?.length && (
+      {!!keyPoints.length && (
         <div>
-          <div className="mb-2 text-[12px] text-token-muted">片头预告的 {run.keyPoints.length} 个重点 · 点击跳转</div>
+          <div className="mb-2 text-[12px] text-token-muted">片头预告的 {keyPoints.length} 个重点 · 点击跳转</div>
           <div className="grid gap-2 sm:grid-cols-3">
-            {run.keyPoints.map((k, i) => (
+            {keyPoints.map((k, i) => (
               <button key={k.text} type="button" data-qc={`key-point-${i + 1}`} disabled={!media} onClick={() => { seek(k.atSec ?? 0); void play(); }}
                 className={cn('flex items-start gap-2.5 rounded-[10px] border bg-[var(--bg-input)] px-3 py-2.5 text-left text-[12.5px] leading-5 hover-bg-soft max-md:min-h-11',
                   current && k.atSec != null && current.startSec === k.atSec ? 'border-[color:var(--accent-primary)]/60' : 'border-token-subtle')}>

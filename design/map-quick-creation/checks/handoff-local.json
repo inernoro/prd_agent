@@ -58,6 +58,16 @@
       "errors": []
     },
     {
+      "id": "trial-default-by-length",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "id": "trial-approve",
+      "status": "passed",
+      "errors": []
+    },
+    {
       "id": "export-in-browser",
       "status": "passed",
       "errors": []

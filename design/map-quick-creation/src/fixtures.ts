@@ -139,6 +139,10 @@ export const fixedRuns: Record<string, QcRun> = {
     scenes: scenes(i => (i < 3 ? 'drawn' : 'waiting')),
     failure: { stageKey: 'storyboard', message: '用满 2 小时上限，系统已停下', saved: ['原稿与要求', '已画好的第 1–3 幕分镜'], actions: ['requeue', 'retry-step'] },
   }),
+  /* 试看好了：片头和第 1 幕已做完并配好音，等确认；确认前任务暂停、不占排队名额 */
+  'run-trial': baseRun({ id: 'run-trial', status: 'running', targetSec: 180, elapsedSec: 6 * MIN, durationSec: 28,
+    stages: stagesAt('video', 1).map(s => (s.status === 'running' ? { ...s, detail: '试看好了：片头和第 1 幕，等你确认' } : s)),
+    scenes: scenes(i => (i < 2 ? 'ready' : 'waiting')), trial: { status: 'ready', scenes: 2, seconds: 28, restScenes: 11, restMin: [30, 45] } }),
   'run-done': baseRun({ id: 'run-done', status: 'done', stages: stagesAt('video', 4), elapsedSec: 41 * MIN, durationSec: 96, scenes: scenes(() => 'ready') }),
   'run-publish-failed': baseRun({ id: 'run-publish-failed', status: 'done', stages: stagesAt('video', 4), elapsedSec: 41 * MIN, durationSec: 96, scenes: scenes(() => 'ready'), publish: { status: 'failed', error: '网页托管这次没有响应（14:21）' } }),
   'run-published': baseRun({ id: 'run-published', status: 'done', stages: stagesAt('video', 4), elapsedSec: 41 * MIN, durationSec: 96, scenes: scenes(() => 'ready'), publish: { status: 'done', siteId: 'site-habits', siteTitle: '需求评审的三个习惯', at: '14:23' } }),

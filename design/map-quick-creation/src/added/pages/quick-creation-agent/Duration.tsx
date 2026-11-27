@@ -55,3 +55,22 @@ export function DurationOptions({ value, estimate, onChange, compact }: { value:
     </div>
   );
 }
+
+/**
+ * 先试看：只做片头和第 1 幕（带配音），满意再做完。3 分钟及以上默认开：越长，方向不对时白做得越多。
+ * 用户手动改过就以用户为准，不再随时长自动变。
+ */
+export function TrialToggle({ on, estimate, onChange }: { on: boolean; estimate?: QcEstimate | null; onChange: (v: boolean) => void }) {
+  return (
+    <button type="button" role="switch" aria-checked={on} data-qc="trial-toggle" onClick={() => onChange(!on)}
+      className="flex min-h-11 w-full items-center gap-2.5 rounded-lg px-1 text-left hover-bg-soft md:min-h-9">
+      <span aria-hidden className={cn('relative inline-flex h-[18px] w-8 shrink-0 rounded-full transition-colors', on ? 'bg-[var(--accent-primary)]' : 'bg-[var(--border-default)]')}>
+        <span className={cn('absolute top-[2px] h-[14px] w-[14px] rounded-full bg-[var(--bg-input)] shadow-sm transition-[left]', on ? 'left-[16px]' : 'left-[2px]')} />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-[12.5px] text-token-primary">先试看片头和第 1 幕，满意再做完</span>
+        <span className="block text-[11.5px] text-token-muted">{estimate ? `约 ${estimate.trialMin[0]}–${estimate.trialMin[1]} 分钟出试看；` : ''}方向不对时只白做一成</span>
+      </span>
+    </button>
+  );
+}

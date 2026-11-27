@@ -13,7 +13,8 @@ import { MapSpinner } from '@/components/ui/VideoLoader';
 import { StreamingText } from '@/components/streaming';
 import { StyleFrame } from './TemplateFrames';
 import { AgentTurn, UserTurn } from './Conversation';
-import type { QcBrief, QcBriefSession, QcChatMessage, QcTemplate } from './types';
+import { TrialToggle } from './Duration';
+import type { QcBrief, QcBriefSession, QcChatMessage, QcEstimate, QcTemplate } from './types';
 
 /** 创作简报条：放在输入框上方，聊到哪一条就勾哪一条 */
 export function BriefStrip({ brief }: { brief: QcBrief }) {
@@ -56,7 +57,7 @@ function useReveal(text: string, active: boolean) {
   return { shown: text.slice(0, n), done: n >= text.length };
 }
 
-function AgentMessage({ m, latest, revealing, templates, session, busy, onReply, onUseStyle, onStart, onSkipScript, onConfirmScript, onAdjustScript }: {
+function AgentMessage({ m, latest, revealing, templates, session, busy, onReply, onUseStyle, onStart, onSkipScript, onConfirmScript, onAdjustScript, trialOn, estimate, onToggleTrial }: {
   m: QcChatMessage;
   latest: boolean;
   revealing: boolean;
@@ -69,6 +70,9 @@ function AgentMessage({ m, latest, revealing, templates, session, busy, onReply,
   onSkipScript: () => void;
   onConfirmScript: () => void;
   onAdjustScript: (a: 'shorter' | 'longer') => void;
+  trialOn: boolean;
+  estimate?: QcEstimate | null;
+  onToggleTrial: (v: boolean) => void;
 }) {
   const { shown, done } = useReveal(m.text, revealing);
   const scriptTotal = (m.script ?? []).reduce((n, x) => n + (x.seconds ?? 0), 0);
@@ -161,7 +165,8 @@ function AgentMessage({ m, latest, revealing, templates, session, busy, onReply,
           </ol>
           {latest && (
             <div className="flex flex-wrap items-center gap-2 border-t border-token-subtle bg-[var(--bg-secondary)] px-3.5 py-2.5">
-              <Button variant="primary" className="qc-face qc-face-primary relative px-3.5" data-qc="script-confirm" disabled={!active} onClick={onConfirmScript}><Play size={14} />按这个脚本开始生成</Button>
+              <div className="basis-full"><TrialToggle on={trialOn} estimate={estimate} onChange={onToggleTrial} /></div>
+              <Button variant="primary" className="qc-face qc-face-primary relative px-3.5" data-qc="script-confirm" disabled={!active} onClick={onConfirmScript}><Play size={14} />{trialOn ? '按这个脚本先做试看' : '按这个脚本开始生成'}</Button>
               <span className="text-[12px] text-token-muted">想改哪一幕直接说，例如「第 3 幕换成客户案例」</span>
             </div>
           )}
@@ -173,7 +178,7 @@ function AgentMessage({ m, latest, revealing, templates, session, busy, onReply,
 }
 
 /** 对话流：你的消息靠右，助手的回复带头像与模型名；正在等回复时显示一条在动的占位 */
-export function BriefConversation({ session, pendingText, revealId, templates, busy, onReply, onUseStyle, onStart, onSkipScript, onConfirmScript, onAdjustScript }: {
+export function BriefConversation({ session, pendingText, revealId, templates, busy, onReply, onUseStyle, onStart, onSkipScript, onConfirmScript, onAdjustScript, trialOn, estimate, onToggleTrial }: {
   session: QcBriefSession | null;
   pendingText: string | null;
   revealId: string | null;
@@ -185,6 +190,9 @@ export function BriefConversation({ session, pendingText, revealId, templates, b
   onSkipScript: () => void;
   onConfirmScript: () => void;
   onAdjustScript: (a: 'shorter' | 'longer') => void;
+  trialOn: boolean;
+  estimate?: QcEstimate | null;
+  onToggleTrial: (v: boolean) => void;
 }) {
   const messages = session?.messages ?? [];
   const lastAgent = [...messages].reverse().find(x => x.role === 'agent');
@@ -194,7 +202,7 @@ export function BriefConversation({ session, pendingText, revealId, templates, b
         <UserTurn key={m.id}><p className="m-0 whitespace-pre-wrap px-1 text-[14px] leading-6 text-token-primary">{m.text}</p></UserTurn>
       ) : session && (
         <AgentMessage key={m.id} m={m} latest={m.id === lastAgent?.id && !pendingText} revealing={m.id === revealId} templates={templates} session={session} busy={busy}
-          onReply={onReply} onUseStyle={onUseStyle} onStart={onStart} onSkipScript={onSkipScript} onConfirmScript={onConfirmScript} onAdjustScript={onAdjustScript} />
+          onReply={onReply} onUseStyle={onUseStyle} onStart={onStart} onSkipScript={onSkipScript} onConfirmScript={onConfirmScript} onAdjustScript={onAdjustScript} trialOn={trialOn} estimate={estimate} onToggleTrial={onToggleTrial} />
       ))}
       {pendingText && (
         <>

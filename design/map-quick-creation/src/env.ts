@@ -5,7 +5,7 @@ import type { QcAttachment, QcRun, QcScene } from '@/pages/quick-creation-agent/
 /* 演示成片：由 tools/make-demo-film.mjs 用模板画面渲染、带示意音轨的 WebM，构建时内嵌为 data: 地址 */
 import filmUrl from './assets/demo-film.webm';
 import { briefContext, briefMessage, briefScript } from './briefEngine';
-import { estimate } from './estimate';
+import { estimate, scenesFor } from './estimate';
 import { assets, attachmentQueue, fixedRuns, queueAt, sampleDoc, scenes, stagesAt, templateCategories, templateSource, templates, webKeyPoints, webSections, works } from './fixtures';
 
 class MemStorage {
@@ -31,7 +31,9 @@ const ok = (data: unknown) => json({ success: true, data, error: null });
 const fail = (message: string, code = 'UPSTREAM_UNAVAILABLE') => json({ success: false, data: null, error: { code, message } });
 
 /* ---------- 运行中的任务：按提交后的秒数推进 ---------- */
-type Live = { kind: 'video' | 'web'; startedAt: number; title: string; templateId: string; ask: string; attachments: QcAttachment[]; fromStage?: number; targetSec?: number };
+type Live = { kind: 'video' | 'web'; startedAt: number; title: string; templateId: string; ask: string; attachments: QcAttachment[]; fromStage?: number; targetSec?: number;
+  /* 试看：making → ready（暂停等确认）→ approved（从断点接着做） */
+  trial?: 'making' | 'ready' | 'approved'; approvedAt?: number };
 const live = new Map<string, Live>();
 const publishTries = new Map<string, number>();
 /* 恢复：只重做没完成的部分。keep 是保留下来的幕（索引 → 状态），重做的幕按时间推进 */
@@ -44,8 +46,14 @@ const publishedAt = new Map<string, string>();
 const VIDEO_STEPS = [8, 16, 26, 31];
 const WEB_STEPS = [6, 11, 16, 22];
 
+/* 试看在第 12 秒做完（片头和第 1 幕），之后暂停到用户确认 */
+const TRIAL_END = 12;
+
 function liveRun(id: string, l: Live): QcRun {
-  const t = (Date.now() - l.startedAt) / 1000;
+  const raw = (Date.now() - l.startedAt) / 1000;
+  const inTrial = !!l.trial && l.trial !== 'approved';
+  if (inTrial && raw >= TRIAL_END) l.trial = 'ready';
+  const t = inTrial ? Math.min(raw, TRIAL_END) : l.trial === 'approved' && l.approvedAt ? TRIAL_END + (Date.now() - l.approvedAt) / 1000 : raw;
   const steps = l.kind === 'video' ? VIDEO_STEPS : WEB_STEPS;
   let stage = steps.findIndex(s => t < s);
   if (stage < 0) stage = 4;
@@ -62,11 +70,25 @@ function liveRun(id: string, l: Live): QcRun {
     estimateBasis: '最近 20 次同模板任务的中位数', publish: { status: 'none' }, createdAt: '刚刚', updatedAt: '刚刚',
     queue: stage === 0 ? queueAt(3 - Math.floor(t / 3), Math.round(t * SCALE)) : undefined,
   };
+  if (l.kind === 'video' && l.trial) {
+    const target = l.targetSec ?? 180;
+    const total = scenesFor(target);
+    const gen = estimate({ kind: 'video', docs: [], duration: target as 60 }).generateMin;
+    const trial = { status: l.trial, scenes: 2, seconds: 28, restScenes: Math.max(1, total - 2), restMin: [Math.round(gen[0] * 0.85), Math.round(gen[1] * 0.85)] as [number, number] };
+    if (l.trial !== 'approved' && stage >= 1) {
+      const ready = l.trial === 'ready';
+      const stagesT = base.stages.map(s => (s.status === 'running' ? { ...s, detail: ready ? '试看好了：片头和第 1 幕，等你确认' : '先做试看：片头和第 1 幕', progress: ready ? undefined : s.progress } : s));
+      return { ...base, stages: stagesT, remainSec: ready ? undefined : Math.max(60, Math.round((TRIAL_END - t) * SCALE)), voice: '女声 · 稍快', durationSec: ready ? 28 : 96, trial,
+        ...(ready ? { media: { url: filmUrl, mime: 'video/webm' } } : {}),
+        scenes: scenes(i => (i < 2 ? (ready || t > 10 ? 'ready' : 'drawing') : 'waiting')) };
+    }
+    if (l.trial === 'approved') Object.assign(base, { trial });
+  }
   if (l.kind === 'video') {
     const drawn = stage < 1 ? 0 : stage === 1 ? Math.min(6, 1 + Math.floor(((t - steps[0]) / (steps[1] - steps[0])) * 6)) : 6;
     const voiced = stage < 2 ? 0 : stage === 2 ? Math.min(6, Math.floor(((t - steps[1]) / (steps[2] - steps[1])) * 6)) : 6;
     return { ...base, voice: '女声 · 稍快', durationSec: 96, keyPoints: fixedRuns['run-done'].keyPoints,
-      scenes: scenes(i => (i < voiced ? 'ready' : stage === 2 && i === voiced ? 'voicing' : i < drawn ? (stage === 1 && i === drawn - 1 ? 'drawing' : 'drawn') : 'waiting')) };
+      scenes: scenes(i => (l.trial === 'approved' && i < 2 ? 'ready' : i < voiced ? 'ready' : stage === 2 && i === voiced ? 'voicing' : i < drawn ? (stage === 1 && i === drawn - 1 ? 'drawing' : 'drawn') : 'waiting')) };
   }
   return { ...base, sections: stage >= 1 ? webSections : [], keyPoints: webKeyPoints };
 }
@@ -77,7 +99,9 @@ const bundleOf = (run: QcRun) => ({ codeUrl: `/bundles/${run.id}/scenes.js`, aud
 
 function withPublish(run: QcRun): QcRun {
   const at = publishedAt.get(run.id);
-  const withMedia = run.kind === 'video' && run.status === 'done' ? { ...run, media: { url: filmUrl, mime: 'video/webm' }, bundle: bundleOf(run) } : run;
+  const withMedia = run.kind === 'video' && run.status === 'done' ? { ...run, media: { url: filmUrl, mime: 'video/webm' }, bundle: bundleOf(run) }
+    /* 试看好了：右边先播试看的两幕 */
+    : run.kind === 'video' && run.trial?.status === 'ready' && !run.media ? { ...run, media: { url: filmUrl, mime: 'video/webm' } } : run;
   return at ? { ...withMedia, publish: { status: 'done', siteId: `site-${run.id}`, siteTitle: run.title, at } } : withMedia;
 }
 
@@ -155,6 +179,19 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     const docs = [sampleDoc, ...attachmentQueue, ...createdAttachments.values()].filter(a => (body.attachmentIds ?? []).includes(a.id) && a.kind !== 'image' && a.status === 'ready');
     return ok(estimate({ kind: body.kind, docs, duration: body.duration ?? 'auto' }));
   }
+  const trialApprove = path.match(/\/runs\/([^/]+)\/trial\/approve$/);
+  if (trialApprove && method === 'POST') {
+    const id = trialApprove[1];
+    const l = live.get(id);
+    if (l && l.trial === 'ready') { l.trial = 'approved'; l.approvedAt = Date.now(); return ok(getRun(id)); }
+    /* 演示用的固定任务：确认后变成运行中的任务，从试看的断点接着做 */
+    const f = fixedRuns[id];
+    if (f?.trial?.status === 'ready') {
+      live.set(id, { kind: f.kind, startedAt: Date.now() - TRIAL_END * 1000, title: f.title, templateId: f.templateId, ask: f.ask, attachments: f.attachments, targetSec: f.targetSec, trial: 'approved', approvedAt: Date.now() });
+      return ok(getRun(id));
+    }
+    return fail('这个任务现在不在等试看确认', 'NOT_FOUND');
+  }
   const serverExport = path.match(/\/runs\/([^/]+)\/server-export$/);
   if (serverExport && method === 'POST') return ok({ position: 2, etaMin: 12 });
   if (path.endsWith('/assets')) {
@@ -212,7 +249,8 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     const atts = [sampleDoc, ...attachmentQueue, ...createdAttachments.values()].filter(a => (body.attachmentIds ?? []).includes(a.id));
     const usedAtts = atts.length || body.briefId ? atts : [sampleDoc];
     const est = estimate({ kind: body.kind, docs: usedAtts.filter(a => a.kind !== 'image' && a.status === 'ready'), duration: body.duration ?? 'auto' });
-    live.set(id, { kind: body.kind, startedAt: Date.now(), title: body.title || '未命名', templateId: body.templateId, ask: body.ask ?? '', attachments: usedAtts, targetSec: est.targetSec });
+    live.set(id, { kind: body.kind, startedAt: Date.now(), title: body.title || '未命名', templateId: body.templateId, ask: body.ask ?? '', attachments: usedAtts, targetSec: est.targetSec,
+      ...(body.kind === 'video' && body.trial ? { trial: 'making' as const } : {}) });
     return ok(getRun(id));
   }
   const retry = path.match(/\/runs\/([^/]+)\/retry$/);

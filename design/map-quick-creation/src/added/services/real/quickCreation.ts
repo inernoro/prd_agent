@@ -38,6 +38,11 @@ export function estimateQuickCreation(input: { kind: OutputKind; attachmentIds: 
   return apiRequest<QcEstimate>(`${base}/estimate`, { method: 'POST', body: input });
 }
 
+/** 试看满意：从断点接着做完，试看的两幕沿用 */
+export function approveQuickCreationTrial(runId: string) {
+  return apiRequest<QcRun>(`${base}/runs/${encodeURIComponent(runId)}/trial/approve`, { method: 'POST', body: {} });
+}
+
 /** 浏览器不能本机合成时，请服务器代为导出视频文件（排队执行，占服务器资源，只作兜底） */
 export function requestServerExport(runId: string) {
   return apiRequest<{ position: number; etaMin: number }>(`${base}/runs/${encodeURIComponent(runId)}/server-export`, { method: 'POST', body: {} });

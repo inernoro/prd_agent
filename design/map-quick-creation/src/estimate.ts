@@ -30,5 +30,7 @@ export function estimate(input: { kind: OutputKind; docs: QcAttachment[]; durati
   const basis = chars
     ? `稿件 ${chars.toLocaleString('en-US')} 字，全文照念约 ${fmt(fullSec ?? 0)}；${input.duration === 'auto' ? `自动取约 ${fmt(autoSec)}讲重点` : `按约 ${fmt(targetSec)}写分镜`}`
     : `内容来自对话；${input.duration === 'auto' ? '自动取约 1 分钟' : `按约 ${fmt(targetSec)}写分镜`}`;
-  return { choice: input.duration, targetSec, autoSec, ...(fullSec ? { fullSec, chars } : {}), scenes: scenesFor(targetSec), generateMin, basis };
+  /* 试看只做片头和第 1 幕：约占整片的一成多一点（排队之外） */
+  const trialMin: [number, number] = [Math.max(3, Math.round(generateMin[0] * 0.12)), Math.max(5, Math.round(generateMin[1] * 0.15))];
+  return { choice: input.duration, targetSec, autoSec, ...(fullSec ? { fullSec, chars } : {}), scenes: scenesFor(targetSec), generateMin, basis, trialDefault: targetSec >= 180, trialMin };
 }

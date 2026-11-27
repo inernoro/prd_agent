@@ -10,12 +10,12 @@
     "changes/v1-v9/source.diff"
    ],
    "acceptance": {
-    "added": 18,
+    "added": 19,
     "removed": 0,
     "changed": 26
    },
    "screens": {
-    "added": 15,
+    "added": 16,
     "removed": 0,
     "changed": 2
    },
@@ -29,12 +29,12 @@
     "changes/v2-v9/changes.md"
    ],
    "acceptance": {
-    "added": 16,
+    "added": 17,
     "removed": 0,
     "changed": 12
    },
    "screens": {
-    "added": 15,
+    "added": 16,
     "removed": 0,
     "changed": 2
    },
@@ -48,12 +48,12 @@
     "changes/v3-v9/changes.md"
    ],
    "acceptance": {
-    "added": 16,
+    "added": 17,
     "removed": 0,
     "changed": 12
    },
    "screens": {
-    "added": 15,
+    "added": 16,
     "removed": 0,
     "changed": 2
    },
@@ -67,12 +67,12 @@
     "changes/v4-v9/changes.md"
    ],
    "acceptance": {
-    "added": 16,
+    "added": 17,
     "removed": 0,
     "changed": 12
    },
    "screens": {
-    "added": 15,
+    "added": 16,
     "removed": 0,
     "changed": 2
    },
@@ -86,12 +86,12 @@
     "changes/v5-v9/changes.md"
    ],
    "acceptance": {
-    "added": 16,
+    "added": 17,
     "removed": 0,
     "changed": 6
    },
    "screens": {
-    "added": 15,
+    "added": 16,
     "removed": 0,
     "changed": 1
    },
@@ -105,16 +105,16 @@
     "changes/v6-v9/changes.md"
    ],
    "acceptance": {
-    "added": 10,
-    "removed": 0,
-    "changed": 1
-   },
-   "screens": {
     "added": 11,
     "removed": 0,
     "changed": 1
    },
-   "sourceFiles": 12
+   "screens": {
+    "added": 12,
+    "removed": 0,
+    "changed": 1
+   },
+   "sourceFiles": 14
   },
   {
    "version": 7,
@@ -124,16 +124,16 @@
     "changes/v7-v9/changes.md"
    ],
    "acceptance": {
-    "added": 4,
+    "added": 5,
     "removed": 0,
     "changed": 1
    },
    "screens": {
-    "added": 6,
+    "added": 7,
     "removed": 0,
     "changed": 1
    },
-   "sourceFiles": 12
+   "sourceFiles": 14
   },
   {
    "version": 8,
@@ -143,16 +143,16 @@
     "changes/v8-v9/changes.md"
    ],
    "acceptance": {
-    "added": 4,
+    "added": 5,
     "removed": 0,
     "changed": 0
    },
    "screens": {
-    "added": 4,
+    "added": 5,
     "removed": 0,
     "changed": 0
    },
-   "sourceFiles": 12
+   "sourceFiles": 14
   }
  ]
 }

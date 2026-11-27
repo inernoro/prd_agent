@@ -4,11 +4,11 @@
 
 | 从 | 验收项 新增/删除/改写 | 画面 新增/删除/改动 | 源码文件 | 文件 |
 |---|---|---|---|---|
-| V1 | 18/0/26 | 15/0/2 | 122 | `changes/v1-v9/summary.json`、`changes/v1-v9/changes.md`、`changes/v1-v9/source.diff` |
-| V2 | 16/0/12 | 15/0/2 | 120 | `changes/v2-v9/summary.json`、`changes/v2-v9/changes.md` |
-| V3 | 16/0/12 | 15/0/2 | 120 | `changes/v3-v9/summary.json`、`changes/v3-v9/changes.md` |
-| V4 | 16/0/12 | 15/0/2 | 120 | `changes/v4-v9/summary.json`、`changes/v4-v9/changes.md` |
-| V5 | 16/0/6 | 15/0/1 | 118 | `changes/v5-v9/summary.json`、`changes/v5-v9/changes.md` |
-| V6 | 10/0/1 | 11/0/1 | 12 | `changes/v6-v9/summary.json`、`changes/v6-v9/changes.md` |
-| V7 | 4/0/1 | 6/0/1 | 12 | `changes/v7-v9/summary.json`、`changes/v7-v9/changes.md` |
-| V8 | 4/0/0 | 4/0/0 | 12 | `changes/v8-v9/summary.json`、`changes/v8-v9/changes.md` |
+| V1 | 19/0/26 | 16/0/2 | 122 | `changes/v1-v9/summary.json`、`changes/v1-v9/changes.md`、`changes/v1-v9/source.diff` |
+| V2 | 17/0/12 | 16/0/2 | 120 | `changes/v2-v9/summary.json`、`changes/v2-v9/changes.md` |
+| V3 | 17/0/12 | 16/0/2 | 120 | `changes/v3-v9/summary.json`、`changes/v3-v9/changes.md` |
+| V4 | 17/0/12 | 16/0/2 | 120 | `changes/v4-v9/summary.json`、`changes/v4-v9/changes.md` |
+| V5 | 17/0/6 | 16/0/1 | 118 | `changes/v5-v9/summary.json`、`changes/v5-v9/changes.md` |
+| V6 | 11/0/1 | 12/0/1 | 14 | `changes/v6-v9/summary.json`、`changes/v6-v9/changes.md` |
+| V7 | 5/0/1 | 7/0/1 | 14 | `changes/v7-v9/summary.json`、`changes/v7-v9/changes.md` |
+| V8 | 5/0/0 | 5/0/0 | 14 | `changes/v8-v9/summary.json`、`changes/v8-v9/changes.md` |

@@ -132,6 +132,18 @@
      "desktop-dark"
     ],
     "interaction": true
+   },
+   {
+    "id": "A-59",
+    "rule": "先试看再做完：3 分钟及以上默认先只做片头和第 1 幕（带配音），约占整片一成的时间；做好后在右边播放，满意就从断点接着做完（试看的两幕沿用），不满意回去换风格或改要求；等确认时任务暂停、不占排队名额；时长与风格面板和分镜脚本卡都能开关",
+    "expected": "trial-ready 左栏写「试看好了：片头和第 1 幕（约 28 秒）」与「满意，继续做完」「不满意，回去换风格或改要求」，右栏标题「试看」并能播放；点「满意，继续做完」后写「试看已确认，接着做剩下的 11 幕」；放入示例稿件（约 3 分钟）时面板里「先试看」默认开，改成约 1 分钟后默认关",
+    "how": "human",
+    "screenId": "trial-ready",
+    "slots": [
+     "desktop-light",
+     "desktop-dark"
+    ],
+    "interaction": true
    }
   ],
   "removed": [],
@@ -266,6 +278,12 @@
     "entryActions": [
      "[data-qc=style-chip]"
     ]
+   },
+   {
+    "id": "trial-ready",
+    "name": "试看好了：先看片头和第 1 幕，满意再做完",
+    "route": "#/quick-creation-agent?run=run-trial",
+    "viewport": "desktop"
    }
   ],
   "removed": [],
@@ -360,6 +378,10 @@
     "area": "源码"
    },
    {
+    "path": "src/added/pages/quick-creation-agent/ResultPanel.tsx",
+    "area": "源码"
+   },
+   {
     "path": "src/added/pages/quick-creation-agent/StyleLibrary.tsx",
     "area": "源码"
    },
@@ -377,6 +399,10 @@
    },
    {
     "path": "src/env.ts",
+    "area": "源码"
+   },
+   {
+    "path": "src/fixtures.ts",
     "area": "源码"
    },
    {
@@ -412,6 +438,10 @@
     "area": "文档"
    },
    {
+    "path": "设计文档/演示数据.json",
+    "area": "文档"
+   },
+   {
     "path": "设计文档/验收计划.md",
     "area": "文档"
    }
@@ -424,13 +454,13 @@
    "failed": []
   },
   "to": {
-   "passed": 59,
-   "total": 59,
+   "passed": 60,
+   "total": 60,
    "failed": []
   }
  },
  "source": {
-  "files": 12,
-  "bytes": 104628
+  "files": 14,
+  "bytes": 126441
  }
 }
