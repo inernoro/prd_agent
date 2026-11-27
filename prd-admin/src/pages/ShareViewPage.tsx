@@ -1107,7 +1107,9 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
         <div id={documentPanelId} role={isMobile && token ? 'tabpanel' : undefined} aria-labelledby={isMobile && token ? `${documentPanelId}-tab` : undefined}
           aria-hidden={isMobile && showComments && !isFullscreen ? true : undefined}
           className="review-document-stage" style={{ position: 'relative', minHeight: 0, minWidth: 0, gridColumn: 1, gridRow: isFullscreen ? 1 : 2, background: 'var(--review-b-paper)' }}>
-          {!isFullscreen && !review.loading && (site.wrappedAssetType === 'pdf' || (liveSite.wrappedAssetType !== 'video' && annotations.connectionChecked && !annotations.ready)) && <ReviewUnavailableNotice />}
+          {!isFullscreen && !review.loading && (site.wrappedAssetType === 'pdf' || (liveSite.wrappedAssetType !== 'video' && annotations.connectionChecked && !annotations.ready)) && (
+            <ReviewUnavailableNotice onOpenDiscussion={() => setShowComments(true)} />
+          )}
           <AnnotationModeBar annotations={annotations} onCancel={() => setShowComments(true)} />
           {pageFullscreen && (
             <button

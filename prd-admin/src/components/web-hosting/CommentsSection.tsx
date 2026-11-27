@@ -733,14 +733,14 @@ export default function CommentsSection(props: Props) {
         </div>
       </div>
       {historyHintId && <p className="review-talk-note">当前版本暂无意见，{historyHintLabel} 有 {historyHintCount} 条。<button type="button" onClick={() => review?.setVersionPreview({ id: historyHintId })}>在小窗查看</button></p>}
-      {props.readerLayout && annotations?.connectionChecked && !annotations.ready && <p className="review-talk-note">这个页面不能加载批注脚本，只支持整页评论。</p>}
+      {props.readerLayout && annotations?.connectionChecked && !annotations.ready && <p className="review-talk-note">当前页面仅支持整页评论。</p>}
       {props.readerLayout && unread.length > 0 && <button className="review-talk-new" type="button" onClick={jumpUnread}><MessageSquare size={14} />{unread.length} 条讨论有新内容 · 查看</button>}
       <div className="review-thread-scroll" ref={listRef}>
         {loading || versionPending ? <MapSectionLoader text={versionPending ? '正在确认网页版本…' : '正在加载讨论…'} /> : <>
           {visible.length === 0 && !error && <div className="review-empty">
             {!props.readerLayout && <MessageSquare size={23} />}<strong>{filter === 'resolved' ? '还没有已解决的讨论' : filter === 'open' && resolvedCount ? '全部意见都已解决' : props.readerLayout ? '还没有意见' : props.threadKind === 'discussion' ? '讨论这份文档' : '让意见留在对应的位置'}</strong>
             <p>{otherVersions ? '其他版本的讨论会保留在这里。' : props.readerLayout
-              ? '选中正文中的文字可添加批注，也可以在下方写整页评论。'
+              ? (annotations?.ready ? '选中正文中的文字可添加批注，也可以在下方写整页评论。' : '在下方写下对这份网页的意见。')
               : props.threadKind === 'discussion' ? '留下整页讨论，与其他读者交流。' : '选取一个元素或一段文字，开始第一条批注。'}</p>
           </div>}
           {groups.length ? groups.map(group => <Fragment key={group.key}>

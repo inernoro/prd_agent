@@ -68,10 +68,11 @@ export function ReviewReaderTabs({ discussion, count, documentId, discussionId, 
   </div>{trailing}{count > 0 && <span id={`${discussionId}-count`} className="sr-only">{count} 条评论</span>}</div>;
 }
 
-export function ReviewUnavailableNotice() {
+export function ReviewUnavailableNotice({ onOpenDiscussion }: { onOpenDiscussion: () => void }) {
   return <div className="review-annotation-unavailable" role="note">
-    <MessageCircle size={15} />
-    <span><strong>这个页面不能加载批注脚本</strong>，可以在讨论栏写整页评论。</span>
+    <MessageCircle size={15} aria-hidden="true" />
+    <span>当前页面仅支持整页评论</span>
+    <button type="button" onClick={onOpenDiscussion}>打开讨论</button>
   </div>;
 }
 

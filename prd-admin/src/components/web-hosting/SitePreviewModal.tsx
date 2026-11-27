@@ -337,7 +337,9 @@ export default function SitePreviewModal({
           <div id={documentPanelId} role={isMobile ? 'tabpanel' : undefined} aria-labelledby={isMobile ? `${documentPanelId}-tab` : undefined}
             aria-hidden={isMobile && rightPanel !== 'none' ? true : undefined}
             className="review-document-stage flex-1 min-w-0 min-h-0 relative" style={{ background: 'var(--review-b-paper)' }}>
-            {!review.loading && (site.wrappedAssetType === 'pdf' || (!video && annotations.connectionChecked && !annotations.ready)) && <ReviewUnavailableNotice />}
+            {!review.loading && (site.wrappedAssetType === 'pdf' || (!video && annotations.connectionChecked && !annotations.ready)) && (
+              <ReviewUnavailableNotice onOpenDiscussion={() => setShowComments(true)} />
+            )}
             {/* loading 遮罩只在「还没到慢提示阈值」时盖住——超过阈值就让位给 iframe，
                 因为此时页面大概率已经画出来了，只是 load 事件还没来。 */}
             {(historicalLoading || (loading && !slow)) && (

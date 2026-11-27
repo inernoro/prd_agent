@@ -835,9 +835,11 @@ for (const theme of ['light', 'dark'] as const) {
   });
 }
 
-test('单篇分享未加入合集时隐藏阅读工具栏的合集入口', async ({ page }) => {
+test('单篇分享收紧标题和说明，整页评论可直达，未入合集时隐藏入口', async ({ page }) => {
   const token = 'standalone-review';
-  const site = { id: 'standalone', title: '单篇网页', siteUrl: 'https://hosting.example/standalone/index.html', entryFile: 'index.html', viewerIsOwner: true };
+  const site = { id: 'standalone', title: '单篇网页', description: '由知识驱动设计生成',
+    siteUrl: 'https://hosting.example/standalone/index.html', entryFile: 'index.html', viewerIsOwner: true, contentShape: 'multi-file' };
+  const sharePath = `/api/web-pages/shares/view/${token}`;
   const contextsPath = `/api/web-pages/${site.id}/collection-contexts`;
   await page.addInitScript(() => {
     localStorage.setItem('prd-admin-auth', JSON.stringify({ state: {
@@ -850,17 +852,34 @@ test('单篇分享未加入合集时隐藏阅读工具栏的合集入口', async
   await page.route('**/api/**', route => {
     const { pathname } = new URL(route.request().url());
     let data: unknown = { items: [] };
-    if (pathname === `/api/web-pages/shares/view/${token}`) {
+    if (pathname === sharePath) {
       data = { title: site.title, shareType: 'single', sites: [site], createdBy: 'author', createdAt: '2026-11-26T12:00:00Z' };
     }
     if (pathname === contextsPath) data = { items: [], total: 0, totalContexts: 0, page: 1, pageSize: 20 };
+    if (pathname === `${sharePath}/revisions`) data = [{ id: 'current', siteId: site.id, versionLabel: 'V1',
+      contentVersionKey: '2026-11-26T12:00:00Z', canPreview: true, isCurrent: true, siteUrl: site.siteUrl }];
+    if (pathname.endsWith('/comments')) data = { comments: [], commentsEnabled: true, canComment: true };
     return route.fulfill({ json: { success: true, data, error: null } });
   });
   const contexts = page.waitForResponse(response => new URL(response.url()).pathname === contextsPath);
   await page.goto(`/s/wp/${token}`);
   expect((await contexts).ok()).toBe(true);
   await expect(page.frameLocator('iframe[title="单篇网页"]').getByRole('heading', { name: '单篇正文' })).toBeVisible();
-  await expect(page.locator('.review-reader-toolbar .related-trigger')).toHaveCount(0);
+  const toolbar = page.locator('.review-reader-toolbar');
+  await expect(toolbar.locator('.related-trigger')).toHaveCount(0);
+  await expect(toolbar.getByRole('button', { name: '修改标题' })).toBeVisible();
+  await expect(toolbar.getByText(site.description, { exact: true })).toBeVisible();
+  const geometry = await toolbar.evaluate(bar => {
+    const title = bar.querySelector('.review-reader-identity-line > span')!.getBoundingClientRect();
+    const description = bar.querySelector('.review-reader-source')!.getBoundingClientRect();
+    return { gap: description.top - title.bottom, bottom: bar.getBoundingClientRect().bottom - description.bottom };
+  });
+  expect(geometry.gap).toBeLessThanOrEqual(5);
+  expect(geometry.bottom).toBeGreaterThanOrEqual(7);
+  const notice = page.getByRole('note').filter({ hasText: '当前页面仅支持整页评论' });
+  await notice.getByRole('button', { name: '打开讨论' }).click();
+  await expect(page.getByRole('textbox', { name: '批注内容' })).toBeEditable();
+  await expect(page.getByText('选中正文中的文字可添加批注', { exact: false })).toHaveCount(0);
 });
 
 async function mockVideoCollectionShare(page: Page) {
