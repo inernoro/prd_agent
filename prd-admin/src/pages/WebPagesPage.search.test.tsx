@@ -37,6 +37,7 @@ const site = {
   createdAt: '2026-11-27T00:00:00Z', updatedAt: '2026-11-27T00:00:00Z',
 };
 const preview = 'iframe[title="preview"]';
+const viewModePreference = 'webpages.pref.viewMode';
 let host: HTMLDivElement;
 let root: ReturnType<typeof createRoot>;
 
@@ -68,6 +69,7 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => root.unmount());
   host.remove();
+  localStorage.removeItem(viewModePreference);
   vi.unstubAllGlobals();
 });
 
@@ -77,10 +79,13 @@ function inputText(input: HTMLInputElement, value: string, isComposing = false) 
 }
 
 it.each([
-  ['桌面', false, '搜索标题、描述、标签'],
-  ['移动端', true, '搜索站点名称、描述...'],
-] as const)('%s仅用已确认的拼音选词搜索，实时预览在输入期间暂停', async (_name, mobile, placeholder) => {
+  ['桌面网格', false, 'grid', '搜索标题、描述、标签'],
+  ['桌面列表', false, 'list', '搜索标题、描述、标签'],
+  ['移动端网格', true, 'grid', '搜索站点名称、描述...'],
+  ['移动端列表', true, 'list', '搜索站点名称、描述...'],
+] as const)('%s仅用已确认的拼音选词搜索，实时预览在输入期间暂停', async (_name, mobile, viewMode, placeholder) => {
   viewport.isMobile = mobile;
+  localStorage.setItem(viewModePreference, viewMode);
   await act(async () => root.render(<MemoryRouter initialEntries={['/web-pages']}><WebPagesPage /></MemoryRouter>));
   const input = host.querySelector<HTMLInputElement>(`input[placeholder="${placeholder}"]`)!;
   const previewCount = host.querySelectorAll(preview).length;
@@ -103,7 +108,7 @@ it.each([
   });
   expect(listSites).toHaveBeenCalledTimes(initialRequests + 1);
   expect(listSites).toHaveBeenLastCalledWith(expect.objectContaining({ keyword: '架构' }));
-  expect(host.querySelector('[data-site-selection-surface] h3')?.textContent).toBe('架构');
+  expect(host.querySelector('[data-site-selection-surface] [data-hosted-site-id="site-1"]')?.textContent).toContain('架构');
   expect(host.querySelector(preview)).toBeNull();
   expect(document.activeElement).toBe(input);
 

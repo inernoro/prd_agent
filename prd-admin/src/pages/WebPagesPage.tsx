@@ -1342,6 +1342,7 @@ export default function WebPagesPage() {
       <div className="flex flex-col">
         {items.map(site => (
           <SiteListItem
+            pauseLivePreview={searchFocused}
             traffic={siteTraffic[site.id]}
             activity={siteActivity[site.id]}
             relatedSummary={relatedSummaries[site.id]}
@@ -3155,8 +3156,9 @@ function MoreActionsButton({ actions }: { actions: MoreAction[] }) {
 
 // ─── List View ───
 
-export function SiteListItem({ site, selected, selectionMode = false, shared, caps, activity, traffic, relatedSummary, onNavigateRelated, onVisit, onSelect, onEdit, onDelete, onShare, onQrCode, onTogglePublic, onComments, onAskConfig, onAiEdit }: {
+export function SiteListItem({ site, pauseLivePreview, selected, selectionMode = false, shared, caps, activity, traffic, relatedSummary, onNavigateRelated, onVisit, onSelect, onEdit, onDelete, onShare, onQrCode, onTogglePublic, onComments, onAskConfig, onAiEdit }: {
   site: HostedSite;
+  pauseLivePreview?: boolean;
   selected: boolean;
   selectionMode?: boolean;
   shared?: boolean;
@@ -3227,7 +3229,7 @@ export function SiteListItem({ site, selected, selectionMode = false, shared, ca
         <PdfThumbnail className="shrink-0 w-8 h-8 rounded overflow-hidden" compact />
       ) : (
         <div className="shrink-0 w-8 h-8 rounded overflow-hidden" style={{ background: 'var(--bg-sunken)' }}>
-          <SitePreview site={site} url={site.siteUrl} className="w-full h-full" />
+          <SitePreview site={site} url={site.siteUrl} className="w-full h-full" paused={pauseLivePreview} />
         </div>
       )}
 
