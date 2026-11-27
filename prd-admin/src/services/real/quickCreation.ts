@@ -2,7 +2,7 @@ import { apiDownload, apiRequest, resolveApiUrl } from '@/services/real/apiClien
 import { useAuthStore } from '@/stores/authStore';
 import { connectSse } from '@/lib/useSseStream';
 import { fail, type ApiResponse } from '@/types/api';
-import type { AssetScope, CreateRunInput, QcAsset, QcAttachment, QcBriefContext, QcBriefEvent, QcBriefSession, QcRun, QcTemplate, QcTemplateCategory, QcTemplateSource, QcWork } from '@/pages/quick-creation-agent/types';
+import type { AssetScope, CreateRunInput, DurationChoice, QcAsset, QcAttachment, QcBriefContext, QcBriefEvent, QcBriefSession, QcEstimate, QcPlayBundle, QcRun, QcTemplate, QcTemplateCategory, QcTemplateSource, QcWork } from '@/pages/quick-creation-agent/types';
 
 /**
  * 快速创作接口。生成在服务端排队与执行（Run/Worker），离开页面不取消；页面按任务编号恢复。
@@ -12,7 +12,7 @@ const base = '/api/quick-creation';
 
 export function listQuickCreationTemplates() {
   /* 风格库目录：分类、风格（含海报地址与风格说明位置）和来源授权，由服务端维护 */
-  return apiRequest<{ items: QcTemplate[]; categories: QcTemplateCategory[]; source: QcTemplateSource }>(`${base}/templates`);
+  return apiRequest<{ items: QcTemplate[]; categories: QcTemplateCategory[]; source: QcTemplateSource; browserFilm?: boolean }>(`${base}/templates`);
 }
 
 export function listQuickCreationWorks() {
@@ -26,6 +26,42 @@ export function listQuickCreationAssets(scope: AssetScope) {
 
 export function getQuickCreationRun(runId: string, signal?: AbortSignal) {
   return apiRequest<QcRun>(`${base}/runs/${encodeURIComponent(runId)}`, { signal });
+}
+
+export function estimateQuickCreation(attachmentIds: string[], duration: DurationChoice, signal?: AbortSignal) {
+  return apiRequest<QcEstimate>(`${base}/estimate`, { method: 'POST', body: { kind: 'video', attachmentIds, duration }, signal });
+}
+
+export function approveQuickCreationTrial(runId: string) {
+  return apiRequest<QcRun>(`${base}/runs/${encodeURIComponent(runId)}/trial/approve`, {
+    method: 'POST', body: {}, headers: { 'Idempotency-Key': `qc-trial-${runId}` },
+  });
+}
+
+export async function readQuickCreationBundle(runId: string) {
+  const result = await apiDownload(`${base}/runs/${encodeURIComponent(runId)}/film-bundle`, 'film-bundle.json');
+  if (result.contentType.split(';')[0] !== 'application/json') throw new Error('影片播放包暂未就绪');
+  return await result.blob.text().then(text => JSON.parse(text) as QcPlayBundle);
+}
+
+type CloudFilmExport = { status: 'none' | 'queued' | 'running' | 'failed' | 'done'; ahead: number; error?: string; downloadAvailable: boolean };
+
+export function getCloudFilmExport(runId: string, signal?: AbortSignal) {
+  return apiRequest<CloudFilmExport>(`${base}/runs/${encodeURIComponent(runId)}/export`, { signal });
+}
+
+export function queueCloudFilmExport(runId: string) {
+  return apiRequest<CloudFilmExport>(`${base}/runs/${encodeURIComponent(runId)}/export`, { method: 'POST', body: {} });
+}
+
+export function downloadCloudFilmExport(runId: string, title: string) {
+  return apiDownload(`${base}/runs/${encodeURIComponent(runId)}/export/file`, `${title}.mp4`);
+}
+
+export async function readQuickCreationPlayer(runId: string) {
+  const result = await apiDownload(`${base}/runs/${encodeURIComponent(runId)}/film-bundle?player=true`, 'player.html');
+  if (result.contentType.split(';')[0] !== 'text/html') throw new Error('影片播放器暂未就绪');
+  return await result.blob.text();
 }
 
 export function createQuickCreationRun(input: CreateRunInput) {

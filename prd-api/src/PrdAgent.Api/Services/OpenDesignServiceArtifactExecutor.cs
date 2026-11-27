@@ -566,7 +566,7 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
         try
         {
             var result = await _workspaceBroker.ReadResultAsync(run.Id, ct);
-            if (result.Files.All(file => file.Path != "film.mp4")) return null;
+            if (result.Files.All(file => file.Path != (run.QuickCreation?.BrowserFilm == true ? "film-bundle.json" : "film.mp4"))) return null;
             _logger.LogInformation("已取回事件流中断前提交的原影片 run={RunId}", run.Id);
             return new DesignArtifactExecutorChunk("delta", result.IndexHtml, result.Files);
         }
@@ -614,7 +614,9 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
             ["envelope"] = run.ArtifactType == DesignArtifactTypes.CodeFilm
                 ? new JsonObject { ["schemaVersion"] = "map-code-film-command-v1", ["runId"] = run.Id,
                     ["command"] = run.Instruction, ["resumeFilmFrom"] = run.ResumeFilmFromRunId,
-                    ["retryFilmScene"] = run.RetryFilmSceneIndex }
+                    ["retryFilmScene"] = run.RetryFilmSceneIndex,
+                    ["browserFilm"] = run.QuickCreation is { BrowserFilm: true, TargetDurationSec: { } target, PlannedScenes: { } scenes } quick
+                        ? new JsonObject { ["target"] = target, ["scenes"] = scenes, ["trial"] = quick.Trial } : null }
                 : JsonNode.Parse(DesignArtifactPromptBuilder.BuildRemoteEnvelope(run)),
         };
 

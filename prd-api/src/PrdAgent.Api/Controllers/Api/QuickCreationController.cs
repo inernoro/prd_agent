@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Caching.Memory;
 using MongoDB.Driver;
@@ -29,9 +30,14 @@ public sealed partial class DesignArtifactsController
         问一句：怎样算真的做完？能被别人照着检查的标准，才算验收标准。
         """;
 
+    private static bool QuickCreationAcceptanceBranch() => DeploymentScope.Current != null
+        && Environment.GetEnvironmentVariable("VITE_GIT_BRANCH") == "codex/dsn-1400e277-v6";
+
+    private bool BrowserFilmEnabled() => _configuration.GetValue<bool?>("DesignRuntime:QuickCreation:BrowserFilmEnabled")
+        ?? QuickCreationAcceptanceBranch();
+
     private bool QuickCreationEnabled() => _configuration.GetValue<bool>("DesignRuntime:QuickCreation:Enabled")
-        || (DeploymentScope.Current != null
-            && Environment.GetEnvironmentVariable("VITE_GIT_BRANCH") == "codex/dsn-1400e277-v6");
+        || QuickCreationAcceptanceBranch();
 
     [HttpGet("/api/quick-creation/templates")]
     public IActionResult GetQuickCreationTemplates()
@@ -46,7 +52,7 @@ public sealed partial class DesignArtifactsController
                 item.DurationSec, item.PromptRef, item.NeedsImageTool,
             }),
             catalog.Categories,
-            catalog.Source,
+            catalog.Source, browserFilm = BrowserFilmEnabled(),
         }));
     }
 
@@ -181,11 +187,29 @@ public sealed partial class DesignArtifactsController
         return File(bytes, attachment.MimeType);
     }
 
+    [HttpPost("/api/quick-creation/estimate")]
+    public async Task<IActionResult> EstimateQuickCreation([FromBody] QuickCreationEstimateRequest request, CancellationToken ct)
+    {
+        if (!QuickCreationEnabled()) return NotFound();
+        if (request.Kind != "video" || !QuickCreationDuration.TryRead(request.Duration, out var duration))
+            return QuickCreationError("请选择有效的成片时长");
+        var ids = request.AttachmentIds?.Distinct(StringComparer.Ordinal).ToList() ?? [];
+        if (ids.Any(id => !Guid.TryParseExact(id, "N", out _))) return QuickCreationError("有资料无法识别，请重新添加");
+        var userId = this.GetRequiredUserId();
+        var rows = ids.Count == 0 ? new List<Attachment>() : await _db.Attachments.Find(row => row.UploaderId == userId
+            && ids.Contains(row.AttachmentId) && row.QuickCreationKind != null && row.QuickCreationReadError == null).ToListAsync(ct);
+        if (rows.Count != ids.Count) return QuickCreationError("有资料没有读到，请检查后再估算");
+        var chars = QuickCreationDuration.CountCharacters(rows.Where(row => row.QuickCreationKind != "image").Select(row => row.ExtractedText));
+        return Ok(ApiResponse<object>.Ok(QuickCreationDuration.Estimate(chars, duration)));
+    }
+
     [HttpPost("/api/quick-creation/runs")]
     public async Task<IActionResult> CreateQuickCreationRun([FromBody] QuickCreationRunRequest request, CancellationToken ct)
     {
         if (!QuickCreationEnabled()) return NotFound();
         if (request.Kind is not ("video" or "web")) return QuickCreationError("请选择网页或视频");
+        if (!QuickCreationDuration.TryRead(request.Duration, out var durationChoice))
+            return QuickCreationError("请选择有效的成片时长");
         if (QuickCreationCatalog.Find(request.TemplateId) is not { } template)
             return QuickCreationError("这个风格不在当前目录，请重新选择");
         var ids = request.AttachmentIds?.Distinct(StringComparer.Ordinal).ToList() ?? [];
@@ -234,6 +258,10 @@ public sealed partial class DesignArtifactsController
             return QuickCreationError(ex.Message);
         }
         var film = request.Kind == "video";
+        var effectiveDurationChoice = request.Duration.HasValue ? durationChoice : brief?.DurationChoiceSec;
+        var duration = film ? QuickCreationDuration.Estimate(
+            brief != null && brief.SourceTitle == null ? 0 : QuickCreationDuration.CountCharacters(sourceIds.Select(id => byId[id].ExtractedText)),
+            effectiveDurationChoice) : null;
         if (film && OpenDesignTransportResolver.Resolve(_configuration).Transport != OpenDesignTransport.Service)
             return Conflict(ApiResponse<object>.Fail("RUNTIME_NOT_READY", "视频执行服务暂不可用，稿件仍可改做网页"));
         var guide = QuickCreationCatalog.ReadGuide(template);
@@ -245,19 +273,27 @@ public sealed partial class DesignArtifactsController
             if (!string.IsNullOrWhiteSpace(brief.Duration)) confirmed.Add($"成品时长或篇幅：{brief.Duration}");
             if (request.BriefMode == "confirm")
                 confirmed.Add("用户确认的分镜：\n" + string.Join("\n", brief.Script.Select(scene =>
-                    $"{scene.Index}. 画面：{scene.Visual}；旁白：{scene.Narration}")));
+                    $"{scene.Index}. {scene.DurationSec?.ToString() ?? "未定"}秒。画面：{scene.Visual}；旁白：{scene.Narration}")));
             ask = string.Join("\n", confirmed.Where(value => !string.IsNullOrWhiteSpace(value)));
         }
+        var browserFilm = film && BrowserFilmEnabled();
         var input = new QuickCreationInput
         {
             TemplateId = template.Id, StyleSha256 = QuickCreationCatalog.Hash(guide), Ask = ask, AttachmentIds = ids,
             BriefId = brief?.Id, BriefRevision = brief?.Revision, BriefContentSource = brief == null ? null : brief.SourceTitle == null ? "chat" : "doc",
             BriefUserRequests = brief == null ? null : FreezeBriefUserRequests(brief.Messages),
-            FilmTimeoutSeconds = film ? Math.Clamp(_configuration.GetValue<int?>("DesignRuntime:QuickCreation:FilmTimeoutSeconds") ?? 7200, 3300, 7200) : null,
+            FilmTimeoutSeconds = duration is not null ? Math.Max(duration.GenerateMin[1] * 120,
+                Math.Clamp(_configuration.GetValue<int?>("DesignRuntime:QuickCreation:FilmTimeoutSeconds") ?? 7200, 7200, 14400)) : null,
+            TargetDurationSec = duration?.TargetSec, DurationChoiceSec = duration is null ? null : effectiveDurationChoice,
+            PlannedScenes = duration?.Scenes, BrowserFilm = browserFilm,
+            Trial = browserFilm && (request.Trial ?? duration?.TrialDefault ?? false),
         };
         var instruction = film
-            ? $"用原版 Lemo-Opuscar 技能把附件稿件做成代码视频。风格：{template.Name}（{template.Id}）。完整读取随任务提供的 {template.PromptRef}，按原样说明执行。使用中文配音和同步字幕，交付可播放的 MP4。"
+            ? $"用原版 Lemo-Opuscar 技能把附件稿件做成代码视频。风格：{template.Name}（{template.Id}）。完整读取随任务提供的 {template.PromptRef}，按原样说明执行。使用中文配音和同步字幕。" +
+                (browserFilm ? " 交付方式以随任务提供的 brief/film-delivery.json 为准。" : "交付可播放的 MP4。")
             : $"把附件稿件做成可阅读的网页。完整读取 {template.PromptRef}，按「{template.Name}」借鉴配色、字体与版式。正文以稿件为准。";
+        if (duration is not null)
+            instruction += $" 成片目标约 {QuickCreationDuration.Label(duration.TargetSec)}，约 {duration.Scenes} 幕。以配音实测时长确定画面和字幕的时间轴。";
         if (input.BriefUserRequests is { Length: > 0 })
             instruction += $" 另请读取 {QuickCreationInput.BriefUserRequestsPath}，里面按顺序保留用户对作品的原话。";
         if (ask.Length > 0)
@@ -315,7 +351,8 @@ public sealed partial class DesignArtifactsController
         if (scope is not ("mine" or "team")) return QuickCreationError("请选择我的产物或团队产物");
         var userId = this.GetRequiredUserId();
         var filter = Builders<DesignArtifactRun>.Filter;
-        var completed = QuickCreationScope() & filter.Eq(row => row.Status, RunStatuses.Done);
+        var completed = QuickCreationScope() & filter.Eq(row => row.Status, RunStatuses.Done)
+            & filter.Ne(row => row.QuickCreation!.Trial, true);
         if (scope == "mine") completed &= filter.Eq(row => row.UserId, userId);
         else
         {
@@ -346,6 +383,69 @@ public sealed partial class DesignArtifactsController
         return Ok(ApiResponse<object>.Ok(new { items = result, total = result.Count }));
     }
 
+    [HttpGet("/api/quick-creation/runs/{runId}/film-bundle")]
+    public async Task<IActionResult> ReadQuickCreationBrowserFilm(string runId, [FromQuery] bool player,
+        [FromServices] IDesignArtifactWorkspaceBroker broker, CancellationToken ct)
+    {
+        if (!QuickCreationEnabled()) return NotFound();
+        var run = await FindOwnedQuickRunAsync(runId, ct) ?? await FindSharedQuickRunAsync(runId, ct);
+        if (run?.QuickCreation?.BrowserFilm != true || run.Status != RunStatuses.Done) return NotFound();
+        var bytes = await ReadBrowserFilmBundleAsync(run, broker, ct);
+        Response.Headers.CacheControl = "private, no-store";
+        Response.Headers.Append("X-Content-Type-Options", "nosniff");
+        if (!player) return File(bytes, "application/json");
+        Response.Headers.Append("Content-Security-Policy", "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline' blob:; style-src 'unsafe-inline'; img-src data: blob:; media-src data: blob:; font-src data: blob:; connect-src 'none'; form-action 'none'; base-uri 'none'");
+        return Content(QuickCreationBrowserPlayback.RenderSandbox(bytes), "text/html", Encoding.UTF8);
+    }
+
+    private static async Task<byte[]> ReadBrowserFilmBundleAsync(DesignArtifactRun run, IDesignArtifactWorkspaceBroker broker, CancellationToken ct)
+    {
+        var package = await broker.ReadCommittedCodeFilmAsync(run, ct);
+        return Convert.FromBase64String(package.Files.Single(file => file.Path == "film-bundle.json").ContentBase64);
+    }
+
+    [HttpPost("/api/quick-creation/runs/{runId}/export")]
+    public async Task<IActionResult> QueueQuickCreationExport(string runId, CancellationToken ct)
+    {
+        if (!QuickCreationEnabled()) return NotFound();
+        var run = await FindOwnedQuickRunAsync(runId, ct);
+        if (run?.QuickCreation is not { BrowserFilm: true, Trial: false } || run.Status != RunStatuses.Done) return NotFound();
+        var filters = Builders<DesignArtifactRun>.Filter;
+        var owner = filters.Eq(row => row.Id, run.Id) & filters.Eq(row => row.UserId, run.UserId);
+        await _db.DesignArtifactRuns.UpdateOneAsync(owner & (filters.Eq(row => row.BrowserFilmExport, null)
+            | filters.Eq(row => row.BrowserFilmExport!.Status, "failed")),
+            Builders<DesignArtifactRun>.Update.Set(row => row.BrowserFilmExport, new QuickCreationBrowserExport()), cancellationToken: ct);
+        return await ReadQuickCreationExport(runId, ct);
+    }
+
+    [HttpGet("/api/quick-creation/runs/{runId}/export")]
+    public async Task<IActionResult> ReadQuickCreationExport(string runId, CancellationToken ct)
+    {
+        if (!QuickCreationEnabled()) return NotFound();
+        var run = await FindOwnedQuickRunAsync(runId, ct);
+        if (run?.QuickCreation is not { BrowserFilm: true, Trial: false } || run.Status != RunStatuses.Done) return NotFound();
+        var export = run.BrowserFilmExport;
+        var queuedAt = export?.QueuedAt;
+        var ahead = export?.Status == "queued" && queuedAt.HasValue ? await _db.DesignArtifactRuns.CountDocumentsAsync(QuickCreationExportWorker.Scope
+            & Builders<DesignArtifactRun>.Filter.Where(row => row.Id != run.Id && row.BrowserFilmExport != null
+                && (row.BrowserFilmExport.Status == "running" || (row.BrowserFilmExport.Status == "queued"
+                    && row.BrowserFilmExport.QueuedAt < queuedAt.Value))), cancellationToken: ct) : 0;
+        return Ok(ApiResponse<object>.Ok(new { status = export?.Status ?? "none", ahead, error = export?.Error,
+            downloadAvailable = export?.Status == "done" && !string.IsNullOrWhiteSpace(export.AssetKey) }));
+    }
+
+    [HttpGet("/api/quick-creation/runs/{runId}/export/file")]
+    public async Task<IActionResult> DownloadQuickCreationExport(string runId, [FromServices] IAssetStorage storage, CancellationToken ct)
+    {
+        if (!QuickCreationEnabled()) return NotFound();
+        var run = await FindOwnedQuickRunAsync(runId, ct);
+        if (run?.BrowserFilmExport is not { Status: "done", AssetKey: { } key }) return NotFound();
+        var bytes = await storage.TryDownloadBytesAsync(key, ct);
+        if (bytes == null) return NotFound();
+        Response.Headers.CacheControl = "private, no-store";
+        return File(bytes, "video/mp4", run.Title + ".mp4");
+    }
+
     [HttpPost("/api/quick-creation/runs/{runId}/publish")]
     public async Task<IActionResult> PublishQuickCreationRun(
         string runId, [FromServices] IDesignArtifactWorkspaceBroker broker,
@@ -354,12 +454,26 @@ public sealed partial class DesignArtifactsController
         if (!QuickCreationEnabled()) return NotFound();
         var run = await FindOwnedQuickRunAsync(runId, ct);
         if (run == null) return NotFound();
-        if (run.Status != RunStatuses.Done)
+        if (run.Status != RunStatuses.Done || run.QuickCreation?.Trial == true)
             return Conflict(ApiResponse<object>.Fail("RUN_NOT_COMPLETE", "成品还未生成，请回到本次任务查看"));
         if (run.QuickCreationPublishedAt != null)
             return Ok(ApiResponse<object>.Ok(await ToQuickRunAsync(run, ct)));
         var siteId = run.ArtifactSiteId;
-        if (run.ArtifactType == DesignArtifactTypes.CodeFilm)
+        if (run.QuickCreation?.BrowserFilm == true)
+        {
+            await using var lease = await VideoAssetMutationLease.AcquireAsync(_db, "quick-creation-publish:" + run.Id, ct);
+            var sourceRef = "code-film:" + run.Id;
+            var site = await _db.HostedSites.Find(row => row.OwnerUserId == run.UserId && row.SourceRef == sourceRef).FirstOrDefaultAsync(ct);
+            if (site == null)
+            {
+                var bytes = await ReadBrowserFilmBundleAsync(run, broker, ct);
+                var zip = QuickCreationBrowserPlayback.BuildPublishedZip(run.Title, bytes);
+                site = await _sites.CreateFromZipAsync(run.UserId, zip, run.Title, null, null, null, "html",
+                    CancellationToken.None, sourceRef: sourceRef);
+            }
+            siteId = site.Id;
+        }
+        else if (run.ArtifactType == DesignArtifactTypes.CodeFilm)
         {
             var saved = await SaveCodeFilm(runId, broker, recovery, ct);
             if (saved is not OkObjectResult response) return saved;
@@ -416,6 +530,29 @@ public sealed partial class DesignArtifactsController
             retryFilmScene: retryFilmScene);
     }
 
+    [HttpPost("/api/quick-creation/runs/{runId}/trial/approve")]
+    public async Task<IActionResult> ApproveQuickCreationTrial(string runId,
+        [FromServices] OpenDesignServiceArtifactExecutor recovery, CancellationToken ct)
+    {
+        if (!QuickCreationEnabled()) return NotFound();
+        var run = await FindOwnedQuickRunAsync(runId, ct);
+        if (run?.QuickCreation is not { BrowserFilm: true, Trial: true } input || run.Status != RunStatuses.Done)
+            return Conflict(ApiResponse<object>.Fail("TRIAL_NOT_AVAILABLE", "试看还未就绪，请稍后重试"));
+        await using var lease = await VideoAssetMutationLease.AcquireAsync(_db, "quick-creation-trial:" + run.Id, ct);
+        var already = await _db.DesignArtifactRuns.Find(QuickCreationScope() & Builders<DesignArtifactRun>.Filter.Where(row =>
+            row.UserId == run.UserId && row.ResumeFilmFromRunId == run.Id && row.QuickCreation != null && !row.QuickCreation.Trial))
+            .SortByDescending(row => row.CreatedAt).FirstOrDefaultAsync(ct);
+        if (already != null) return Accepted(ApiResponse<object>.Ok(await ToQuickRunAsync(already, ct)));
+        var checkpoint = await recovery.ReadFilmProjectAsync(run, ct);
+        if (checkpoint is not { CompletedScenes: 2, NarrationClips: >= 2 })
+            return Conflict(ApiResponse<object>.Fail("FILM_CHECKPOINT_UNAVAILABLE", "试看仍可播放，暂时取不到续做素材。请稍后再试"));
+        return await CreateRunCoreAsync(new CreateDesignArtifactRunRequest
+        {
+            ArtifactType = run.ArtifactType, Instruction = run.Instruction, Title = run.Title,
+            AttachmentIds = run.UploadedSources?.Select(item => item.AttachmentId).ToList(),
+        }, input.ApproveTrial(), run.ReferenceImages, run.DesignDirection, retryOfRunId: run.Id, resumeFilm: run);
+    }
+
     private FilterDefinition<DesignArtifactRun> QuickCreationScope()
     {
         var f = Builders<DesignArtifactRun>.Filter;
@@ -446,6 +583,7 @@ public sealed partial class DesignArtifactsController
     {
         RunStatuses.Queued => "queued",
         RunStatuses.Running or RunStatuses.Committing => "running",
+        RunStatuses.Done when run.QuickCreation?.Trial == true => "trial-ready",
         RunStatuses.Done => "done",
         _ => "failed",
     };
@@ -495,7 +633,7 @@ public sealed partial class DesignArtifactsController
                 }),
             };
         }
-        var stageStatus = status switch { "done" => "done", "failed" => "failed", "running" => "running", _ => "pending" };
+        var stageStatus = status switch { "done" or "trial-ready" => "done", "failed" => "failed", "running" => "running", _ => "pending" };
         var checkpoint = includePrivate && run.Status == RunStatuses.Error && run.ArtifactType == DesignArtifactTypes.CodeFilm
             ? await HttpContext.RequestServices.GetRequiredService<OpenDesignServiceArtifactExecutor>().ReadFilmProjectAsync(run, ct)
             : null;
@@ -532,11 +670,19 @@ public sealed partial class DesignArtifactsController
             remainSec = status == "running" && estimate is { } seconds ? Math.Max(0, seconds - ElapsedSeconds(run, now)) : (int?)null,
             estimateBasis = estimate.HasValue ? "近期同风格成功任务的执行时长中位数" : null,
             durationSec = run.QuickCreationMedia?.DurationSec,
+            targetDurationSec = input.TargetDurationSec,
+            bundleUrl = input.BrowserFilm && (status is "done" or "trial-ready") ? $"/api/quick-creation/runs/{run.Id}/film-bundle" : null,
+            bundleBytes = run.QuickCreationMedia?.BundleBytes,
+            trial = input.Trial || run.ResumeFilmFromRunId != null && input.BrowserFilm
+                ? new { status = input.Trial ? status == "trial-ready" ? "ready" : "making" : "approved",
+                    scenes = 2, seconds = run.QuickCreationMedia?.DurationSec, restScenes = Math.Max(0, (input.PlannedScenes ?? 4) - 2) }
+                : null,
+            durationChoice = input.DurationChoiceSec,
             captions = run.QuickCreationMedia?.Captions,
             captionsBurnedIn = run.QuickCreationMedia?.CaptionsBurnedIn,
             hasSubtitleFreePreview = run.QuickCreationMedia?.HasSubtitleFreePreview,
             stages = new[] { new { key = run.PhaseCode, label = run.Phase, status = stageStatus, run.Progress } },
-            media = run.ArtifactType == DesignArtifactTypes.CodeFilm && status == "done"
+            media = run.ArtifactType == DesignArtifactTypes.CodeFilm && !input.BrowserFilm && status == "done"
                 ? new { url = $"/api/design-artifacts/runs/{run.Id}/film.mp4", mime = "video/mp4" } : null,
             previewSiteId = run.ArtifactType == DesignArtifactTypes.WebPage ? run.ArtifactSiteId : null,
             previewHtml = run.ArtifactType == DesignArtifactTypes.WebPage && run.ArtifactSiteId == null ? run.LatestPreviewHtml : null,
@@ -655,6 +801,7 @@ public sealed partial class DesignArtifactsController
 }
 
 public sealed record QuickCreationTextRequest(string? Name, string? Text);
+public sealed record QuickCreationEstimateRequest(string? Kind, List<string>? AttachmentIds, JsonElement? Duration);
 public sealed record QuickCreationRunRequest(string? Kind, string? TemplateId, string? Ask, List<string>? AttachmentIds, string? Title,
-    string? DestinationTeamId = null, string? BriefId = null, int? BriefRevision = null, string? BriefMode = null);
+    string? DestinationTeamId = null, string? BriefId = null, int? BriefRevision = null, string? BriefMode = null, JsonElement? Duration = null, bool? Trial = null);
 public sealed record QuickCreationRetryRequest(string? Action, int? UnitIndex = null);

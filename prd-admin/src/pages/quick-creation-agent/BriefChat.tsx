@@ -1,10 +1,11 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import { ArrowRight, Check, Circle, Clapperboard, Play, Sparkles } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { StreamingText } from '@/components/streaming';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { AgentTurn, UserTurn } from './Conversation';
 import { StyleFrame } from './TemplateFrames';
+import { formatClock } from './format';
 import type { QcBriefSession, QcTemplate } from './types';
 
 export const BRIEF_STARTERS = ['我想做一个宣传片', '给新同事做个培训短片', '不知道选什么风格'];
@@ -42,12 +43,14 @@ export interface BriefPending {
   platform?: string;
 }
 
-export function BriefConversation({ session, pending, error, templates, disabled, onRetry, onSend, onPick, onScript, onGenerate }: {
+export function BriefConversation({ session, pending, error, templates, disabled, onRetry, onSend, onPick, onScript, onGenerate, targetDuration, trialControl }: {
   session: QcBriefSession | null;
   pending: BriefPending | null;
   error: string | null;
   templates: QcTemplate[];
   disabled: boolean;
+  targetDuration?: number;
+  trialControl?: ReactNode;
   onRetry: () => void;
   onSend: (text: string) => void;
   onPick: (styleId: string) => void;
@@ -107,18 +110,25 @@ export function BriefConversation({ session, pending, error, templates, disabled
         <AgentTurn>
           {session.script.length ? (
             <section className="qc-card overflow-hidden" data-qc="script-draft">
-              <header className="flex items-center gap-2 border-b border-token-subtle px-3 py-2 text-[14px] font-semibold"><Clapperboard size={15} />分镜脚本 · {session.script.length} 幕</header>
+              <header className="flex items-center gap-2 border-b border-token-subtle px-3 py-2 text-[14px] font-semibold"><Clapperboard size={15} />分镜脚本 · {session.script.length} 幕
+                {session.script.some(scene => scene.durationSec != null) && <span className="text-[12px] text-token-muted">
+                  合计约 {formatClock(session.script.reduce((sum, scene) => sum + (scene.durationSec ?? 0), 0))}
+                  {targetDuration ? ` · 目标约 ${formatClock(targetDuration)}` : ''}
+                </span>}
+              </header>
               <ol className="m-0 list-none p-0">
                 {session.script.map(scene => <li key={scene.index} className="border-b border-token-subtle p-2.5 text-[13px]">
-                  <p className="m-0">{scene.index}. {scene.visual}</p>
+                  <p className="m-0">{scene.index}. {scene.visual}{scene.durationSec != null && <span className="ml-2 text-token-muted">约 {scene.durationSec} 秒</span>}</p>
                   <p className="m-0 mt-0.5 text-token-secondary">旁白 · {scene.narration}</p>
                 </li>)}
               </ol>
+              {trialControl && <div className="px-2.5 pt-2">{trialControl}</div>}
               <div className="flex flex-wrap items-center gap-2 p-2.5">
                 <Button size="sm" data-qc="script-confirm" className="qc-face qc-face-primary relative px-3.5" disabled={disabled} onClick={() => onGenerate('confirm')}><Play size={14} aria-hidden />按这个脚本开始生成</Button>
                 <Button size="sm" variant="ghost" data-qc="brief-skip-script" className="max-md:min-h-11" disabled={disabled}
                   onClick={() => onGenerate('skip')}>跳过脚本，直接开始</Button>
-                <span className="text-[12px] text-token-muted">想改的地方可以直接在对话里说</span>
+                <Button size="sm" variant="ghost" disabled={disabled || targetDuration === 60} onClick={() => onSend('短一点')}>短一点</Button>
+                <Button size="sm" variant="ghost" disabled={disabled || targetDuration === 600} onClick={() => onSend('长一点')}>长一点</Button>
               </div>
             </section>
           ) : (

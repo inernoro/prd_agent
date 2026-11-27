@@ -114,6 +114,8 @@ export async function createDesignRuntime(config: ServiceConfig, overrides: Desi
     tasks,
     filmRecovery,
     filmProjects,
+    exportIsolation: config.engineUid == null ? undefined
+      : { uid: config.engineUid, gid: config.engineGid ?? config.engineUid, home: config.engineHome },
   });
   return {
     server,

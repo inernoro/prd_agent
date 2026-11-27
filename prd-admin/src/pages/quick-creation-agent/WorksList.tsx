@@ -11,6 +11,7 @@ type Filter = 'all' | 'active' | 'attention' | 'published';
 export function workStatus(w: QcWork): { label: string; variant: 'subtle' | 'success' | 'danger' | 'warning' | 'new' } {
   if (w.status === 'queued') return { label: '排队中', variant: 'new' };
   if (w.status === 'running') return { label: '生成中', variant: 'new' };
+  if (w.status === 'trial-ready') return { label: '试看待确认', variant: 'warning' };
   if (w.status === 'failed') return { label: '需要处理', variant: 'danger' };
   if (w.publishStatus === 'failed') return { label: '发布未完成', variant: 'warning' };
   if (w.publishStatus === 'done') return { label: '已发布', variant: 'success' };
@@ -26,12 +27,12 @@ export function WorksList({ works, templates, onOpen, onCreate }: {
   const [filter, setFilter] = useState<Filter>('all');
   const counts = useMemo(() => ({
     active: works.filter(w => w.status === 'queued' || w.status === 'running').length,
-    attention: works.filter(w => w.status === 'failed' || w.publishStatus === 'failed').length,
+    attention: works.filter(w => w.status === 'failed' || w.status === 'trial-ready' || w.publishStatus === 'failed').length,
     published: works.filter(w => w.publishStatus === 'done').length,
   }), [works]);
   const shown = works.filter(w => filter === 'all'
     || (filter === 'active' && (w.status === 'queued' || w.status === 'running'))
-    || (filter === 'attention' && (w.status === 'failed' || w.publishStatus === 'failed'))
+    || (filter === 'attention' && (w.status === 'failed' || w.status === 'trial-ready' || w.publishStatus === 'failed'))
     || (filter === 'published' && w.publishStatus === 'done'));
   const tpl = (id: string) => templates.find(t => t.id === id);
 

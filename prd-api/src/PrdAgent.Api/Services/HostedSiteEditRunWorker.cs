@@ -459,13 +459,15 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             executionCts.Token.ThrowIfCancellationRequested();
             if (run.ArtifactType == DesignArtifactTypes.CodeFilm)
             {
-                var film = verifiedFiles?.SingleOrDefault(file => file.Path == "film.mp4")
-                    ?? throw new InvalidOperationException("OpenDesign 没有交付 MP4 成片");
+                var browserFilm = run.QuickCreation?.BrowserFilm == true;
+                var film = verifiedFiles?.SingleOrDefault(file => file.Path == (browserFilm ? "film-bundle.json" : "film.mp4"))
+                    ?? throw new InvalidOperationException("OpenDesign 没有交付可播放的成片");
                 var filmMetadata = run.QuickCreation == null ? null : DesignArtifactWorkspaceContract.ParseQuickCreationMedia(
                     verifiedFiles?.SingleOrDefault(file => file.Path == "film.json")
                     ?? throw new InvalidOperationException("没有取得成片的音轨验证结果"));
+                if (browserFilm && filmMetadata != null) filmMetadata.BundleBytes = film.Size;
                 if (!await CompleteRunAsync(db, run.Id, leaseOwner, null, null,
-                        "影片已生成", DateTime.UtcNow, CancellationToken.None, codeFilm: true, filmMetadata: filmMetadata))
+                        run.QuickCreation?.Trial == true ? "试看待确认" : "影片已生成", DateTime.UtcNow, CancellationToken.None, codeFilm: true, filmMetadata: filmMetadata))
                     throw new DesignArtifactRunLeaseLostException(run.Id);
 
                 meta.Status = RunStatuses.Done;
@@ -473,7 +475,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                 await projection.WriteAsync(() => _events.SetRunAsync(RunKinds.DesignArtifact, meta, RunTtl, ct: CancellationToken.None));
                 await projection.WriteAsync(() => _events.AppendEventAsync(RunKinds.DesignArtifact, run.Id, "done",
                     new { mediaType = film.MediaType, sha256 = film.Sha256, size = film.Size,
-                        filmUrl = $"/api/design-artifacts/runs/{run.Id}/film.mp4" }, RunTtl, CancellationToken.None));
+                        filmUrl = browserFilm ? $"/api/quick-creation/runs/{run.Id}/film-bundle" : $"/api/design-artifacts/runs/{run.Id}/film.mp4" }, RunTtl, CancellationToken.None));
                 return;
             }
 

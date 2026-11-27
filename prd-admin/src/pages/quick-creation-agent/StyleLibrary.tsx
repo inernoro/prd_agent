@@ -67,7 +67,7 @@ function CategoryRow({ categories, counts, total, value, onChange }: {
 }
 
 /** 输入框里的风格按钮 + 就地弹出的选择面板 */
-export function StylePickerChip({ templates, categories, selected, onSelect, onBrowse, outputLabel, outputControl }: {
+export function StylePickerChip({ templates, categories, selected, onSelect, onBrowse, outputLabel, outputControl, durationControl }: {
   templates: QcTemplate[];
   categories: QcTemplateCategory[];
   selected?: QcTemplate;
@@ -75,6 +75,7 @@ export function StylePickerChip({ templates, categories, selected, onSelect, onB
   onBrowse: () => void;
   outputLabel?: string;
   outputControl?: ReactNode;
+  durationControl?: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   const f = useStyleFilter(templates, categories);
@@ -97,6 +98,7 @@ export function StylePickerChip({ templates, categories, selected, onSelect, onB
             <span className="text-[11.5px] text-token-muted">{categories.length} 类 · {templates.length} 种</span>
           </div>
           {outputControl && <div className="pb-2">{outputControl}</div>}
+          {durationControl && <div className="mb-2 border-b border-token-subtle pb-2">{durationControl}</div>}
           <div className="flex items-center gap-1.5"><SearchBox id="qc-style-search-pop" value={f.query} onChange={f.setQuery} /></div>
           <div className="mt-2"><CategoryRow categories={categories} counts={f.counts} total={templates.length} value={f.category} onChange={f.setCategory} /></div>
           <div role="radiogroup" aria-label="选择风格" className="mt-1.5 grid min-h-0 flex-1 grid-cols-2 content-start gap-1 overflow-y-auto pr-0.5" style={{ overscrollBehavior: 'contain' }}>

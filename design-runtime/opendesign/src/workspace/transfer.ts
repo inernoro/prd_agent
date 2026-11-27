@@ -138,7 +138,7 @@ export function validateModelAuthority(
   }
 }
 
-export function normalizeWorkspaceTransfer(value: unknown, codeFilm = false): WorkspaceTransferRequest {
+export function normalizeWorkspaceTransfer(value: unknown, codeFilm = false, browserFilm = false): WorkspaceTransferRequest {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new AgentWorkspaceRuntimeError('workspace_transfer_required', 'workspaceTransfer is required for OpenDesign');
   }
@@ -177,7 +177,10 @@ export function normalizeWorkspaceTransfer(value: unknown, codeFilm = false): Wo
     );
   }
   for (const pattern of allowedOutputPaths) validateOutputPattern(pattern);
-  if (codeFilm && (!allowedOutputPaths.includes('film.mp4') || new Set(allowedOutputPaths).size !== allowedOutputPaths.length
+  if (browserFilm && (allowedOutputPaths.length !== 2 || !allowedOutputPaths.includes('film-bundle.json') || !allowedOutputPaths.includes('film.json'))) {
+    throw new AgentWorkspaceRuntimeError('workspace_transfer_invalid', 'browser film requires a playable bundle and metadata');
+  }
+  if (codeFilm && !browserFilm && (!allowedOutputPaths.includes('film.mp4') || new Set(allowedOutputPaths).size !== allowedOutputPaths.length
       || allowedOutputPaths.some(file => !['film.mp4', 'film.json', 'film-preview.mp4'].includes(file))
       || (allowedOutputPaths.includes('film-preview.mp4') && !allowedOutputPaths.includes('film.json')))) {
     throw new AgentWorkspaceRuntimeError('workspace_transfer_invalid', 'a code film may return film.mp4 and film.json, with film-preview.mp4 only alongside metadata');

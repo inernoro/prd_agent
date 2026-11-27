@@ -55,6 +55,7 @@
     "katex": "^0.16.40",
     "lexical": "^0.39.0",
     "lucide-react": "^0.468.0",
+    "mediabunny": "1.66.5",
     "mermaid": "^11.14.0",
     "motion": "^12.34.3",
     "ogl": "^1.0.11",

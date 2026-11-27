@@ -21,7 +21,7 @@ import { listRecentDocumentEntries } from '@/services/real/documentStore';
 import type { RecentDocumentEntry } from '@/services/contracts/documentStore';
 import { PaneTabs, Segmented, WorkbenchLayout, WorkbenchPreview, fitComposerHeight, type WorkbenchPane } from '@/components/web-hosting/workbench/WorkbenchParts';
 import {
-  addKnowledgeAttachment, createQuickCreationRun, getQuickCreationRun, listQuickCreationAssets, listQuickCreationTemplates, listQuickCreationWorks,
+  addKnowledgeAttachment, approveQuickCreationTrial, createQuickCreationRun, estimateQuickCreation, getQuickCreationRun, listQuickCreationAssets, listQuickCreationTemplates, listQuickCreationWorks,
   addTextAttachment, publishQuickCreationRun, retryAttachmentRead, retryQuickCreationRun, uploadQuickCreationAttachment,
 } from '@/services/real/quickCreation';
 import { AttachmentTray, MaterialsPanel, SentAttachments } from './AttachmentTray';
@@ -30,11 +30,13 @@ import { BRIEF_STARTERS, BriefConversation, BriefStrip } from './BriefChat';
 import { useQuickCreationBrief } from './useQuickCreationBrief';
 import { FailureCard, QueueCard, RunProgress } from './RunProgress';
 import { ProgressPreview, VideoPlayer, WebPreview } from './ResultPanel';
+import { DurationOptions, durationShort, minutesLabel, TrialToggle } from './Duration';
+import { BrowserExport, BrowserFilmPlayer } from './BrowserExport';
 import { StyleLibrary, StylePickerChip } from './StyleLibrary';
 import { AssetLibrary } from './AssetLibrary';
 import { WorksList } from './WorksList';
 import { formatChars, formatClock, summarizeAttachments } from './format';
-import type { AssetScope, OutputKind, QcAsset, QcAttachment, QcBriefContext, QcBriefSession, QcFailure, QcRun, QcTemplate, QcTemplateCategory, QcTemplateSource, QcWork } from './types';
+import type { AssetScope, DurationChoice, OutputKind, QcAsset, QcAttachment, QcBriefContext, QcBriefSession, QcEstimate, QcFailure, QcRun, QcTemplate, QcTemplateCategory, QcTemplateSource, QcWork } from './types';
 import './quickCreation.css';
 
 const OUTPUT_LABEL: Record<OutputKind, string> = { video: '视频', web: '网页' };
@@ -44,6 +46,7 @@ const RETRY_RUN_READ_ERRORS = new Set(['DISCONNECTED', 'NETWORK_ERROR', 'SERVER_
 function runBadge(run: QcRun) {
   if (run.status === 'queued') return { label: `排队中 · 第 ${run.queue?.position ?? '-'} 位`, variant: 'new' as const };
   if (run.status === 'running') return { label: `生成中 · ${run.stages.find(s => s.status === 'running')?.label ?? ''}`, variant: 'new' as const };
+  if (run.status === 'trial-ready') return { label: '试看待确认', variant: 'warning' as const };
   if (run.status === 'failed') return { label: '需要处理', variant: 'danger' as const };
   if (run.publish.status === 'done') return { label: '已发布', variant: 'success' as const };
   if (run.publish.status === 'failed') return { label: '发布未完成', variant: 'warning' as const };
@@ -72,6 +75,13 @@ export function QuickCreationAgentPage() {
   const [kind, setKind] = useState<OutputKind>(fromHosting ? 'web' : 'video');
   const [templateId, setTemplateId] = useState<string>('');
   const [stylePicked, setStylePicked] = useState(false);
+  const [duration, setDuration] = useState<DurationChoice>('auto');
+  const [estimate, setEstimate] = useState<QcEstimate | null>(null);
+  const [estimateError, setEstimateError] = useState<string | null>(null);
+  const [estimateRetry, setEstimateRetry] = useState(0);
+  const [browserFilm, setBrowserFilm] = useState(false);
+  const [trialChoice, setTrialChoice] = useState<boolean | null>(null);
+  const [approving, setApproving] = useState(false);
   const [attachments, setAttachments] = useState<QcAttachment[]>([]);
   const [ask, setAsk] = useState('');
   const [plusOpen, setPlusOpen] = useState(false);
@@ -107,6 +117,7 @@ export function QuickCreationAgentPage() {
   const askRef = useRef<HTMLTextAreaElement>(null);
   const restoreBrief = useCallback((value: QcBriefSession) => {
     setKind(value.kind);
+    setDuration(value.durationChoice ?? 'auto');
     setTemplateId(value.styleId);
     setStylePicked(value.brief.fields.find(field => field.key === 'style')?.source === 'pick');
     setAttachments(value.attachments);
@@ -126,7 +137,7 @@ export function QuickCreationAgentPage() {
   }, [ask, isMobile]);
 
   useEffect(() => {
-    void listQuickCreationTemplates().then(res => { if (res.success) { setTemplates(res.data.items); setCategories(res.data.categories); setStyleSource(res.data.source); } });
+    void listQuickCreationTemplates().then(res => { if (res.success) { setTemplates(res.data.items); setCategories(res.data.categories); setStyleSource(res.data.source); setBrowserFilm(res.data.browserFilm === true); } });
   }, []);
   const refreshWorks = useCallback(() => {
     void listQuickCreationWorks().then(res => { if (res.success) setWorks(res.data.items); });
@@ -200,7 +211,18 @@ export function QuickCreationAgentPage() {
     setParams(query, { replace });
   };
   const openRun = (id: string) => showPage({ run: id });
-  const startNew = () => { failedUploads.current.clear(); showPage({}); setKind(fromHosting ? 'web' : 'video'); setAsk(''); setAttachments([]); setPane('chat'); };
+  const approveTrial = async (item: QcRun) => {
+    setApproving(true);
+    const result = await approveQuickCreationTrial(item.id).finally(() => setApproving(false));
+    if (result.success) openRun(result.data.id);
+    else toast.error('没有继续生成', result.error?.message ?? '试看仍保留，可以稍后再试');
+  };
+  const reviseTrial = (item: QcRun) => {
+    showPage({}); setKind(item.kind); setTemplateId(item.templateId); setStylePicked(true);
+    setDuration(item.durationChoice ?? 'auto'); setTrialChoice(true); setAsk(item.briefUserRequests ?? item.ask);
+    setAttachments(item.attachments); setPane('chat'); setPanel(null); setRightTab('select');
+  };
+  const startNew = () => { failedUploads.current.clear(); showPage({}); setKind(fromHosting ? 'web' : 'video'); setDuration('auto'); setTrialChoice(null); setAsk(''); setAttachments([]); setPane('chat'); };
 
   /* ---------- 附件 ---------- */
   const uploadFileRow = async (id: string, file: File) => {
@@ -287,9 +309,24 @@ export function QuickCreationAgentPage() {
   const briefContext = useMemo<QcBriefContext>(() => ({
     revision: brief?.revision ?? 0, kind, templateId: template?.id ?? '', stylePicked,
     attachmentIds: attachments.filter(a => a.status === 'ready').map(a => a.id),
-  }), [brief?.revision, kind, template?.id, stylePicked, attachments]);
+    duration: kind === 'video' ? duration : undefined,
+  }), [brief?.revision, kind, template?.id, stylePicked, attachments, duration]);
   const briefMatches = !!brief && brief.kind === kind && brief.styleId === template?.id
+    && (kind !== 'video' || (brief.durationChoice ?? 'auto') === duration)
     && brief.attachments.map(a => a.id).join(',') === briefContext.attachmentIds.join(',');
+  const estimateKey = briefContext.attachmentIds.join(',');
+  useEffect(() => {
+    const controller = new AbortController();
+    setEstimate(null);
+    setEstimateError(null);
+    if (runId || kind !== 'video') return;
+    void estimateQuickCreation(estimateKey ? estimateKey.split(',') : [], duration, controller.signal).then(result => {
+      if (controller.signal.aborted) return;
+      if (result.success) setEstimate(result.data);
+      else setEstimateError(result.error?.message ?? '暂时无法估算');
+    });
+    return () => controller.abort();
+  }, [duration, estimateKey, estimateRetry, kind, runId]);
   const latestMaterials = useRef({ ids: '', blocked: false });
   latestMaterials.current = { ids: briefContext.attachmentIds.join(','), blocked: attachmentBlockReason !== null };
   const syncAttempt = useRef('');
@@ -317,6 +354,8 @@ export function QuickCreationAgentPage() {
       kind: output, templateId: fromBrief?.styleId ?? template.id, ask: extraAsk.trim(),
       attachmentIds: fromBrief?.attachments.map(a => a.id) ?? briefContext.attachmentIds, title: fromBrief?.brief.title ?? draftTitle,
       destinationTeamId: output === 'web' ? destinationTeamId : undefined,
+      duration: output === 'video' ? (fromBrief ? fromBrief.durationChoice ?? 'auto' : duration) : undefined,
+      trial: browserFilm && output === 'video' ? trialChoice ?? undefined : undefined,
       ...(fromBrief ? { briefId: fromBrief.id, briefRevision: fromBrief.revision, briefMode: mode } : {}),
     }).finally(() => { submitLock.current = false; setSubmitting(false); });
     if (!res.success) { toast.error('没有提交成功', `${res.error?.message || '请稍后重试'}，稿件仍在输入框里`); return; }
@@ -328,6 +367,7 @@ export function QuickCreationAgentPage() {
   };
   const acceptBrief = (value: QcBriefSession) => {
     setKind(value.kind);
+    setDuration(value.durationChoice ?? 'auto');
     setTemplateId(value.styleId);
     setStylePicked(value.brief.fields.find(field => field.key === 'style')?.source === 'pick');
   };
@@ -467,7 +507,8 @@ export function QuickCreationAgentPage() {
     </span></AgentTurn>}
     <BriefConversation session={brief} pending={pendingBrief} error={briefError} templates={templates} disabled={briefDisabled}
       onRetry={() => void briefFlow.recover().then(continueBrief)}
-      onSend={text => void sendToBrief(text)} onPick={selectStyle}
+      onSend={text => void sendToBrief(text)} onPick={selectStyle} targetDuration={estimate?.targetSec}
+      trialControl={browserFilm && kind === 'video' ? <TrialToggle on={trialChoice ?? estimate?.trialDefault ?? false} estimate={estimate} onChange={setTrialChoice} /> : null}
       onScript={() => { if (brief && !briefDisabled) void requestScript(brief); }}
       onGenerate={mode => { if (brief && !briefDisabled) void submit(brief, mode); }} />
     </>
@@ -532,8 +573,16 @@ export function QuickCreationAgentPage() {
           <div className="flex min-w-0 items-center gap-1.5 md:ml-1 md:border-l md:border-[var(--border-subtle)] md:pl-2">
             {!isMobile && outputSwitch}
             <StylePickerChip templates={templates} categories={categories} selected={template} onSelect={selectStyle}
-              onBrowse={() => { setPanel(null); setPane('preview'); }} outputLabel={isMobile ? OUTPUT_LABEL[kind] : undefined}
-              outputControl={isMobile ? outputSwitch : undefined} />
+              onBrowse={() => { setPanel(null); setPane('preview'); }}
+              outputLabel={kind === 'video' ? durationShort(duration, estimate) : isMobile ? OUTPUT_LABEL[kind] : undefined}
+              outputControl={isMobile ? outputSwitch : undefined}
+              durationControl={kind === 'video' ? <>
+                <DurationOptions value={duration} estimate={estimate} onChange={setDuration} compact={isMobile} />
+                {browserFilm && <TrialToggle on={trialChoice ?? estimate?.trialDefault ?? false} estimate={estimate} onChange={setTrialChoice} />}
+                {estimateError && <div className="mt-1 flex items-center gap-2 text-[12px] text-token-muted" role="status">
+                  {estimateError}<button type="button" className="underline" onClick={() => setEstimateRetry(n => n + 1)}>重新估算</button>
+                </div>}
+              </> : null} />
           </div>
           <div className="ml-auto flex shrink-0 items-center gap-1">
             {speech.supported && (
@@ -566,7 +615,7 @@ export function QuickCreationAgentPage() {
   const agentStatus = !run ? null : run.status === 'queued' ? '已排队 · 后台进行' : run.status === 'running' ? '后台进行中 · 可以离开' : run.status === 'failed' ? '需要你处理' : '已完成';
   const runConversation = run && (
     <>
-      <UserTurn meta={<>{run.kind === 'video' ? <Video size={12} aria-hidden /> : <Globe size={12} aria-hidden />}{OUTPUT_LABEL[run.kind]} · {runTemplate?.name}</>}>
+      <UserTurn meta={<>{run.kind === 'video' ? <Video size={12} aria-hidden /> : <Globe size={12} aria-hidden />}{OUTPUT_LABEL[run.kind]}{run.targetDurationSec ? ` · 约 ${minutesLabel(run.targetDurationSec)}` : ''} · {runTemplate?.name}</>}>
         {run.contentSource === 'chat' && <p className="m-0 px-1 text-[12px] text-token-secondary">没有稿件，内容来自和快速创作的对话</p>}
         {run.briefUserRequests && (
           <details className="px-1 text-sm text-token-primary" data-qc="brief-run-requests">
@@ -586,6 +635,17 @@ export function QuickCreationAgentPage() {
         {run.status === 'queued' && <QueueCard run={run} />}
         {run.status !== 'queued' && <RunProgress run={run} />}
         {run.status === 'failed' && run.failure && <FailureCard failure={run.failure} onAction={a => void onRecover(a)} />}
+        {run.status === 'trial-ready' && run.trial && (
+          <section className="qc-card space-y-2 p-3" data-qc="trial-ready">
+            <div className="text-sm font-semibold">试看好了：片头和第 1 幕{run.trial.seconds ? `（约 ${Math.round(run.trial.seconds)} 秒）` : ''}</div>
+            <p className="m-0 text-xs text-token-secondary">可以先在右侧看画面和配音。等你确认时，任务暂停。</p>
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" data-qc="trial-approve" disabled={approving} onClick={() => void approveTrial(run)}>满意，继续做完</Button>
+              <Button size="sm" variant="secondary" data-qc="trial-revise" disabled={approving} onClick={() => reviseTrial(run)}>不满意，回去换风格或改要求</Button>
+            </div>
+          </section>
+        )}
+        {run.trial?.status === 'approved' && run.status !== 'done' && <p className="m-0 text-xs" data-qc="trial-approved">试看已确认，接着做剩下的 {run.trial.restScenes} 幕。</p>}
         {run.status === 'done' && (
           <section className="qc-card qc-rise p-4" data-qc="done-card">
             <div className="flex items-start gap-3">
@@ -594,7 +654,8 @@ export function QuickCreationAgentPage() {
                 <div className="text-[15px] font-semibold text-token-primary">{run.kind === 'video' ? '成片已生成' : '网页已生成'}</div>
                 <div className="mt-0.5 text-[12.5px] leading-5 text-token-secondary">
                   {run.kind === 'video' ? [
-                    run.durationSec ? formatClock(run.durationSec) : null,
+                    run.durationSec ? `实际 ${formatClock(run.durationSec)}` : null,
+                    run.targetDurationSec ? `目标 ${formatClock(run.targetDurationSec)}` : null,
                     run.scenes?.length ? `${run.scenes.length} 幕` : null,
                     '在右侧播放',
                   ].filter(Boolean).join(' · ') : '在右侧预览网页'}
@@ -605,7 +666,9 @@ export function QuickCreationAgentPage() {
               {run.publish.status === 'none' && (
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
                   <Button variant="primary" className="max-md:min-h-11" onClick={() => void onPublish()} data-qc="publish"><Globe size={14} />发布到网页托管</Button>
-                  <span className="text-[12px] text-token-muted">发布后得到可分享的链接</span>
+                  <span className="text-[12px] text-token-muted">{run.bundleUrl
+                    ? `发布的是能播放的网页${run.bundleBytes ? `（约 ${Math.max(1, Math.round(run.bundleBytes / (1024 * 1024)))} MB）` : ''}，不传视频文件`
+                    : '发布后得到可分享的链接'}</span>
                 </div>
               )}
               {run.publish.status === 'publishing' && <div className="flex h-9 items-center gap-2 text-[12.5px] text-token-secondary"><MapSpinner size={13} />正在上传到网页托管…</div>}
@@ -628,6 +691,7 @@ export function QuickCreationAgentPage() {
                 </div>
               )}
             </div>
+            {run.bundleUrl && <BrowserExport key={run.id} run={run} />}
           </section>
         )}
       </AgentTurn>
@@ -697,12 +761,12 @@ export function QuickCreationAgentPage() {
   } else if (!run && template) {
     body = <StyleLibrary templates={templates} categories={categories} source={styleSource} selected={template} onSelect={selectStyle} kind={kind} />;
   } else if (run && runTemplate) {
-    if (run.status === 'done') {
-      previewTitle = run.kind === 'video' ? '成片' : '网页';
+    if (run.status === 'done' || run.status === 'trial-ready') {
+      previewTitle = run.status === 'trial-ready' ? '试看' : run.kind === 'video' ? '成片' : '网页';
       previewNote = [run.kind === 'video' && run.durationSec ? formatClock(run.durationSec) : null,
         run.kind === 'video' && run.voice ? `配音 ${run.voice}` : null, `风格 ${runTemplate.name}`].filter(Boolean).join(' · ');
-      nextHint = run.publish.status === 'done' ? '已发布，网页托管里能找到它；改了稿件可以用同一份资料再做一个。' : '满意的话在左边发布到网页托管；发布只上传，不会重新生成。';
-      body = run.kind === 'video' ? <VideoPlayer run={run} template={runTemplate} /> : <WebPreview run={run} template={runTemplate} />;
+      nextHint = run.status === 'trial-ready' ? '试看满意后，在对话里继续做完。' : run.publish.status === 'done' ? '已发布，网页托管里能找到它；改了稿件可以用同一份资料再做一个。' : '满意的话在左边发布到网页托管；发布只上传，不会重新生成。';
+      body = run.kind === 'video' ? run.bundleUrl ? <BrowserFilmPlayer run={run} /> : <VideoPlayer run={run} template={runTemplate} /> : <WebPreview run={run} template={runTemplate} />;
     } else {
       previewTitle = run.kind === 'video' ? run.scenes?.length ? '分镜' : '视频进度' : '页面';
       previewNote = run.status === 'queued' ? '轮到后会自动开始' : run.status === 'failed' ? run.failure?.message ?? '没有完成' : liveStage?.detail || liveStage?.label || '正在生成';

@@ -32,6 +32,7 @@ import {
 } from './artifact/public-package.js';
 import { runtimeDiagnosticPreview } from './diagnostics.js';
 import { OpenDesignClient, signalForDeadline, type OpenDesignRunOutcome } from './engine/client.js';
+import { findBrowserFilm, makeBrowserFilmContract, packageBrowserFilm } from './engine/browser-film.js';
 import { codeFilmDefaultAnswers, collectCodeFilm, collectCodeFilmMetadata, registerCodeFilmSkill, verifyCodeFilmInput } from './engine/code-film.js';
 import { observeCodeFilmWork } from './engine/code-film-timing.js';
 import type { FilmRecoveryStore } from './engine/film-recovery.js';
@@ -187,6 +188,7 @@ export interface DesignTaskInput {
   codeFilm?: boolean;
   resumeFilmFrom?: string;
   retryFilmScene?: number;
+  browserFilm?: { target: number; scenes: number; trial: boolean };
   model: OpenDesignModelAuthority;
   timeoutSeconds: number;
   /** 交给 OpenDesign 的第一轮指令：MAP 的任务信封（map-design-artifact-command-v2）序列化文本。 */
@@ -619,6 +621,15 @@ export class DesignTaskExecutor {
           this.chownForEngine(deliveryFile);
           attachments.push(deliveryPath);
         }
+        if (task.browserFilm) {
+          const deliveryPath = 'brief/film-delivery.json';
+          const deliveryFile = path.join(workspaceDir, deliveryPath);
+          fs.mkdirSync(path.dirname(deliveryFile), { recursive: true });
+          const { target, scenes, trial } = task.browserFilm;
+          fs.writeFileSync(deliveryFile, JSON.stringify(makeBrowserFilmContract(target, scenes, trial)), { flag: 'wx', mode: 0o644 });
+          this.chownForEngine(deliveryFile);
+          attachments.push(deliveryPath);
+        }
         const firstRunId = await startFilmTurn(instruction, assistantMessageId, attachments);
         onStage('code_film_input_verified', { ...proof, runId: firstRunId, instructionSha256: sha256(instruction) });
         const retainFilm = (film: WorkspacePackageFile): boolean => {
@@ -655,8 +666,9 @@ export class DesignTaskExecutor {
         const stopTiming = observeCodeFilmWork(this.options.daemon.describe().pid ?? undefined);
         try {
           await client.waitForRun(firstRunId, budget.finalizationDeadline, signal, onStage);
-          let film = getFilm();
-          if (!film) {
+          let film = task.browserFilm ? undefined : getFilm();
+          let browserProject = task.browserFilm ? findBrowserFilm(workspaceDir) : undefined;
+          if (!film && !browserProject) {
             const conversation = await client.odJson(
               `/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/messages`,
               { method: 'GET', signal: signalForDeadline(executionDeadline, signal) },
@@ -669,7 +681,28 @@ export class DesignTaskExecutor {
               finalRunId = await startFilmTurn(answers, randomUUID(), []);
               onStage('code_film_form_answered', { runId: finalRunId, previousRunId: firstRunId });
               await client.waitForRun(finalRunId, budget.finalizationDeadline, signal, onStage);
-              film = getFilm();
+              film = task.browserFilm ? undefined : getFilm();
+              browserProject = task.browserFilm ? findBrowserFilm(workspaceDir) : undefined;
+            }
+          }
+          if (task.browserFilm) {
+            if (!browserProject) throw new AgentWorkspaceRuntimeError('design_output_missing', 'OpenDesign did not return a playable browser film project');
+            daemon.freeze();
+            try {
+              verifyCodeFilmInput(dataDir, workspaceDir, inputs);
+              if (restoredFilm && (browserProject.root !== restoredFilm.root || restoredFilm.protectedMedia.some(file =>
+                fs.realpathSync(file.absolute) !== file.absolute || sha256(readRegularFileNoFollow(file.absolute, file.size)) !== file.sha))) {
+                throw new AgentWorkspaceRuntimeError('code_film_checkpoint_changed', 'Completed browser film scenes changed after approval');
+              }
+              onStage('code_film_packaging', { scenes: browserProject.indexes.length });
+              const outputs = await packageBrowserFilm(browserProject, task.browserFilm.target, task.browserFilm.trial,
+                signalForDeadline(executionDeadline, signal));
+              if (task.browserFilm.trial && (!filmInputHash || !this.options.filmProjects?.capture(sessionId, model.userId, filmInputHash, workspaceDir))) {
+                throw new AgentWorkspaceRuntimeError('code_film_checkpoint_unavailable', 'Cannot retain the trial so the same scenes can be resumed');
+              }
+              return await this.commitOutputs(task, prepared, outputs, finalRunId, executionDeadline, signal, onStage);
+            } finally {
+              daemon.thaw();
             }
           }
           if (!film) {

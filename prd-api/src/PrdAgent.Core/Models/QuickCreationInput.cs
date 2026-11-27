@@ -15,15 +15,38 @@ public sealed class QuickCreationInput
     public string? BriefContentSource { get; set; }
     public string? BriefUserRequests { get; set; }
     public int? FilmTimeoutSeconds { get; set; }
+    public int? TargetDurationSec { get; set; }
+    public int? DurationChoiceSec { get; set; }
+    public int? PlannedScenes { get; set; }
+    public bool BrowserFilm { get; set; }
+    public bool Trial { get; set; }
+
+    public QuickCreationInput ApproveTrial()
+    {
+        var resumed = (QuickCreationInput)MemberwiseClone();
+        resumed.Trial = false;
+        return resumed;
+    }
 }
 
 public sealed class QuickCreationMedia
 {
     public double DurationSec { get; set; }
     public bool HasAudio { get; set; }
+    public long? BundleBytes { get; set; }
     public bool CaptionsBurnedIn { get; set; }
     public bool HasSubtitleFreePreview { get; set; }
     public List<QuickCreationCaption> Captions { get; set; } = new();
 }
 
 public sealed record QuickCreationCaption(double FromSec, double ToSec, string Text);
+
+public sealed class QuickCreationBrowserExport
+{
+    public string Status { get; set; } = "queued";
+    public DateTime QueuedAt { get; set; } = DateTime.UtcNow;
+    public string? Lease { get; set; }
+    public DateTime? ExpiresAt { get; set; }
+    public string? AssetKey { get; set; }
+    public string? Error { get; set; }
+}

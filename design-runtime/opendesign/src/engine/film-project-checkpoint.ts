@@ -36,7 +36,12 @@ function isSceneVideo(relative: string): boolean {
   return /^scenes\/(?:[1-9]\d?|100)\.mp4$/.test(relative);
 }
 
+function isSceneProgram(relative: string): boolean {
+  return /^scenes\/[1-9]\d?\.mjs$/.test(relative);
+}
+
 function isCompletedAsset(relative: string, bytes: Buffer): boolean {
+  if (isSceneProgram(relative)) return bytes.length > 0;
   if (isSceneVideo(relative)) return hasCompletedMovie(bytes);
   if (!isNarration(relative) || bytes.length <= 44 || bytes.toString('ascii', 0, 4) !== 'RIFF'
     || bytes.toString('ascii', 8, 12) !== 'WAVE' || bytes.readUInt32LE(4) + 8 !== bytes.length) return false;
@@ -61,7 +66,7 @@ function decode(file: CheckpointFile): Buffer {
 }
 
 function summarize(checkpoint: ProjectCheckpoint) {
-  const saved = checkpoint.files.filter(file => (isNarration(file.path) || isSceneVideo(file.path))
+  const saved = checkpoint.files.filter(file => (isNarration(file.path) || isSceneVideo(file.path) || isSceneProgram(file.path))
     && isCompletedAsset(file.path, decode(file)));
   const plan = checkpoint.files.find(file => file.path === 'scenes/plan.json');
   const indexes = new Set(saved.filter(file => isSceneVideo(file.path)).map(file => Number(path.parse(file.path).name)));
@@ -79,7 +84,8 @@ function summarize(checkpoint: ProjectCheckpoint) {
     }
   }
   return {
-    completedScenes: saved.filter(file => isSceneVideo(file.path)).length,
+    completedScenes: new Set(saved.filter(file => isSceneVideo(file.path) || isSceneProgram(file.path))
+      .map(file => Number(path.parse(file.path).name))).size,
     narrationClips: saved.filter(file => isNarration(file.path)).length,
     ...(incompleteScene ? { incompleteScene } : {}),
   };

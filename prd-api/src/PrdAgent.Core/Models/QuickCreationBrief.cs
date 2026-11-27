@@ -15,6 +15,7 @@ public sealed class QuickCreationBrief
     public string? Manuscript { get; set; }
     public string? Audience { get; set; }
     public string? Duration { get; set; }
+    public int? DurationChoiceSec { get; set; }
     public List<QuickCreationBriefMessage> Messages { get; set; } = [];
     public List<QuickCreationScriptScene> Script { get; set; } = [];
     public string? PendingTurnId { get; set; }
@@ -28,4 +29,4 @@ public sealed record QuickCreationBriefMessage(string Id, string Role, string Te
     IReadOnlyList<QuickCreationStyleRecommendation>? Recommendations = null, bool StartsProduction = false);
 
 public sealed record QuickCreationStyleRecommendation(string TemplateId, string Reason);
-public sealed record QuickCreationScriptScene(int Index, string Visual, string Narration);
+public sealed record QuickCreationScriptScene(int Index, string Visual, string Narration, int? DurationSec = null);

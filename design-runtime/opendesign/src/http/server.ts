@@ -8,6 +8,11 @@
 //   POST /v1/tasks/{taskId}/cancel              Bearer；取消（已结束的任务原样返回）
 import crypto from 'node:crypto';
 import http from 'node:http';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { pipeline } from 'node:stream/promises';
+import { parseBrowserFilmExport, runBrowserFilmExport, type ExportIsolation } from '../engine/browser-film-export.js';
 
 import { describeCapabilities, type CapabilitiesContext } from '../capabilities.js';
 import { renderCondition } from '../conditions.js';
@@ -27,6 +32,8 @@ export interface ServerContext extends CapabilitiesContext {
   tasks: TaskManager;
   filmRecovery?: FilmRecoveryStore;
   filmProjects?: FilmProjectCheckpointStore;
+  exportIsolation?: ExportIsolation;
+  exportBusy?: boolean;
 }
 
 function sendJson(res: http.ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}): void {
@@ -57,14 +64,14 @@ function authorized(req: http.IncomingMessage, apiKey: string): boolean {
   return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
 }
 
-async function readJsonBody(req: http.IncomingMessage): Promise<unknown> {
+async function readJsonBody(req: http.IncomingMessage, maxBytes = MAX_REQUEST_BODY_BYTES): Promise<unknown> {
   const chunks: Buffer[] = [];
   let total = 0;
   for await (const chunk of req) {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     total += buffer.byteLength;
-    if (total > MAX_REQUEST_BODY_BYTES) {
-      throw new AgentWorkspaceRuntimeError('request_too_large', `request body exceeds ${MAX_REQUEST_BODY_BYTES} bytes`);
+    if (total > maxBytes) {
+      throw new AgentWorkspaceRuntimeError('request_too_large', `request body exceeds ${maxBytes} bytes`);
     }
     chunks.push(buffer);
   }
@@ -107,7 +114,8 @@ async function handle(context: ServerContext, req: http.IncomingMessage, res: ht
   }
 
   const taskMatch = /^\/v1\/tasks(?:\/([a-zA-Z0-9][a-zA-Z0-9_-]{0,127})(?:\/(events|cancel|film-recovery|film-project))?)?$/.exec(url.pathname);
-  if (!taskMatch) {
+  const filmExport = method === 'POST' && url.pathname === '/v1/film-exports';
+  if (!taskMatch && !filmExport) {
     sendError(res, 404, { code: 'not_found', message: `没有这个接口：${method} ${url.pathname}` });
     return;
   }
@@ -130,7 +138,32 @@ async function handle(context: ServerContext, req: http.IncomingMessage, res: ht
     return;
   }
 
-  const [, taskId, action] = taskMatch;
+  if (filmExport) {
+    if (!context.exportIsolation) { sendError(res, 503, { code: 'export_unavailable', message: '云端导出未启用' }); return; }
+    if (context.exportBusy) { sendError(res, 409, { code: 'export_busy', message: '云端导出排队中' }); return; }
+    context.exportBusy = true;
+    let work: string | undefined;
+    const controller = new AbortController();
+    res.once('close', () => controller.abort());
+    try {
+      const payload = parseBrowserFilmExport(await readJsonBody(req, 34 * 1024 * 1024));
+      work = fs.mkdtempSync(path.join(os.tmpdir(), 'map-browser-export-'));
+      const output = await runBrowserFilmExport(payload, work, context.exportIsolation,
+        AbortSignal.any([controller.signal, AbortSignal.timeout(45 * 60 * 1000)]));
+      const file = fs.lstatSync(output);
+      if (!file.isFile() || file.size < 32 || file.size > 384 * 1024 * 1024) throw new Error('导出文件大小不符合要求');
+      res.writeHead(200, { 'Content-Type': 'video/mp4', 'Content-Length': file.size, 'Cache-Control': 'no-store' });
+      await pipeline(fs.createReadStream(output), res);
+    } catch (error) {
+      if (!res.headersSent && !res.destroyed) sendError(res, 422, { code: 'export_failed', message: error instanceof Error ? error.message : '云端导出未完成' });
+    } finally {
+      if (work) fs.rmSync(work, { recursive: true, force: true });
+      context.exportBusy = false;
+    }
+    return;
+  }
+
+  const [, taskId, action] = taskMatch!;
   const { tasks } = context;
 
   if (!taskId) {

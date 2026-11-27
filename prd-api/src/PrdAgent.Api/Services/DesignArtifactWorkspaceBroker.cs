@@ -296,7 +296,8 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
             package.BaseRevision,
             inputLimit,
             ResultLimit(run),
-            isCodeFilm ? run.QuickCreation == null ? ["film.mp4"] : ["film.mp4", "film.json", "film-preview.mp4"] : AllowedOutputPaths,
+            isCodeFilm ? run.QuickCreation is { BrowserFilm: true } ? ["film-bundle.json", "film.json"]
+                : run.QuickCreation == null ? ["film.mp4"] : ["film.mp4", "film.json", "film-preview.mp4"] : AllowedOutputPaths,
             isCodeFilm ? MaxCodeFilmOutputBytes : MaxPublicOutputBytes);
     }
 
@@ -553,10 +554,10 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
             runId,
             run.WorkspaceBaseRevision ?? string.Empty,
             ResultLimit(run),
-            run.ArtifactType == DesignArtifactTypes.CodeFilm);
+            run.ArtifactType == DesignArtifactTypes.CodeFilm, run.QuickCreation?.BrowserFilm == true);
         var packageSha = Sha256Hex(packageBytes);
         var manifestSha = parsed.Files.Single(file => file.Path ==
-            (run.ArtifactType == DesignArtifactTypes.CodeFilm ? "film.mp4" : "manifest.json")).Sha256;
+            (run.ArtifactType == DesignArtifactTypes.CodeFilm ? run.QuickCreation?.BrowserFilm == true ? "film-bundle.json" : "film.mp4" : "manifest.json")).Sha256;
         if (!string.IsNullOrWhiteSpace(run.WorkspaceResultAssetKey))
         {
             if (FixedEquals(run.WorkspaceResultSha256, packageSha))
@@ -783,7 +784,7 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
                 run.Id,
                 run.WorkspaceBaseRevision ?? string.Empty,
                 ResultLimit(run),
-                run.ArtifactType == DesignArtifactTypes.CodeFilm);
+                run.ArtifactType == DesignArtifactTypes.CodeFilm, run.QuickCreation?.BrowserFilm == true);
         return parsed with
         {
             IndexHtml = HostedSiteRevisionRules.StripSingleTrustedSystemCspEnvelope(parsed.IndexHtml),
@@ -1586,7 +1587,7 @@ public static class DesignArtifactWorkspaceContract
         string runId,
         string baseRevision,
         long maxBytes,
-        bool isCodeFilm = false)
+        bool isCodeFilm = false, bool browserFilm = false)
     {
         if (bytes.LongLength == 0 || bytes.LongLength > maxBytes)
             throw new InvalidOperationException("远程设计结果大小不符合要求，请重新生成");
@@ -1606,6 +1607,14 @@ public static class DesignArtifactWorkspaceContract
             || package.Files.Count is 0 or > 100)
             throw new InvalidOperationException("远程设计结果版本不匹配，请重新生成");
 
+        if (isCodeFilm && browserFilm)
+        {
+            if (package.Files.Count != 2 || package.Files[0] is not { Path: "film-bundle.json", MediaType: "application/json" } bundle)
+                throw new InvalidOperationException("影片任务没有提交浏览器播放包");
+            var metadata = ParseQuickCreationMedia(package.Files[1]);
+            QuickCreationBrowserPlayback.Validate(bundle, metadata);
+            return new ParsedDesignWorkspaceResult(string.Empty, package.Files);
+        }
         if (isCodeFilm)
         {
             if (package.Files.Count is < 1 or > 3 || package.Files[0] is not

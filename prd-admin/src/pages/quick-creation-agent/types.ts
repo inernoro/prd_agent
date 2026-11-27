@@ -1,6 +1,20 @@
 /** 快速创作：一份文档 + 一个模板 → 能播放（视频）或能浏览（网页）、能发布到网页托管的成品。 */
 
 export type OutputKind = 'video' | 'web';
+export type DurationChoice = 'auto' | 60 | 180 | 300 | 600;
+
+export interface QcEstimate {
+  choice: DurationChoice;
+  targetSec: number;
+  autoSec: number;
+  fullSec?: number;
+  chars?: number;
+  scenes: number;
+  generateMin: [number, number];
+  basis: string;
+  trialDefault: boolean;
+  trialMin: [number, number];
+}
 
 export type AttachmentKind = 'doc' | 'kb' | 'image';
 export type AttachmentStatus = 'reading' | 'ready' | 'failed';
@@ -148,7 +162,25 @@ export interface QcPublish {
   at?: string;
 }
 
-export type RunStatus = 'queued' | 'running' | 'failed' | 'done';
+export type RunStatus = 'queued' | 'running' | 'failed' | 'done' | 'trial-ready';
+
+export interface QcPlayBundle {
+  version: 1;
+  width: number;
+  height: number;
+  fps: number;
+  durationSec: number;
+  aac: string;
+  opus: string;
+  captions: Array<{ fromSec: number; toSec: number; text: string }>;
+}
+
+export interface QcTrial {
+  status: 'making' | 'ready' | 'approved';
+  scenes: number;
+  seconds?: number;
+  restScenes: number;
+}
 
 export interface QcRun {
   contentSource?: 'chat' | 'doc';
@@ -171,6 +203,11 @@ export interface QcRun {
   scenes?: QcScene[];
   sections?: QcWebSection[];
   durationSec?: number;
+  targetDurationSec?: number;
+  bundleUrl?: string;
+  bundleBytes?: number;
+  trial?: QcTrial;
+  durationChoice?: Exclude<DurationChoice, 'auto'> | null;
   keyPoints?: QcKeyPoint[];
   captions?: Array<{ fromSec: number; toSec: number; text: string }>;
   captionsBurnedIn?: boolean;
@@ -233,6 +270,8 @@ export interface CreateRunInput {
   briefId?: string;
   briefRevision?: number;
   briefMode?: 'confirm' | 'skip';
+  duration?: DurationChoice;
+  trial?: boolean;
 }
 
 export interface QcBriefContext {
@@ -241,6 +280,7 @@ export interface QcBriefContext {
   templateId: string;
   stylePicked: boolean;
   attachmentIds: string[];
+  duration?: DurationChoice;
 }
 
 export interface QcBriefRecommendation {
@@ -266,7 +306,8 @@ export interface QcBriefSession {
   styleId: string;
   attachments: QcAttachment[];
   messages: QcBriefMessage[];
-  script: Array<{ index: number; visual: string; narration: string }>;
+  durationChoice?: Exclude<DurationChoice, 'auto'> | null;
+  script: Array<{ index: number; visual: string; narration: string; durationSec?: number }>;
   busy?: boolean;
   draft?: string;
   brief: {
