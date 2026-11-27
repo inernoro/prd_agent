@@ -50,6 +50,7 @@ on:
           - skip
           - survey
           - proof
+          - lint
         default: none
       quick_creation_retry_film_id:
         description: '可选的本账号旧视频任务编号，复用该任务稿件和风格完成重试验收'
@@ -321,3 +322,23 @@ jobs:
           name: dsn-1400e277-v6-preview-evidence
           path: ${{ runner.temp }}/dsn-1400e277-evidence/
           retention-days: 14
+
+  quick-creation-scoped-lint:
+    name: Quick creation scoped lint (cloud)
+    if: github.event_name == 'workflow_dispatch' && inputs.quick_creation_brief_admission == 'lint'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.quick_creation_commit }}
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Lint changed quick creation files
+        run: |
+          pnpm -C prd-admin install --frozen-lockfile
+          pnpm -C prd-admin exec eslint --max-warnings 0 src/pages/quick-creation-agent/QuickCreationAgentPage.tsx src/pages/quick-creation-agent/types.ts
