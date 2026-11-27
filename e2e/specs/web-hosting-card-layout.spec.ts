@@ -808,3 +808,43 @@ for (const theme of ['light', 'dark'] as const) {
     await expect(page.locator('.ledger-directory .hosted-share-member')).toHaveCount(4);
   });
 }
+
+for (const width of [1440, 375]) {
+  test(`生成网页进入快速创作并预选网页（${width} px）`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 812 });
+    await page.addInitScript(() => {
+      localStorage.setItem('prd-admin-auth', JSON.stringify({ state: {
+        isAuthenticated: true, user: { userId: 'hosting-entry-qa', username: 'hosting-entry-qa', role: 'ADMIN' },
+        token: 'hosting-entry-qa-session', permissions: ['access', 'web-pages.read'], permissionsLoaded: true,
+        menuCatalog: [], menuCatalogLoaded: true,
+      }, version: 0 }));
+    });
+    await page.route('**/api/**', async route => {
+      const pathname = new URL(route.request().url()).pathname;
+      let data: unknown = { items: [], total: 0, folders: [], tags: [], teams: [] };
+      if (pathname === '/api/authz/me') data = { effectivePermissions: ['access', 'web-pages.read'], menuCatalog: [], isRoot: false };
+      if (pathname.endsWith('/api/quick-creation/templates')) data = {
+        items: [{
+          id: 'sketchnote', name: '视觉笔记', nameEn: 'Sketchnote', categoryId: 'presentation',
+          line: '纸面笔记', durationSec: 60,
+        }],
+        categories: [{ id: 'presentation', name: '知识讲解' }],
+        source: { name: 'Lemo-Opuscar by Lemomo (LemoLab)', url: 'https://example.invalid/', posterLicense: 'CC BY 4.0' },
+      };
+      await route.fulfill({ json: { success: true, data, error: null } });
+    });
+    await page.goto('/web-pages');
+    const generate = page.getByRole('button', { name: '生成网页', exact: true }).filter({ visible: true });
+    await generate.click();
+    await expect(page).toHaveURL(/\/quick-creation-agent\?from=web-pages$/);
+    await expect(page.locator('[data-qc-ready=compose]')).toHaveAttribute('data-output', 'web');
+    await expect(page.getByRole('button', { name: '返回网页托管', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: '发给快速创作', exact: true })).toBeVisible();
+    const widths = await page.evaluate(() => [innerWidth, document.documentElement.scrollWidth]);
+    expect(widths[1]).toBe(widths[0]);
+    await testInfo.attach(`hosting-entry-${width}`, { body: await page.screenshot(), contentType: 'image/png' });
+    await page.getByRole('button', { name: '返回网页托管', exact: true }).click();
+    await expect(page).toHaveURL(/\/web-pages$/);
+    await expect(page.getByRole('button', { name: '上传网页', exact: true }).filter({ visible: true })).toBeVisible();
+  });
+}
