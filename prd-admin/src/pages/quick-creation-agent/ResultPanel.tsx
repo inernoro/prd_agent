@@ -155,20 +155,28 @@ export function VideoPlayer({ run, template }: { run: QcRun; template: QcTemplat
   const [muted, setMuted] = useState(false);
   const [captions, setCaptions] = useState(true);
   const [blocked, setBlocked] = useState<string | null>(null);
-  const [mediaUrl, setMediaUrl] = useState<string | null>(null);
+  const [media, setMedia] = useState<{ url: string; subtitleFree: boolean } | null>(null);
   const [filmAttempt, setFilmAttempt] = useState(0);
   const mediaAvailable = !!run.media;
   const subtitleFreePreview = run.hasSubtitleFreePreview === true;
   useEffect(() => {
-    setMediaUrl(null);
+    setMedia(null);
     setBlocked(null);
     if (!mediaAvailable) return;
     let active = true;
     let objectUrl: string | null = null;
-    void readQuickCreationFilm(run.id, subtitleFreePreview).then(blob => {
-      if (!active) return;
-      objectUrl = URL.createObjectURL(blob);
-      setMediaUrl(objectUrl);
+    const read = async () => {
+      if (subtitleFreePreview) {
+        const preview = await readQuickCreationFilm(run.id, true).catch(() => null);
+        if (preview) return { blob: preview, subtitleFree: true };
+        if (!active) return null;
+      }
+      return { blob: await readQuickCreationFilm(run.id), subtitleFree: false };
+    };
+    void read().then(file => {
+      if (!active || !file) return;
+      objectUrl = URL.createObjectURL(file.blob);
+      setMedia({ url: objectUrl, subtitleFree: file.subtitleFree });
     }).catch(() => {
       if (active) setBlocked('成片暂时没能打开，请重试读取');
     });
@@ -177,10 +185,9 @@ export function VideoPlayer({ run, template }: { run: QcRun; template: QcTemplat
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
   }, [run.id, mediaAvailable, filmAttempt, subtitleFreePreview]);
-  const media = mediaUrl ? { url: mediaUrl } : null;
   const current = useMemo(() => [...scenes].reverse().find(s => t >= s.startSec) ?? scenes[0], [scenes, t]);
   const currentCaption = run.captions?.find(caption => caption.fromSec <= t && t < caption.toSec)?.text;
-  const hasCaptions = (!run.captionsBurnedIn || subtitleFreePreview) && Boolean(run.captions?.length);
+  const hasCaptions = (!run.captionsBurnedIn || media?.subtitleFree === true) && Boolean(run.captions?.length);
   const captionAction = hasCaptions ? (captions ? '关闭字幕' : '打开字幕')
     : run.captionsBurnedIn ? '字幕已印在画面上' : '本片没有可切换的字幕轨';
 

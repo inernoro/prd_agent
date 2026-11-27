@@ -191,9 +191,9 @@ function probeCodeFilm(file: string) {
   return { durationSec, audio, video };
 }
 
-function audioPacketDigest(file: string): string {
+function packetDigest(file: string, stream: 'a' | 'v'): string {
   return execFileSync('ffmpeg', ['-v', 'error', '-nostdin', '-protocol_whitelist', 'file,pipe', '-i', file,
-    '-map', '0:a:0', '-c', 'copy', '-f', 'hash', '-hash', 'sha256', '-'], {
+    '-map', `0:${stream}:0`, '-c', 'copy', '-f', 'hash', '-hash', 'sha256', '-'], {
     encoding: 'utf8', timeout: 8000, maxBuffer: 8 * 1024,
   }).trim();
 }
@@ -208,11 +208,12 @@ export function collectCodeFilmMetadata(file: string, previewLimit: number): Wor
     try {
       const bytes = readRegularFileNoFollow(previewPath, previewLimit);
       const alternate = probeCodeFilm(previewPath);
-      const digest = audioPacketDigest(file);
+      const audioDigest = packetDigest(file, 'a');
       if (Math.abs(main.durationSec - alternate.durationSec) <= 0.06
           && Math.abs(Number(main.audio.start_time) - Number(alternate.audio.start_time)) <= 0.035
           && main.video.width === alternate.video.width && main.video.height === alternate.video.height
-          && /^SHA256=[0-9a-f]{64}$/i.test(digest) && digest === audioPacketDigest(previewPath)) {
+          && /^SHA256=[0-9a-f]{64}$/i.test(audioDigest) && audioDigest === packetDigest(previewPath, 'a')
+          && packetDigest(file, 'v') !== packetDigest(previewPath, 'v')) {
         preview = { path: 'film-preview.mp4', mediaType: 'video/mp4', size: bytes.length,
           sha256: sha256(bytes), contentBase64: bytes.toString('base64') };
       }

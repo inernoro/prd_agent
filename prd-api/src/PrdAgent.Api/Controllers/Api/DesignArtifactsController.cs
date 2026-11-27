@@ -877,8 +877,12 @@ public sealed partial class DesignArtifactsController : ControllerBase
         if (string.IsNullOrWhiteSpace(run.WorkspaceResultAssetKey))
             return preview ? null : await recovery.ReadRetainedFilmAsync(run.Id, ct, run.CodeFilmRuntimeSlot);
         var package = await workspace.ReadCommittedCodeFilmAsync(run, ct);
-        var file = package.Files.SingleOrDefault(file => file.Path == (preview ? "film-preview.mp4" : "film.mp4"));
-        return file == null ? null : Convert.FromBase64String(file.ContentBase64);
+        var master = package.Files.SingleOrDefault(file => file.Path == "film.mp4");
+        if (master == null) return null;
+        if (!preview) return Convert.FromBase64String(master.ContentBase64);
+        var alternate = package.Files.SingleOrDefault(file => file.Path == "film-preview.mp4");
+        return alternate == null || string.Equals(alternate.Sha256, master.Sha256, StringComparison.OrdinalIgnoreCase)
+            ? null : Convert.FromBase64String(alternate.ContentBase64);
     }
 
     [HttpPost("runs/{runId}/cancel")]
