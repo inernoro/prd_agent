@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
@@ -98,8 +98,31 @@ async function verifyExistingWebRequests(page, id) {
   const headings = await frame.locator('h1').allTextContents();
   assert.ok(headings.some(heading => heading.replace(/\s/g, '').includes('评审入门手记')));
   await page.screenshot({ path: join(out, 'existing-web-request-proof.png'), scale: 'css' });
-  await writeFile(join(out, 'existing-web-request-proof.json'),
-    JSON.stringify({ runId: id, commit, headings, restoredRequests: messages, staleFallback: false }, null, 2));
+
+  const briefId = '56e925f0061046f9a851ef7153f5c6de';
+  const headers = { Authorization: `Bearer ${desktopToken}`, 'X-Client': 'admin' };
+  const briefResponse = await page.request.get(new URL(`/api/quick-creation/brief/${briefId}`, origin).href,
+    { headers, timeout: 20_000 });
+  assert.ok(briefResponse.ok());
+  const brief = (await briefResponse.json()).data;
+  assert.equal(brief.kind, 'web');
+  assert.deepEqual(brief.messages.filter(message => message.role === 'user').map(message => message.text), messages);
+  const recheck = revision => page.request.post(new URL('/api/quick-creation/runs', origin).href, {
+    headers: { ...headers, 'Idempotency-Key': randomUUID() },
+    data: { kind: 'web', templateId: brief.styleId, ask: '', briefId, briefRevision: revision,
+      briefMode: 'skip', attachmentIds: brief.attachments.map(attachment => attachment.id) },
+    timeout: 20_000,
+  });
+  const sameRevision = await recheck(brief.revision);
+  assert.ok(sameRevision.ok(), `重复提交未返回原任务 HTTP ${sameRevision.status()}`);
+  assert.equal((await sameRevision.json()).data.id, id);
+  const mismatchedRevision = await recheck(brief.revision + 1);
+  assert.equal(mismatchedRevision.status(), 409);
+  assert.equal((await mismatchedRevision.json()).error.code, 'BRIEF_CHANGED');
+  await writeFile(join(out, 'existing-web-request-proof.json'), JSON.stringify({
+    runId: id, commit, headings, restoredRequests: messages, staleFallback: false,
+    sameRevisionReused: true, mismatchedRevisionRejected: true,
+  }, null, 2));
 }
 
 async function verifyExistingFilm(page, id) {
