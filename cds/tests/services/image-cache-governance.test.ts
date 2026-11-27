@@ -28,6 +28,13 @@ it('emits pull quota alerts on observed changes and leaves alerts active during 
   expect(record.mock.calls.slice(2).map(([entry])=>entry.action)).toEqual([
     'image.cache.pull.overdue.recovered','image.cache.pull.headroom.recovered',
   ]);
+  const normal={...blocked,reservedBytes:0,overdueCount:0,overdueReservedBytes:0,headroom:'normal'} as const;
+  cache.observePullBudget({...normal,activeSlotCount:32,slotLimit:32});
+  cache.observePullBudget();
+  cache.observePullBudget({...normal,activeSlotCount:31,slotLimit:32});
+  expect(record.mock.calls.slice(4).map(([entry])=>entry.action)).toEqual([
+    'image.cache.pull.slots.alert','image.cache.pull.slots.recovered',
+  ]);
 });
 
 function fixture() {
@@ -199,10 +206,10 @@ with socketserver.UnixStreamServer(${JSON.stringify(socket)},Handler) as server:
   });
   it.each(['2026-10-01T00:00:00Z', '2026-10-01T00:00:00.123456789Z'])('replays a durable native receipt for Docker timestamp %s without charging the peak twice', created => {
     const f=fixture(), image='registry.example/test:old';
-    const pin=f.request({action:'prepare',image,nativePull:true,peakBytes:4096,nowMs:now-700_000});
+    const pin=f.request({action:'prepare',image,nativePull:true,peakBytes:4096});
     f.values.pullImage={...f.image(),Created:created};f.save();
     expect(f.request({action:'execute-pull',token:pin.token,image,pullTimeoutMs:1_000})).toEqual({outcome:'success',recorded:true});
-    expect(f.request({peakBytes:4096}).pullBudget).toMatchObject({reservedBytes:4096,overdueCount:1});
+    expect(f.request({peakBytes:4096,nowMs:Date.now()+700_000}).pullBudget).toMatchObject({reservedBytes:4096,overdueCount:1});
     expect(f.request({action:'settle-pulls',instanceId:'other-master'}).settled).toEqual([]);
     const {settled}=f.request({action:'settle-pulls'});
     expect(settled).toMatchObject([{outcome:'success',source:'scheduled',image,exitCode:0,observedId:id,reservedBytesEstimate:4096}]);
@@ -228,18 +235,18 @@ with socketserver.UnixStreamServer(${JSON.stringify(socket)},Handler) as server:
     const drifted=f.request({action:'prepare',image,nativePull:true,peakBytes:1024,nowMs:old});
     const invalid=f.request({action:'prepare',image,nativePull:true,peakBytes:1024,nowMs:old});
     f.values.pullDelay=0.25;f.save();
-    expect(f.request({action:'execute-pull',token:timed.token,image,pullTimeoutMs:20}).recorded).toBe(false);
+    expect(f.request({action:'execute-pull',token:timed.token,image,pullTimeoutMs:20,nowMs:old}).recorded).toBe(false);
     expect(f.request({}).pullReservations).toEqual(expect.arrayContaining([
       expect.objectContaining({confirmed:false,diagnostic:{executionState:'timeout',summary:'拉取等待超时，完成结果未知',signals:[],stdoutTailBytes:0,stderrTailBytes:0}}),
     ]));
     f.values.pullDelay=0;f.values.pullImage=f.image();f.save();
-    for(const pin of [drifted,invalid]) f.request({action:'execute-pull',token:pin.token,image,pullTimeoutMs:1_000});
+    for(const pin of [drifted,invalid]) f.request({action:'execute-pull',token:pin.token,image,pullTimeoutMs:1_000,nowMs:old});
     const proofPath=path.join(f.root,'catalog','pull-receipt-'+invalid.token);
     const proof=JSON.parse(fs.readFileSync(proofPath,'utf8'));
     fs.writeFileSync(proofPath,JSON.stringify({...proof,daemonId:'other-daemon'}));
     f.values.images=[{...f.image(),Id:'sha256:'+'d'.repeat(64)}];f.save();
     expect(f.request({action:'settle-pulls'}).settled).toEqual([]);
-    expect(f.request({budgetBytes:6144,peakBytes:2048}).pullBudget)
+    expect(f.request({budgetBytes:6144,peakBytes:2048,nowMs:Date.now()+700_000}).pullBudget)
       .toMatchObject({reservedBytes:4096,availableBytes:1024,overdueCount:4,overdueReservedBytes:4096,headroom:'blocked'});
   });
   it('keeps a queryable safe diagnostic for an unknown native failure with arbitrary stderr', () => {
@@ -336,34 +343,67 @@ with socketserver.UnixStreamServer(${JSON.stringify(socket)},Handler) as server:
     expect(f.request(reuse)).toMatchObject({ confirmedImage: { Id: id, RepoDigests: [repoDigest] } });
     expect(f.request({}).pullReservations).toMatchObject([{ confirmed: true, reservedBytesEstimate: 0 }]);
   });
-  it('keeps the old reservations charged and permits only one budgeted exact-commit recovery pull', () => {
+  it('admits new pulls with 33 overdue records while retaining old bytes, references and evidence', () => {
     const f = fixture();
     f.request({ action: 'publish', references: [] });
     const ledgerPath = path.join(f.root, 'catalog', 'images.json');
     const ledger = JSON.parse(fs.readFileSync(ledgerPath, 'utf8'));
     const older = now - 600_001;
-    const old = Object.fromEntries(Array.from({ length: 32 }, (_, index) => [index.toString(16).padStart(32, '0'), {
-      image: `registry.example/test:old-${index}`, instanceId: 'master-a', createdAt: older, startedAt: older,
-      nativePull: true, beforeId: null, reserveBytes: 1024,
+    const old = Object.fromEntries(Array.from({ length: 33 }, (_, index) => [index.toString(16).padStart(32, '0'), {
+      image: `registry.example/test:old-${index}`, instanceId: index % 2 ? 'master-a' : 'master-b',
+      createdAt: older, ...(index % 3 ? { startedAt: older, nativePull: true } : {}),
+      beforeId: null, reserveBytes: 1024,
     }]));
-    const commit = 'c'.repeat(40);
-    const request = { action: 'prepare', image: `registry.example/test:sha-${commit}`, forceNew: true,
-      nativePull: true, peakBytes: 1024, budgetBytes: 33 * 1024, reuseVerifiedRevision: commit };
-    const writeLedger = (pulls: typeof old) => fs.writeFileSync(ledgerPath, JSON.stringify({ ...ledger, pulls }));
-    writeLedger({ ...old, ['0'.repeat(32)]: { ...old['0'.repeat(32)], startedAt: now } });
-    const callsBeforeBlock = fs.readFileSync(f.calls, 'utf8').length;
-    expect(() => f.request(request)).toThrow(/unsettled-image-pull-budget-reached/);
-    expect(fs.readFileSync(f.calls, 'utf8').slice(callsBeforeBlock)).not.toContain('["image", "ls"');
-    writeLedger(old);
-    expect(() => f.request({ ...request, budgetBytes: 33 * 1024 - 1 })).toThrow(/host-image-cache-budget-exceeded/);
-    expect(() => f.request({ ...request, reuseVerifiedRevision: undefined })).toThrow(/unsettled-image-pull-budget-reached/);
-    expect(f.request(request)).toMatchObject({ recovery: true });
-    expect(() => f.request(request)).toThrow(/unsettled-image-pull-budget-reached/);
-    const report = f.request({ budgetBytes: 33 * 1024 });
-    expect(report.pullBudget).toMatchObject({ reservedBytes: 33 * 1024, overdueCount: 32 });
-    expect(report.pullReservations.filter((row: { recovery?: boolean }) => row.recovery)).toHaveLength(1);
+    fs.writeFileSync(ledgerPath, JSON.stringify({ ...ledger, pulls: old }));
+    const first = { action: 'prepare', image: 'registry.example/test:new-1', forceNew: true,
+      nativePull: true, peakBytes: 1024, budgetBytes: 36 * 1024 };
+    const second = { ...first, image: 'registry.example/test:new-2', instanceId: 'master-b' };
+    f.values.images = [f.image(['registry.example/test:old-0'])];
+    f.save();
+    expect(() => f.request({ ...first, budgetBytes: 35 * 1024 - 1 })).toThrow(/host-image-cache-budget-exceeded/);
+    expect(() => f.request({ ...first, budgetBytes: 0 })).toThrow(/unsettled-image-pull-budget-reached/);
+    expect(f.request(first)).toMatchObject({ token: expect.any(String) });
+    expect(f.request(second)).toMatchObject({ token: expect.any(String) });
+    expect(() => f.request({ ...first, image: 'registry.example/test:new-3' })).toThrow(/host-image-cache-budget-exceeded/);
+    const report = f.request({ budgetBytes: 36 * 1024 });
+    expect(report.pullBudget).toMatchObject({
+      reservedBytes: 35 * 1024, overdueCount: 33, activeSlotCount: 2, slotLimit: 32, reconciliationCount: 33,
+    });
+    expect(report.held).toMatchObject([{ identity: id, reason: 'current-rollback-or-inflight-reference' }]);
+    expect(report.pullReservations[0]).toMatchObject({ slotState: 'awaiting-reconciliation' });
     const after = JSON.parse(fs.readFileSync(ledgerPath, 'utf8')).pulls;
     for (const [token, row] of Object.entries(old)) expect(after[token]).toEqual(row);
+  });
+  it('rejects 32 active reservations before inventory but admits a zero-byte immutable pin', () => {
+    const f = fixture();
+    f.request({ action: 'publish', references: [] });
+    const ledgerPath = path.join(f.root, 'catalog', 'images.json');
+    const ledger = JSON.parse(fs.readFileSync(ledgerPath, 'utf8'));
+    const pulls = Object.fromEntries(Array.from({ length: 32 }, (_, index) => [index.toString(16).padStart(32, '0'), {
+      image: `registry.example/test:active-${index}`, instanceId: 'master-a', createdAt: now - 600_001,
+      startedAt: now, nativePull: true, beforeId: null, reserveBytes: 1024,
+    }]));
+    fs.writeFileSync(ledgerPath, JSON.stringify({ ...ledger, pulls }));
+    const callsBeforeBlock = fs.readFileSync(f.calls, 'utf8').length;
+    expect(() => f.request({ action: 'prepare', image: 'registry.example/test:another', nativePull: true, references: [digest] }))
+      .toThrow(/unsettled-image-pull-budget-reached/);
+    expect(fs.readFileSync(f.calls, 'utf8').slice(callsBeforeBlock)).not.toContain('["image", "ls"');
+    expect(JSON.parse(fs.readFileSync(ledgerPath, 'utf8')).masters['master-a'].references).toEqual([digest]);
+    f.values.images = [f.image()];
+    f.save();
+    expect(f.request({ action: 'prepare', image: digest, requirePresent: true }))
+      .toMatchObject({ token: expect.any(String), alreadyPresent: true });
+    expect(f.request({}).pullBudget).toMatchObject({ activeSlotCount: 32, reconciliationCount: 0 });
+  });
+  it('fences a delayed native worker as soon as its reservation leaves the active window', () => {
+    const f = fixture(), image = 'registry.example/test:old';
+    const pin = f.request({ action: 'prepare', image, nativePull: true, peakBytes: 1024 });
+    expect(() => f.request({ action: 'execute-pull', token: pin.token, image, pullTimeoutMs: 1_000, nowMs: now + 600_001 }))
+      .toThrow(/pull-authorization-unconfirmed/);
+    expect(fs.readFileSync(f.calls, 'utf8')).not.toContain('["pull"');
+    const after = f.request({ action: 'settle-pulls', nowMs: now + 600_001 });
+    expect(after.settled).toMatchObject([{ outcome: 'never-started', source: 'scheduled' }]);
+    expect(f.request({}).pullReservations).toEqual([]);
   });
   it('settles a successful pull after a failed post-pull Docker read using its exact repository digest', () => {
     const f = fixture();
@@ -422,6 +462,14 @@ with socketserver.UnixStreamServer(${JSON.stringify(socket)},Handler) as server:
   });
 });
 describe('image cache orchestration and durable status', () => {
+  it('publishes the current protected references with the reservation in one native request', async () => {
+    const exec = vi.fn<IShellExecutor['exec']>().mockResolvedValue({ exitCode: 0, stdout: '{"token":"fixture"}', stderr: '' });
+    const service = new ImageCacheGovernance({ shell: { exec }, catalog: '/unused', instanceId: 'owned', budgetBytes: 1, protectedReferences: () => [digest] });
+    await expect(service.prepare('registry.example/test:new', () => {})).resolves.toEqual({ token: 'fixture' });
+    expect(exec).toHaveBeenCalledOnce();
+    expect(JSON.parse(exec.mock.calls[0][1]!.stdin!)).toMatchObject({ action: 'prepare', references: [digest] });
+  });
+
   it('retries a busy runtime catalog with freshly read protection references', async () => {
     const exec = vi.fn<IShellExecutor['exec']>()
       .mockResolvedValueOnce({ exitCode: 3, stdout: '{"catalogError":"catalog-busy"}', stderr: '' })
