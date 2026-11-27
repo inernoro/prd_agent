@@ -376,7 +376,10 @@ async function verifyExistingVideo(page, api) {
   row.siteId = repeated.publish.siteId;
   await page.screenshot({ path: join(out, '21-watercolor-published.png') });
   await page.locator('[data-qc=open-hosting]').click();
-  await page.locator(`[data-hosted-site-id="${row.siteId}"]`).waitFor();
+  const hosted = page.locator(`[data-hosted-site-id="${row.siteId}"]`);
+  await hosted.waitFor();
+  await page.waitForFunction(siteId => [...document.querySelectorAll('[data-hosted-site-id]')]
+    .some(element => element.dataset.hostedSiteId === siteId && element.style.outlineWidth === '2px'), row.siteId);
   assert.equal(new URL(page.url()).pathname, '/web-pages');
   await page.screenshot({ path: join(out, '22-watercolor-hosted.png') });
   row.locatedHostedSite = true;
@@ -386,6 +389,7 @@ async function verifyExistingVideo(page, api) {
   const bytes = await response.body();
   const media = join(process.env.RUNNER_TEMP, 'watercolor-acceptance.mp4');
   await writeFile(media, bytes);
+  await writeFile(join(process.env.RUNNER_TEMP, 'watercolor-captions.json'), JSON.stringify(film.captions ?? []));
   const { stdout } = await runProcess('ffprobe', ['-v', 'error', '-show_format', '-show_streams', '-of', 'json', media]);
   const probe = JSON.parse(stdout);
   const picture = probe.streams.find(stream => stream.codec_type === 'video');

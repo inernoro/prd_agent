@@ -286,6 +286,14 @@ jobs:
           E2E_USER: ${{ secrets.E2E_USER }}
           E2E_PASSWORD: ${{ secrets.E2E_PASSWORD }}
         run: node e2e/quick-creation-v6-acceptance.mjs
+      - name: Check audio and subtitle timing on the cloud runner
+        if: always() && inputs.quick_creation_retry_film_id != '' && !inputs.quick_creation_generate
+        timeout-minutes: 12
+        run: |
+          if [ ! -s "$RUNNER_TEMP/watercolor-acceptance.mp4" ]; then exit 0; fi
+          python3 -m venv "$RUNNER_TEMP/watercolor-asr"
+          "$RUNNER_TEMP/watercolor-asr/bin/pip" install -q faster-whisper==1.2.1 opencc-python-reimplemented==0.1.7
+          "$RUNNER_TEMP/watercolor-asr/bin/python" e2e/verify-watercolor-caption-sync.py "$RUNNER_TEMP"
       - name: Retain cloud browser evidence
         if: always()
         uses: actions/upload-artifact@v4
