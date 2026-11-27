@@ -205,6 +205,13 @@ export function designDemoImplementationPath(screen: DesignScreen): string | und
   return screen.route.startsWith('#/design?') ? screen.route.slice(1) : undefined;
 }
 
+export function isDesignRecordDelivery(params: URLSearchParams, hash = ''): boolean {
+  const tab = params.get('tab');
+  if (tab === 'log') return params.get('log') === 'delivery';
+  return tab === 'delivery' && params.get('part') !== 'checks'
+    && (params.get('full') === 'delivery' || params.has('part') || params.has('fb') || params.has('file') || hash.startsWith('#dw-'));
+}
+
 export type DesignRun = {
   id: string; version: number; pullRequest?: number; target?: 'installed'; commit: string; createdAt: string;
   cells: DesignCell[]; verdict: DesignVerdict; previewUrl: string;

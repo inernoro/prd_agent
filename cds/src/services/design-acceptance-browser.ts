@@ -2,7 +2,7 @@ import { readFile, realpath } from 'node:fs/promises';
 import { extname, resolve, sep } from 'node:path';
 import type { Browser, Page, Route } from 'playwright';
 import { designPixelDifference } from '../shared/design-pixels.js';
-import { designViewports, type DesignRule, type DesignScreen, type DesignTheme, type DesignVersion } from '../shared/design-workspace.js';
+import { designViewports, isDesignRecordDelivery, type DesignRule, type DesignScreen, type DesignTheme, type DesignVersion } from '../shared/design-workspace.js';
 import { designBrowserPath, launchDesignBrowser, readPrototypeScreen } from './design-framework-browser.js';
 import { designDigest, localDesignPath } from './design-package.js';
 import { decorateDesignPrototype, designPrototypeCsp } from './design-prototype.js';
@@ -27,6 +27,8 @@ const renderOrigin = 'https://cds-design-implementation.invalid';
 const snapshotLimit = 2 * 1024 * 1024;
 const captureTimeout = 5500;
 const screenshotOptions = { animations: 'disabled', caret: 'hide', timeout: captureTimeout } as const;
+const sceneParameters = ['tab', 'full', 'check', 'pane', 'panel', 'part', 'view', 'mode', 'side', 'status', 'log', 'demo', 'compare-screen', 'compare-slot'];
+const recordDeliveryParameters = [...sceneParameters, 'fb', 'file', 'about'];
 // Rounded subpixel borders can rasterize differently across compositor runs.
 // Use the same software rendering path for the two images and their exact replay.
 const evidenceRenderArgs = [
@@ -38,6 +40,36 @@ const mimeTypes: Record<string, string> = {
   '.js': 'text/javascript', '.css': 'text/css', '.woff': 'font/woff', '.woff2': 'font/woff2',
   '.png': 'image/png', '.svg': 'image/svg+xml', '.webp': 'image/webp', '.ico': 'image/x-icon',
 };
+
+function acceptanceSceneQuery(url: URL) {
+  const query = new URLSearchParams(url.searchParams);
+  const tab = query.get('tab');
+  if (isDesignRecordDelivery(query, url.hash)) {
+    query.set('tab', 'log');
+    query.set('log', 'delivery');
+    if (query.get('full') === 'delivery') query.delete('full');
+  } else if (tab === 'preview' || tab === null) {
+    query.set('tab', 'delivery');
+  } else if (tab === 'delivery' && query.has('part') && !query.has('full')) {
+    query.set('full', 'delivery');
+  }
+  return query;
+}
+
+function sameAcceptanceScene(target: URL, bound: URL, recordDelivery: boolean) {
+  const expected = acceptanceSceneQuery(target);
+  const actual = acceptanceSceneQuery(bound);
+  const parameters = recordDelivery ? recordDeliveryParameters : sceneParameters;
+  return parameters.every(name => actual.get(name) === expected.get(name))
+    && (!recordDelivery || target.hash === bound.hash);
+}
+
+function recordDeliveryReady(target: URL) {
+  const panel = '.dr-delivery .dw-delivery-panel';
+  const part = target.searchParams.get('part');
+  return (part === 'files' || part === 'feedback') && !target.searchParams.has('fb') && !target.hash
+    ? `${panel} .dw-dl-parts [data-part="${part}"][aria-selected="true"]` : panel;
+}
 
 async function takeScreenshot(page: Page) {
   await page.waitForFunction(() => !Array.from(document.querySelectorAll('.dw-frame-loading')).some(element => {
@@ -150,7 +182,7 @@ async function serveImplementation(route: Route, target: URL, build: DesignBuild
 }
 
 async function readImplementation(browser: Browser, build: DesignBuild, target: URL, project: string,
-  runtime: ProgramCaptureInput, fixtures: FixtureSnapshot, reference: Buffer, date: Date) {
+  runtime: ProgramCaptureInput, fixtures: FixtureSnapshot, reference: Buffer, date: Date, expectRecordDelivery: boolean) {
   const { screen, theme } = runtime;
   const context = await browser.newContext({
     viewport: designViewports[screen.viewport], hasTouch: screen.viewport === 'phone', colorScheme: theme,
@@ -208,6 +240,9 @@ async function readImplementation(browser: Browser, build: DesignBuild, target: 
     const ready = screen.entryReadySelector
       && !screen.entryReadySelector.startsWith('[data-cds-design-ready=') ? screen.entryReadySelector : view;
     await page.locator('css=' + ready).first().waitFor({ state: 'visible', timeout: captureTimeout });
+    if (expectRecordDelivery) {
+      await page.locator('css=' + recordDeliveryReady(target)).first().waitFor({ state: 'visible', timeout: captureTimeout });
+    }
     const expectedVersion = target.searchParams.get('version');
     if (target.searchParams.has('design') && expectedVersion) {
       await page.waitForFunction(version => document.querySelector<HTMLSelectElement>('.dw-version-select')?.value === version,
@@ -256,16 +291,9 @@ export function createDesignAcceptanceBrowser(webDist: string, executablePath?: 
       || project === projectId || !/^[a-z0-9-]{1,100}$/.test(project)) {
       return rejectPlanning(422, 'design_capture_invalid_scene', '设计方需提供不同于实际项目的演示场景，且与实现绑定使用同一入口。');
     }
-    const tab = (url: URL) => {
-      const value = url.searchParams.get('tab');
-      return value === 'preview' || value === null ? 'delivery' : value;
-    };
-    const overlay = (url: URL) => url.searchParams.get('full')
-      ?? (url.searchParams.get('tab') === 'delivery' && url.searchParams.has('part') ? 'delivery' : null);
-    const states = ['check', 'pane', 'panel', 'part', 'view', 'mode', 'side', 'status', 'log', 'demo', 'compare-screen', 'compare-slot'];
+    const recordDelivery = isDesignRecordDelivery(target.searchParams, target.hash);
     if (bound.href !== target.href && (bound.searchParams.get('project') !== projectId
-      || tab(bound) !== tab(target) || overlay(bound) !== overlay(target)
-      || states.some(name => bound.searchParams.get(name) !== target.searchParams.get(name)))) {
+      || !sameAcceptanceScene(target, bound, recordDelivery))) {
       return rejectPlanning(422, 'design_capture_binding_mismatch', '实现方需核对绑定的页签或面板，与稿件演示场景对齐后再运行。');
     }
     const date = new Date(version.createdAt);
@@ -286,7 +314,9 @@ export function createDesignAcceptanceBrowser(webDist: string, executablePath?: 
           return { fixtures, observed: await measureDesignPage(page), image };
         }, date, message => { referenceFailure = message; });
       if (!prior) return rejectPlanning(422, 'design_capture_reference_unavailable', referenceFailure);
-      const actual = await readImplementation(browser, build, target, project, input, prior.fixtures, prior.image, date);
+      // An explicit record entry must render the embedded panel. Older bindings can still use the original overlay.
+      const expectRecordDelivery = recordDelivery && [target, bound].some(url => url.searchParams.get('tab') === 'log');
+      const actual = await readImplementation(browser, build, target, project, input, prior.fixtures, prior.image, date, expectRecordDelivery);
       if (!await build.current()) return rejectPlanning(409, 'design_capture_commit_changed', '实现提交在截图时变化，请创建新的验收运行。');
       if (!actual) return rejectPlanning(422, 'design_capture_implementation_unavailable', '实现未到达同数据画面。请实现方核对路由或进入动作。');
       return { fixtureDigest: designDigest(JSON.stringify(prior.fixtures)), reference: prior.image, implementation: actual.image,
