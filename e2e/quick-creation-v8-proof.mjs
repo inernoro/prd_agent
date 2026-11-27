@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
+import { mkdir, writeFile } from 'node:fs/promises';
 
-import { launch, loadConfig, createMobileContext, stepClick, stepShot, writeManifest, detectThemeSupport } from
+import { launch, loadConfig, createMobileContext, stepClick, stepShot, writeManifest } from
   '../.claude/skills/create-visual-test-to-kb/scripts/harness.mjs';
 
 const origin = new URL(process.env.E2E_BASE_URL);
@@ -12,6 +13,16 @@ assert.match(commit, /^[a-f0-9]{40}$/);
 const config = loadConfig(new URL('../.claude/skills/create-visual-test-to-kb/acceptance.config.json', import.meta.url));
 const out = join(process.env.RUNNER_TEMP, 'dsn-1400e277-evidence');
 const environment = { kind: 'cds', branch: 'codex/dsn-1400e277-v6', commit, baseUrl: origin.origin };
+
+async function switchToLight(page, mobile) {
+  if (mobile) await page.getByRole('button', { name: '打开导航菜单', exact: true }).click();
+  const settings = page.locator('nav a[href="/settings"]:visible, nav button[title="设置"]:visible')
+    .or(page.getByRole('button', { name: '设置', exact: true }).filter({ visible: true })).first();
+  await settings.click();
+  await page.getByText('皮肤设置', { exact: true }).first().click();
+  await page.getByRole('button', { name: /^白天/ }).click();
+  await page.waitForFunction(() => document.documentElement.dataset.theme === 'light');
+}
 
 async function enter(page, mobile) {
   await page.goto(origin.href);
@@ -23,6 +34,21 @@ async function enter(page, mobile) {
     page.getByRole('button', { name: '开始身份确认', exact: true }).click(),
   ]);
   assert.ok(login.ok(), '登录失败');
+  if (!mobile && process.env.E2E_QC_POLL_ID) {
+    const runId = process.env.E2E_QC_POLL_ID;
+    assert.match(runId, /^[a-f0-9]{32}$/);
+    const { accessToken } = (await login.json()).data;
+    const response = await page.request.get(new URL(`/api/quick-creation/runs/${runId}`, origin).href,
+      { headers: { Authorization: `Bearer ${accessToken}` } });
+    assert.ok(response.ok(), '读取原视频任务失败');
+    const { id, status, kind, elapsedSec, stages, durationSec, captions, publish, failure } = (await response.json()).data;
+    assert.equal(id, runId);
+    const summary = { id, status, kind, elapsedSec, stages, durationSec, captionCount: captions?.length ?? 0, publish, failure };
+    await mkdir(out, { recursive: true });
+    await writeFile(join(out, 'retained-video-status.json'), JSON.stringify(summary, null, 2));
+    console.log(JSON.stringify(summary));
+  }
+  await switchToLight(page, mobile);
   if (mobile) await page.getByRole('button', { name: '打开导航菜单', exact: true }).click();
   const hosting = page.locator('nav a[href="/web-pages"]:visible, nav button[title^="网页"]:visible')
     .or(page.getByRole('button', { name: /^网页(?:托管)?$/ }).filter({ visible: true })).first();
@@ -51,7 +77,8 @@ try {
   const version = await page.request.get(new URL('/api/version', origin).href);
   assert.equal((await version.json()).actualCommit, commit);
   await enter(page, false);
-  themeSupport = await detectThemeSupport(page, config);
+  themeSupport = { supportsLight: true, verifiedBy: 'skin settings then real landing' };
+  await page.screenshot({ path: join(out, 'desktop-light-compose-css.png'), scale: 'css' });
   await stepShot(page, out, 3, 'desktop-web-compose', '快速创作：桌面入口默认选中网页，空稿时快捷生成禁用',
     page.locator('[data-qc=composer-tools]'));
   assert.equal(await page.locator('[data-qc=submit]').isEnabled(), false);
@@ -65,10 +92,12 @@ try {
     assert.equal(await tools.locator('[data-qc=brief-send]').isEnabled(), false);
     assert.equal(await phone.locator('[data-qc=block-reason]').count(), 0);
     assert.equal(await phone.evaluate(() => document.documentElement.scrollWidth), 390);
+    await phone.screenshot({ path: join(out, 'mobile-light-compose-css.png'), scale: 'css' });
     await stepClick(phone, out, 7, tools.locator('[data-qc=composer-plus]'), 'mobile-plus-click', '添加资料：点左下的加号');
     const plus = phone.locator('[data-qc=plus-menu]');
     await plus.waitFor();
     assert.deepEqual(await plus.getByRole('button').allTextContents(), ['上传稿件或图片', '从知识库选择']);
+    await phone.screenshot({ path: join(out, 'mobile-light-plus-css.png'), scale: 'css' });
     await stepShot(phone, out, 8, 'mobile-plus-menu', '添加资料：上传和知识库两项在同一菜单', plus);
     await phone.keyboard.press('Escape');
     await plus.waitFor({ state: 'hidden' });
