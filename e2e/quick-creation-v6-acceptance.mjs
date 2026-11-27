@@ -43,8 +43,13 @@ async function openWorkbench(page, { mobile = false } = {}) {
   const toolbox = page.locator('nav button[title^="百宝箱"]:visible')
     .or(page.getByRole('button', { name: /^(?:AI\s*)?百宝箱$/ }).filter({ visible: true })).first();
   await toolbox.click();
-  const card = page.locator('.toolbox-tool-card').filter({ has: page.getByText('快速创作', { exact: true }) });
-  await card.getByText('开发中', { exact: true }).waitFor();
+  if (mobile) await page.getByPlaceholder('搜索智能体、工具').fill('快速创作');
+  const card = mobile ? page.getByRole('button', { name: /^快速创作/ })
+    : page.locator('.toolbox-tool-card').filter({ has: page.getByText('快速创作', { exact: true }) });
+  if (!mobile) {
+    await card.getByText('开发中', { exact: true }).waitFor();
+    receipt.cases.push('desktop toolbox quick creation card has the in-development badge');
+  }
   const [templates] = await Promise.all([
     page.waitForResponse(match(base + '/templates')),
     card.getByText('快速创作', { exact: true }).click(),
