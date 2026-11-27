@@ -51,6 +51,13 @@
    "tag": "design/DSN-1400E277/v7",
    "committedAt": "2026-11-27T07:48:52+00:00",
    "subject": "feat(design): 快速创作 V7 对话起稿"
+  },
+  {
+   "version": 8,
+   "commit": "754e85ad507804cdb8ccd52315596fdcb8770de0",
+   "tag": "design/DSN-1400E277/v8",
+   "committedAt": "2026-11-27T08:33:07+00:00",
+   "subject": "style(design): 快速创作手机输入框做减法（未发布到 CDS）"
   }
  ]
 }
