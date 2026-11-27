@@ -185,7 +185,8 @@ public sealed partial class DesignArtifactsController
             if (brief == null) return NotFound();
             var existing = await _db.DesignArtifactRuns.Find(QuickCreationScope()
                 & Builders<DesignArtifactRun>.Filter.Where(row => row.UserId == userId && row.QuickCreation != null
-                    && row.RetryOfRunId == null && row.QuickCreation.BriefId == request.BriefId)).FirstOrDefaultAsync(ct);
+                    && row.RetryOfRunId == null && row.QuickCreation.BriefId == request.BriefId
+                    && row.QuickCreation.BriefRevision == request.BriefRevision)).FirstOrDefaultAsync(ct);
             if (existing != null) return Accepted(ApiResponse<object>.Ok(await ToQuickRunAsync(existing, ct)));
             if (brief.Revision != request.BriefRevision || !BriefReady(brief) || brief.Kind != request.Kind
                 || (brief.PendingTurnId != null && brief.PendingUntil > DateTime.UtcNow)
