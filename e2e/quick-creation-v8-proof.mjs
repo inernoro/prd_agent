@@ -16,6 +16,7 @@ const config = loadConfig(new URL('../.claude/skills/create-visual-test-to-kb/ac
 const out = join(process.env.RUNNER_TEMP, 'dsn-1400e277-evidence');
 const environment = { kind: 'cds', branch: 'codex/dsn-1400e277-v6', commit, baseUrl: origin.origin };
 const verifyUserRequests = process.env.E2E_QC_BRIEF_HANDOFF === 'true';
+const reviewWebRunId = process.env.E2E_QC_REVIEW_WEB_ID;
 if (verifyUserRequests) assert.equal(process.env.GITHUB_RUN_ATTEMPT, '1');
 let desktopToken;
 
@@ -73,6 +74,32 @@ async function enter(page, mobile) {
   assert.equal(new URL(page.url()).searchParams.get('from'), 'web-pages');
   await page.getByRole('button', { name: '返回网页托管', exact: true }).waitFor();
   return composer;
+}
+
+async function verifyExistingWebRequests(page, id) {
+  assert.match(id, /^[a-f0-9]{32}$/);
+  await page.getByRole('button', { name: /^我的作品，共/ }).click();
+  await page.locator(`[data-qc=works] button[data-run-id="${id}"]`).click();
+  assert.equal(new URL(page.url()).searchParams.get('run'), id);
+  await page.locator('[data-qc=done-card]').waitFor();
+  const messages = [
+    '请把这份稿件做成一页网页，保留先读目标、再画边界、最后对验收三个习惯。',
+    '把页面主标题写成「评审入门手记」，省略首段介绍，从三个习惯开始。',
+  ];
+  const panel = page.locator('[data-qc=brief-run-requests]');
+  await panel.locator('summary').click();
+  const expected = messages.join('\n\n');
+  assert.equal(await panel.locator('p').textContent(), expected);
+  assert.equal(await page.getByText('没有补充要求，按模板默认节奏生成', { exact: true }).count(), 0);
+  await page.reload();
+  await panel.locator('summary').click();
+  assert.equal(await panel.locator('p').textContent(), expected);
+  const frame = page.frameLocator('[data-qc=web-preview] iframe');
+  const headings = await frame.locator('h1').allTextContents();
+  assert.ok(headings.some(heading => heading.replace(/\s/g, '').includes('评审入门手记')));
+  await page.screenshot({ path: join(out, 'existing-web-request-proof.png'), scale: 'css' });
+  await writeFile(join(out, 'existing-web-request-proof.json'),
+    JSON.stringify({ runId: id, commit, headings, restoredRequests: messages, staleFallback: false }, null, 2));
 }
 
 async function verifyExistingFilm(page, id) {
@@ -221,6 +248,8 @@ try {
   themeSupport = { supportsLight: true, verifiedBy: 'skin settings then real landing' };
   if (verifyUserRequests) {
     await verifyWebHandoff(page);
+  } else if (reviewWebRunId) {
+    await verifyExistingWebRequests(page, reviewWebRunId);
   } else if (process.env.E2E_QC_POLL_ID) {
     await verifyExistingFilm(page, process.env.E2E_QC_POLL_ID);
   } else {
@@ -274,6 +303,6 @@ try {
   }
   verdict = 'conditional';
 } finally {
-  if (!verifyUserRequests && !process.env.E2E_QC_POLL_ID) writeManifest(out, { target: 'MAP 快速创作 V8 入口及手机输入框', verdict, commit, themeSupport });
+  if (!verifyUserRequests && !reviewWebRunId && !process.env.E2E_QC_POLL_ID) writeManifest(out, { target: 'MAP 快速创作 V8 入口及手机输入框', verdict, commit, themeSupport });
   await browser.close();
 }
