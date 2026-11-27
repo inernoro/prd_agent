@@ -1,7 +1,7 @@
 import { apiRequest } from '@/services/real/apiClient';
 import { useAuthStore } from '@/stores/authStore';
 import { fail, type ApiResponse } from '@/types/api';
-import type { AssetScope, BriefContext, CreateRunInput, QcBriefSession, QcAsset, QcAttachment, QcRun, QcTemplate, QcTemplateCategory, QcTemplateSource, QcWork } from '@/pages/quick-creation-agent/types';
+import type { AssetScope, BriefContext, CreateRunInput, DurationChoice, OutputKind, QcBriefSession, QcAsset, QcAttachment, QcEstimate, QcRun, QcTemplate, QcTemplateCategory, QcTemplateSource, QcWork } from '@/pages/quick-creation-agent/types';
 
 /**
  * 快速创作接口。生成在服务端排队与执行（Run/Worker），离开页面不取消；页面按任务编号恢复。
@@ -28,9 +28,19 @@ export function updateBriefContext(input: { sessionId?: string; context: BriefCo
   return apiRequest<QcBriefSession>(`${base}/brief/context`, { method: 'POST', body: input });
 }
 
-/** 开工前先出分镜脚本（约一两分钟），确认后再正式排队 */
-export function requestBriefScript(sessionId: string, context: BriefContext) {
-  return apiRequest<QcBriefSession>(`${base}/brief/${encodeURIComponent(sessionId)}/script`, { method: 'POST', body: { context } });
+/** 开工前先出分镜脚本（约一两分钟），确认后再正式排队；adjust 用于「短一点 / 长一点」重写这版脚本 */
+export function requestBriefScript(sessionId: string, context: BriefContext, adjust?: 'shorter' | 'longer') {
+  return apiRequest<QcBriefSession>(`${base}/brief/${encodeURIComponent(sessionId)}/script`, { method: 'POST', body: { context, ...(adjust ? { adjust } : {}) } });
+}
+
+/** 开工前的时长与耗时预估：按产出、资料与时长选择算出目标时长、幕数和预计生成耗时 */
+export function estimateQuickCreation(input: { kind: OutputKind; attachmentIds: string[]; duration: DurationChoice; briefId?: string }) {
+  return apiRequest<QcEstimate>(`${base}/estimate`, { method: 'POST', body: input });
+}
+
+/** 浏览器不能本机合成时，请服务器代为导出视频文件（排队执行，占服务器资源，只作兜底） */
+export function requestServerExport(runId: string) {
+  return apiRequest<{ position: number; etaMin: number }>(`${base}/runs/${encodeURIComponent(runId)}/server-export`, { method: 'POST', body: {} });
 }
 
 /* 产物：已生成的成品，按「我的 / 团队」取；用于创作时回看与复用风格 */

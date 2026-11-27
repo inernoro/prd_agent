@@ -67,14 +67,16 @@ function CategoryRow({ categories, counts, total, value, onChange }: {
 }
 
 /** 输入框里的风格按钮 + 就地弹出的选择面板 */
-export function StylePickerChip({ templates, categories, selected, onSelect, onBrowse, outputLabel, header }: {
+export function StylePickerChip({ templates, categories, selected, onSelect, onBrowse, outputLabel, durationLabel, header }: {
   templates: QcTemplate[];
   categories: QcTemplateCategory[];
   selected?: QcTemplate;
   onSelect: (id: string) => void;
   onBrowse: () => void;
-  /** 手机上产出切换收进这个按钮：按钮上写「视频 · 风格名」，面板顶部放切换 */
+  /** 手机上产出切换收进这个按钮：按钮上写「视频 3 分钟 · 风格名」 */
   outputLabel?: string;
+  /** 做视频时按钮上写时长（桌面与手机都写），面板顶部放时长选项 */
+  durationLabel?: string;
   header?: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
@@ -82,10 +84,13 @@ export function StylePickerChip({ templates, categories, selected, onSelect, onB
   return (
     <Popover.Root open={open} onOpenChange={setOpen}>
       <Popover.Trigger asChild>
-        <button type="button" data-qc="style-chip" data-template={selected?.id ?? ''} aria-label={`风格：${selected?.name ?? '未选'}，点此更换`}
+        <button type="button" data-qc="style-chip" data-template={selected?.id ?? ''} aria-label={`${durationLabel ? `时长：${durationLabel}，` : ''}风格：${selected?.name ?? '未选'}，点此更换`}
+          title={`${durationLabel ? `${durationLabel} · ` : ''}${selected?.name ?? '选风格'}`}
           className="inline-flex h-8 min-w-0 max-w-full items-center gap-1.5 rounded-lg pl-1 pr-1.5 text-[12px] text-token-primary hover-bg-soft max-md:h-11">
           {selected && <span className="w-7 shrink-0 overflow-hidden rounded-[4px]"><StyleFrame template={{ ...selected, frame: undefined }} /></span>}
-          <span className="min-w-0 truncate">{outputLabel && <span className="md:hidden">{outputLabel} · </span>}{selected?.name ?? '选风格'}</span>
+          {/* 时长不截断，只截风格名：窄的时候至少看得到「做多长」 */}
+          {(outputLabel || durationLabel) && <span className="shrink-0 whitespace-nowrap">{outputLabel && <span className="md:hidden">{outputLabel} </span>}{durationLabel && `${durationLabel} · `}</span>}
+          <span className="min-w-0 truncate">{selected?.name ?? '选风格'}</span>
           <ChevronDown size={13} className="shrink-0 text-token-muted" aria-hidden />
         </button>
       </Popover.Trigger>
@@ -94,10 +99,10 @@ export function StylePickerChip({ templates, categories, selected, onSelect, onB
           className="qc-menu-surface z-[110] flex flex-col rounded-xl border border-[var(--border-default)] p-2.5 shadow-lg"
           style={{ width: 'min(440px, calc(100vw - 24px))', maxHeight: 'min(520px, var(--radix-popover-content-available-height))' }}>
           <div className="flex items-center justify-between px-1 pb-2">
-            <span className="text-[13px] font-semibold text-token-primary">选风格</span>
+            <span className="text-[13px] font-semibold text-token-primary">{durationLabel ? '时长与风格' : '选风格'}</span>
             <span className="text-[11.5px] text-token-muted">{categories.length} 类 · {templates.length} 种</span>
           </div>
-          {header && <div className="pb-2 md:hidden">{header}</div>}
+          {header && <div className="pb-2">{header}</div>}
           <div className="flex items-center gap-1.5"><SearchBox id="qc-style-search-pop" value={f.query} onChange={f.setQuery} /></div>
           <div className="mt-2"><CategoryRow categories={categories} counts={f.counts} total={templates.length} value={f.category} onChange={f.setCategory} /></div>
           <div role="radiogroup" aria-label="选择风格" className="mt-1.5 grid min-h-0 flex-1 grid-cols-2 content-start gap-1 overflow-y-auto pr-0.5" style={{ overscrollBehavior: 'contain' }}>

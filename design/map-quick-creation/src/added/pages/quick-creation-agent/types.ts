@@ -168,6 +168,10 @@ export interface QcRun {
   scenes?: QcScene[];
   sections?: QcWebSection[];
   durationSec?: number;
+  /** 开工时定下的目标时长（秒）：分镜按它写，服务端校验脚本总时长落在目标的 ±15% */
+  targetSec?: number;
+  /** 成片的可播放形态：画面代码 + 配音 + 时间轴。播放与导出都在用户浏览器里完成，服务器不渲染视频 */
+  bundle?: QcPlayBundle;
   keyPoints?: QcKeyPoint[];
   voice?: string;
   /** 成片媒体（视频产出完成后才有）：播放器直接播放它，字幕与重点随 currentTime 切换 */
@@ -249,11 +253,48 @@ export interface QcStyleRec {
   reason: string;
 }
 
-/** 分镜脚本的一幕：画面一句、旁白一句 */
+/** 分镜脚本的一幕：画面一句、旁白一句；秒数按配音语速（约每分钟 250 字）由服务端算出 */
 export interface QcScriptScene {
   index: number;
   visual: string;
   narration: string;
+  seconds?: number;
+}
+
+/** 成片时长：自动（服务端按内容估算）或指定目标 */
+export type DurationChoice = 'auto' | 60 | 180 | 300 | 600;
+
+/** 开工前的时长与耗时预估，由服务端给出；前端只显示，不自己算 */
+export interface QcEstimate {
+  choice: DurationChoice;
+  /** 分镜按这个时长写（秒） */
+  targetSec: number;
+  /** 选「自动」时会取多长 */
+  autoSec: number;
+  /** 有稿件时：全文照念需要多长 */
+  fullSec?: number;
+  chars?: number;
+  /** 预计幕数 */
+  scenes: number;
+  /** 预计生成耗时（分钟，下限与上限） */
+  generateMin: [number, number];
+  /** 一句话依据，例如「稿件 1,840 字，全文念完约 7 分钟，自动取约 3 分钟讲重点」 */
+  basis: string;
+}
+
+/** 成片 = 一个可播放的网页包：画面代码（Canvas / WebGL，按时间逐帧画）+ 配音 + 时间轴 */
+export interface QcPlayBundle {
+  /** 画面代码入口：导出 renderFrame(t) 的模块，同一个 t 永远画出同一帧 */
+  codeUrl: string;
+  /** 配音与音乐混好的音轨 */
+  audioUrl: string;
+  /** 每幕起止时间、字幕与重点 */
+  timelineUrl: string;
+  width: number;
+  height: number;
+  fps: number;
+  /** 整包大小（字节），用来说明比视频文件省多少 */
+  bytes: number;
 }
 
 export interface QcChatMessage {
@@ -269,6 +310,8 @@ export interface QcChatMessage {
   missingNote?: boolean;
   /** 开工前的分镜脚本（确认后正式排队） */
   script?: QcScriptScene[];
+  /** 这版脚本按多长写的（秒） */
+  scriptTargetSec?: number;
 }
 
 export interface QcBriefSession {
@@ -279,6 +322,8 @@ export interface QcBriefSession {
   model?: { model: string; platform: string };
   /** 简报当前采用的风格（对话里说「第二个」选定时由服务端给出，输入框里的风格按钮随之同步） */
   styleId?: string;
+  /** 简报当前采用的时长（说「长一点」或在对话里选了时长时由服务端给出，输入框里的时长随之同步） */
+  durationChoice?: DurationChoice;
 }
 
 /** 每次对话都带上输入框里的当前选择，服务端据此更新简报 */
@@ -286,6 +331,7 @@ export interface BriefContext {
   kind: OutputKind;
   templateId?: string;
   attachmentIds: string[];
+  duration?: DurationChoice;
 }
 
 export interface CreateRunInput {
@@ -298,4 +344,6 @@ export interface CreateRunInput {
   briefId?: string;
   /** 已确认的分镜脚本（跳过时为空） */
   script?: QcScriptScene[];
+  /** 目标时长：自动或指定；服务端按它决定幕数与旁白字数 */
+  duration?: DurationChoice;
 }

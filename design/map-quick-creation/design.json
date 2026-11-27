@@ -265,6 +265,64 @@
       "impl": "/quick-creation-agent?run=run-done"
     },
     {
+      "id": "duration-picker",
+      "name": "开工前定时长：「时长 · 风格」按钮的面板顶部，自动写出估算值，可选 1 / 3 / 5 / 10 分钟",
+      "route": "#/quick-creation-agent",
+      "viewport": "desktop",
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "entryReadySelector": "[data-qc=duration-basis]",
+      "entryActions": [
+        "[data-qc=sample-doc]",
+        "[data-qc=style-chip]"
+      ],
+      "impl": "/quick-creation-agent"
+    },
+    {
+      "id": "export-progress",
+      "name": "成片在浏览器里导出：帧数进度与还需时间",
+      "route": "#/quick-creation-agent?run=run-done",
+      "viewport": "desktop",
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "entryReadySelector": "[data-qc=export-card][data-state=exporting]",
+      "entryActions": [
+        "[data-qc=export-start]"
+      ],
+      "impl": "/quick-creation-agent?run=run-done"
+    },
+    {
+      "id": "export-done",
+      "name": "成片导出完成，可下载",
+      "route": "#/quick-creation-agent?run=run-done",
+      "viewport": "desktop",
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "entryReadySelector": "[data-qc=export-card][data-state=done]",
+      "entryActions": [
+        "[data-qc=export-start]"
+      ],
+      "impl": "/quick-creation-agent?run=run-done"
+    },
+    {
+      "id": "export-unsupported",
+      "name": "浏览器不能本机合成：换浏览器或请服务器导出",
+      "route": "#/quick-creation-agent?run=run-done&export=unsupported",
+      "viewport": "desktop",
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "entryReadySelector": "[data-qc=export-unsupported]",
+      "impl": "/quick-creation-agent?run=run-done&export=unsupported"
+    },
+    {
       "id": "publish-failed",
       "name": "发布失败 · 成片仍可播",
       "route": "#/quick-creation-agent?run=run-publish-failed",
@@ -595,6 +653,27 @@
       "risk": "不知道选什么的人问了没有回答，只能自己翻 99 种风格（像伪智能体）",
       "ruleIds": [
         "A-49"
+      ]
+    },
+    {
+      "dimension": "correctness",
+      "risk": "教程类成片被做成二三十秒：没有时长目标，模型照样片的 15–30 秒写",
+      "ruleIds": [
+        "A-56"
+      ]
+    },
+    {
+      "dimension": "performance",
+      "risk": "在用户浏览器里导出：手机发热、后台变慢、长片占内存",
+      "ruleIds": [
+        "A-57"
+      ]
+    },
+    {
+      "dimension": "compatibility",
+      "risk": "老 Safari、安卓 Firefox 没有 WebCodecs，或编不了 H.264",
+      "ruleIds": [
+        "A-58"
       ]
     },
     {
@@ -1297,6 +1376,58 @@
       "expected": "不放稿件聊完后开工，任务左栏你的消息写「没有稿件：内容来自和快速创作的对话」",
       "dimension": "correctness",
       "interaction": true
+    },
+    {
+      "id": "A-55",
+      "screenId": "duration-picker",
+      "how": "human",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "开工前就知道成片多长，也能自己定：时长和风格收在输入框里同一个按钮上（按钮写「约 3 分钟 · 视觉笔记」），面板顶部是时长，默认自动并直接写出估算值；可选约 1 / 3 / 5 / 10 分钟；面板写明依据（稿件字数、全文照念多长）、幕数和预计生成耗时；估算由服务端给出，前端不自己算",
+      "expected": "放入示例稿件后按钮写「约 3 分钟 · 视觉笔记」；面板写「自动 · 约 3 分钟」与「稿件 1,840 字，全文照念约 7 分钟；自动取约 3 分钟讲重点。分成约 13 幕，生成约 35–54 分钟」；选「约 10 分钟」后按钮变为「约 10 分钟 · 视觉笔记」，提交后任务里写「视频 · 约 10 分钟」",
+      "dimension": "experience",
+      "interaction": true
+    },
+    {
+      "id": "A-56",
+      "screenId": "chat-script",
+      "how": "human",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "分镜脚本按目标时长写：每幕写秒数，顶部写合计与目标；「短一点 / 长一点」在 1–10 分钟的档位间重写这版脚本；对话里说「5 分钟」「长一点」同样生效；培训、教程类先问一次想要多长；服务端校验脚本总时长落在目标的 ±15%，不够就补写",
+      "expected": "宣传片聊完出脚本：4 幕、合计约 1 分钟（目标约 1 分钟）；点「长一点」后 13 幕、合计约 3 分钟（目标约 3 分钟），输入框里的时长同步为约 3 分钟",
+      "dimension": "correctness",
+      "interaction": true
+    },
+    {
+      "id": "A-57",
+      "screenId": "export-progress",
+      "how": "human",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "服务器不渲染视频：成片是能播放的网页（画面代码 + 配音），播放与导出都在用户浏览器里；完成卡写实际时长与目标；「导出 MP4 文件」显示帧数进度、已用与还需时间、保持前台的提醒，可取消，完成后可下载；发布到网页托管发布的是能播放的网页（约几 MB），不传视频文件",
+      "expected": "点「导出 MP4 文件」后出现「正在用你的浏览器合成 MP4」、第 x / 2,304 帧、还需时间与「保持这个页面在前台」；完成后写「已导出 需求评审的三个习惯.mp4」并可下载；发布按钮旁写「发布的是能播放的网页（约 2 MB），不传视频文件」",
+      "dimension": "performance",
+      "interaction": true
+    },
+    {
+      "id": "A-58",
+      "screenId": "export-unsupported",
+      "how": "human",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "浏览器不能本机合成时（没有 WebCodecs，或 H.264 与 VP9 都编不了）说明原因并给两条路：换电脑上的 Chrome / Edge / Safari 打开这一页，或请服务器代为导出（排队，作为兜底）",
+      "expected": "没有 WebCodecs 时写「这个浏览器不能在本机合成视频」并给「请服务器导出」；点它后写「已交给服务器导出：前面还有 2 个，预计 12 分钟后可以下载」",
+      "dimension": "compatibility",
+      "interaction": true
     }
   ],
   "goals": [
@@ -1324,6 +1455,24 @@
         "A-52",
         "A-53",
         "A-54"
+      ]
+    },
+    {
+      "id": "G-13",
+      "goal": "开工前就知道成片多长，并能定长短",
+      "doneWhen": "输入框里能看到并改时长（自动时写出估算值与依据）；分镜脚本按目标写、每幕有秒数，能「短一点 / 长一点」；任务与成片写明目标",
+      "items": [
+        "A-55",
+        "A-56"
+      ]
+    },
+    {
+      "id": "G-14",
+      "goal": "服务器不渲染视频：在用户浏览器里播放与导出",
+      "doneWhen": "成片以能播放的网页交付；导出在用户浏览器里合成并有进度；浏览器不支持时有兜底",
+      "items": [
+        "A-57",
+        "A-58"
       ]
     },
     {
@@ -1893,6 +2042,197 @@
             "check": "attribute",
             "attribute": "data-ready",
             "equals": "false"
+          }
+        ]
+      },
+      {
+        "id": "pick-duration-and-submit",
+        "title": "开工前把时长改成约 10 分钟，提交后任务里写明目标时长",
+        "screenId": "compose",
+        "theme": "light",
+        "ruleIds": [
+          "A-55"
+        ],
+        "steps": [
+          {
+            "action": "click",
+            "selector": "[data-qc=sample-doc]"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-qc=style-chip]",
+            "check": "visible"
+          },
+          {
+            "action": "click",
+            "selector": "[data-qc=style-chip]"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-qc=duration-option][data-value=\"600\"]",
+            "check": "visible"
+          },
+          {
+            "action": "click",
+            "selector": "[data-qc=duration-option][data-value=\"600\"]"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-qc=duration-option][data-value=\"600\"]",
+            "check": "attribute",
+            "attribute": "aria-checked",
+            "equals": "true"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-qc=submit]",
+            "check": "enabled"
+          },
+          {
+            "action": "click",
+            "selector": "[data-qc=submit]"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-qc=run-target]",
+            "check": "visible"
+          }
+        ]
+      },
+      {
+        "id": "script-longer",
+        "title": "分镜脚本按目标时长写，点「长一点」重写成约 3 分钟",
+        "screenId": "compose",
+        "theme": "dark",
+        "ruleIds": [
+          "A-56"
+        ],
+        "steps": [
+          {
+            "action": "expect",
+            "selector": "[data-qc=starter][data-value=\"我想做一个宣传片\"]",
+            "check": "visible"
+          },
+          {
+            "action": "click",
+            "selector": "[data-qc=starter][data-value=\"我想做一个宣传片\"]"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-qc=quick-reply][data-value=\"新产品发布\"]",
+            "check": "visible"
+          },
+          {
+            "action": "click",
+            "selector": "[data-qc=quick-reply][data-value=\"新产品发布\"]"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-qc=quick-reply][data-value=\"客户\"]",
+            "check": "visible"
+          },
+          {
+            "action": "click",
+            "selector": "[data-qc=quick-reply][data-value=\"客户\"]"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-qc=quick-reply][data-value=\"科技感\"]",
+            "check": "visible"
+          },
+          {
+            "action": "click",
+            "selector": "[data-qc=quick-reply][data-value=\"科技感\"]"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-qc=rec-style][data-style=dark-keynote] [data-qc=rec-use]",
+            "check": "visible"
+          },
+          {
+            "action": "click",
+            "selector": "[data-qc=rec-style][data-style=dark-keynote] [data-qc=rec-use]"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-qc=brief-start]",
+            "check": "visible"
+          },
+          {
+            "action": "click",
+            "selector": "[data-qc=brief-start]"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-qc=script-draft]",
+            "check": "attribute",
+            "attribute": "data-target-sec",
+            "equals": "60"
+          },
+          {
+            "action": "click",
+            "selector": "[data-qc=script-longer]"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-qc=script-draft]",
+            "check": "attribute",
+            "attribute": "data-target-sec",
+            "equals": "180"
+          }
+        ]
+      },
+      {
+        "id": "export-in-browser",
+        "title": "成片在浏览器里导出：开始后显示帧数进度与保持前台提醒",
+        "screenId": "done-video",
+        "theme": "light",
+        "ruleIds": [
+          "A-57"
+        ],
+        "steps": [
+          {
+            "action": "expect",
+            "selector": "[data-qc=export-start]",
+            "check": "visible"
+          },
+          {
+            "action": "click",
+            "selector": "[data-qc=export-start]"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-qc=export-card]",
+            "check": "attribute",
+            "attribute": "data-state",
+            "equals": "exporting"
+          }
+        ]
+      },
+      {
+        "id": "export-via-server",
+        "title": "浏览器不能本机合成时请服务器代为导出",
+        "screenId": "export-unsupported",
+        "theme": "light",
+        "ruleIds": [
+          "A-58"
+        ],
+        "steps": [
+          {
+            "action": "expect",
+            "selector": "[data-qc=export-server]",
+            "check": "visible"
+          },
+          {
+            "action": "click",
+            "selector": "[data-qc=export-server]"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-qc=export-card]",
+            "check": "attribute",
+            "attribute": "data-state",
+            "equals": "server"
           }
         ]
       },

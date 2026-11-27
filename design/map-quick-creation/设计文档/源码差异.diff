@@ -442,10 +442,10 @@ index 00000000..f377f892
 +}
 diff --git a/prd-admin/src/pages/quick-creation-agent/BriefChat.tsx b/prd-admin/src/pages/quick-creation-agent/BriefChat.tsx
 new file mode 100644
-index 00000000..1cca50a9
+index 00000000..c6ca2b7d
 --- /dev/null
 +++ b/prd-admin/src/pages/quick-creation-agent/BriefChat.tsx
-@@ -0,0 +1,192 @@
+@@ -0,0 +1,209 @@
 +/**
 + * 对话起稿：不知道选什么的人先和快速创作聊，聊到条件齐了再开工。
 + * - 创作简报条：开工条件一眼可见（必填三项、建议两项），由服务端结构化给出；
@@ -504,7 +504,7 @@ index 00000000..1cca50a9
 +  return { shown: text.slice(0, n), done: n >= text.length };
 +}
 +
-+function AgentMessage({ m, latest, revealing, templates, session, busy, onReply, onUseStyle, onStart, onSkipScript, onConfirmScript }: {
++function AgentMessage({ m, latest, revealing, templates, session, busy, onReply, onUseStyle, onStart, onSkipScript, onConfirmScript, onAdjustScript }: {
 +  m: QcChatMessage;
 +  latest: boolean;
 +  revealing: boolean;
@@ -516,8 +516,10 @@ index 00000000..1cca50a9
 +  onStart: () => void;
 +  onSkipScript: () => void;
 +  onConfirmScript: () => void;
++  onAdjustScript: (a: 'shorter' | 'longer') => void;
 +}) {
 +  const { shown, done } = useReveal(m.text, revealing);
++  const scriptTotal = (m.script ?? []).reduce((n, x) => n + (x.seconds ?? 0), 0);
 +  const style = (id: string) => templates.find(t => t.id === id);
 +  const active = latest && done && !busy;
 +  /* 最新一条出完（含选项、推荐卡、准备好了卡、脚本卡）后滚到它的底部，新内容不落在视线外 */
@@ -576,25 +578,39 @@ index 00000000..1cca50a9
 +        </section>
 +      )}
 +      {done && !!m.script?.length && (
-+        <section className="qc-card qc-rise overflow-hidden" data-qc={latest ? 'script-draft' : undefined}>
-+          <div className="flex items-center gap-2 border-b border-token-subtle px-3.5 py-2.5 text-[13.5px] font-semibold text-token-primary">
-+            <Clapperboard size={15} className="text-[color:var(--accent-primary)]" aria-hidden />分镜脚本 · {m.script.length} 幕
++        <section className="qc-card qc-rise overflow-hidden" data-qc={latest ? 'script-draft' : undefined} data-target-sec={m.scriptTargetSec} data-scenes={m.script.length}>
++          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-token-subtle px-3.5 py-2.5">
++            <span className="inline-flex items-center gap-2 text-[13.5px] font-semibold text-token-primary"><Clapperboard size={15} className="text-[color:var(--accent-primary)]" aria-hidden />分镜脚本 · {m.script.length} 幕</span>
++            {scriptTotal > 0 && (
++              <span className="text-[12.5px] tabular-nums text-token-secondary" data-qc="script-total">
++                合计约 {Math.floor(scriptTotal / 60)} 分 {String(scriptTotal % 60).padStart(2, '0')} 秒{m.scriptTargetSec ? `（目标约 ${m.scriptTargetSec < 60 ? `${m.scriptTargetSec} 秒` : `${Math.round(m.scriptTargetSec / 60)} 分钟`}）` : ''}
++              </span>
++            )}
++            {latest && (
++              <span className="ml-auto inline-flex items-center gap-1" aria-label="调整时长">
++                <button type="button" data-qc="script-shorter" disabled={!active || (m.scriptTargetSec ?? 0) <= 60} onClick={() => onAdjustScript('shorter')}
++                  className="qc-face qc-face-chip relative inline-flex items-center px-2.5 text-[12px] text-token-primary disabled:opacity-50">短一点</button>
++                <button type="button" data-qc="script-longer" disabled={!active || (m.scriptTargetSec ?? 0) >= 600} onClick={() => onAdjustScript('longer')}
++                  className="qc-face qc-face-chip relative inline-flex items-center px-2.5 text-[12px] text-token-primary disabled:opacity-50">长一点</button>
++              </span>
++            )}
 +          </div>
-+          <ol className="m-0 list-none p-0">
++          <ol className="m-0 max-h-[360px] list-none overflow-y-auto p-0" style={{ overscrollBehavior: 'contain' }}>
 +            {m.script.map(sc => (
 +              <li key={sc.index} className="flex gap-3 border-b border-token-subtle px-3.5 py-2 text-[12.5px] last:border-b-0">
-+                <span className="w-4 shrink-0 tabular-nums text-token-muted">{sc.index}</span>
++                <span className="w-5 shrink-0 tabular-nums text-token-muted">{sc.index}</span>
 +                <div className="min-w-0 flex-1">
 +                  <div className="text-token-primary">{sc.visual}</div>
-+                  <div className="text-token-secondary">旁白：{sc.narration}</div>
++                  <div className="line-clamp-2 text-token-secondary">旁白：{sc.narration}</div>
 +                </div>
++                {sc.seconds != null && <span className="shrink-0 tabular-nums text-[12px] text-token-muted">{sc.seconds} 秒</span>}
 +              </li>
 +            ))}
 +          </ol>
 +          {latest && (
 +            <div className="flex flex-wrap items-center gap-2 border-t border-token-subtle bg-[var(--bg-secondary)] px-3.5 py-2.5">
 +              <Button variant="primary" className="qc-face qc-face-primary relative px-3.5" data-qc="script-confirm" disabled={!active} onClick={onConfirmScript}><Play size={14} />按这个脚本开始生成</Button>
-+              <span className="text-[12px] text-token-muted">想改哪一幕，直接在下面说，例如「第 3 幕换成客户案例」</span>
++              <span className="text-[12px] text-token-muted">想改哪一幕直接说，例如「第 3 幕换成客户案例」</span>
 +            </div>
 +          )}
 +        </section>
@@ -605,7 +621,7 @@ index 00000000..1cca50a9
 +}
 +
 +/** 对话流：你的消息靠右，助手的回复带头像与模型名；正在等回复时显示一条在动的占位 */
-+export function BriefConversation({ session, pendingText, revealId, templates, busy, onReply, onUseStyle, onStart, onSkipScript, onConfirmScript }: {
++export function BriefConversation({ session, pendingText, revealId, templates, busy, onReply, onUseStyle, onStart, onSkipScript, onConfirmScript, onAdjustScript }: {
 +  session: QcBriefSession | null;
 +  pendingText: string | null;
 +  revealId: string | null;
@@ -616,6 +632,7 @@ index 00000000..1cca50a9
 +  onStart: () => void;
 +  onSkipScript: () => void;
 +  onConfirmScript: () => void;
++  onAdjustScript: (a: 'shorter' | 'longer') => void;
 +}) {
 +  const messages = session?.messages ?? [];
 +  const lastAgent = [...messages].reverse().find(x => x.role === 'agent');
@@ -625,7 +642,7 @@ index 00000000..1cca50a9
 +        <UserTurn key={m.id}><p className="m-0 whitespace-pre-wrap px-1 text-[14px] leading-6 text-token-primary">{m.text}</p></UserTurn>
 +      ) : session && (
 +        <AgentMessage key={m.id} m={m} latest={m.id === lastAgent?.id && !pendingText} revealing={m.id === revealId} templates={templates} session={session} busy={busy}
-+          onReply={onReply} onUseStyle={onUseStyle} onStart={onStart} onSkipScript={onSkipScript} onConfirmScript={onConfirmScript} />
++          onReply={onReply} onUseStyle={onUseStyle} onStart={onStart} onSkipScript={onSkipScript} onConfirmScript={onConfirmScript} onAdjustScript={onAdjustScript} />
 +      ))}
 +      {pendingText && (
 +        <>
@@ -636,6 +653,120 @@ index 00000000..1cca50a9
 +        </>
 +      )}
 +    </>
++  );
++}
+diff --git a/prd-admin/src/pages/quick-creation-agent/BrowserExport.tsx b/prd-admin/src/pages/quick-creation-agent/BrowserExport.tsx
+new file mode 100644
+index 00000000..592f6499
+--- /dev/null
++++ b/prd-admin/src/pages/quick-creation-agent/BrowserExport.tsx
+@@ -0,0 +1,108 @@
++/**
++ * 成片导出：在用户自己的浏览器里合成视频文件，服务器只存画面代码和配音。
++ * 播放本来就不需要视频文件（右边的播放器直接跑画面代码 + 配音）；只有要把视频拿去别处用时才导出。
++ * 浏览器合成不了（老 Safari、安卓 Firefox 等）才请服务器代为导出，排队执行，作为兜底。
++ */
++import { useEffect, useRef, useState } from 'react';
++import { Check, Download, Laptop, Server, X } from 'lucide-react';
++import { Button } from '@/components/design/Button';
++import { MapSpinner } from '@/components/ui/VideoLoader';
++import { requestServerExport } from '@/services/real/quickCreation';
++import { detectBrowserExport, exportFilmInBrowser, exportPlan, type ExportContainer, type ExportProgress, type ExportResult } from './browserExport';
++import { formatClock } from './format';
++import type { QcRun } from './types';
++
++type State =
++  | { s: 'idle' }
++  | { s: 'exporting'; p: ExportProgress }
++  | { s: 'done'; r: ExportResult }
++  | { s: 'failed'; msg: string }
++  | { s: 'server'; position: number; etaMin: number };
++
++const mb = (bytes: number) => `${Math.max(1, Math.round(bytes / 1_000_000))} MB`;
++
++export function BrowserExport({ run }: { run: QcRun }) {
++  const bundle = run.bundle;
++  const [container, setContainer] = useState<ExportContainer | null | undefined>(undefined);
++  const [state, setState] = useState<State>({ s: 'idle' });
++  const abort = useRef<AbortController | null>(null);
++  const phone = typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches;
++  useEffect(() => { if (bundle) void detectBrowserExport(bundle).then(setContainer); }, [bundle]);
++  useEffect(() => () => abort.current?.abort(), []);
++  if (!bundle || run.kind !== 'video') return null;
++  const durationSec = run.durationSec ?? 60;
++  const plan = exportPlan(bundle, durationSec, phone);
++  const fmt = container === 'webm' ? 'WebM' : 'MP4';
++
++  const start = async () => {
++    if (!container) return;
++    abort.current = new AbortController();
++    setState({ s: 'exporting', p: { frame: 0, frames: plan.frames, elapsedSec: 0, remainSec: plan.estSec } });
++    try {
++      const r = await exportFilmInBrowser({ bundle, durationSec, title: run.title, container, phone, mediaUrl: run.media?.url }, p => setState({ s: 'exporting', p }), abort.current.signal);
++      setState({ s: 'done', r });
++    } catch (e) {
++      if ((e as DOMException)?.name === 'AbortError') { setState({ s: 'idle' }); return; }
++      setState({ s: 'failed', msg: '合成到一半停下了，可能是这台设备内存不够。可以关掉其他页面后重试，或请服务器导出。' });
++    }
++  };
++  const viaServer = async () => {
++    const res = await requestServerExport(run.id);
++    if (res.success) setState({ s: 'server', position: res.data.position, etaMin: res.data.etaMin });
++    else setState({ s: 'failed', msg: `${res.error?.message || '服务器这次没有接单'}，请稍后再试` });
++  };
++
++  if (state.s === 'exporting') {
++    const pct = state.p.frames ? Math.round((state.p.frame / state.p.frames) * 100) : 0;
++    return (
++      <div className="mt-3 rounded-[10px] border border-token-subtle bg-[var(--bg-secondary)] p-3" data-qc="export-card" data-state="exporting">
++        <div className="flex items-center gap-2 text-[13px] font-medium text-token-primary"><MapSpinner size={13} />正在用你的浏览器合成 {fmt}</div>
++        <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-[var(--border-default)]"><div className="qc-bar-live h-full rounded-full transition-[width] duration-200" style={{ width: `${pct}%` }} /></div>
++        <div className="mt-1.5 flex flex-wrap items-center gap-x-3 text-[12px] tabular-nums text-token-secondary">
++          <span>第 {state.p.frame.toLocaleString('en-US')} / {state.p.frames.toLocaleString('en-US')} 帧</span>
++          <span>已用 {formatClock(state.p.elapsedSec)}</span>
++          {state.p.remainSec != null && <span>还需约 {formatClock(state.p.remainSec)}</span>}
++        </div>
++        <div className="mt-1.5 flex items-center justify-between gap-2">
++          <span className="text-[12px] text-token-muted">保持这个页面在前台，切走会变慢。</span>
++          <Button size="xs" variant="ghost" data-qc="export-cancel" onClick={() => abort.current?.abort()}><X size={12} />取消</Button>
++        </div>
++      </div>
++    );
++  }
++  if (state.s === 'done') {
++    return (
++      <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-[10px] border border-token-subtle bg-[var(--bg-secondary)] p-3" data-qc="export-card" data-state="done">
++        <span className="inline-flex min-w-0 flex-1 items-center gap-2 text-[13px] text-token-primary"><Check size={15} className="shrink-0 text-[color:var(--accent-fg-success)]" aria-hidden />
++          <span className="min-w-0 truncate">已导出 {state.r.fileName} · {mb(state.r.bytes)}</span></span>
++        <a href={state.r.url} download={state.r.fileName} data-qc="export-download"
++          className="inline-flex h-8 items-center gap-1.5 rounded-[9px] border border-[var(--border-default)] px-3 text-[12px] font-medium text-token-primary hover-bg-soft max-md:h-11"><Download size={13} />下载</a>
++      </div>
++    );
++  }
++  if (state.s === 'server') {
++    return (
++      <div className="mt-3 rounded-[10px] border border-token-subtle bg-[var(--bg-secondary)] p-3 text-[12.5px] leading-5 text-token-secondary" data-qc="export-card" data-state="server">
++        已交给服务器导出：前面还有 {state.position} 个，预计 {state.etaMin} 分钟后可以下载，完成后会通知你。
++      </div>
++    );
++  }
++  return (
++    <div className="mt-3 border-t border-token-subtle pt-3" data-qc="export-idle">
++      {container === undefined && <div className="flex h-8 items-center gap-2 text-[12px] text-token-muted"><MapSpinner size={12} />正在看这个浏览器能不能合成视频…</div>}
++      {container && (
++        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
++          <Button size="sm" variant="secondary" className="max-md:min-h-11" data-qc="export-start" onClick={() => void start()}><Laptop size={13} />导出 {fmt} 文件</Button>
++          <span className="text-[12px] text-token-muted">在你的浏览器里合成，约 {formatClock(plan.estSec)}，不占服务器</span>
++        </div>
++      )}
++      {container === null && (
++        <div>
++          <p className="m-0 text-[12.5px] leading-5 text-token-secondary" data-qc="export-unsupported">这个浏览器不能在本机合成视频。用电脑上的 Chrome、Edge 或 Safari 打开这一页就能导出；也可以请服务器代为导出（要排队）。</p>
++          <Button size="sm" variant="secondary" className="mt-2 max-md:min-h-11" data-qc="export-server" onClick={() => void viaServer()}><Server size={13} />请服务器导出</Button>
++        </div>
++      )}
++      {state.s === 'failed' && <p className="m-0 mt-2 text-[12px] text-token-secondary" role="alert">{state.msg}</p>}
++    </div>
 +  );
 +}
 diff --git a/prd-admin/src/pages/quick-creation-agent/Conversation.tsx b/prd-admin/src/pages/quick-creation-agent/Conversation.tsx
@@ -678,12 +809,75 @@ index 00000000..d4287826
 +    </div>
 +  );
 +}
+diff --git a/prd-admin/src/pages/quick-creation-agent/Duration.tsx b/prd-admin/src/pages/quick-creation-agent/Duration.tsx
+new file mode 100644
+index 00000000..9201bd28
+--- /dev/null
++++ b/prd-admin/src/pages/quick-creation-agent/Duration.tsx
+@@ -0,0 +1,57 @@
++/**
++ * 成片时长：开工前就让人知道「大概多长」，也能自己定。
++ * - 自动：服务端按内容估算（稿件全文照念多长、取多少讲重点），选项上直接写出估算值，不写空泛的「自动」；
++ * - 指定：约 1 / 3 / 5 / 10 分钟。服务端按目标决定幕数与旁白字数，并校验脚本总时长落在目标的 ±15%。
++ * 估算值来自 POST /api/quick-creation/estimate，前端只显示。
++ * 选项放在「时长 · 风格」按钮的面板顶部：时长、风格都是「怎么做这一支」，收在同一个按钮里，输入框不再多一个按钮。
++ */
++import { Check } from 'lucide-react';
++import { cn } from '@/lib/cn';
++import type { DurationChoice, QcEstimate } from './types';
++
++const OPTIONS: { value: DurationChoice; label: string; hint: string }[] = [
++  { value: 'auto', label: '自动', hint: '按内容估算' },
++  { value: 60, label: '约 1 分钟', hint: '讲重点' },
++  { value: 180, label: '约 3 分钟', hint: '讲清楚' },
++  { value: 300, label: '约 5 分钟', hint: '一步步教' },
++  { value: 600, label: '约 10 分钟', hint: '完整课程' },
++];
++
++export const minutesLabel = (sec: number) => (sec < 60 ? `${sec} 秒` : `${Math.round(sec / 60)} 分钟`);
++/** 按钮上的短写：自动时直接写估算值 */
++export function durationShort(value: DurationChoice, estimate?: QcEstimate | null) {
++  const sec = value === 'auto' ? estimate?.autoSec : value;
++  return sec ? `约 ${minutesLabel(sec)}` : '时长';
++}
++
++/** 时长选项：桌面在时长按钮的面板里，手机在「视频 · 风格」面板顶部 */
++export function DurationOptions({ value, estimate, onChange, compact }: { value: DurationChoice; estimate?: QcEstimate | null; onChange: (v: DurationChoice) => void; compact?: boolean }) {
++  return (
++    <div>
++      <div role="radiogroup" aria-label="成片时长" className={cn(compact ? 'flex gap-1.5 overflow-x-auto pb-0.5' : 'flex flex-col gap-0.5')} style={compact ? { scrollbarWidth: 'none' } : undefined}>
++        {OPTIONS.map(o => {
++          const on = o.value === value;
++          const label = o.value === 'auto' && estimate ? `自动 · 约 ${minutesLabel(estimate.autoSec)}` : o.label;
++          return compact ? (
++            <button key={String(o.value)} type="button" role="radio" aria-checked={on} data-qc="duration-option" data-value={String(o.value)} onClick={() => onChange(o.value)}
++              className={cn('qc-face qc-face-chip relative inline-flex shrink-0 items-center px-3 text-[12.5px]', on ? 'font-medium text-[color:var(--accent-primary)]' : 'text-token-primary')}>
++              {label}
++            </button>
++          ) : (
++            <button key={String(o.value)} type="button" role="radio" aria-checked={on} data-qc="duration-option" data-value={String(o.value)} onClick={() => onChange(o.value)}
++              className={cn('flex min-h-9 items-center gap-2 rounded-lg px-2.5 text-left text-[13px] hover-bg-soft', on && 'bg-[var(--selection-bg)]')}>
++              <span className="min-w-0 flex-1 text-token-primary">{label}</span>
++              <span className="shrink-0 text-[12px] text-token-muted">{o.hint}</span>
++              <Check size={14} className={cn('shrink-0 text-[color:var(--accent-primary)]', !on && 'invisible')} aria-hidden />
++            </button>
++          );
++        })}
++      </div>
++      {estimate && (
++        <p className="m-0 mt-2 text-[12px] leading-[18px] text-token-secondary" data-qc="duration-basis">
++          {estimate.basis}。分成约 {estimate.scenes} 幕，生成约 {estimate.generateMin[0]}–{estimate.generateMin[1]} 分钟。
++        </p>
++      )}
++    </div>
++  );
++}
 diff --git a/prd-admin/src/pages/quick-creation-agent/QuickCreationAgentPage.tsx b/prd-admin/src/pages/quick-creation-agent/QuickCreationAgentPage.tsx
 new file mode 100644
-index 00000000..d78df50c
+index 00000000..7b769ff6
 --- /dev/null
 +++ b/prd-admin/src/pages/quick-creation-agent/QuickCreationAgentPage.tsx
-@@ -0,0 +1,619 @@
+@@ -0,0 +1,644 @@
 +/**
 + * 快速创作智能体：一份文档 + 一个模板 → 能播放的视频或能浏览的网页，并发布到网页托管。
 + * - 生成在服务端排队执行，离开页面不取消；地址里的 ?run= 让用户回到同一个任务。
@@ -701,7 +895,7 @@ index 00000000..d78df50c
 +import { MapSpinner } from '@/components/ui/VideoLoader';
 +import { PaneTabs, Segmented, WorkbenchLayout, WorkbenchPreview, fitComposerHeight, type WorkbenchPane } from '@/components/web-hosting/workbench/WorkbenchParts';
 +import {
-+  addKnowledgeAttachment, createQuickCreationRun, getQuickCreationRun, listQuickCreationAssets, listQuickCreationTemplates, listQuickCreationWorks, requestBriefScript, sendBriefMessage, updateBriefContext,
++  addKnowledgeAttachment, createQuickCreationRun, estimateQuickCreation, getQuickCreationRun, listQuickCreationAssets, listQuickCreationTemplates, listQuickCreationWorks, requestBriefScript, sendBriefMessage, updateBriefContext,
 +  addTextAttachment, publishQuickCreationRun, retryAttachmentRead, retryQuickCreationRun, uploadQuickCreationAttachment,
 +} from '@/services/real/quickCreation';
 +import { AttachmentTray, MaterialsPanel, SentAttachments } from './AttachmentTray';
@@ -711,9 +905,11 @@ index 00000000..d78df50c
 +import { StyleLibrary, StylePickerChip } from './StyleLibrary';
 +import { AssetLibrary } from './AssetLibrary';
 +import { BriefConversation, BriefStrip } from './BriefChat';
++import { DurationOptions, durationShort, minutesLabel } from './Duration';
++import { BrowserExport } from './BrowserExport';
 +import { WorksList } from './WorksList';
 +import { MAX_ATTACHMENTS, formatChars, formatClock, summarizeAttachments } from './format';
-+import type { AssetScope, BriefContext, OutputKind, QcAsset, QcAttachment, QcBriefSession, QcFailure, QcRun, QcTemplate, QcTemplateCategory, QcTemplateSource, QcWork } from './types';
++import type { AssetScope, BriefContext, DurationChoice, OutputKind, QcAsset, QcAttachment, QcBriefSession, QcEstimate, QcFailure, QcRun, QcTemplate, QcTemplateCategory, QcTemplateSource, QcWork } from './types';
 +import './quickCreation.css';
 +
 +const OUTPUT_LABEL: Record<OutputKind, string> = { video: '视频', web: '网页' };
@@ -746,6 +942,9 @@ index 00000000..d78df50c
 +  const [attachments, setAttachments] = useState<QcAttachment[]>([]);
 +  const [ask, setAsk] = useState('');
 +  const [plusOpen, setPlusOpen] = useState(false);
++  /* 成片时长：默认自动，按内容估算；估算值由服务端给出 */
++  const [duration, setDuration] = useState<DurationChoice>('auto');
++  const [estimate, setEstimate] = useState<QcEstimate | null>(null);
 +  /* 语音输入复用正式实现的 useSpeechInput（浏览器语音识别）；不支持的浏览器不显示入口 */
 +  const speechBase = useRef('');
 +  const speech = useSpeechInput({
@@ -870,7 +1069,7 @@ index 00000000..d78df50c
 +    setSubmitting(true);
 +    const res = await createQuickCreationRun({
 +      kind, templateId: template.id, ask: ask.trim(),
-+      attachmentIds: attachments.filter(a => a.status === 'ready').map(a => a.id), title: draftTitle,
++      attachmentIds: attachments.filter(a => a.status === 'ready').map(a => a.id), title: draftTitle, ...(kind === 'video' ? { duration } : {}),
 +    });
 +    setSubmitting(false);
 +    if (!res.success) { toast.error('没有提交成功', `${res.error?.message || '请稍后重试'}，稿件仍在输入框里`); return; }
@@ -883,7 +1082,16 @@ index 00000000..d78df50c
 +  const [revealId, setRevealId] = useState<string | null>(null);
 +  const [briefBusy, setBriefBusy] = useState(false);
 +  const readyIds = attachments.filter(a => a.status === 'ready').map(a => a.id);
-+  const briefContext: BriefContext = { kind, templateId: template?.id, attachmentIds: readyIds };
++  const briefContext: BriefContext = { kind, templateId: template?.id, attachmentIds: readyIds, ...(kind === 'video' ? { duration } : {}) };
++  /* 时长预估：产出、资料或时长选择变了就重新估（新建时） */
++  const estimateKey = JSON.stringify({ kind, readyIds, duration });
++  useEffect(() => {
++    if (runId || kind !== 'video') { setEstimate(null); return; }
++    let stop = false;
++    const q = JSON.parse(estimateKey) as { kind: OutputKind; readyIds: string[]; duration: DurationChoice };
++    void estimateQuickCreation({ kind: q.kind, attachmentIds: q.readyIds, duration: q.duration }).then(res => { if (!stop && res.success) setEstimate(res.data); });
++    return () => { stop = true; };
++  }, [estimateKey, runId, kind]);
 +  const contextKey = JSON.stringify(briefContext);
 +  const briefId = briefSession?.id;
 +  /* 输入框里的选择（产出、风格、资料）变了，简报跟着更新；只在新建时 */
@@ -896,6 +1104,9 @@ index 00000000..d78df50c
 +  /* 对话里选定了风格（例如说「第二个」），输入框里的风格按钮同步 */
 +  const briefStyle = briefSession?.styleId;
 +  useEffect(() => { if (briefStyle && briefStyle !== templateId) setTemplateId(briefStyle); }, [briefStyle]); // eslint-disable-line react-hooks/exhaustive-deps
++  /* 对话里定了时长（例如说「5 分钟」或点了「长一点」），输入框里的时长同步 */
++  const briefDuration = briefSession?.durationChoice;
++  useEffect(() => { if (briefDuration && briefDuration !== duration) setDuration(briefDuration); }, [briefDuration]); // eslint-disable-line react-hooks/exhaustive-deps
 +  const sendChat = async (text: string, styleOverride?: string) => {
 +    const t = text.trim();
 +    if (!t || briefBusy) return;
@@ -912,10 +1123,10 @@ index 00000000..d78df50c
 +    setTemplateId(id);
 +    void sendChat(`就用「${templates.find(t => t.id === id)?.name ?? id}」`, id);
 +  };
-+  const startBriefScript = async () => {
++  const startBriefScript = async (adjust?: 'shorter' | 'longer') => {
 +    if (!briefId || briefBusy) return;
 +    setBriefBusy(true);
-+    const res = await requestBriefScript(briefId, briefContext);
++    const res = await requestBriefScript(briefId, briefContext, adjust);
 +    setBriefBusy(false);
 +    if (!res.success) { toast.error('分镜脚本没有出来', res.error?.message || '请稍后重试'); return; }
 +    setBriefSession(res.data);
@@ -927,7 +1138,7 @@ index 00000000..d78df50c
 +    setBriefBusy(true);
 +    const res = await createQuickCreationRun({
 +      kind, templateId: template.id, ask: briefSession.brief.summary ?? ask.trim(), attachmentIds: readyIds,
-+      title: briefSession.brief.title ?? draftTitle, briefId: briefSession.id, ...(script ? { script } : {}),
++      title: briefSession.brief.title ?? draftTitle, briefId: briefSession.id, ...(script ? { script } : {}), ...(kind === 'video' ? { duration } : {}),
 +    });
 +    setBriefBusy(false);
 +    if (!res.success) { toast.error('没有提交成功', `${res.error?.message || '请稍后重试'}，对话和简报都还在`); return; }
@@ -1049,7 +1260,7 @@ index 00000000..d78df50c
 +      {composeConversation}
 +      <BriefConversation session={briefSession} pendingText={pendingText} revealId={revealId} templates={templates} busy={briefBusy}
 +        onReply={t => void sendChat(t)} onUseStyle={pickRecommendedStyle} onStart={() => void startBriefScript()}
-+        onSkipScript={() => void startFromBrief(false)} onConfirmScript={() => void startFromBrief(true)} />
++        onSkipScript={() => void startFromBrief(false)} onConfirmScript={() => void startFromBrief(true)} onAdjustScript={a => void startBriefScript(a)} />
 +      <div ref={conversationEnd} />
 +    </>
 +  );
@@ -1063,6 +1274,13 @@ index 00000000..d78df50c
 +      <Segmented<OutputKind> label="选择产出" value={kind} onChange={setKind}
 +        options={[{ value: 'video', label: '视频', title: '能播放的成片：配音、字幕与画面' }, { value: 'web', label: '网页', title: '能浏览的网页：桌面与手机都能读' }]} />
 +    </span>
++  );
++  const durationLabel = durationShort(duration, estimate);
++  const phonePanelHeader = (
++    <div className="flex flex-col gap-2">
++      <div className="md:hidden">{outputSwitch}</div>
++      {kind === 'video' && <DurationOptions compact value={duration} estimate={estimate} onChange={setDuration} />}
++    </div>
 +  );
 +  const composer = (
 +    <div>
@@ -1108,9 +1326,9 @@ index 00000000..d78df50c
 +          <button type="button" aria-label="从知识库选择" title="从知识库选择" data-qc="pick-knowledge" className="qc-icon-btn max-md:hidden" onClick={() => void addKnowledge('kb-picker')}><BookOpen size={16} /></button>
 +          {/* 产出与风格在输入框里决定：将来和其他输入集成时，这一组跟着输入框走，不依赖右栏 */}
 +          <div className="flex min-w-0 items-center gap-1.5 md:ml-1 md:border-l md:border-[var(--border-subtle)] md:pl-2">
-+            <span className="max-md:hidden">{outputSwitch}</span>
++            <span className="shrink-0 max-md:hidden">{outputSwitch}</span>
 +            <StylePickerChip templates={templates} categories={categories} selected={template} onSelect={id => { setTemplateId(id); setPanel(null); }}
-+              onBrowse={() => { setPanel(null); setPane('preview'); }} outputLabel={OUTPUT_LABEL[kind]} header={outputSwitch} />
++              onBrowse={() => { setPanel(null); setPane('preview'); }} outputLabel={OUTPUT_LABEL[kind]} durationLabel={kind === 'video' ? durationLabel.replace(/^约 /, '') : undefined} header={phonePanelHeader} />
 +          </div>
 +          <div className="ml-auto flex shrink-0 items-center gap-1">
 +            {speech.supported && (
@@ -1137,7 +1355,7 @@ index 00000000..d78df50c
 +  const agentStatus = !run ? null : run.status === 'queued' ? '已排队 · 后台进行' : run.status === 'running' ? '后台进行中 · 可以离开' : run.status === 'failed' ? '需要你处理' : '已完成';
 +  const runConversation = run && (
 +    <>
-+      <UserTurn meta={<>{run.kind === 'video' ? <Video size={12} aria-hidden /> : <Globe size={12} aria-hidden />}{OUTPUT_LABEL[run.kind]} · {runTemplate?.name}</>}>
++      <UserTurn meta={<>{run.kind === 'video' ? <Video size={12} aria-hidden /> : <Globe size={12} aria-hidden />}{OUTPUT_LABEL[run.kind]}{run.targetSec ? <span data-qc="run-target"> · 约 {minutesLabel(run.targetSec)}</span> : null} · {runTemplate?.name}</>}>
 +        <p className="m-0 px-1 text-[14px] leading-6 text-token-primary">{run.ask || '没有补充要求，按模板默认节奏生成'}</p>
 +        {run.attachments.some(x => x.status === 'ready')
 +          ? <SentAttachments items={run.attachments} onOpenAll={() => openReview()} onOpen={id => openReview(id)} />
@@ -1157,7 +1375,7 @@ index 00000000..d78df50c
 +              <div className="min-w-0 flex-1">
 +                <div className="text-[15px] font-semibold text-token-primary">{run.kind === 'video' ? '成片已生成' : '网页已生成'}</div>
 +                <div className="mt-0.5 text-[12.5px] leading-5 text-token-secondary">
-+                  {run.kind === 'video' ? `${formatClock(run.durationSec ?? 0)} · ${run.scenes?.length ?? 0} 幕 · 1080p` : `${run.sections?.length ?? 0} 节 · 适配手机`}，右边可以直接{run.kind === 'video' ? '播放' : '浏览'}。
++                  {run.kind === 'video' ? `${formatClock(run.durationSec ?? 0)}${run.targetSec ? `（目标约 ${minutesLabel(run.targetSec)}）` : ''} · ${run.scenes?.length ?? 0} 幕 · 1080p` : `${run.sections?.length ?? 0} 节 · 适配手机`}，右边可以直接{run.kind === 'video' ? '播放' : '浏览'}。
 +                </div>
 +              </div>
 +            </div>
@@ -1165,7 +1383,7 @@ index 00000000..d78df50c
 +              {run.publish.status === 'none' && (
 +                <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
 +                  <Button variant="primary" className="max-md:min-h-11" onClick={() => void onPublish()} data-qc="publish"><Globe size={14} />发布到网页托管</Button>
-+                  <span className="text-[12px] text-token-muted">发布后得到可分享的链接</span>
++                  <span className="text-[12px] text-token-muted">{run.bundle ? `发布的是能播放的网页（约 ${Math.max(1, Math.round(run.bundle.bytes / 1_000_000))} MB），不传视频文件` : '发布后得到可分享的链接'}</span>
 +                </div>
 +              )}
 +              {run.publish.status === 'publishing' && <div className="flex h-9 items-center gap-2 text-[12.5px] text-token-secondary"><MapSpinner size={13} />正在上传到网页托管…</div>}
@@ -1188,6 +1406,7 @@ index 00000000..d78df50c
 +                </div>
 +              )}
 +            </div>
++            <BrowserExport run={run} />
 +          </section>
 +        )}
 +      </AgentTurn>
@@ -1804,10 +2023,10 @@ index 00000000..a4a53b6e
 +
 diff --git a/prd-admin/src/pages/quick-creation-agent/StyleLibrary.tsx b/prd-admin/src/pages/quick-creation-agent/StyleLibrary.tsx
 new file mode 100644
-index 00000000..95f7d046
+index 00000000..1cbcb957
 --- /dev/null
 +++ b/prd-admin/src/pages/quick-creation-agent/StyleLibrary.tsx
-@@ -0,0 +1,196 @@
+@@ -0,0 +1,201 @@
 +/**
 + * 风格（模板）选择。风格库按「画面像什么」分 15 类，共 99 种（Lemo-Opuscar 的分类与风格）。
 + * 两个入口选同一个状态：
@@ -1877,14 +2096,16 @@ index 00000000..95f7d046
 +}
 +
 +/** 输入框里的风格按钮 + 就地弹出的选择面板 */
-+export function StylePickerChip({ templates, categories, selected, onSelect, onBrowse, outputLabel, header }: {
++export function StylePickerChip({ templates, categories, selected, onSelect, onBrowse, outputLabel, durationLabel, header }: {
 +  templates: QcTemplate[];
 +  categories: QcTemplateCategory[];
 +  selected?: QcTemplate;
 +  onSelect: (id: string) => void;
 +  onBrowse: () => void;
-+  /** 手机上产出切换收进这个按钮：按钮上写「视频 · 风格名」，面板顶部放切换 */
++  /** 手机上产出切换收进这个按钮：按钮上写「视频 3 分钟 · 风格名」 */
 +  outputLabel?: string;
++  /** 做视频时按钮上写时长（桌面与手机都写），面板顶部放时长选项 */
++  durationLabel?: string;
 +  header?: ReactNode;
 +}) {
 +  const [open, setOpen] = useState(false);
@@ -1892,10 +2113,13 @@ index 00000000..95f7d046
 +  return (
 +    <Popover.Root open={open} onOpenChange={setOpen}>
 +      <Popover.Trigger asChild>
-+        <button type="button" data-qc="style-chip" data-template={selected?.id ?? ''} aria-label={`风格：${selected?.name ?? '未选'}，点此更换`}
++        <button type="button" data-qc="style-chip" data-template={selected?.id ?? ''} aria-label={`${durationLabel ? `时长：${durationLabel}，` : ''}风格：${selected?.name ?? '未选'}，点此更换`}
++          title={`${durationLabel ? `${durationLabel} · ` : ''}${selected?.name ?? '选风格'}`}
 +          className="inline-flex h-8 min-w-0 max-w-full items-center gap-1.5 rounded-lg pl-1 pr-1.5 text-[12px] text-token-primary hover-bg-soft max-md:h-11">
 +          {selected && <span className="w-7 shrink-0 overflow-hidden rounded-[4px]"><StyleFrame template={{ ...selected, frame: undefined }} /></span>}
-+          <span className="min-w-0 truncate">{outputLabel && <span className="md:hidden">{outputLabel} · </span>}{selected?.name ?? '选风格'}</span>
++          {/* 时长不截断，只截风格名：窄的时候至少看得到「做多长」 */}
++          {(outputLabel || durationLabel) && <span className="shrink-0 whitespace-nowrap">{outputLabel && <span className="md:hidden">{outputLabel} </span>}{durationLabel && `${durationLabel} · `}</span>}
++          <span className="min-w-0 truncate">{selected?.name ?? '选风格'}</span>
 +          <ChevronDown size={13} className="shrink-0 text-token-muted" aria-hidden />
 +        </button>
 +      </Popover.Trigger>
@@ -1904,10 +2128,10 @@ index 00000000..95f7d046
 +          className="qc-menu-surface z-[110] flex flex-col rounded-xl border border-[var(--border-default)] p-2.5 shadow-lg"
 +          style={{ width: 'min(440px, calc(100vw - 24px))', maxHeight: 'min(520px, var(--radix-popover-content-available-height))' }}>
 +          <div className="flex items-center justify-between px-1 pb-2">
-+            <span className="text-[13px] font-semibold text-token-primary">选风格</span>
++            <span className="text-[13px] font-semibold text-token-primary">{durationLabel ? '时长与风格' : '选风格'}</span>
 +            <span className="text-[11.5px] text-token-muted">{categories.length} 类 · {templates.length} 种</span>
 +          </div>
-+          {header && <div className="pb-2 md:hidden">{header}</div>}
++          {header && <div className="pb-2">{header}</div>}
 +          <div className="flex items-center gap-1.5"><SearchBox id="qc-style-search-pop" value={f.query} onChange={f.setQuery} /></div>
 +          <div className="mt-2"><CategoryRow categories={categories} counts={f.counts} total={templates.length} value={f.category} onChange={f.setCategory} /></div>
 +          <div role="radiogroup" aria-label="选择风格" className="mt-1.5 grid min-h-0 flex-1 grid-cols-2 content-start gap-1 overflow-y-auto pr-0.5" style={{ overscrollBehavior: 'contain' }}>
@@ -2302,6 +2526,75 @@ index 00000000..aee65f99
 +    </div>
 +  );
 +}
+diff --git a/prd-admin/src/pages/quick-creation-agent/browserExport.ts b/prd-admin/src/pages/quick-creation-agent/browserExport.ts
+new file mode 100644
+index 00000000..896b2d07
+--- /dev/null
++++ b/prd-admin/src/pages/quick-creation-agent/browserExport.ts
+@@ -0,0 +1,63 @@
++/**
++ * 在用户浏览器里把成片导出成视频文件，服务器不渲染。
++ *
++ * 为什么物理上可行：成片的画面是 Canvas / WebGL 代码按时间逐帧画出来的（Lemo-Opuscar 的风格本来就这样做），
++ * 每一帧就是画布上的像素，可以直接交给浏览器的硬件编码器（WebCodecs VideoEncoder），不需要把 HTML 截图。
++ *
++ * 正式实现（实现方照此替换 exportFilmInBrowser 的原型部分，依赖 Mediabunny，MPL-2.0，可商用；详见设计文档《成片时长与浏览器渲染》）：
++ *   1. 取成片包：画面代码模块（导出 renderFrame(ctx, t)，同一个 t 永远画同一帧）、配音音轨、时间轴；先等字体与图片加载完。
++ *   2. 画面：OffscreenCanvas 1920×1080；第 i 帧 t = i / fps，renderFrame 画完后 new VideoFrame(canvas, { timestamp })，
++ *      交给 Mediabunny 的 CanvasSource / VideoSampleSource 编码（H.264，浏览器不支持时退到 VP9 + WebM），帧用完立即 close()。
++ *      编码队列超过约 30 帧就等一等（encodeQueueSize），防止内存涨满。
++ *   3. 声音不在浏览器里编码：服务端生成配音时顺手编好 AAC（m4a）与 Opus（webm）各一份，导出时把已编码的音频包直接写进文件
++ *      （Mediabunny 的 EncodedAudioPacketSource）。这样 Safari 16.4 起就能导出（它的音频编码器到 26 才有），也避开 Firefox 编不了 AAC。
++ *   4. Mediabunny 的 Output + Mp4OutputFormat（或 WebMOutputFormat）+ BufferTarget 封装，得到 Blob，生成下载。
++ *   5. 渲染循环放在 Worker 里（OffscreenCanvas），不用 requestAnimationFrame：页面在后台时 rAF 会停，导出会卡住。
++ *   6. 每 24 帧回报一次进度；可取消（AbortSignal）；失败要说清卡在哪一帧、是编码器不支持还是内存不足。
++ */
++import type { QcPlayBundle } from './types';
++
++export type ExportContainer = 'mp4' | 'webm';
++
++/** 这个浏览器能不能在本机合成：先试 H.264 + MP4，再试 VP9 + WebM；都不行返回 null（走「请服务器导出」兜底） */
++export async function detectBrowserExport(bundle: Pick<QcPlayBundle, 'width' | 'height' | 'fps'>): Promise<ExportContainer | null> {
++  if (typeof VideoEncoder === 'undefined' || typeof VideoFrame === 'undefined') return null;
++  const tryCodec = async (codec: string) => {
++    try { return (await VideoEncoder.isConfigSupported({ codec, width: bundle.width, height: bundle.height, framerate: bundle.fps, bitrate: 6_000_000 })).supported === true; } catch { return false; }
++  };
++  if (await tryCodec('avc1.640028')) return 'mp4';
++  if (await tryCodec('vp09.00.40.08')) return 'webm';
++  return null;
++}
++
++export interface ExportProgress { frame: number; frames: number; elapsedSec: number; remainSec?: number }
++export interface ExportResult { url: string; fileName: string; bytes: number; container: ExportContainer }
++
++/** 预估本机导出要多久：桌面浏览器硬件编码通常比实时快，按约 2 倍速估；手机按 1 倍速估 */
++export function exportPlan(bundle: QcPlayBundle, durationSec: number, phone: boolean) {
++  const frames = Math.round(durationSec * bundle.fps);
++  return { frames, estSec: Math.max(5, Math.round(durationSec / (phone ? 1 : 2))) };
++}
++
++/**
++ * 原型：不真正编码，按 exportPlan 的速度推进进度（演示时间压缩 25 倍），产物用演示成片文件。
++ * 正式实现见文件头的六步；签名不变，页面不用改。
++ */
++export function exportFilmInBrowser(input: { bundle: QcPlayBundle; durationSec: number; title: string; container: ExportContainer; phone: boolean; mediaUrl?: string },
++  onProgress: (p: ExportProgress) => void, signal: AbortSignal): Promise<ExportResult> {
++  const { frames, estSec } = exportPlan(input.bundle, input.durationSec, input.phone);
++  const demoMs = Math.max(2500, (estSec * 1000) / 25);
++  const started = Date.now();
++  return new Promise((resolve, reject) => {
++    const timer = window.setInterval(() => {
++      if (signal.aborted) { window.clearInterval(timer); reject(new DOMException('已取消', 'AbortError')); return; }
++      const ratio = Math.min(1, (Date.now() - started) / demoMs);
++      const elapsedSec = Math.round(ratio * estSec);
++      onProgress({ frame: Math.round(ratio * frames), frames, elapsedSec, remainSec: Math.max(0, estSec - elapsedSec) });
++      if (ratio >= 1) {
++        window.clearInterval(timer);
++        resolve({ url: input.mediaUrl ?? '', fileName: `${input.title}.${input.container}`, bytes: Math.round(input.durationSec * 750_000), container: input.container });
++      }
++    }, 200);
++  });
++}
 diff --git a/prd-admin/src/pages/quick-creation-agent/format.ts b/prd-admin/src/pages/quick-creation-agent/format.ts
 new file mode 100644
 index 00000000..8232e08e
@@ -2356,10 +2649,10 @@ index 00000000..8232e08e
 +export const CHAR_BUDGET = 20000;
 diff --git a/prd-admin/src/pages/quick-creation-agent/quickCreation.css b/prd-admin/src/pages/quick-creation-agent/quickCreation.css
 new file mode 100644
-index 00000000..1ad4142c
+index 00000000..413af220
 --- /dev/null
 +++ b/prd-admin/src/pages/quick-creation-agent/quickCreation.css
-@@ -0,0 +1,131 @@
+@@ -0,0 +1,132 @@
 +/* 快速创作页的少量局部样式；颜色只取 tokens.css 语义变量 */
 +/* 放进 components 层：Tailwind 工具类（hidden、sm:inline-flex 等）可以覆盖这里 */
 +@layer components {
@@ -2491,12 +2784,13 @@ index 00000000..1ad4142c
 +
 +/* 弹出菜单的底：浅色主题 --bg-input 是实色（白），深色主题它是半透明，叠在 --bg-elevated 上才不透出下面的字 */
 +.qc-menu-surface { background: linear-gradient(var(--bg-input), var(--bg-input)), var(--bg-elevated); }
++.qc-face-chip[aria-checked="true"] { --qc-face-ring: inset 0 0 0 1.5px var(--accent-primary); }
 diff --git a/prd-admin/src/pages/quick-creation-agent/types.ts b/prd-admin/src/pages/quick-creation-agent/types.ts
 new file mode 100644
-index 00000000..63ff73e0
+index 00000000..4289afac
 --- /dev/null
 +++ b/prd-admin/src/pages/quick-creation-agent/types.ts
-@@ -0,0 +1,301 @@
+@@ -0,0 +1,349 @@
 +/** 快速创作：一份文档 + 一个模板 → 能播放（视频）或能浏览（网页）、能发布到网页托管的成品。 */
 +
 +export type OutputKind = 'video' | 'web';
@@ -2667,6 +2961,10 @@ index 00000000..63ff73e0
 +  scenes?: QcScene[];
 +  sections?: QcWebSection[];
 +  durationSec?: number;
++  /** 开工时定下的目标时长（秒）：分镜按它写，服务端校验脚本总时长落在目标的 ±15% */
++  targetSec?: number;
++  /** 成片的可播放形态：画面代码 + 配音 + 时间轴。播放与导出都在用户浏览器里完成，服务器不渲染视频 */
++  bundle?: QcPlayBundle;
 +  keyPoints?: QcKeyPoint[];
 +  voice?: string;
 +  /** 成片媒体（视频产出完成后才有）：播放器直接播放它，字幕与重点随 currentTime 切换 */
@@ -2748,11 +3046,48 @@ index 00000000..63ff73e0
 +  reason: string;
 +}
 +
-+/** 分镜脚本的一幕：画面一句、旁白一句 */
++/** 分镜脚本的一幕：画面一句、旁白一句；秒数按配音语速（约每分钟 250 字）由服务端算出 */
 +export interface QcScriptScene {
 +  index: number;
 +  visual: string;
 +  narration: string;
++  seconds?: number;
++}
++
++/** 成片时长：自动（服务端按内容估算）或指定目标 */
++export type DurationChoice = 'auto' | 60 | 180 | 300 | 600;
++
++/** 开工前的时长与耗时预估，由服务端给出；前端只显示，不自己算 */
++export interface QcEstimate {
++  choice: DurationChoice;
++  /** 分镜按这个时长写（秒） */
++  targetSec: number;
++  /** 选「自动」时会取多长 */
++  autoSec: number;
++  /** 有稿件时：全文照念需要多长 */
++  fullSec?: number;
++  chars?: number;
++  /** 预计幕数 */
++  scenes: number;
++  /** 预计生成耗时（分钟，下限与上限） */
++  generateMin: [number, number];
++  /** 一句话依据，例如「稿件 1,840 字，全文念完约 7 分钟，自动取约 3 分钟讲重点」 */
++  basis: string;
++}
++
++/** 成片 = 一个可播放的网页包：画面代码（Canvas / WebGL，按时间逐帧画）+ 配音 + 时间轴 */
++export interface QcPlayBundle {
++  /** 画面代码入口：导出 renderFrame(t) 的模块，同一个 t 永远画出同一帧 */
++  codeUrl: string;
++  /** 配音与音乐混好的音轨 */
++  audioUrl: string;
++  /** 每幕起止时间、字幕与重点 */
++  timelineUrl: string;
++  width: number;
++  height: number;
++  fps: number;
++  /** 整包大小（字节），用来说明比视频文件省多少 */
++  bytes: number;
 +}
 +
 +export interface QcChatMessage {
@@ -2768,6 +3103,8 @@ index 00000000..63ff73e0
 +  missingNote?: boolean;
 +  /** 开工前的分镜脚本（确认后正式排队） */
 +  script?: QcScriptScene[];
++  /** 这版脚本按多长写的（秒） */
++  scriptTargetSec?: number;
 +}
 +
 +export interface QcBriefSession {
@@ -2778,6 +3115,8 @@ index 00000000..63ff73e0
 +  model?: { model: string; platform: string };
 +  /** 简报当前采用的风格（对话里说「第二个」选定时由服务端给出，输入框里的风格按钮随之同步） */
 +  styleId?: string;
++  /** 简报当前采用的时长（说「长一点」或在对话里选了时长时由服务端给出，输入框里的时长随之同步） */
++  durationChoice?: DurationChoice;
 +}
 +
 +/** 每次对话都带上输入框里的当前选择，服务端据此更新简报 */
@@ -2785,6 +3124,7 @@ index 00000000..63ff73e0
 +  kind: OutputKind;
 +  templateId?: string;
 +  attachmentIds: string[];
++  duration?: DurationChoice;
 +}
 +
 +export interface CreateRunInput {
@@ -2797,17 +3137,19 @@ index 00000000..63ff73e0
 +  briefId?: string;
 +  /** 已确认的分镜脚本（跳过时为空） */
 +  script?: QcScriptScene[];
++  /** 目标时长：自动或指定；服务端按它决定幕数与旁白字数 */
++  duration?: DurationChoice;
 +}
 diff --git a/prd-admin/src/services/real/quickCreation.ts b/prd-admin/src/services/real/quickCreation.ts
 new file mode 100644
-index 00000000..b9d13929
+index 00000000..2e8fe768
 --- /dev/null
 +++ b/prd-admin/src/services/real/quickCreation.ts
-@@ -0,0 +1,87 @@
+@@ -0,0 +1,97 @@
 +import { apiRequest } from '@/services/real/apiClient';
 +import { useAuthStore } from '@/stores/authStore';
 +import { fail, type ApiResponse } from '@/types/api';
-+import type { AssetScope, BriefContext, CreateRunInput, QcBriefSession, QcAsset, QcAttachment, QcRun, QcTemplate, QcTemplateCategory, QcTemplateSource, QcWork } from '@/pages/quick-creation-agent/types';
++import type { AssetScope, BriefContext, CreateRunInput, DurationChoice, OutputKind, QcBriefSession, QcAsset, QcAttachment, QcEstimate, QcRun, QcTemplate, QcTemplateCategory, QcTemplateSource, QcWork } from '@/pages/quick-creation-agent/types';
 +
 +/**
 + * 快速创作接口。生成在服务端排队与执行（Run/Worker），离开页面不取消；页面按任务编号恢复。
@@ -2834,9 +3176,19 @@ index 00000000..b9d13929
 +  return apiRequest<QcBriefSession>(`${base}/brief/context`, { method: 'POST', body: input });
 +}
 +
-+/** 开工前先出分镜脚本（约一两分钟），确认后再正式排队 */
-+export function requestBriefScript(sessionId: string, context: BriefContext) {
-+  return apiRequest<QcBriefSession>(`${base}/brief/${encodeURIComponent(sessionId)}/script`, { method: 'POST', body: { context } });
++/** 开工前先出分镜脚本（约一两分钟），确认后再正式排队；adjust 用于「短一点 / 长一点」重写这版脚本 */
++export function requestBriefScript(sessionId: string, context: BriefContext, adjust?: 'shorter' | 'longer') {
++  return apiRequest<QcBriefSession>(`${base}/brief/${encodeURIComponent(sessionId)}/script`, { method: 'POST', body: { context, ...(adjust ? { adjust } : {}) } });
++}
++
++/** 开工前的时长与耗时预估：按产出、资料与时长选择算出目标时长、幕数和预计生成耗时 */
++export function estimateQuickCreation(input: { kind: OutputKind; attachmentIds: string[]; duration: DurationChoice; briefId?: string }) {
++  return apiRequest<QcEstimate>(`${base}/estimate`, { method: 'POST', body: input });
++}
++
++/** 浏览器不能本机合成时，请服务器代为导出视频文件（排队执行，占服务器资源，只作兜底） */
++export function requestServerExport(runId: string) {
++  return apiRequest<{ position: number; etaMin: number }>(`${base}/runs/${encodeURIComponent(runId)}/server-export`, { method: 'POST', body: {} });
 +}
 +
 +/* 产物：已生成的成品，按「我的 / 团队」取；用于创作时回看与复用风格 */

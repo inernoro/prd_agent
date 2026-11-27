@@ -56,7 +56,7 @@ function useReveal(text: string, active: boolean) {
   return { shown: text.slice(0, n), done: n >= text.length };
 }
 
-function AgentMessage({ m, latest, revealing, templates, session, busy, onReply, onUseStyle, onStart, onSkipScript, onConfirmScript }: {
+function AgentMessage({ m, latest, revealing, templates, session, busy, onReply, onUseStyle, onStart, onSkipScript, onConfirmScript, onAdjustScript }: {
   m: QcChatMessage;
   latest: boolean;
   revealing: boolean;
@@ -68,8 +68,10 @@ function AgentMessage({ m, latest, revealing, templates, session, busy, onReply,
   onStart: () => void;
   onSkipScript: () => void;
   onConfirmScript: () => void;
+  onAdjustScript: (a: 'shorter' | 'longer') => void;
 }) {
   const { shown, done } = useReveal(m.text, revealing);
+  const scriptTotal = (m.script ?? []).reduce((n, x) => n + (x.seconds ?? 0), 0);
   const style = (id: string) => templates.find(t => t.id === id);
   const active = latest && done && !busy;
   /* 最新一条出完（含选项、推荐卡、准备好了卡、脚本卡）后滚到它的底部，新内容不落在视线外 */
@@ -128,25 +130,39 @@ function AgentMessage({ m, latest, revealing, templates, session, busy, onReply,
         </section>
       )}
       {done && !!m.script?.length && (
-        <section className="qc-card qc-rise overflow-hidden" data-qc={latest ? 'script-draft' : undefined}>
-          <div className="flex items-center gap-2 border-b border-token-subtle px-3.5 py-2.5 text-[13.5px] font-semibold text-token-primary">
-            <Clapperboard size={15} className="text-[color:var(--accent-primary)]" aria-hidden />分镜脚本 · {m.script.length} 幕
+        <section className="qc-card qc-rise overflow-hidden" data-qc={latest ? 'script-draft' : undefined} data-target-sec={m.scriptTargetSec} data-scenes={m.script.length}>
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-token-subtle px-3.5 py-2.5">
+            <span className="inline-flex items-center gap-2 text-[13.5px] font-semibold text-token-primary"><Clapperboard size={15} className="text-[color:var(--accent-primary)]" aria-hidden />分镜脚本 · {m.script.length} 幕</span>
+            {scriptTotal > 0 && (
+              <span className="text-[12.5px] tabular-nums text-token-secondary" data-qc="script-total">
+                合计约 {Math.floor(scriptTotal / 60)} 分 {String(scriptTotal % 60).padStart(2, '0')} 秒{m.scriptTargetSec ? `（目标约 ${m.scriptTargetSec < 60 ? `${m.scriptTargetSec} 秒` : `${Math.round(m.scriptTargetSec / 60)} 分钟`}）` : ''}
+              </span>
+            )}
+            {latest && (
+              <span className="ml-auto inline-flex items-center gap-1" aria-label="调整时长">
+                <button type="button" data-qc="script-shorter" disabled={!active || (m.scriptTargetSec ?? 0) <= 60} onClick={() => onAdjustScript('shorter')}
+                  className="qc-face qc-face-chip relative inline-flex items-center px-2.5 text-[12px] text-token-primary disabled:opacity-50">短一点</button>
+                <button type="button" data-qc="script-longer" disabled={!active || (m.scriptTargetSec ?? 0) >= 600} onClick={() => onAdjustScript('longer')}
+                  className="qc-face qc-face-chip relative inline-flex items-center px-2.5 text-[12px] text-token-primary disabled:opacity-50">长一点</button>
+              </span>
+            )}
           </div>
-          <ol className="m-0 list-none p-0">
+          <ol className="m-0 max-h-[360px] list-none overflow-y-auto p-0" style={{ overscrollBehavior: 'contain' }}>
             {m.script.map(sc => (
               <li key={sc.index} className="flex gap-3 border-b border-token-subtle px-3.5 py-2 text-[12.5px] last:border-b-0">
-                <span className="w-4 shrink-0 tabular-nums text-token-muted">{sc.index}</span>
+                <span className="w-5 shrink-0 tabular-nums text-token-muted">{sc.index}</span>
                 <div className="min-w-0 flex-1">
                   <div className="text-token-primary">{sc.visual}</div>
-                  <div className="text-token-secondary">旁白：{sc.narration}</div>
+                  <div className="line-clamp-2 text-token-secondary">旁白：{sc.narration}</div>
                 </div>
+                {sc.seconds != null && <span className="shrink-0 tabular-nums text-[12px] text-token-muted">{sc.seconds} 秒</span>}
               </li>
             ))}
           </ol>
           {latest && (
             <div className="flex flex-wrap items-center gap-2 border-t border-token-subtle bg-[var(--bg-secondary)] px-3.5 py-2.5">
               <Button variant="primary" className="qc-face qc-face-primary relative px-3.5" data-qc="script-confirm" disabled={!active} onClick={onConfirmScript}><Play size={14} />按这个脚本开始生成</Button>
-              <span className="text-[12px] text-token-muted">想改哪一幕，直接在下面说，例如「第 3 幕换成客户案例」</span>
+              <span className="text-[12px] text-token-muted">想改哪一幕直接说，例如「第 3 幕换成客户案例」</span>
             </div>
           )}
         </section>
@@ -157,7 +173,7 @@ function AgentMessage({ m, latest, revealing, templates, session, busy, onReply,
 }
 
 /** 对话流：你的消息靠右，助手的回复带头像与模型名；正在等回复时显示一条在动的占位 */
-export function BriefConversation({ session, pendingText, revealId, templates, busy, onReply, onUseStyle, onStart, onSkipScript, onConfirmScript }: {
+export function BriefConversation({ session, pendingText, revealId, templates, busy, onReply, onUseStyle, onStart, onSkipScript, onConfirmScript, onAdjustScript }: {
   session: QcBriefSession | null;
   pendingText: string | null;
   revealId: string | null;
@@ -168,6 +184,7 @@ export function BriefConversation({ session, pendingText, revealId, templates, b
   onStart: () => void;
   onSkipScript: () => void;
   onConfirmScript: () => void;
+  onAdjustScript: (a: 'shorter' | 'longer') => void;
 }) {
   const messages = session?.messages ?? [];
   const lastAgent = [...messages].reverse().find(x => x.role === 'agent');
@@ -177,7 +194,7 @@ export function BriefConversation({ session, pendingText, revealId, templates, b
         <UserTurn key={m.id}><p className="m-0 whitespace-pre-wrap px-1 text-[14px] leading-6 text-token-primary">{m.text}</p></UserTurn>
       ) : session && (
         <AgentMessage key={m.id} m={m} latest={m.id === lastAgent?.id && !pendingText} revealing={m.id === revealId} templates={templates} session={session} busy={busy}
-          onReply={onReply} onUseStyle={onUseStyle} onStart={onStart} onSkipScript={onSkipScript} onConfirmScript={onConfirmScript} />
+          onReply={onReply} onUseStyle={onUseStyle} onStart={onStart} onSkipScript={onSkipScript} onConfirmScript={onConfirmScript} onAdjustScript={onAdjustScript} />
       ))}
       {pendingText && (
         <>

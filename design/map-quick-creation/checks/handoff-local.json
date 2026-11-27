@@ -48,6 +48,26 @@
       "errors": []
     },
     {
+      "id": "pick-duration-and-submit",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "id": "script-longer",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "id": "export-in-browser",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "id": "export-via-server",
+      "status": "passed",
+      "errors": []
+    },
+    {
       "id": "submit-pasted-text",
       "status": "passed",
       "errors": []

@@ -33,6 +33,10 @@ const screens = [
   { id: 'failed-scene', name: '单幕失败 · 只重做这一幕', route: `#${Q}?run=run-failed`, viewport: 'desktop', themes: both, entryReadySelector: ready('run-failed') },
   { id: 'timeout', name: '整条超时 · 保留已完成部分', route: `#${Q}?run=run-timeout`, viewport: 'desktop', themes: both, entryReadySelector: ready('run-failed') },
   { id: 'done-video', name: '成片 · 有声播放、字幕与重点', route: `#${Q}?run=run-done`, viewport: 'desktop', themes: both, entryReadySelector: '[data-qc=video-player]' },
+  { id: 'duration-picker', name: '开工前定时长：「时长 · 风格」按钮的面板顶部，自动写出估算值，可选 1 / 3 / 5 / 10 分钟', route: `#${Q}`, viewport: 'desktop', themes: both, entryReadySelector: '[data-qc=duration-basis]', entryActions: ['[data-qc=sample-doc]', '[data-qc=style-chip]'], impl: Q },
+  { id: 'export-progress', name: '成片在浏览器里导出：帧数进度与还需时间', route: `#${Q}?run=run-done`, viewport: 'desktop', themes: both, entryReadySelector: '[data-qc=export-card][data-state=exporting]', entryActions: ['[data-qc=export-start]'], impl: `${Q}?run=<编号>` },
+  { id: 'export-done', name: '成片导出完成，可下载', route: `#${Q}?run=run-done`, viewport: 'desktop', themes: both, entryReadySelector: '[data-qc=export-card][data-state=done]', entryActions: ['[data-qc=export-start]'], impl: `${Q}?run=<编号>` },
+  { id: 'export-unsupported', name: '浏览器不能本机合成：换浏览器或请服务器导出', route: `#${Q}?run=run-done&export=unsupported`, viewport: 'desktop', themes: both, entryReadySelector: '[data-qc=export-unsupported]', impl: `${Q}?run=<编号>（浏览器没有 WebCodecs 时）` },
   { id: 'publish-failed', name: '发布失败 · 成片仍可播', route: `#${Q}?run=run-publish-failed`, viewport: 'desktop', themes: both, entryReadySelector: '[data-qc=publish-failed]' },
   { id: 'published', name: '发布成功', route: `#${Q}?run=run-published`, viewport: 'desktop', themes: both, entryReadySelector: '[data-qc=published]' },
   { id: 'hosting', name: '网页托管里定位到这条记录', route: '#/web-pages?focusSite=site-run-published', viewport: 'desktop', themes: both, entryReadySelector: ready('hosting') },
@@ -109,17 +113,21 @@ const rows = [
   ['A-52', null, 'chat-ready', 'human', D, '准备好了：必填条件都齐了，助手复述简报并给主按钮「开始生成（约 30–60 分钟）」；直接说「可以开始了」效果一样；条件不够时说明还缺什么，不硬开始', '条件齐时出现「准备好了」卡；一开始就说「可以开始了」，助手回「还不能开始：还缺讲什么」并接着问'],
   ['A-53', null, 'chat-script', 'human', D, '开工前先看分镜脚本：每幕一句画面、一句旁白，确认后正式排队；不想看可以一键跳过；想改直接在对话里说', '点「开始生成」→ 出现 6 幕分镜脚本与「按这个脚本开始生成」；点它或「跳过脚本，直接开始」都进入排队'],
   ['A-54', null, 'chat-script', 'human', D, '没有稿件也能只靠对话出片：讲什么来自对话，文案由快速创作按对话先写；任务里写明内容来自对话', '不放稿件聊完后开工，任务左栏你的消息写「没有稿件：内容来自和快速创作的对话」'],
+  ['A-55', null, 'duration-picker', 'human', D, '开工前就知道成片多长，也能自己定：时长和风格收在输入框里同一个按钮上（按钮写「约 3 分钟 · 视觉笔记」），面板顶部是时长，默认自动并直接写出估算值；可选约 1 / 3 / 5 / 10 分钟；面板写明依据（稿件字数、全文照念多长）、幕数和预计生成耗时；估算由服务端给出，前端不自己算', '放入示例稿件后按钮写「约 3 分钟 · 视觉笔记」；面板写「自动 · 约 3 分钟」与「稿件 1,840 字，全文照念约 7 分钟；自动取约 3 分钟讲重点。分成约 13 幕，生成约 35–54 分钟」；选「约 10 分钟」后按钮变为「约 10 分钟 · 视觉笔记」，提交后任务里写「视频 · 约 10 分钟」'],
+  ['A-56', null, 'chat-script', 'human', D, '分镜脚本按目标时长写：每幕写秒数，顶部写合计与目标；「短一点 / 长一点」在 1–10 分钟的档位间重写这版脚本；对话里说「5 分钟」「长一点」同样生效；培训、教程类先问一次想要多长；服务端校验脚本总时长落在目标的 ±15%，不够就补写', '宣传片聊完出脚本：4 幕、合计约 1 分钟（目标约 1 分钟）；点「长一点」后 13 幕、合计约 3 分钟（目标约 3 分钟），输入框里的时长同步为约 3 分钟'],
+  ['A-57', null, 'export-progress', 'human', D, '服务器不渲染视频：成片是能播放的网页（画面代码 + 配音），播放与导出都在用户浏览器里；完成卡写实际时长与目标；「导出 MP4 文件」显示帧数进度、已用与还需时间、保持前台的提醒，可取消，完成后可下载；发布到网页托管发布的是能播放的网页（约几 MB），不传视频文件', '点「导出 MP4 文件」后出现「正在用你的浏览器合成 MP4」、第 x / 2,304 帧、还需时间与「保持这个页面在前台」；完成后写「已导出 需求评审的三个习惯.mp4」并可下载；发布按钮旁写「发布的是能播放的网页（约 2 MB），不传视频文件」'],
+  ['A-58', null, 'export-unsupported', 'human', D, '浏览器不能本机合成时（没有 WebCodecs，或 H.264 与 VP9 都编不了）说明原因并给两条路：换电脑上的 Chrome / Edge / Safari 打开这一页，或请服务器代为导出（排队，作为兜底）', '没有 WebCodecs 时写「这个浏览器不能在本机合成视频」并给「请服务器导出」；点它后写「已交给服务器导出：前面还有 2 个，预计 12 分钟后可以下载」'],
 ];
 
 /* 关键操作：CDS 交接检查按 handoff.cases 实际执行 */
-const INTERACTIVE = new Set(['A-12', 'A-15', 'A-17', 'A-18', 'A-19', 'A-20', 'A-23', 'A-24', 'A-25', 'A-26', 'A-27', 'A-29', 'A-30', 'A-32', 'A-33', 'A-39', 'A-40', 'A-41', 'A-42', 'A-43', 'A-44', 'A-45', 'A-47', 'A-48', 'A-49', 'A-51', 'A-52', 'A-53', 'A-54']);
+const INTERACTIVE = new Set(['A-12', 'A-15', 'A-17', 'A-18', 'A-19', 'A-20', 'A-23', 'A-24', 'A-25', 'A-26', 'A-27', 'A-29', 'A-30', 'A-32', 'A-33', 'A-39', 'A-40', 'A-41', 'A-42', 'A-43', 'A-44', 'A-45', 'A-47', 'A-48', 'A-49', 'A-51', 'A-52', 'A-53', 'A-54', 'A-55', 'A-56', 'A-57', 'A-58']);
 /* 覆盖维度（CDS 六维）：每条验收项归一个维度，缺规则的维度在 risks 里写风险与理由 */
 const DIM = {
-  compatibility: ['A-01', 'A-02', 'A-03', 'A-06', 'A-35', 'A-36', 'A-37'],
+  compatibility: ['A-01', 'A-02', 'A-03', 'A-06', 'A-35', 'A-36', 'A-37', 'A-58'],
   security: ['A-10', 'A-46'],
   operations: ['A-07', 'A-08', 'A-23'],
-  performance: ['A-16', 'A-20', 'A-34'],
-  correctness: ['A-12', 'A-13', 'A-15', 'A-17', 'A-24', 'A-25', 'A-26', 'A-27', 'A-29', 'A-30', 'A-32', 'A-33', 'A-39', 'A-41', 'A-42', 'A-44', 'A-45', 'A-48', 'A-50', 'A-51', 'A-52', 'A-53', 'A-54'],
+  performance: ['A-16', 'A-20', 'A-34', 'A-57'],
+  correctness: ['A-12', 'A-13', 'A-15', 'A-17', 'A-24', 'A-25', 'A-26', 'A-27', 'A-29', 'A-30', 'A-32', 'A-33', 'A-39', 'A-41', 'A-42', 'A-44', 'A-45', 'A-48', 'A-50', 'A-51', 'A-52', 'A-53', 'A-54', 'A-56'],
 };
 const dimensionOf = id => Object.entries(DIM).find(([, ids]) => ids.includes(id))?.[0] ?? 'experience';
 const acceptance = rows.map(([id, ruleId, screenId, how, slots, rule, expected, extra]) => ({ id, ...(ruleId ? { ruleId } : {}), screenId, how, slots, rule, expected, dimension: dimensionOf(id), ...(extra ?? {}), ...(INTERACTIVE.has(id) ? { interaction: true } : {}) }));
@@ -216,6 +224,44 @@ const cases = [
     { action: 'expect', selector: '[data-qc=missing-note]', check: 'visible' },
     { action: 'expect', selector: '[data-qc=brief]', check: 'attribute', attribute: 'data-ready', equals: 'false' },
   ] },
+  { id: 'pick-duration-and-submit', title: '开工前把时长改成约 10 分钟，提交后任务里写明目标时长', screenId: 'compose', theme: 'light', ruleIds: ['A-55'], steps: [
+    { action: 'click', selector: '[data-qc=sample-doc]' },
+    { action: 'expect', selector: '[data-qc=style-chip]', check: 'visible' },
+    { action: 'click', selector: '[data-qc=style-chip]' },
+    { action: 'expect', selector: '[data-qc=duration-option][data-value="600"]', check: 'visible' },
+    { action: 'click', selector: '[data-qc=duration-option][data-value="600"]' },
+    { action: 'expect', selector: '[data-qc=duration-option][data-value="600"]', check: 'attribute', attribute: 'aria-checked', equals: 'true' },
+    { action: 'expect', selector: '[data-qc=submit]', check: 'enabled' },
+    { action: 'click', selector: '[data-qc=submit]' },
+    { action: 'expect', selector: '[data-qc=run-target]', check: 'visible' },
+  ] },
+  { id: 'script-longer', title: '分镜脚本按目标时长写，点「长一点」重写成约 3 分钟', screenId: 'compose', theme: 'dark', ruleIds: ['A-56'], steps: [
+    { action: 'expect', selector: '[data-qc=starter][data-value="我想做一个宣传片"]', check: 'visible' },
+    { action: 'click', selector: '[data-qc=starter][data-value="我想做一个宣传片"]' },
+    { action: 'expect', selector: '[data-qc=quick-reply][data-value="新产品发布"]', check: 'visible' },
+    { action: 'click', selector: '[data-qc=quick-reply][data-value="新产品发布"]' },
+    { action: 'expect', selector: '[data-qc=quick-reply][data-value="客户"]', check: 'visible' },
+    { action: 'click', selector: '[data-qc=quick-reply][data-value="客户"]' },
+    { action: 'expect', selector: '[data-qc=quick-reply][data-value="科技感"]', check: 'visible' },
+    { action: 'click', selector: '[data-qc=quick-reply][data-value="科技感"]' },
+    { action: 'expect', selector: '[data-qc=rec-style][data-style=dark-keynote] [data-qc=rec-use]', check: 'visible' },
+    { action: 'click', selector: '[data-qc=rec-style][data-style=dark-keynote] [data-qc=rec-use]' },
+    { action: 'expect', selector: '[data-qc=brief-start]', check: 'visible' },
+    { action: 'click', selector: '[data-qc=brief-start]' },
+    { action: 'expect', selector: '[data-qc=script-draft]', check: 'attribute', attribute: 'data-target-sec', equals: '60' },
+    { action: 'click', selector: '[data-qc=script-longer]' },
+    { action: 'expect', selector: '[data-qc=script-draft]', check: 'attribute', attribute: 'data-target-sec', equals: '180' },
+  ] },
+  { id: 'export-in-browser', title: '成片在浏览器里导出：开始后显示帧数进度与保持前台提醒', screenId: 'done-video', theme: 'light', ruleIds: ['A-57'], steps: [
+    { action: 'expect', selector: '[data-qc=export-start]', check: 'visible' },
+    { action: 'click', selector: '[data-qc=export-start]' },
+    { action: 'expect', selector: '[data-qc=export-card]', check: 'attribute', attribute: 'data-state', equals: 'exporting' },
+  ] },
+  { id: 'export-via-server', title: '浏览器不能本机合成时请服务器代为导出', screenId: 'export-unsupported', theme: 'light', ruleIds: ['A-58'], steps: [
+    { action: 'expect', selector: '[data-qc=export-server]', check: 'visible' },
+    { action: 'click', selector: '[data-qc=export-server]' },
+    { action: 'expect', selector: '[data-qc=export-card]', check: 'attribute', attribute: 'data-state', equals: 'server' },
+  ] },
   { id: 'submit-pasted-text', title: '粘贴长正文成为稿件附件后生成', screenId: 'compose', theme: 'light', ruleIds: ['A-41'], steps: [
     { action: 'fill', selector: '#qc-ask', value: SAMPLE_PASTE },
     { action: 'expect', selector: '#qc-ask', check: 'value', equals: '' },
@@ -306,6 +352,8 @@ const cases = [
 const goals = [
   { id: 'G-01', goal: '一份文档 + 一个模板，最快路径得到成品', doneWhen: '首次打开即可选产出与模板，用示例、上传、知识库或粘贴放进稿件并快捷生成；没有稿件时按钮不可用且说明原因', items: ['A-11', 'A-12', 'A-13', 'A-39', 'A-41', 'A-42'] },
   { id: 'G-12', goal: '不知道选什么的人也能通过对话开工', doneWhen: '可以直接说想做什么，助手逐个问清并推荐风格；创作简报显示开工条件；条件齐了出现「准备好了」，也能说「可以开始了」；开工前确认分镜脚本；没有稿件也能出片', items: ['A-49', 'A-50', 'A-51', 'A-52', 'A-53', 'A-54'] },
+  { id: 'G-13', goal: '开工前就知道成片多长，并能定长短', doneWhen: '输入框里能看到并改时长（自动时写出估算值与依据）；分镜脚本按目标写、每幕有秒数，能「短一点 / 长一点」；任务与成片写明目标', items: ['A-55', 'A-56'] },
+  { id: 'G-14', goal: '服务器不渲染视频：在用户浏览器里播放与导出', doneWhen: '成片以能播放的网页交付；导出在用户浏览器里合成并有进度；浏览器不支持时有兜底', items: ['A-57', 'A-58'] },
   { id: 'G-11', goal: '右栏同时承担选择与资产：创作时能回看自己和团队生成过的产物', doneWhen: '右栏有「产物」页签，可按我的 / 团队与产出类型浏览已生成的成品，能打开原任务、把风格带回输入框、去网页托管', items: ['A-47', 'A-48'] },
   { id: 'G-10', goal: '模板按 Lemo-Opuscar 风格库选择，并在输入框里决定产出与风格', doneWhen: '15 类 99 种风格可筛选、搜索、看样片说明；输入框里就地切换视频 / 网页与风格，两者相互独立；风格说明只按编号引用并署名来源', items: ['A-43', 'A-44', 'A-45', 'A-46'] },
   { id: 'G-02', goal: '附件再多也清楚、不堆一大把', doneWhen: '收起时只占一行，展开可分组管理，失败项单独处理；发送后可回看', items: ['A-14', 'A-15', 'A-16', 'A-17', 'A-18'] },
@@ -354,6 +402,9 @@ const manifest = {
     { dimension: 'compatibility', risk: '手机与深浅主题下布局挤压、对比度不足', ruleIds: ['A-03', 'A-06', 'A-35'] },
     { dimension: 'correctness', risk: '对话没问清就开工，跑了 30–60 分钟才发现方向不对；或开工判据靠前端猜聊天文字', ruleIds: ['A-50', 'A-52', 'A-53'] },
     { dimension: 'experience', risk: '不知道选什么的人问了没有回答，只能自己翻 99 种风格（像伪智能体）', ruleIds: ['A-49'] },
+    { dimension: 'correctness', risk: '教程类成片被做成二三十秒：没有时长目标，模型照样片的 15–30 秒写', ruleIds: ['A-56'] },
+    { dimension: 'performance', risk: '在用户浏览器里导出：手机发热、后台变慢、长片占内存', ruleIds: ['A-57'] },
+    { dimension: 'compatibility', risk: '老 Safari、安卓 Firefox 没有 WebCodecs，或编不了 H.264', ruleIds: ['A-58'] },
     { dimension: 'correctness', risk: '真实模型的提问质量、推荐准确度与开工意图判定', reason: '原型用固定路线演示对话，无法测真实模型；接入模型池后按验收债务 D-05 用真实开场跑一轮校准' },
   ],
   acceptance,

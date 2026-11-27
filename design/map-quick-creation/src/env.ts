@@ -5,6 +5,7 @@ import type { QcAttachment, QcRun, QcScene } from '@/pages/quick-creation-agent/
 /* 演示成片：由 tools/make-demo-film.mjs 用模板画面渲染、带示意音轨的 WebM，构建时内嵌为 data: 地址 */
 import filmUrl from './assets/demo-film.webm';
 import { briefContext, briefMessage, briefScript } from './briefEngine';
+import { estimate } from './estimate';
 import { assets, attachmentQueue, fixedRuns, queueAt, sampleDoc, scenes, stagesAt, templateCategories, templateSource, templates, webKeyPoints, webSections, works } from './fixtures';
 
 class MemStorage {
@@ -20,12 +21,17 @@ for (const k of ['localStorage', 'sessionStorage']) {
   try { Object.defineProperty(window, k, { value: new MemStorage(), configurable: true }); } catch { /* 已可用 */ }
 }
 
+/* 场景：浏览器不能在本机合成视频（演示「请服务器导出」兜底）。地址里带 export=unsupported 时去掉 WebCodecs */
+if (/[?&]export=unsupported/.test(location.hash + location.search)) {
+  try { Object.defineProperty(window, 'VideoEncoder', { value: undefined, configurable: true }); } catch { /* 只读时忽略 */ }
+}
+
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 const ok = (data: unknown) => json({ success: true, data, error: null });
 const fail = (message: string, code = 'UPSTREAM_UNAVAILABLE') => json({ success: false, data: null, error: { code, message } });
 
 /* ---------- 运行中的任务：按提交后的秒数推进 ---------- */
-type Live = { kind: 'video' | 'web'; startedAt: number; title: string; templateId: string; ask: string; attachments: QcAttachment[]; fromStage?: number };
+type Live = { kind: 'video' | 'web'; startedAt: number; title: string; templateId: string; ask: string; attachments: QcAttachment[]; fromStage?: number; targetSec?: number };
 const live = new Map<string, Live>();
 const publishTries = new Map<string, number>();
 /* 恢复：只重做没完成的部分。keep 是保留下来的幕（索引 → 状态），重做的幕按时间推进 */
@@ -51,6 +57,7 @@ function liveRun(id: string, l: Live): QcRun {
   const status = stage === 0 ? 'queued' : stage < 4 ? 'running' : 'done';
   const base: QcRun = {
     id, title: l.title, kind: l.kind, templateId: l.templateId, ask: l.ask, attachments: l.attachments, status,
+    ...(l.targetSec ? { targetSec: l.targetSec } : {}),
     stages: stagesAt(l.kind, stage, { progress }), elapsedSec: Math.round(t * SCALE), remainSec: status === 'done' ? undefined : Math.max(60, Math.round((total - t) * SCALE)),
     estimateBasis: '最近 20 次同模板任务的中位数', publish: { status: 'none' }, createdAt: '刚刚', updatedAt: '刚刚',
     queue: stage === 0 ? queueAt(3 - Math.floor(t / 3), Math.round(t * SCALE)) : undefined,
@@ -64,9 +71,13 @@ function liveRun(id: string, l: Live): QcRun {
   return { ...base, sections: stage >= 1 ? webSections : [], keyPoints: webKeyPoints };
 }
 
+/* 成片的可播放包：画面代码约 300 KB，配音按 128 kbps 每分钟约 1 MB；同样时长的 1080p 视频文件每分钟约 60 MB */
+const bundleOf = (run: QcRun) => ({ codeUrl: `/bundles/${run.id}/scenes.js`, audioUrl: `/bundles/${run.id}/voice.mp3`, timelineUrl: `/bundles/${run.id}/timeline.json`,
+  width: 1920, height: 1080, fps: 24, bytes: Math.round(300_000 + ((run.durationSec ?? 60) / 60) * 1_000_000) });
+
 function withPublish(run: QcRun): QcRun {
   const at = publishedAt.get(run.id);
-  const withMedia = run.kind === 'video' && run.status === 'done' ? { ...run, media: { url: filmUrl, mime: 'video/webm' } } : run;
+  const withMedia = run.kind === 'video' && run.status === 'done' ? { ...run, media: { url: filmUrl, mime: 'video/webm' }, bundle: bundleOf(run) } : run;
   return at ? { ...withMedia, publish: { status: 'done', siteId: `site-${run.id}`, siteTitle: run.title, at } } : withMedia;
 }
 
@@ -137,9 +148,15 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
   const scriptMatch = path.match(/\/brief\/([^/]+)\/script$/);
   if (scriptMatch && method === 'POST') {
     await new Promise(r => setTimeout(r, 160));
-    const v = briefScript(decodeURIComponent(scriptMatch[1]), body.context);
+    const v = briefScript(decodeURIComponent(scriptMatch[1]), body.context, body.adjust);
     return v ? ok(v) : fail('这次对话已失效，请重新开始', 'NOT_FOUND');
   }
+  if (path.endsWith('/estimate') && method === 'POST') {
+    const docs = [sampleDoc, ...attachmentQueue, ...createdAttachments.values()].filter(a => (body.attachmentIds ?? []).includes(a.id) && a.kind !== 'image' && a.status === 'ready');
+    return ok(estimate({ kind: body.kind, docs, duration: body.duration ?? 'auto' }));
+  }
+  const serverExport = path.match(/\/runs\/([^/]+)\/server-export$/);
+  if (serverExport && method === 'POST') return ok({ position: 2, etaMin: 12 });
   if (path.endsWith('/assets')) {
     /* 团队视图按时间混排（演示数据里同事的成品更新），我的视图只列自己的 */
     const mine = assets.filter(a => a.mine), others = assets.filter(a => !a.mine);
@@ -193,7 +210,9 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     seq += 1;
     const id = `run-live-${seq}`;
     const atts = [sampleDoc, ...attachmentQueue, ...createdAttachments.values()].filter(a => (body.attachmentIds ?? []).includes(a.id));
-    live.set(id, { kind: body.kind, startedAt: Date.now(), title: body.title || '未命名', templateId: body.templateId, ask: body.ask ?? '', attachments: atts.length || body.briefId ? atts : [sampleDoc] });
+    const usedAtts = atts.length || body.briefId ? atts : [sampleDoc];
+    const est = estimate({ kind: body.kind, docs: usedAtts.filter(a => a.kind !== 'image' && a.status === 'ready'), duration: body.duration ?? 'auto' });
+    live.set(id, { kind: body.kind, startedAt: Date.now(), title: body.title || '未命名', templateId: body.templateId, ask: body.ask ?? '', attachments: usedAtts, targetSec: est.targetSec });
     return ok(getRun(id));
   }
   const retry = path.match(/\/runs\/([^/]+)\/retry$/);

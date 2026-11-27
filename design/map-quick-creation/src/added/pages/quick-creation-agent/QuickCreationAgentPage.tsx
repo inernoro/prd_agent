@@ -15,7 +15,7 @@ import { Badge } from '@/components/design/Badge';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { PaneTabs, Segmented, WorkbenchLayout, WorkbenchPreview, fitComposerHeight, type WorkbenchPane } from '@/components/web-hosting/workbench/WorkbenchParts';
 import {
-  addKnowledgeAttachment, createQuickCreationRun, getQuickCreationRun, listQuickCreationAssets, listQuickCreationTemplates, listQuickCreationWorks, requestBriefScript, sendBriefMessage, updateBriefContext,
+  addKnowledgeAttachment, createQuickCreationRun, estimateQuickCreation, getQuickCreationRun, listQuickCreationAssets, listQuickCreationTemplates, listQuickCreationWorks, requestBriefScript, sendBriefMessage, updateBriefContext,
   addTextAttachment, publishQuickCreationRun, retryAttachmentRead, retryQuickCreationRun, uploadQuickCreationAttachment,
 } from '@/services/real/quickCreation';
 import { AttachmentTray, MaterialsPanel, SentAttachments } from './AttachmentTray';
@@ -25,9 +25,11 @@ import { ProgressPreview, VideoPlayer, WebPreview } from './ResultPanel';
 import { StyleLibrary, StylePickerChip } from './StyleLibrary';
 import { AssetLibrary } from './AssetLibrary';
 import { BriefConversation, BriefStrip } from './BriefChat';
+import { DurationOptions, durationShort, minutesLabel } from './Duration';
+import { BrowserExport } from './BrowserExport';
 import { WorksList } from './WorksList';
 import { MAX_ATTACHMENTS, formatChars, formatClock, summarizeAttachments } from './format';
-import type { AssetScope, BriefContext, OutputKind, QcAsset, QcAttachment, QcBriefSession, QcFailure, QcRun, QcTemplate, QcTemplateCategory, QcTemplateSource, QcWork } from './types';
+import type { AssetScope, BriefContext, DurationChoice, OutputKind, QcAsset, QcAttachment, QcBriefSession, QcEstimate, QcFailure, QcRun, QcTemplate, QcTemplateCategory, QcTemplateSource, QcWork } from './types';
 import './quickCreation.css';
 
 const OUTPUT_LABEL: Record<OutputKind, string> = { video: '视频', web: '网页' };
@@ -60,6 +62,9 @@ export function QuickCreationAgentPage() {
   const [attachments, setAttachments] = useState<QcAttachment[]>([]);
   const [ask, setAsk] = useState('');
   const [plusOpen, setPlusOpen] = useState(false);
+  /* 成片时长：默认自动，按内容估算；估算值由服务端给出 */
+  const [duration, setDuration] = useState<DurationChoice>('auto');
+  const [estimate, setEstimate] = useState<QcEstimate | null>(null);
   /* 语音输入复用正式实现的 useSpeechInput（浏览器语音识别）；不支持的浏览器不显示入口 */
   const speechBase = useRef('');
   const speech = useSpeechInput({
@@ -184,7 +189,7 @@ export function QuickCreationAgentPage() {
     setSubmitting(true);
     const res = await createQuickCreationRun({
       kind, templateId: template.id, ask: ask.trim(),
-      attachmentIds: attachments.filter(a => a.status === 'ready').map(a => a.id), title: draftTitle,
+      attachmentIds: attachments.filter(a => a.status === 'ready').map(a => a.id), title: draftTitle, ...(kind === 'video' ? { duration } : {}),
     });
     setSubmitting(false);
     if (!res.success) { toast.error('没有提交成功', `${res.error?.message || '请稍后重试'}，稿件仍在输入框里`); return; }
@@ -197,7 +202,16 @@ export function QuickCreationAgentPage() {
   const [revealId, setRevealId] = useState<string | null>(null);
   const [briefBusy, setBriefBusy] = useState(false);
   const readyIds = attachments.filter(a => a.status === 'ready').map(a => a.id);
-  const briefContext: BriefContext = { kind, templateId: template?.id, attachmentIds: readyIds };
+  const briefContext: BriefContext = { kind, templateId: template?.id, attachmentIds: readyIds, ...(kind === 'video' ? { duration } : {}) };
+  /* 时长预估：产出、资料或时长选择变了就重新估（新建时） */
+  const estimateKey = JSON.stringify({ kind, readyIds, duration });
+  useEffect(() => {
+    if (runId || kind !== 'video') { setEstimate(null); return; }
+    let stop = false;
+    const q = JSON.parse(estimateKey) as { kind: OutputKind; readyIds: string[]; duration: DurationChoice };
+    void estimateQuickCreation({ kind: q.kind, attachmentIds: q.readyIds, duration: q.duration }).then(res => { if (!stop && res.success) setEstimate(res.data); });
+    return () => { stop = true; };
+  }, [estimateKey, runId, kind]);
   const contextKey = JSON.stringify(briefContext);
   const briefId = briefSession?.id;
   /* 输入框里的选择（产出、风格、资料）变了，简报跟着更新；只在新建时 */
@@ -210,6 +224,9 @@ export function QuickCreationAgentPage() {
   /* 对话里选定了风格（例如说「第二个」），输入框里的风格按钮同步 */
   const briefStyle = briefSession?.styleId;
   useEffect(() => { if (briefStyle && briefStyle !== templateId) setTemplateId(briefStyle); }, [briefStyle]); // eslint-disable-line react-hooks/exhaustive-deps
+  /* 对话里定了时长（例如说「5 分钟」或点了「长一点」），输入框里的时长同步 */
+  const briefDuration = briefSession?.durationChoice;
+  useEffect(() => { if (briefDuration && briefDuration !== duration) setDuration(briefDuration); }, [briefDuration]); // eslint-disable-line react-hooks/exhaustive-deps
   const sendChat = async (text: string, styleOverride?: string) => {
     const t = text.trim();
     if (!t || briefBusy) return;
@@ -226,10 +243,10 @@ export function QuickCreationAgentPage() {
     setTemplateId(id);
     void sendChat(`就用「${templates.find(t => t.id === id)?.name ?? id}」`, id);
   };
-  const startBriefScript = async () => {
+  const startBriefScript = async (adjust?: 'shorter' | 'longer') => {
     if (!briefId || briefBusy) return;
     setBriefBusy(true);
-    const res = await requestBriefScript(briefId, briefContext);
+    const res = await requestBriefScript(briefId, briefContext, adjust);
     setBriefBusy(false);
     if (!res.success) { toast.error('分镜脚本没有出来', res.error?.message || '请稍后重试'); return; }
     setBriefSession(res.data);
@@ -241,7 +258,7 @@ export function QuickCreationAgentPage() {
     setBriefBusy(true);
     const res = await createQuickCreationRun({
       kind, templateId: template.id, ask: briefSession.brief.summary ?? ask.trim(), attachmentIds: readyIds,
-      title: briefSession.brief.title ?? draftTitle, briefId: briefSession.id, ...(script ? { script } : {}),
+      title: briefSession.brief.title ?? draftTitle, briefId: briefSession.id, ...(script ? { script } : {}), ...(kind === 'video' ? { duration } : {}),
     });
     setBriefBusy(false);
     if (!res.success) { toast.error('没有提交成功', `${res.error?.message || '请稍后重试'}，对话和简报都还在`); return; }
@@ -363,7 +380,7 @@ export function QuickCreationAgentPage() {
       {composeConversation}
       <BriefConversation session={briefSession} pendingText={pendingText} revealId={revealId} templates={templates} busy={briefBusy}
         onReply={t => void sendChat(t)} onUseStyle={pickRecommendedStyle} onStart={() => void startBriefScript()}
-        onSkipScript={() => void startFromBrief(false)} onConfirmScript={() => void startFromBrief(true)} />
+        onSkipScript={() => void startFromBrief(false)} onConfirmScript={() => void startFromBrief(true)} onAdjustScript={a => void startBriefScript(a)} />
       <div ref={conversationEnd} />
     </>
   );
@@ -377,6 +394,13 @@ export function QuickCreationAgentPage() {
       <Segmented<OutputKind> label="选择产出" value={kind} onChange={setKind}
         options={[{ value: 'video', label: '视频', title: '能播放的成片：配音、字幕与画面' }, { value: 'web', label: '网页', title: '能浏览的网页：桌面与手机都能读' }]} />
     </span>
+  );
+  const durationLabel = durationShort(duration, estimate);
+  const phonePanelHeader = (
+    <div className="flex flex-col gap-2">
+      <div className="md:hidden">{outputSwitch}</div>
+      {kind === 'video' && <DurationOptions compact value={duration} estimate={estimate} onChange={setDuration} />}
+    </div>
   );
   const composer = (
     <div>
@@ -422,9 +446,9 @@ export function QuickCreationAgentPage() {
           <button type="button" aria-label="从知识库选择" title="从知识库选择" data-qc="pick-knowledge" className="qc-icon-btn max-md:hidden" onClick={() => void addKnowledge('kb-picker')}><BookOpen size={16} /></button>
           {/* 产出与风格在输入框里决定：将来和其他输入集成时，这一组跟着输入框走，不依赖右栏 */}
           <div className="flex min-w-0 items-center gap-1.5 md:ml-1 md:border-l md:border-[var(--border-subtle)] md:pl-2">
-            <span className="max-md:hidden">{outputSwitch}</span>
+            <span className="shrink-0 max-md:hidden">{outputSwitch}</span>
             <StylePickerChip templates={templates} categories={categories} selected={template} onSelect={id => { setTemplateId(id); setPanel(null); }}
-              onBrowse={() => { setPanel(null); setPane('preview'); }} outputLabel={OUTPUT_LABEL[kind]} header={outputSwitch} />
+              onBrowse={() => { setPanel(null); setPane('preview'); }} outputLabel={OUTPUT_LABEL[kind]} durationLabel={kind === 'video' ? durationLabel.replace(/^约 /, '') : undefined} header={phonePanelHeader} />
           </div>
           <div className="ml-auto flex shrink-0 items-center gap-1">
             {speech.supported && (
@@ -451,7 +475,7 @@ export function QuickCreationAgentPage() {
   const agentStatus = !run ? null : run.status === 'queued' ? '已排队 · 后台进行' : run.status === 'running' ? '后台进行中 · 可以离开' : run.status === 'failed' ? '需要你处理' : '已完成';
   const runConversation = run && (
     <>
-      <UserTurn meta={<>{run.kind === 'video' ? <Video size={12} aria-hidden /> : <Globe size={12} aria-hidden />}{OUTPUT_LABEL[run.kind]} · {runTemplate?.name}</>}>
+      <UserTurn meta={<>{run.kind === 'video' ? <Video size={12} aria-hidden /> : <Globe size={12} aria-hidden />}{OUTPUT_LABEL[run.kind]}{run.targetSec ? <span data-qc="run-target"> · 约 {minutesLabel(run.targetSec)}</span> : null} · {runTemplate?.name}</>}>
         <p className="m-0 px-1 text-[14px] leading-6 text-token-primary">{run.ask || '没有补充要求，按模板默认节奏生成'}</p>
         {run.attachments.some(x => x.status === 'ready')
           ? <SentAttachments items={run.attachments} onOpenAll={() => openReview()} onOpen={id => openReview(id)} />
@@ -471,7 +495,7 @@ export function QuickCreationAgentPage() {
               <div className="min-w-0 flex-1">
                 <div className="text-[15px] font-semibold text-token-primary">{run.kind === 'video' ? '成片已生成' : '网页已生成'}</div>
                 <div className="mt-0.5 text-[12.5px] leading-5 text-token-secondary">
-                  {run.kind === 'video' ? `${formatClock(run.durationSec ?? 0)} · ${run.scenes?.length ?? 0} 幕 · 1080p` : `${run.sections?.length ?? 0} 节 · 适配手机`}，右边可以直接{run.kind === 'video' ? '播放' : '浏览'}。
+                  {run.kind === 'video' ? `${formatClock(run.durationSec ?? 0)}${run.targetSec ? `（目标约 ${minutesLabel(run.targetSec)}）` : ''} · ${run.scenes?.length ?? 0} 幕 · 1080p` : `${run.sections?.length ?? 0} 节 · 适配手机`}，右边可以直接{run.kind === 'video' ? '播放' : '浏览'}。
                 </div>
               </div>
             </div>
@@ -479,7 +503,7 @@ export function QuickCreationAgentPage() {
               {run.publish.status === 'none' && (
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
                   <Button variant="primary" className="max-md:min-h-11" onClick={() => void onPublish()} data-qc="publish"><Globe size={14} />发布到网页托管</Button>
-                  <span className="text-[12px] text-token-muted">发布后得到可分享的链接</span>
+                  <span className="text-[12px] text-token-muted">{run.bundle ? `发布的是能播放的网页（约 ${Math.max(1, Math.round(run.bundle.bytes / 1_000_000))} MB），不传视频文件` : '发布后得到可分享的链接'}</span>
                 </div>
               )}
               {run.publish.status === 'publishing' && <div className="flex h-9 items-center gap-2 text-[12.5px] text-token-secondary"><MapSpinner size={13} />正在上传到网页托管…</div>}
@@ -502,6 +526,7 @@ export function QuickCreationAgentPage() {
                 </div>
               )}
             </div>
+            <BrowserExport run={run} />
           </section>
         )}
       </AgentTurn>
