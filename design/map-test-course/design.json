@@ -899,7 +899,7 @@
             "action": "expect",
             "selector": "[data-lc=media-video]",
             "check": "enabled",
-            "equals": "false"
+            "equals": false
           },
           {
             "action": "expect",
