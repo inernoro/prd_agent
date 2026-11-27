@@ -33,6 +33,15 @@ using Serilog;
 using Serilog.Events;
 using Microsoft.Extensions.Configuration;
 
+if (args is ["--verify-quick-creation-resources"])
+{
+    var templates = QuickCreationCatalog.Get().Items;
+    foreach (var template in templates)
+        QuickCreationCatalog.ReadGuide(template);
+    Console.WriteLine($"快捷创作风格说明校验通过：{templates.Count} 份");
+    return;
+}
+
 var builder = WebApplication.CreateBuilder(args);
 
 // MongoDB BSON 映射注册：

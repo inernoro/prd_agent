@@ -3,6 +3,7 @@ import type { ToolboxItem } from '@/services';
 import { useToolboxStore, NEW_BADGE_WINDOW_MS } from '@/stores/toolboxStore';
 import { useNavigate } from 'react-router-dom';
 import { DesktopDownloadDialog } from '@/components/ui/DesktopDownloadDialog';
+import { Badge } from '@/components/design/Badge';
 import { useAuthStore } from '@/stores/authStore';
 import { toast } from '@/lib/toast';
 import { systemDialog } from '@/lib/systemDialog';
@@ -448,7 +449,10 @@ export function ToolCard({ item, source = 'mine', displayMode = 'compact' }: Too
         </div>
 
         <div className="toolbox-gallery-caption relative z-10 min-w-0">
-          <div className="toolbox-gallery-name" title={item.name}>{item.name}</div>
+          <div className="flex min-w-0 items-center gap-1.5">
+            <div className="toolbox-gallery-name" title={item.name}>{item.name}</div>
+            {isBuiltin && item.wip && <Badge variant="warning" size="sm" className="shrink-0">开发中</Badge>}
+          </div>
           <p className="toolbox-gallery-description" title={item.description}>
             {getAgentCardTask(item.agentKey) ?? item.description}
           </p>
