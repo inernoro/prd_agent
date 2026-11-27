@@ -80,3 +80,49 @@
   .qc-icon-btn { width: 44px; height: 44px; }
 }
 }
+
+/* ---------- 质感：点按区域和画出来的大小分开 ----------
+ * 手机上 44px 是手指的点按区域，不是按钮该画多大。直接把按钮画成 44px 高、13px 字，
+ * 字只占三成高度，看起来肥、像塑料。这里按钮元素仍是 44px（真实点按区域），
+ * 只在中间画一块 32px 的面；桌面上元素本身就是那块面。
+ * 放在 @layer 之外：需要压过 Button 组件自带的底色与 50% 透明的禁用态。 */
+.qc-face {
+  /* 定位交给工具类（relative / absolute），这里写了会压过 absolute */
+  isolation: isolate;
+  height: var(--qc-face-h, 32px);
+  border-radius: var(--qc-face-r, 999px);
+  background: var(--qc-face-bg, transparent);
+  box-shadow: var(--qc-face-ring, none);
+  border: 0;
+}
+.qc-face-chip { --qc-face-h: 30px; --qc-face-bg: var(--bg-input); --qc-face-ring: inset 0 0 0 1px var(--border-default); }
+.qc-face-chip:hover:not(:disabled) { --qc-face-bg: var(--bg-tertiary); }
+.qc-face-send { --qc-face-h: 32px; --qc-face-r: 999px; width: 32px; --qc-face-bg: var(--button-primary-bg); color: var(--button-primary-fg); }
+.qc-face-send:disabled { --qc-face-bg: var(--bg-tertiary); color: var(--text-muted); cursor: not-allowed; }
+.map-btn.qc-face-primary { --qc-face-h: 32px; --qc-face-r: 10px; --qc-face-bg: var(--button-primary-bg); color: var(--button-primary-fg); background: var(--qc-face-bg); box-shadow: none; }
+.map-btn.qc-face-primary:hover:not(:disabled) { --qc-face-bg: var(--button-primary-bg-hover); }
+/* 禁用不用半透明：主色打五折会变成一块发灰的塑料色，改成实心的中性底 */
+.map-btn.qc-face-primary:disabled { --qc-face-bg: var(--bg-tertiary); color: var(--text-muted); opacity: 1; }
+.map-btn.qc-face-secondary { --qc-face-h: 32px; --qc-face-r: 10px; --qc-face-bg: var(--bg-input); --qc-face-ring: inset 0 0 0 1px var(--border-default); background: var(--qc-face-bg); box-shadow: var(--qc-face-ring); }
+.map-btn.qc-face-secondary:hover:not(:disabled) { --qc-face-bg: var(--bg-tertiary); }
+.map-btn.qc-face-secondary:disabled { color: var(--text-muted); opacity: 1; }
+@media (max-width: 767px) {
+  .qc-face { height: auto; min-height: 44px; background: transparent; box-shadow: none; }
+  .map-btn.qc-face-primary, .map-btn.qc-face-secondary { background: transparent; box-shadow: none; }
+  .qc-face::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 50%;
+    height: var(--qc-face-h, 32px);
+    transform: translateY(-50%);
+    border-radius: var(--qc-face-r, 999px);
+    background: var(--qc-face-bg, transparent);
+    box-shadow: var(--qc-face-ring, none);
+    transition: background-color .15s;
+    z-index: -1;
+  }
+  .qc-face-send { width: 44px; }
+  .qc-face-send::before { left: 6px; right: 6px; }
+}

@@ -6,7 +6,7 @@
  * 只有最新一条助手消息的按钮可点，旧消息里的选项收起，避免点到过时的选择。
  */
 import { useEffect, useRef, useState } from 'react';
-import { Check, Circle, Clapperboard, Play, Sparkles } from 'lucide-react';
+import { ArrowRight, Check, Circle, Clapperboard, Play, Sparkles } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { Button } from '@/components/design/Button';
 import { MapSpinner } from '@/components/ui/VideoLoader';
@@ -29,8 +29,8 @@ export function BriefStrip({ brief }: { brief: QcBrief }) {
       </span>
       {brief.fields.map(f => (
         <span key={f.key} data-brief-field={f.key} data-filled={f.value ? 'true' : 'false'} title={f.value ? `${f.label}：${f.value}` : `${f.label}：待补`}
-          className={cn('inline-flex h-6 max-w-[200px] shrink-0 items-center gap-1 rounded-md border px-1.5',
-            f.value ? 'border-token-subtle bg-[var(--bg-card)]' : f.required ? 'border-dashed border-[var(--border-default)]' : 'border-dashed border-token-subtle')}>
+          className={cn('inline-flex h-6 max-w-[200px] shrink-0 items-center gap-1 rounded-md',
+            f.value ? 'px-0.5' : f.required ? 'border border-dashed border-[var(--border-default)] px-1.5' : 'px-0.5')}>
           {f.value ? <Check size={11} className="shrink-0 text-[color:var(--accent-fg-success)]" aria-hidden /> : <Circle size={11} className="shrink-0 text-token-muted" aria-hidden />}
           <span className="shrink-0 text-token-muted">{f.label}</span>
           <span className={cn('min-w-0 truncate', f.value ? 'text-token-primary' : 'text-token-muted')}>{f.value ?? (f.required ? '待补' : '可选')}</span>
@@ -80,7 +80,7 @@ function AgentMessage({ m, latest, revealing, templates, session, busy, onReply,
         <div className="flex flex-wrap gap-1.5" aria-label="可以直接点的回答">
           {m.quickReplies.map(q => (
             <button key={q} type="button" data-qc="quick-reply" data-value={q} disabled={!active} onClick={() => onReply(q)}
-              className="inline-flex h-8 items-center rounded-full border border-[var(--border-default)] bg-[var(--bg-input)] px-3 text-[12.5px] text-token-primary hover-bg-soft disabled:opacity-50 max-md:h-11">
+              className="qc-face qc-face-chip relative inline-flex items-center px-3 text-[12.5px] text-token-primary disabled:opacity-50">
               {q}
             </button>
           ))}
@@ -95,14 +95,16 @@ function AgentMessage({ m, latest, revealing, templates, session, busy, onReply,
             return (
               <div key={r.templateId} data-qc="rec-style" data-style={r.templateId}
                 className={cn('flex flex-col overflow-hidden rounded-[12px] border bg-[var(--bg-input)] max-sm:flex-row', chosen ? 'border-[color:var(--accent-primary)] shadow-[0_0_0_1px_var(--accent-primary)]' : 'border-token-subtle')}>
-                <div className="max-sm:w-32 max-sm:shrink-0 max-sm:self-center"><StyleFrame template={{ ...st, frame: undefined }} /></div>
+                <div className="max-sm:w-28 max-sm:shrink-0 max-sm:self-stretch max-sm:[&>div]:!aspect-auto max-sm:[&>div]:!h-full"><StyleFrame template={{ ...st, frame: undefined }} /></div>
                 <div className="flex min-w-0 flex-1 flex-col gap-1 p-2.5">
                   <div className="flex items-center gap-1.5 text-[13px] font-medium text-token-primary"><span className="tabular-nums text-token-muted">{i + 1}</span>{st.name}</div>
                   <p className="m-0 flex-1 text-[12px] leading-[18px] text-token-secondary">{r.reason}</p>
                   {latest && (
-                    <Button size="xs" variant={chosen ? 'ghost' : 'secondary'} className="mt-1 self-start max-md:min-h-11" data-qc="rec-use" disabled={!active || chosen} onClick={() => onUseStyle(st.id)}>
-                      {chosen ? <><Check size={12} />已选</> : '用这个'}
-                    </Button>
+                    <button type="button" data-qc="rec-use" disabled={!active || chosen} onClick={() => onUseStyle(st.id)}
+                      className="-ml-1 mt-0.5 inline-flex h-7 items-center gap-1 self-start rounded-md px-1 text-[12.5px] font-medium text-[color:var(--accent-primary)] hover:underline disabled:cursor-default disabled:no-underline max-md:h-11 [&:disabled:not([data-chosen])]:opacity-50"
+                      data-chosen={chosen ? '' : undefined}>
+                      {chosen ? <><Check size={13} aria-hidden />已选这个</> : <>用这个风格<ArrowRight size={13} aria-hidden /></>}
+                    </button>
                   )}
                 </div>
               </div>
@@ -115,7 +117,7 @@ function AgentMessage({ m, latest, revealing, templates, session, busy, onReply,
           <div className="flex items-center gap-2 text-[14px] font-semibold text-token-primary"><Sparkles size={15} className="text-[color:var(--accent-primary)]" aria-hidden />准备好了</div>
           {session.brief.summary && <p className="m-0 mt-1.5 whitespace-pre-line text-[12.5px] leading-5 text-token-secondary">{session.brief.summary}</p>}
           <div className="mt-3 flex flex-wrap items-center gap-2">
-            <Button variant="primary" className="max-md:min-h-11" data-qc="brief-start" disabled={!active} onClick={onStart}><Play size={14} />开始生成（约 30–60 分钟）</Button>
+            <Button variant="primary" className="qc-face qc-face-primary relative px-3.5" data-qc="brief-start" disabled={!active} onClick={onStart}><Play size={14} />开始生成（约 30–60 分钟）</Button>
             <Button variant="ghost" size="sm" className="max-md:min-h-11" data-qc="brief-skip-script" disabled={!active} onClick={onSkipScript}>跳过脚本，直接开始</Button>
           </div>
           <p className="m-0 mt-2 text-[11.5px] text-token-muted">点「开始生成」会先花一两分钟出分镜脚本给你确认，再正式排队。</p>
@@ -139,7 +141,7 @@ function AgentMessage({ m, latest, revealing, templates, session, busy, onReply,
           </ol>
           {latest && (
             <div className="flex flex-wrap items-center gap-2 border-t border-token-subtle bg-[var(--bg-secondary)] px-3.5 py-2.5">
-              <Button variant="primary" className="max-md:min-h-11" data-qc="script-confirm" disabled={!active} onClick={onConfirmScript}><Play size={14} />按这个脚本开始生成</Button>
+              <Button variant="primary" className="qc-face qc-face-primary relative px-3.5" data-qc="script-confirm" disabled={!active} onClick={onConfirmScript}><Play size={14} />按这个脚本开始生成</Button>
               <span className="text-[12px] text-token-muted">想改哪一幕，直接在下面说，例如「第 3 幕换成客户案例」</span>
             </div>
           )}

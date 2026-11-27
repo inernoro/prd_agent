@@ -363,7 +363,7 @@ export function QuickCreationAgentPage() {
           placeholder="说说想做什么；不知道选什么风格也可以直接问"
           className="block w-full resize-none overflow-y-auto bg-transparent pb-1 pl-3.5 pr-12 pt-3 text-base leading-relaxed text-token-primary outline-none placeholder:text-token-muted sm:text-[14px]" />
             <button type="button" data-qc="send" aria-label="发给快速创作" title="发给快速创作（Enter）" disabled={!ask.trim() || briefBusy} onClick={() => void sendChat(ask)}
-              className="absolute bottom-1 right-2 inline-flex h-8 w-8 items-center justify-center rounded-[9px] border border-[var(--border-default)] text-token-primary hover-bg-soft disabled:cursor-not-allowed disabled:opacity-40 max-md:h-11 max-md:w-11">
+              className="qc-face qc-face-send absolute bottom-1.5 right-2 inline-flex items-center justify-center max-md:bottom-0 max-md:right-1">
               {briefBusy ? <MapSpinner size={13} /> : <ArrowUp size={16} strokeWidth={2.4} />}
             </button>
         </div>
@@ -386,7 +386,7 @@ export function QuickCreationAgentPage() {
           <div className="ml-auto flex shrink-0 items-center gap-1.5">
 
             {/* 对话里出现「准备好了」卡后，开工由卡片的主按钮负责，这里降为次要，保持一屏一个主动作 */}
-            <Button variant={hasBriefCard ? 'secondary' : 'primary'} size="sm" className="shrink-0 max-md:min-h-11" disabled={!!blockReason || submitting} onClick={() => void submit()} data-qc="submit">
+            <Button variant={hasBriefCard ? 'secondary' : 'primary'} size="sm" className={`qc-face relative shrink-0 ${hasBriefCard ? 'qc-face-secondary' : 'qc-face-primary'}`} disabled={!!blockReason || submitting} onClick={() => void submit()} data-qc="submit">
               {submitting ? <MapSpinner size={13} /> : <Send size={13} />}快捷生成
             </Button>
           </div>
