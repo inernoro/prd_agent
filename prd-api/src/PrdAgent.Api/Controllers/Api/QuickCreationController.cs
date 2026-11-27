@@ -466,7 +466,10 @@ public sealed partial class DesignArtifactsController
             & Builders<DesignArtifactRun>.Filter.Where(row => row.Id != run.Id && row.BrowserFilmExport != null
                 && (row.BrowserFilmExport.Status == "running" || (row.BrowserFilmExport.Status == "queued"
                     && row.BrowserFilmExport.QueuedAt < queuedAt.Value))), cancellationToken: ct) : 0;
-        return Ok(ApiResponse<object>.Ok(new { status = export?.Status ?? "none", ahead, error = export?.Error,
+        var seconds = run.QuickCreationMedia?.DurationSec ?? 0;
+        var estimatedMinutes = export?.Status == "queued" && seconds > 0
+            ? (int)Math.Ceiling((Math.Min(ahead, 100) + 1) * Math.Max(60, seconds * 2) / 60) : (int?)null;
+        return Ok(ApiResponse<object>.Ok(new { status = export?.Status ?? "none", ahead, estimatedMinutes, error = export?.Error,
             downloadAvailable = export?.Status == "done" && !string.IsNullOrWhiteSpace(export.AssetKey) }));
     }
 

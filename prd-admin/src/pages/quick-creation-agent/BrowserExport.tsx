@@ -33,6 +33,7 @@ export function BrowserFilmPlayer({ run }: { run: QcRun }) {
 function CloudExport({ run }: { run: QcRun }) {
   const [state, setState] = useState<'none' | 'queued' | 'running' | 'failed' | 'done'>('none');
   const [ahead, setAhead] = useState(0);
+  const [estimatedMinutes, setEstimatedMinutes] = useState<number>();
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
   const active = state === 'queued' || state === 'running';
@@ -43,7 +44,7 @@ function CloudExport({ run }: { run: QcRun }) {
       const response = await getCloudFilmExport(run.id, controller.signal);
       if (controller.signal.aborted) return;
       if (response.success) {
-        setState(response.data.status); setAhead(response.data.ahead); setError(response.data.error);
+        setState(response.data.status); setAhead(response.data.ahead); setEstimatedMinutes(response.data.estimatedMinutes); setError(response.data.error);
         if (response.data.status === 'queued' || response.data.status === 'running') timer = window.setTimeout(poll, 3000);
       } else if (active) timer = window.setTimeout(poll, 4000);
     };
@@ -53,7 +54,7 @@ function CloudExport({ run }: { run: QcRun }) {
   const queue = async () => {
     setBusy(true);
     const response = await queueCloudFilmExport(run.id).finally(() => setBusy(false));
-    if (response.success) { setState(response.data.status); setAhead(response.data.ahead); setError(response.data.error); }
+    if (response.success) { setState(response.data.status); setAhead(response.data.ahead); setEstimatedMinutes(response.data.estimatedMinutes); setError(response.data.error); }
     else setError(response.error?.message ?? '暂时没有排进去，可以再试');
   };
   const download = async () => {
@@ -69,7 +70,7 @@ function CloudExport({ run }: { run: QcRun }) {
   };
   return <div className="space-y-2" data-qc="cloud-export" data-state={state}>
     {active ? <p className="m-0 text-xs text-token-secondary" role="status">
-      {state === 'queued' ? `已交给服务器导出，前面还有 ${ahead} 个。可以稍后回来查看。` : '服务器正在合成，可以稍后回来下载。'}
+      {state === 'queued' ? `已交给服务器导出，前面还有 ${ahead} 个${estimatedMinutes ? `，预计约 ${estimatedMinutes} 分钟后可以下载` : }。` : '服务器正在合成，可以稍后回来下载。'}
     </p> : <Button size="sm" variant="secondary" disabled={busy} onClick={() => void (state === 'done' ? download() : queue())}>
       {state === 'done' ? '下载云端导出的 MP4' : state === 'failed' ? '重试服务器导出' : '请服务器导出'}
     </Button>}

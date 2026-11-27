@@ -44,7 +44,7 @@ export async function readQuickCreationBundle(runId: string) {
   return await result.blob.text().then(text => JSON.parse(text) as QcPlayBundle);
 }
 
-type CloudFilmExport = { status: 'none' | 'queued' | 'running' | 'failed' | 'done'; ahead: number; error?: string; downloadAvailable: boolean };
+type CloudFilmExport = { status: 'none' | 'queued' | 'running' | 'failed' | 'done'; ahead: number; estimatedMinutes?: number; error?: string; downloadAvailable: boolean };
 
 export function getCloudFilmExport(runId: string, signal?: AbortSignal) {
   return apiRequest<CloudFilmExport>(`${base}/runs/${encodeURIComponent(runId)}/export`, { signal });
