@@ -292,24 +292,29 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/qc-speech-audit"
           "$RUNNER_TEMP/qc-speech-audit/bin/pip" install --disable-pip-version-check faster-whisper==1.1.0 huggingface-hub==0.28.1 requests==2.32.5
           "$RUNNER_TEMP/qc-speech-audit/bin/python" - <<'PY'
-          import json, os, subprocess
+          import json, os
+          from itertools import chain
           from pathlib import Path
+          import av
           import numpy as np
           from faster_whisper import WhisperModel
 
           runner = Path(os.environ["RUNNER_TEMP"])
           model = WhisperModel("small", device="cpu", compute_type="int8", cpu_threads=2)
-          audio = subprocess.run(["ffmpeg", "-v", "error", "-i", str(runner / "existing-v6-film.mp4"),
-                                  "-vn", "-ac", "1", "-ar", "16000", "-f", "f32le", "pipe:1"],
-                                 capture_output=True, check=True, timeout=30).stdout
-          segments, info = model.transcribe(np.frombuffer(audio, dtype="<f4"), language="zh", word_timestamps=True)
+          resampler = av.AudioResampler(format="fltp", layout="mono", rate=16000)
+          with av.open(str(runner / "existing-v6-film.mp4"), mode="r") as media:
+              stream = media.streams.audio[0]
+              start = float((stream.start_time or 0) * stream.time_base)
+              samples = [frame.to_ndarray().reshape(-1)
+                         for source in chain(media.decode(audio=0), [None]) for frame in resampler.resample(source)]
+          segments, info = model.transcribe(np.concatenate(samples), language="zh", word_timestamps=True)
           result = [{"fromSec": segment.start, "toSec": segment.end, "text": segment.text.strip(),
                      "words": [{"fromSec": word.start, "toSec": word.end, "text": word.word} for word in segment.words or []]}
                     for segment in segments if segment.text.strip()]
           if not result:
               raise SystemExit("No intelligible narration was detected")
           (runner / "dsn-1400e277-evidence" / "speech-audit.json").write_text(
-              json.dumps({"language": info.language, "durationSec": info.duration, "segments": result}, ensure_ascii=False, indent=2),
+              json.dumps({"language": info.language, "durationSec": info.duration, "audioStartSec": start, "segments": result}, ensure_ascii=False, indent=2),
               encoding="utf-8",
           )
           (runner / "existing-v6-film.mp4").unlink()
