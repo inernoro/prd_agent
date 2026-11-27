@@ -290,7 +290,7 @@ jobs:
         timeout-minutes: 10
         run: |
           python3 -m venv "$RUNNER_TEMP/qc-speech-audit"
-          "$RUNNER_TEMP/qc-speech-audit/bin/pip" install --disable-pip-version-check faster-whisper==1.1.0
+          "$RUNNER_TEMP/qc-speech-audit/bin/pip" install --disable-pip-version-check faster-whisper==1.1.0 huggingface-hub==0.28.1 requests==2.32.5
           "$RUNNER_TEMP/qc-speech-audit/bin/python" - <<'PY'
           import json, os
           from pathlib import Path
