@@ -85,7 +85,7 @@
     "cds/tests/test_verify_selfheal.py": "c7ea5a0ac11a2d6bbf35fc435029475fc778b31fb4e844dcc2cdc714140c3acc",
     "cds/tests/test_web_entry_contract.py": "f08f361478b6e3232d73090c1edc7616bd34df0823b88958852741374c203636",
     "cds-design/SKILL.md": "dc905a44ecf3adf84b3a9f9ff2590dffe7228cb628296be2623b1c7259c2004c",
-    "cds-build/SKILL.md": "4ab2eca79cf6ae289804fe00283623561e282b41aacad88ff2298fadd36601b9",
+    "cds-build/SKILL.md": "8424cd4ec12e232406c12ea0478b16b37532878ebd700fd4bf418aa9ebc48958",
     "cds-project-scan/reference/cds-pending-import.md": "a071bae76e9bf6ed792af2b0697fad19f62544b38062dce864db8f4ede054cda",
     "cds-project-scan/reference/infra-init.md": "367af0506e5f8418d37cc9483602f6bc34747ed84cba4e6d11f49be1b7b31015",
     "cds-project-scan/reference/tech-detection.md": "20d88a38a278bc65dd2f7f8c9e09e2a5e39e5ef33584af585980249604df7a64",
@@ -95,5 +95,5 @@
     "cds-release/SKILL.md": "7a80c34792d75c327d360f5c84963de33b78e43b818465cfbe6213db6b70ee90",
     "preview-url/SKILL.md": "cba546b198bc1e0bad384d447078663d0e6906f1d080722dd29db7b14a33f65b"
   },
-  "generatedAt": "2026-11-26T21:58:01.674Z"
+  "generatedAt": "2026-11-27T20:17:58.424Z"
 }

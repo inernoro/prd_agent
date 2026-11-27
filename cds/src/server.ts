@@ -84,7 +84,7 @@ import { FileProjectRevisionStore, MongoProjectRevisionStore, type ProjectRevisi
 import { EngineeringPlanningService, FileEngineeringPlanningStore, MongoEngineeringPlanningStore } from './services/engineering-planning.js';
 import type { EngineeringPlanningStore } from './services/engineering-planning-store.js';
 import { startPlanningSweep } from './services/engineering-planning-sweep.js';
-import { createPlanningGithubObserver, createPlanningPreviewResolver } from './services/engineering-planning-pull-requests.js';
+import { createPlanningGithubObserver, createPlanningPreviewResolver, parseGitHubPreviewPullRequest } from './services/engineering-planning-pull-requests.js';
 import { createPlanningFileAnchorProbe } from './services/engineering-planning-file-anchors.js';
 import { dtsManagedFreeBytes } from './services/dts-capacity.js';
 import { createDtsRouter } from './routes/dts.js';
@@ -116,7 +116,7 @@ import { createReleasesRouter } from './routes/releases.js';
 import { createReleaseGovernanceRouter } from './routes/release-governance.js';
 import { ReleaseGovernanceService } from './services/release-governance.js';
 import { ReleaseGovernanceGit, governanceGitRunner, resolveReleaseProjectRepository } from './services/release-governance-git.js';
-import { releaseMergeBackReader } from './services/release-merge-back.js';
+import { githubPullRequestReader, releaseMergeBackReader } from './services/release-merge-back.js';
 import { ReleaseTargetHistoryStore } from './services/release-target-history.js';
 import { isDrainBlockedPath, selfUpdateDrainBlockReason } from './services/deploy-drain.js';
 import { createCdsSystemConnectionsRouter } from './routes/cds-system-connections.js';
@@ -5995,6 +5995,8 @@ export function createServer(deps: ServerDeps): express.Express {
   const planning = new EngineeringPlanningService(planningStore, undefined, {
     repositoryFor: (projectId) => deps.stateService.getProject(projectId)?.githubRepoFullName,
     previewFor: createPlanningPreviewResolver(deps.stateService, deps.config),
+    readPreviewPullRequest: githubPullRequestReader(deps.stateService, githubAppClient, fetch, deps.serverEventLogStore,
+      'planning-pr-preview', parseGitHubPreviewPullRequest),
     defaultBranchFor: (projectId) => deps.stateService.getDefaultBranchFor(projectId),
     fileAnchorProbe: createPlanningFileAnchorProbe(projectId => {
       const project = deps.stateService.getProject(projectId);
@@ -6090,7 +6092,7 @@ export function createServer(deps: ServerDeps): express.Express {
       return root ? readDesignSourceZip(root, commit, sourcePath) : Promise.resolve(undefined);
     },
     resolvePreview: async (projectId, pullRequest, commit) => {
-      const preview = await planning.pullRequestPreview(projectId, pullRequest);
+      const preview = await planning.pullRequestPreview(projectId, pullRequest, commit);
       return preview?.status === 'ready' && preview.url && preview.commit && (!commit || preview.commit === commit)
         ? { commit: preview.commit, url: preview.url } : undefined;
     },

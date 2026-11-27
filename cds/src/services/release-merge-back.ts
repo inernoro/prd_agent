@@ -5,23 +5,27 @@ import { createExternalResponseAudit } from './standby-response-audit.js';
 import type { ServerEventLogSink } from './server-event-log-store.js';
 import { FULL_SHA } from './release-governance-git.js';
 
-export function releaseMergeBackReader(state: StateService,
-  app?: Pick<GitHubAppClient, 'getInstallationToken'>, fetchImpl: typeof fetch = fetch, sink?: ServerEventLogSink | null): MergeBackReader {
-  return async (projectId, number) => {
+export function githubPullRequestReader<T>(state: StateService,
+  app: Pick<GitHubAppClient, 'getInstallationToken'> | undefined, fetchImpl: typeof fetch, sink: ServerEventLogSink | null | undefined,
+  purpose: 'release-merge-back' | 'planning-pr-preview', parse: (json: unknown, repository: string, number: number) => T | undefined) {
+  return async (projectId: string, number: number): Promise<T> => {
     const project = state.getProject(projectId), repository = project?.githubRepoFullName;
-    if (!repository || !/^[\w.-]+\/[\w.-]+$/.test(repository) || !project.githubInstallationId || !app) {
+    if (!repository || !/^[\w.-]+\/[\w.-]+$/.test(repository) || !project.githubInstallationId || !app
+      || !Number.isSafeInteger(number) || number < 1) {
       throw new Error('项目尚未接入 GitHub PR 读取权限，请先完成仓库授权');
     }
     const url = `https://api.github.com/repos/${repository}/pulls/${number}`;
     const audit = createExternalResponseAudit(sink, {
-      projectId, remoteProjectId: `${repository}#${number}`, policy: 'release-merge-back', dryRun: true,
-    }, { source: 'release-merge-back', action: 'release.merge-back.response', message: '发布回并 PR 响应核验' });
+      projectId, remoteProjectId: `${repository}#${number}`, policy: purpose, dryRun: true,
+    }, purpose === 'release-merge-back'
+      ? { source: purpose, action: 'release.merge-back.response', message: '发布回并 PR 响应核验' }
+      : { source: purpose, action: 'planning.pr-preview.response', message: '工程规划 PR 预览响应核验' });
     try {
       audit.assertAvailable();
       const started = Date.now();
       let token = '', response: Response | undefined, text: string | undefined, json: unknown;
       let parseState = 'no-response', localDecision = 'token-unavailable';
-      let result: Awaited<ReturnType<MergeBackReader>> | undefined;
+      let result: T | undefined;
       try {
         token = await app.getInstallationToken(project.githubInstallationId);
         localDecision = 'no-response';
@@ -35,18 +39,8 @@ export function releaseMergeBackReader(state: StateService,
         try { json = JSON.parse(text); parseState = 'json'; } catch { /* Persist the failed parse before normalization. */ }
         if (!response.ok) localDecision = response.status === 403 ? 'http-forbidden' : response.status === 429 ? 'rate-limited' : 'http-error';
         else if (parseState === 'json') {
-          const pr = json as { number?: number; state?: string; merged_at?: string; merge_commit_sha?: string;
-            head?: { sha: string }; base?: { ref: string; repo?: { full_name: string } } } | null;
-          localDecision = 'invalid-pr-identity';
-          if (pr?.number === number && pr.base?.repo?.full_name?.toLowerCase() === repository.toLowerCase()
-            && pr.head?.sha && FULL_SHA.test(pr.head.sha) && ['open','closed'].includes(pr.state || '')) {
-            result = { repository, number, url: `https://github.com/${repository}/pull/${number}`,
-              state: pr.merged_at ? 'merged' : pr.state as 'open' | 'closed', headSha: pr.head.sha,
-              baseRef: pr.base.ref, mergedAt: pr.merged_at || undefined,
-              mergeCommitSha: pr.merge_commit_sha && FULL_SHA.test(pr.merge_commit_sha) ? pr.merge_commit_sha : undefined,
-              checkedAt: new Date().toISOString() };
-            localDecision = 'success';
-          }
+          result = parse(json, repository, number);
+          localDecision = result ? 'success' : 'invalid-pr-identity';
         }
       } catch { /* No raw credential-bearing exceptions enter the audit or user error. */ }
       await audit.record({ peerId: 'github', url, method: 'GET', startedAt: new Date(started).toISOString(),
@@ -56,6 +50,25 @@ export function releaseMergeBackReader(state: StateService,
         text, json, parseState, localDecision, secrets: token ? [token] : [] });
       if (!result) throw new Error();
       return result;
-    } catch { throw new Error('GitHub PR 状态暂未核实，请检查项目仓库权限后重试；未判定为已回并'); }
+    } catch {
+      throw new Error(purpose === 'release-merge-back'
+        ? 'GitHub PR 状态暂未核实，请检查项目仓库权限后重试；未判定为已回并'
+        : 'GitHub PR 状态暂未核实，请检查项目仓库权限后重试');
+    }
   };
+}
+
+export function releaseMergeBackReader(state: StateService,
+  app?: Pick<GitHubAppClient, 'getInstallationToken'>, fetchImpl: typeof fetch = fetch, sink?: ServerEventLogSink | null): MergeBackReader {
+  return githubPullRequestReader<Awaited<ReturnType<MergeBackReader>>>(state, app, fetchImpl, sink, 'release-merge-back', (json, repository, number) => {
+    const pr = json as { number?: number; state?: string; merged_at?: string; merge_commit_sha?: string;
+      head?: { sha: string }; base?: { ref: string; repo?: { full_name: string } } } | null;
+    if (pr?.number !== number || pr.base?.repo?.full_name?.toLowerCase() !== repository.toLowerCase()
+      || !pr.head?.sha || !FULL_SHA.test(pr.head.sha) || !['open','closed'].includes(pr.state || '')) return undefined;
+    return { repository, number, url: `https://github.com/${repository}/pull/${number}`,
+      state: pr.merged_at ? 'merged' : pr.state as 'open' | 'closed', headSha: pr.head.sha,
+      baseRef: pr.base.ref, mergedAt: pr.merged_at || undefined,
+      mergeCommitSha: pr.merge_commit_sha && FULL_SHA.test(pr.merge_commit_sha) ? pr.merge_commit_sha : undefined,
+      checkedAt: new Date().toISOString() };
+  });
 }
