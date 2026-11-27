@@ -1951,14 +1951,15 @@
       },
       {
         "id": "say-second-and-start",
-        "title": "说「第二个」选风格，再说「可以开始了」，确认分镜脚本后排队（没有稿件）",
+        "title": "说「第二个」选风格，再说「可以开始了」；脚本按约 1 分钟写，「长一点」重写成约 3 分钟，确认后排队（没有稿件）",
         "screenId": "compose",
         "theme": "dark",
         "ruleIds": [
           "A-51",
           "A-52",
           "A-53",
-          "A-54"
+          "A-54",
+          "A-56"
         ],
         "steps": [
           {
@@ -2035,7 +2036,20 @@
           {
             "action": "expect",
             "selector": "[data-qc=script-draft]",
-            "check": "visible"
+            "check": "attribute",
+            "attribute": "data-target-sec",
+            "equals": "60"
+          },
+          {
+            "action": "click",
+            "selector": "[data-qc=script-longer]"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-qc=script-draft]",
+            "check": "attribute",
+            "attribute": "data-target-sec",
+            "equals": "180"
           },
           {
             "action": "expect",
@@ -2087,147 +2101,11 @@
       },
       {
         "id": "pick-duration-and-submit",
-        "title": "开工前把时长改成约 10 分钟，提交后任务里写明目标时长",
+        "title": "开工前定时长：约 3 分钟默认先试看、约 1 分钟默认不试看；改成约 10 分钟提交后任务里写明目标",
         "screenId": "compose",
         "theme": "light",
         "ruleIds": [
-          "A-55"
-        ],
-        "steps": [
-          {
-            "action": "click",
-            "selector": "[data-qc=sample-doc]"
-          },
-          {
-            "action": "expect",
-            "selector": "[data-qc=style-chip]",
-            "check": "visible"
-          },
-          {
-            "action": "click",
-            "selector": "[data-qc=style-chip]"
-          },
-          {
-            "action": "expect",
-            "selector": "[data-qc=duration-option][data-value=\"600\"]",
-            "check": "visible"
-          },
-          {
-            "action": "click",
-            "selector": "[data-qc=duration-option][data-value=\"600\"]"
-          },
-          {
-            "action": "expect",
-            "selector": "[data-qc=duration-option][data-value=\"600\"]",
-            "check": "attribute",
-            "attribute": "aria-checked",
-            "equals": "true"
-          },
-          {
-            "action": "expect",
-            "selector": "[data-qc=submit]",
-            "check": "enabled"
-          },
-          {
-            "action": "click",
-            "selector": "[data-qc=submit]"
-          },
-          {
-            "action": "expect",
-            "selector": "[data-qc=run-target]",
-            "check": "visible"
-          }
-        ]
-      },
-      {
-        "id": "script-longer",
-        "title": "分镜脚本按目标时长写，点「长一点」重写成约 3 分钟",
-        "screenId": "compose",
-        "theme": "dark",
-        "ruleIds": [
-          "A-56"
-        ],
-        "steps": [
-          {
-            "action": "expect",
-            "selector": "[data-qc=starter][data-value=\"我想做一个宣传片\"]",
-            "check": "visible"
-          },
-          {
-            "action": "click",
-            "selector": "[data-qc=starter][data-value=\"我想做一个宣传片\"]"
-          },
-          {
-            "action": "expect",
-            "selector": "[data-qc=quick-reply][data-value=\"新产品发布\"]",
-            "check": "visible"
-          },
-          {
-            "action": "click",
-            "selector": "[data-qc=quick-reply][data-value=\"新产品发布\"]"
-          },
-          {
-            "action": "expect",
-            "selector": "[data-qc=quick-reply][data-value=\"客户\"]",
-            "check": "visible"
-          },
-          {
-            "action": "click",
-            "selector": "[data-qc=quick-reply][data-value=\"客户\"]"
-          },
-          {
-            "action": "expect",
-            "selector": "[data-qc=quick-reply][data-value=\"科技感\"]",
-            "check": "visible"
-          },
-          {
-            "action": "click",
-            "selector": "[data-qc=quick-reply][data-value=\"科技感\"]"
-          },
-          {
-            "action": "expect",
-            "selector": "[data-qc=rec-style][data-style=dark-keynote] [data-qc=rec-use]",
-            "check": "visible"
-          },
-          {
-            "action": "click",
-            "selector": "[data-qc=rec-style][data-style=dark-keynote] [data-qc=rec-use]"
-          },
-          {
-            "action": "expect",
-            "selector": "[data-qc=brief-start]",
-            "check": "visible"
-          },
-          {
-            "action": "click",
-            "selector": "[data-qc=brief-start]"
-          },
-          {
-            "action": "expect",
-            "selector": "[data-qc=script-draft]",
-            "check": "attribute",
-            "attribute": "data-target-sec",
-            "equals": "60"
-          },
-          {
-            "action": "click",
-            "selector": "[data-qc=script-longer]"
-          },
-          {
-            "action": "expect",
-            "selector": "[data-qc=script-draft]",
-            "check": "attribute",
-            "attribute": "data-target-sec",
-            "equals": "180"
-          }
-        ]
-      },
-      {
-        "id": "trial-default-by-length",
-        "title": "3 分钟及以上默认先试看，改成约 1 分钟后默认不试看",
-        "screenId": "compose",
-        "theme": "light",
-        "ruleIds": [
+          "A-55",
           "A-59"
         ],
         "steps": [
@@ -2261,6 +2139,31 @@
             "check": "attribute",
             "attribute": "aria-checked",
             "equals": "false"
+          },
+          {
+            "action": "click",
+            "selector": "[data-qc=duration-option][data-value=\"600\"]"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-qc=duration-option][data-value=\"600\"]",
+            "check": "attribute",
+            "attribute": "aria-checked",
+            "equals": "true"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-qc=submit]",
+            "check": "enabled"
+          },
+          {
+            "action": "click",
+            "selector": "[data-qc=submit]"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-qc=run-target]",
+            "check": "visible"
           }
         ]
       },
@@ -2286,33 +2189,6 @@
             "action": "expect",
             "selector": "[data-qc=trial-approved]",
             "check": "visible"
-          }
-        ]
-      },
-      {
-        "id": "export-in-browser",
-        "title": "成片在浏览器里导出：开始后显示帧数进度与保持前台提醒",
-        "screenId": "done-video",
-        "theme": "light",
-        "ruleIds": [
-          "A-57"
-        ],
-        "steps": [
-          {
-            "action": "expect",
-            "selector": "[data-qc=export-start]",
-            "check": "visible"
-          },
-          {
-            "action": "click",
-            "selector": "[data-qc=export-start]"
-          },
-          {
-            "action": "expect",
-            "selector": "[data-qc=export-card]",
-            "check": "attribute",
-            "attribute": "data-state",
-            "equals": "exporting"
           }
         ]
       },
@@ -2647,12 +2523,13 @@
       },
       {
         "id": "play-film",
-        "title": "播放成片：画面与声音在走，重点跳转与字幕开关",
+        "title": "播放成片：画面与声音在走，重点跳转与字幕开关；再在浏览器里导出视频文件",
         "screenId": "done-video",
         "theme": "light",
         "ruleIds": [
           "A-26",
-          "A-27"
+          "A-27",
+          "A-57"
         ],
         "steps": [
           {
@@ -2690,6 +2567,22 @@
             "check": "attribute",
             "attribute": "aria-pressed",
             "equals": "false"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-qc=export-start]",
+            "check": "visible"
+          },
+          {
+            "action": "click",
+            "selector": "[data-qc=export-start]"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-qc=export-card]",
+            "check": "attribute",
+            "attribute": "data-state",
+            "equals": "exporting"
           }
         ]
       },
