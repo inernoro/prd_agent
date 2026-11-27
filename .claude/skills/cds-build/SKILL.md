@@ -28,5 +28,13 @@ description: 实现 CDS 中获准的设计稿。用户说「/cds-build 帮我实
 - 系统所有者在项目列表右下角「授权申请」核对项目与智能体，点击「批准实施反馈」。等待中断时重跑同一条 connect 继续原申请。领取后再次用 `--design-access feedback` 自检。
 - 已有同版实施反馈就回原线程。首次登记用 `cdscli --workspace-credential design feedback-create <稿件编号> --version <目标版> --category implementation --title "<标题>" --body "<反馈内容>"`，回读回执的稿件编号、版本和反馈编号。
 - 先按 [CDS 设计闭环](../cds/reference/design-loop.md#六实现方按交接清单实现) 在同版反馈里回复验收项、做法和待澄清点，再按项目规则写测试和实现。按交付清单推进，发现不兼容的差异时，把文件和理由写回同一线程。
+### 验收前自动核对 PR 预览
+
+- 已有已授权的 PR 时，从 GitHub 读取该 PR 当前提交和源分支，用 `cdscli preview-url`、`cdscli branch status <分支>` 和 `cdscli pr show <PR> --project <项目>` 核对同一项目、同一 PR 与运行提交。继续到真实预览读取产品版本。等待中的部署用 `deployment-run` 跟进同一运行，避免重复部署。
+- 运行提交已匹配但 CDS 查不到 PR 时，检查真实 GitHub 投递记录及 CDS 工程规划索引。对确认缺失的有效投递，用已有权限重投该真实 GitHub 事件。PR 缺少真实 `Preview:` 页面入口时，可以按原 PR 授权补充页面路径并核对编辑事件是否同步。禁止用其他环境、手填 URL 或伪造 PR 事件来替代绑定。
+- 绑定恢复后执行 `cdscli --workspace-credential design accept <稿件> --project <项目> --version <固定版> --pr <PR> --commit <完整提交> --start-only`，用 `design result` 读回同一版本、提交和公开预览。只有读回一致后才启动耗时的生成验收。可自行恢复的问题直接处理。无法恢复时，在原反馈记录 GitHub PR、部署 SHA、索引和验收命令的回执，继续可独立完成的准备工作。
+
+### 验收与交接
+
 - 同一验收运行使用目标稿件版本、同一实现提交以及该稿件指定的演示数据。接入清单允许实施协作时，用原绑定执行 `design bind <稿件> --version <目标> --file <页面绑定.json>`。成员也可在页面绑定。使用项目已有的验收写权限生成证据并逐项记录结论。把运行编号和实现提交留在稿件里，请设计方独立复核。
 - 回复固定稿件链接、实施版本、实现提交、验收运行和仍待处理的条件。遇到缺失条件时在原线程记录精确的待办和处理人。有权成员负责独立签收。

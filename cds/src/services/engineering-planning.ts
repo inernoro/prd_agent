@@ -15,7 +15,7 @@ import { parsePlanningCommand, planningDay, planningId, planningImportInputs, pl
 import { findSimilarDebts, duplicateDebtMatcher, projectProposalSuggestion } from './engineering-planning-proposal-matching.js';
 import type { EngineeringPlanningCommit, EngineeringPlanningStore } from './engineering-planning-store.js';
 import { applyPullRequestObservation, planningPullRequestKey, projectPlanningPullRequests, type PlanningGitHubObservation,
-  type PlanningPreviewResolver } from './engineering-planning-pull-requests.js';
+  type PlanningPreviewResolver, type PlanningPullRequestSnapshot } from './engineering-planning-pull-requests.js';
 import { fileAnchorPath, type PlanningFileAnchorProbe } from './engineering-planning-file-anchors.js';
 export { FileEngineeringPlanningStore, MongoEngineeringPlanningStore } from './engineering-planning-store.js';
 
@@ -103,6 +103,7 @@ export class EngineeringPlanningService {
 
   constructor(private readonly store: EngineeringPlanningStore, private readonly now = () => new Date(), private readonly github?: {
     repositoryFor: (projectId: string) => string | undefined; previewFor?: PlanningPreviewResolver;
+    readPreviewPullRequest?: (projectId: string, number: number) => Promise<PlanningPullRequestSnapshot | undefined>;
     defaultBranchFor?: (projectId: string) => string | null | undefined; fileAnchorProbe?: PlanningFileAnchorProbe;
   }, private readonly designLinksFor?: (projectId: string) => Promise<PlanningDesignLink[]>) {}
 
@@ -151,7 +152,7 @@ export class EngineeringPlanningService {
     throw new Error('Planning sweep could not acquire a project revision');
   }
 
-  /** Only the verified repository webhook invokes this method. */
+  /** Store facts from the verified webhook or the repository’s authenticated GitHub read. */
   async recordGithubObservation(projectId: string, observation: PlanningGitHubObservation): Promise<void> {
     const repository = observation.type === 'pull_request' ? observation.pullRequest.repository : observation.repository;
     if (this.github?.repositoryFor(projectId)?.toLowerCase() !== repository.toLowerCase()) return;
@@ -169,11 +170,23 @@ export class EngineeringPlanningService {
     return repository && state.pullRequests.size ? projectPlanningPullRequests(projectId, repository, state, now, this.github?.previewFor) : [];
   }
 
-  async pullRequestPreview(projectId: string, number: number) {
+  async pullRequestPreview(projectId: string, number: number, expectedCommit?: string) {
     const repository = this.github?.repositoryFor(projectId);
     if (!repository || !this.github?.previewFor) return undefined;
-    const row = (await this.load(projectId)).pullRequests.get(planningPullRequestKey(repository, number));
-    return row ? this.github.previewFor(projectId, row, this.now()) : undefined;
+    const key = planningPullRequestKey(repository, number);
+    const row = (await this.load(projectId)).pullRequests.get(key);
+    const preview = row && this.github.previewFor(projectId, row, this.now());
+    if (preview && (!expectedCommit || preview.commit === expectedCommit)) return preview;
+    if (row?.mergedAt || row?.closedAt || !this.github.readPreviewPullRequest) return undefined;
+
+    // A missed or stale webhook must not strand an already deployed PR preview.
+    const current = await this.github.readPreviewPullRequest(projectId, number).catch(() => undefined);
+    if (!current || (expectedCommit && current.headSha !== expectedCommit)
+      || !this.github.previewFor(projectId, current, this.now())) return undefined;
+    await this.recordGithubObservation(projectId, { type: 'pull_request', pullRequest: current });
+    const saved = (await this.load(projectId)).pullRequests.get(key);
+    if (!saved || saved.headSha !== current.headSha || saved.closedAt || saved.mergedAt) return undefined;
+    return this.github.previewFor(projectId, saved, this.now());
   }
 
   async designAcceptanceDebt(projectId: string, id: string, sourceRef: string) {

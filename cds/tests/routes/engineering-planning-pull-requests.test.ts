@@ -13,7 +13,7 @@ import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backin
 import { createGithubWebhookRouter } from '../../src/routes/github-webhook.js';
 import { EngineeringPlanningService, FileEngineeringPlanningStore } from '../../src/services/engineering-planning.js';
 import { createPlanningFileAnchorProbe } from '../../src/services/engineering-planning-file-anchors.js';
-import { createPlanningGithubObserver, createPlanningPreviewResolver } from '../../src/services/engineering-planning-pull-requests.js';
+import { createPlanningGithubObserver, createPlanningPreviewResolver, parseGitHubPreviewPullRequest, type PlanningPullRequestSnapshot } from '../../src/services/engineering-planning-pull-requests.js';
 import { StateService } from '../../src/services/state.js';
 import { WorktreeService } from '../../src/services/worktree.js';
 import type { PlanningActor } from '../../src/shared/engineering-planning.js';
@@ -42,8 +42,10 @@ describe('engineering planning PR projection', () => {
   let delivery: number;
   let endpoint: string;
 
-  const reopenPlanning = () => new EngineeringPlanningService(new FileEngineeringPlanningStore(path.join(directory, 'planning')), () => now, {
+  const reopenPlanning = (readPreviewPullRequest?: (projectId: string, number: number) => Promise<PlanningPullRequestSnapshot | undefined>) =>
+    new EngineeringPlanningService(new FileEngineeringPlanningStore(path.join(directory, 'planning')), () => now, {
     repositoryFor: id => state.getProject(id)?.githubRepoFullName,
+    readPreviewPullRequest,
     previewFor: createPlanningPreviewResolver(state, { previewDomain: 'preview.example.test' }),
     defaultBranchFor: id => state.getDefaultBranchFor(id),
     fileAnchorProbe: createPlanningFileAnchorProbe(id => state.getProjectRepoRoot(id, directory)),
@@ -138,6 +140,26 @@ describe('engineering planning PR projection', () => {
       title: 'Add report theme', author: 'lisa', decisionIds: [id], target: { label: targetPath, path: targetPath } })]);
     expect(board.pullRequests![0]).not.toHaveProperty('checks');
     expect((await planning.board('unrelated-project', owner)).pullRequests ?? []).toEqual([]);
+  });
+
+  it('restores an exact deployed PR from GitHub when the webhook index is empty', async () => {
+    const evidence = { ...pr(`Preview: ${targetPath}`).pull_request, base: { repo: { full_name: repository } } };
+    const fetchPreview = async (id: string, number: number) => {
+      expect(id).toBe(projectId);
+      return parseGitHubPreviewPullRequest(evidence, repository, number);
+    };
+    planning = reopenPlanning(fetchPreview);
+    deployed('feature/report-theme', head);
+
+    expect(await planning.pullRequestPreview(projectId, 2412, otherHead)).toBeUndefined();
+    expect((await planning.board(projectId, owner)).pullRequests).toBeUndefined();
+    expect(await planning.pullRequestPreview(projectId, 2412, head)).toMatchObject({ status: 'ready', commit: head });
+    expect((await reopenPlanning().board(projectId, owner)).pullRequests).toEqual([
+      expect.objectContaining({ number: 2412, preview: expect.objectContaining({ status: 'ready', commit: head }) }),
+    ]);
+
+    expect(parseGitHubPreviewPullRequest({ ...evidence, head: { ...evidence.head, repo: { full_name: 'fork/repo' } } }, repository, 2412)).toBeUndefined();
+    expect(parseGitHubPreviewPullRequest(evidence, repository, 2413)).toBeUndefined();
   });
 
   it('uses actual deployment head and expires only a previously built preview', async () => {
