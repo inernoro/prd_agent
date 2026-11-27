@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
+import type { QcAttachment } from '../../prd-admin/src/pages/quick-creation-agent/types';
 
 // 布局与阅读回归使用静止背景；动态画布单独由三档演示用例验证。
 test.beforeEach(async ({ page }) => { await page.emulateMedia({ reducedMotion: 'reduce' }); });
@@ -33,7 +34,9 @@ test('网页托管生成入口与 V8 手机输入框', async ({ page }, testInfo
       categories: [{ id: 'presentation', name: '知识讲解' }],
       source: { name: 'Lemo-Opuscar by Lemomo (LemoLab)', url: 'https://example.invalid/', posterLicense: 'CC BY 4.0' },
     };
-    if (path === `${base}/attachments/knowledge`) data = { id: 'a'.repeat(32), name: '需求评审的三个习惯.md', kind: 'knowledge', status: 'ready', meta: '示例稿件', chars: 193 };
+    if (path === `${base}/attachments/knowledge`) data = {
+      id: 'a'.repeat(32), name: '需求评审的三个习惯.md', kind: 'kb', status: 'ready', meta: '示例稿件', chars: 193,
+    } satisfies QcAttachment;
     await route.fulfill({ json: { success: true, data, error: null } });
   });
   await page.goto('/web-pages');
