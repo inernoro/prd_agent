@@ -17,7 +17,7 @@
     "cds/cli/acceptance/design-browser.mjs": "1d2e474d5d4a6f93e34f78b52bae070b174a5cbb793871bf4be6e475dc997c97",
     "cds/cli/acceptance/driver.template.mjs": "8da890248268ecb8a578cb37bc3e8c645b916487690f7706d59f9965c38e8dd3",
     "cds/cli/acceptance/proxyroute.mjs": "9800de2267fa8c02aa34350c5c1fbc5652caaa77c65d4b789ec865c40022f8fb",
-    "cds/cli/cdscli.py": "fa139432df4768d10b4019b9fed47afb49b11a17f0ea3a362bf785e5f48295a7",
+    "cds/cli/cdscli.py": "a0033c45dec9c6fd55e7a385c6d3e731dd77d4ea7eb9ec254fc54f7e9d9b1b19",
     "cds/reference/acceptance-reports.md": "dc7a834ec6e41a4eb51be4054cf7e3dea5752a0f4a2892e928c5457cc4ac31d5",
     "cds/reference/api.md": "6309ef6683f7e4b73779c69c0c3b37efb8fa69403ccb63bf4cec5c9fb27ca708",
     "cds/reference/auth.md": "958f28c4f5eaa60e3b245984cd978110b4969f1baf54fd00ed59ef579fe189bd",
@@ -33,7 +33,7 @@
     "cds/reference/smoke.md": "5bf8b1642555d87ccca5525df7f6250c7848c5a64d1b5c2f5b07b562d8326d44",
     "cds/reference/test-loop.md": "9586672041ad02916fa5df767343972dcf63f91dbbd2c9b81f3a52994cc0e0c4",
     "cds/scripts/design/changes-index.mjs": "a368f01702398ac860cc718e63268ffa4024caa4fe73fb20bf74e6ccb1de9afd",
-    "cds/scripts/design/gate.mjs": "604c1c59595a628b9002e97bf254538fa903bc3ceb475d79b9c5974c90a20597",
+    "cds/scripts/design/gate.mjs": "781406a543bdd57aa407c7b82339fc5af72ed4928426b5c55060d5538428b3a8",
     "cds/scripts/design/handoff.mjs": "0c1fa3a05dcaf2762d8964c3329d83726fb55082328d6584a3c57db599afecd9",
     "cds/scripts/design/prototype-build.mjs": "d0b3979f30ce9a5c8aff4643db2a61c756efc5f2dd277bac65df3eecaf6d26c8",
     "cds/scripts/design/release.mjs": "ce3e532fdec861bd45dbff7b78ee342e5ac939e63264f6756f39b5fb2ca3faca",
@@ -86,5 +86,5 @@
     "cds-release/SKILL.md": "7a80c34792d75c327d360f5c84963de33b78e43b818465cfbe6213db6b70ee90",
     "preview-url/SKILL.md": "cba546b198bc1e0bad384d447078663d0e6906f1d080722dd29db7b14a33f65b"
   },
-  "generatedAt": "2026-11-27T07:22:30.659303+00:00"
+  "generatedAt": "2026-11-27T07:28:25.372927+00:00"
 }
