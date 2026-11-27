@@ -27,9 +27,9 @@ segments, _ = model.transcribe(np.frombuffer(pcm, dtype='<f4'), language='zh', b
 words = []
 transcript = []
 for segment in segments:
-    transcript.append({'fromSec': segment.start, 'toSec': segment.end, 'text': segment.text.strip()})
+    transcript.append({'fromSec': float(segment.start), 'toSec': float(segment.end), 'text': segment.text.strip()})
     for word in segment.words or []:
-        words.extend((character, word.start, word.end) for character in normalized(word.word))
+        words.extend((character, float(word.start), float(word.end)) for character in normalized(word.word))
 
 cues = json.loads((workspace / 'watercolor-captions.json').read_text())
 results = []
