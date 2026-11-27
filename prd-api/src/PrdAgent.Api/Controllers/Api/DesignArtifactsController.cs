@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Api.Services;
@@ -24,6 +25,7 @@ namespace PrdAgent.Api.Controllers.Api;
 public sealed partial class DesignArtifactsController : ControllerBase
 {
     private static readonly TimeSpan RunTtl = TimeSpan.FromHours(24);
+    private const int MaxInlineInstructionChars = 4000;
     private static readonly HashSet<string> ExportableRuntimeFailureCodes = new(StringComparer.Ordinal)
     {
         "design_output_invalid",
@@ -216,7 +218,7 @@ public sealed partial class DesignArtifactsController : ControllerBase
         if (!isCodeFilm) instruction = instruction.Trim();
         if (string.IsNullOrWhiteSpace(instruction))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请用两句话说明网页用途和期望效果"));
-        if (instruction.Length > 4000)
+        if (instruction.Length > MaxInlineInstructionChars)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "设计要求不能超过 4000 个字符"));
         if (isCodeFilm && quickCreation == null && (!LegacyCodeFilmEnabled() || request.AttachmentIds?.Count != 1
                 || !string.IsNullOrWhiteSpace(request.DestinationTeamId)
@@ -401,6 +403,11 @@ public sealed partial class DesignArtifactsController : ControllerBase
             DesignArtifactBriefFactory.Freeze(run, currentHtml: null);
             WebPageDesignArtifactLifecycleAdapter.InitializeNewRun(run, capability, currentHtml: null);
         }
+        // MongoDB cannot write a BSON document over 16 MiB. Check the real stored record
+        // before inserting or queuing anything, rather than estimating a character quota.
+        if (quickCreation != null && run.ToBson().LongLength > 16L * 1024 * 1024)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
+                "这次稿件打包后超出任务存储容量，请减少文件体积后再提交"));
         await _db.DesignArtifactRuns.InsertOneAsync(run, cancellationToken: CancellationToken.None);
 
         var meta = new RunMeta

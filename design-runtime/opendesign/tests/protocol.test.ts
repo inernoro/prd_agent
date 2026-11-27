@@ -306,6 +306,9 @@ describe('POST /v1/tasks', () => {
     const userRequests = Buffer.from('只展示第二部分\n\n不要出现联系方式');
     const brief = original('brief/user-requests.txt', 'text/plain', userRequests);
     expect(parse([...files, brief]).map(file => file.bytes)).toEqual([source, secondSource, guide, reference, userRequests]);
+    const creationRequest = Buffer.from('保留完整创作要求。'.repeat(800));
+    const longRequest = original('brief/creation-request.txt', 'text/plain', creationRequest);
+    expect(parse([...files, brief, longRequest]).at(-1)?.bytes).toEqual(creationRequest);
     expect(() => parse([...files, { ...brief, mediaType: 'text/markdown' }])).toThrow('optional reference images');
     expect(() => parse([files[0], files[1], files[3]])).toThrow('one original STYLE.md');
     expect(() => parse([...files, original('brief/task.json', 'application/json', Buffer.from('{}'))])).toThrow('optional reference images');

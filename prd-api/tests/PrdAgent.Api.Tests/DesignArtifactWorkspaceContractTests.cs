@@ -1290,15 +1290,15 @@ public sealed class DesignArtifactWorkspaceContractTests
     }
 
     [Fact]
-    public void QuickCreationInputBudgetAcceptsThreeAdvertisedReferenceImages()
+    public void QuickCreationInputRetainsLongManuscriptAndMoreThanThreeImages()
     {
         var run = BuildRun();
         run.QuickCreation = new QuickCreationInput { TemplateId = "sketchnote" };
         var imageBytes = new byte[DesignRunInputAttachments.MaxReferenceImageBytes];
         new Random(2).NextBytes(imageBytes);
-        var references = Enumerable.Range(1, 3).Select(index => DesignArtifactWorkspaceContract.ToFile(
+        var references = Enumerable.Range(1, 4).Select(index => DesignArtifactWorkspaceContract.ToFile(
             $"reference/screenshot-{index:D2}.png", "image/png", imageBytes)).ToList();
-        var source = DesignArtifactWorkspaceContract.ToFile("source-1.md", "text/markdown", Encoding.UTF8.GetBytes("完整原稿"));
+        var source = DesignArtifactWorkspaceContract.ToFile("source-1.md", "text/markdown", Encoding.UTF8.GetBytes(new string('稿', 21_000) + "完整结尾"));
         var package = new DesignWorkspacePackage(DesignArtifactWorkspaceBroker.SchemaVersion, run.Id, "revision", [source, .. references]);
         var bytes = DesignArtifactWorkspaceContract.ValidateInputPackageSize(package, DesignArtifactWorkspaceBroker.InputLimit(run));
 

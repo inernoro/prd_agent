@@ -10,6 +10,8 @@ public sealed class QuickCreationInput
     public string? BriefId { get; set; }
     public int? BriefRevision { get; set; }
     public const string BriefUserRequestsPath = "brief/user-requests.txt";
+    public const string WorkspaceRequestPath = "brief/creation-request.txt";
+    public bool UseWorkspaceRequest { get; set; }
     public string? BriefContentSource { get; set; }
     public string? BriefUserRequests { get; set; }
     public int? FilmTimeoutSeconds { get; set; }

@@ -20,8 +20,6 @@ public static class DesignRunInputAttachments
 {
     public const int MaxUploadedSources = 5;
     public const int MaxUploadedCharacters = 60_000;
-    public const int QuickCreationAttachmentLimit = 10;
-    public const int QuickCreationCharacterLimit = 20_000;
     public const int MaxReferenceImages = 3;
     public const long MaxReferenceImageBytes = 5 * 1024 * 1024;
     private static readonly HashSet<string> ImageMimeTypes = new(StringComparer.OrdinalIgnoreCase)
@@ -34,13 +32,11 @@ public static class DesignRunInputAttachments
     {
         var ids = Normalize(attachmentIds);
         if (ids.Count == 0) return new List<DesignUploadedSource>();
-        var maxSources = quickCreation ? QuickCreationAttachmentLimit : MaxUploadedSources;
-        var maxCharacters = quickCreation ? QuickCreationCharacterLimit : MaxUploadedCharacters;
-        if (ids.Count > maxSources)
-            throw new DesignRunInputException($"一次最多直接上传 {maxSources} 个文件");
+        if (!quickCreation && ids.Count > MaxUploadedSources)
+            throw new DesignRunInputException($"一次最多直接上传 {MaxUploadedSources} 个文件");
         var found = await LoadOwnedAsync(db, userId, ids, ct);
         var result = new List<DesignUploadedSource>();
-        var total = 0;
+        long total = 0;
         foreach (var id in ids)
         {
             var attachment = found[id];
@@ -49,8 +45,8 @@ public static class DesignRunInputAttachments
             if (string.IsNullOrWhiteSpace(text))
                 throw new DesignRunInputException($"文件「{attachment.FileName}」没有可读取的文字内容，请上传 Markdown、Word、PDF 或纯文本文件");
             total += text.Length;
-            if (total > maxCharacters)
-                throw new DesignRunInputException($"上传文件的正文合计超过 {maxCharacters / 10000} 万字，请精简或分次生成");
+            if (!quickCreation && total > MaxUploadedCharacters)
+                throw new DesignRunInputException($"上传文件的正文合计超过 {MaxUploadedCharacters / 10000} 万字，请精简或分次生成");
             result.Add(new DesignUploadedSource
             {
                 AttachmentId = attachment.AttachmentId,
@@ -64,11 +60,11 @@ public static class DesignRunInputAttachments
     }
 
     public static async Task<List<DesignReferenceImage>> ResolveImagesAsync(
-        MongoDbContext db, string userId, IReadOnlyList<string>? attachmentIds, CancellationToken ct)
+        MongoDbContext db, string userId, IReadOnlyList<string>? attachmentIds, CancellationToken ct, bool quickCreation = false)
     {
         var ids = Normalize(attachmentIds);
         if (ids.Count == 0) return new List<DesignReferenceImage>();
-        if (ids.Count > MaxReferenceImages)
+        if (!quickCreation && ids.Count > MaxReferenceImages)
             throw new DesignRunInputException($"一次最多附 {MaxReferenceImages} 张截图");
         var found = await LoadOwnedAsync(db, userId, ids, ct);
         return ids.Select(id =>

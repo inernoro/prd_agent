@@ -106,8 +106,8 @@ async function stopAtSubmission(page, click) {
 }
 
 async function verifyMaterialsBeforeGeneration(page, api, original) {
-  const longSource = '# 核对正文\n\n' + '这是用来检查完整读取的段落。'.repeat(680) + '\n\n尾注：保留结尾校验字样。';
-  assert.ok(longSource.length > 8000 && longSource.length < 20000);
+  const longSource = '# 核对正文\n\n' + '这是用来检查完整读取的段落。'.repeat(1600) + '\n\n尾注：保留结尾校验字样。';
+  assert.ok(longSource.length > 20000);
   const imageBytes = Buffer.from(await page.evaluate(() => {
     const canvas = document.createElement('canvas');
     canvas.width = 720; canvas.height = 570;
@@ -175,9 +175,18 @@ async function verifyMaterialsBeforeGeneration(page, api, original) {
     await page.screenshot({ path: join(out, '17-pre-submit-image.png') });
     await page.getByRole('button', { name: '完成', exact: true }).click();
 
-    const requirement = '以完整正文为准，保留尾注，并用参考图作为画面参考。';
+    const extraFiles = [2, 3, 4].flatMap(index => [
+      { name: `参考图-${index}.png`, mimeType: 'image/png', buffer: imageBytes },
+      { name: `附录-${index}.txt`, mimeType: 'text/plain', buffer: Buffer.from(`补充说明 ${index}`) },
+    ]);
+    await page.locator('[data-qc=file-input]').setInputFiles(extraFiles);
+    await page.locator('[data-qc=attachment-tray][data-count="12"][data-reading-count="0"][data-failed-count="2"]').waitFor();
+    const extras = await Promise.all(uploads.slice(5).map(response => data(response, 'additional attachment scan')));
+    assert.equal(extras.length, 6);
+    const requirement = '以完整正文为准，保留尾注，并用参考图作为画面参考。' + '完整保留本段校验要求。'.repeat(400);
+    assert.ok(requirement.length > 4000);
     await page.locator('#qc-ask').fill(requirement);
-    const expectedIds = [original.id, long.id, reference.id, memo.id];
+    const expectedIds = [original.id, long.id, reference.id, memo.id, ...extras.map(item => item.id)];
     const payload = await stopAtSubmission(page, () => submit.click());
     assert.equal(payload.kind, 'web');
     assert.equal(payload.templateId, 'ink-wash');
@@ -190,6 +199,7 @@ async function verifyMaterialsBeforeGeneration(page, api, original) {
     assert.deepEqual(film, { ...payload, kind: 'video' });
     receipt.preSubmission = { generatedJobs: 0, sourceSha256: digest(longSource), referenceSha256: digest(imageBytes),
       readable: expectedIds.length, rejected: 2, sourceCharacters: longSource.length, referenceBytes: imageBytes.length,
+      referenceCount: [reference, ...extras.filter(item => item.kind === 'image')].length, requestCharacters: requirement.length,
       outputs: [payload.kind, film.kind], template: film.templateId, preservedRequirement: true };
     receipt.cases.push('real source scan and image preview; verified exact web and video payloads intercepted before admission');
   } finally {

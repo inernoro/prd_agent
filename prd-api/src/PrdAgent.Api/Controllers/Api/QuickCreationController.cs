@@ -188,11 +188,9 @@ public sealed partial class DesignArtifactsController
         if (request.Kind is not ("video" or "web")) return QuickCreationError("请选择网页或视频");
         if (QuickCreationCatalog.Find(request.TemplateId) is not { } template)
             return QuickCreationError("这个风格不在当前目录，请重新选择");
-        if (request.Ask?.Length > 3500) return QuickCreationError("创作要求太长，请缩短后再提交");
         var ids = request.AttachmentIds?.Distinct(StringComparer.Ordinal).ToList() ?? [];
-        if (ids.Count > DesignRunInputAttachments.QuickCreationAttachmentLimit
-            || ids.Any(id => string.IsNullOrWhiteSpace(id) || id.Length > 80))
-            return QuickCreationError("请放入一至十份可用资料");
+        if (ids.Any(id => string.IsNullOrWhiteSpace(id) || id.Length > 80))
+            return QuickCreationError("有资料无法识别，请重新添加");
         var userId = this.GetRequiredUserId();
         if (request.BriefId != null && (!Guid.TryParseExact(request.BriefId, "N", out _)
             || request.BriefRevision is null or < 1 || request.BriefMode is not ("confirm" or "skip")))
@@ -215,11 +213,7 @@ public sealed partial class DesignArtifactsController
                 || (request.BriefMode == "confirm" && (brief.Kind != "video" || brief.Script.Count == 0)))
                 return BriefConflict();
             if (brief.SourceTitle == null)
-            {
-                if (ids.Count >= DesignRunInputAttachments.QuickCreationAttachmentLimit)
-                    return QuickCreationError("请留出一份资料的位置，用于保存对话稿件");
                 ids.Add(await SaveBriefManuscriptAsync(brief, ct));
-            }
         }
         if (ids.Count == 0) return QuickCreationError("请放入至少一份可用稿件，或先完成创作简报");
         var rows = await _db.Attachments.Find(item => ids.Contains(item.AttachmentId) && item.UploaderId == userId
@@ -233,7 +227,7 @@ public sealed partial class DesignArtifactsController
         try
         {
             images = await DesignRunInputAttachments.ResolveImagesAsync(
-                _db, userId, ids.Where(id => byId[id].QuickCreationKind == "image").ToList(), ct);
+                _db, userId, ids.Where(id => byId[id].QuickCreationKind == "image").ToList(), ct, quickCreation: true);
         }
         catch (DesignRunInputException ex)
         {
@@ -253,7 +247,6 @@ public sealed partial class DesignArtifactsController
                 confirmed.Add("用户确认的分镜：\n" + string.Join("\n", brief.Script.Select(scene =>
                     $"{scene.Index}. 画面：{scene.Visual}；旁白：{scene.Narration}")));
             ask = string.Join("\n", confirmed.Where(value => !string.IsNullOrWhiteSpace(value)));
-            if (ask.Length > 3500) return QuickCreationError("确认的要求和分镜超过长度上限，请精简补充要求");
         }
         var input = new QuickCreationInput
         {
@@ -267,10 +260,18 @@ public sealed partial class DesignArtifactsController
             : $"把附件稿件做成可阅读的网页。完整读取 {template.PromptRef}，按「{template.Name}」借鉴配色、字体与版式。正文以稿件为准。";
         if (input.BriefUserRequests is { Length: > 0 })
             instruction += $" 另请读取 {QuickCreationInput.BriefUserRequestsPath}，里面按顺序保留用户对作品的原话。";
+        if (ask.Length > 0)
+        {
+            var inline = instruction + "\n\n用户要求：\n" + ask;
+            input.UseWorkspaceRequest = inline.Length > MaxInlineInstructionChars;
+            instruction = input.UseWorkspaceRequest
+                ? instruction + $" 用户的完整要求见随任务提供的 {QuickCreationInput.WorkspaceRequestPath}。"
+                : inline;
+        }
         return await CreateRunCoreAsync(new CreateDesignArtifactRunRequest
         {
             ArtifactType = film ? DesignArtifactTypes.CodeFilm : DesignArtifactTypes.WebPage,
-            Instruction = ask.Length == 0 ? instruction : instruction + "\n\n用户要求：\n" + ask,
+            Instruction = instruction,
             Title = brief?.SourceTitle ?? brief?.Title ?? request.Title ?? Path.GetFileNameWithoutExtension(byId[sourceIds[0]].FileName),
             AttachmentIds = sourceIds,
             DestinationTeamId = film ? null : request.DestinationTeamId,
@@ -599,8 +600,7 @@ public sealed partial class DesignArtifactsController
     private static string DecodeQuickCreationText(byte[] bytes) => new UTF8Encoding(false, true).GetString(bytes).TrimStart('\uFEFF');
 
     private static string? GetQuickCreationTextError(string content) =>
-        string.IsNullOrWhiteSpace(content) ? "文件没有可读文字，请重新上传或移除"
-        : content.Length > DesignRunInputAttachments.QuickCreationCharacterLimit ? "单份稿件超过 2 万字，请精简后重传" : null;
+        string.IsNullOrWhiteSpace(content) ? "文件没有可读文字，请重新上传或移除" : null;
 
     private static bool ValidQuickCreationImage(string mime, byte[] bytes) => mime switch
     {

@@ -82,8 +82,8 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
     public const string SchemaVersion = "map-design-workspace-v1";
     public const string ManifestSchemaVersion = "map-design-artifact-public-manifest-v2";
     public const long MaxInputBytes = 1_048_576;
-    // 快速创作可附三张各 5 MiB 的参考图。上限按含 Base64 和 JSON 的完整包计算。
-    internal const long MaxQuickCreationInputBytes = 32L * 1024 * 1024;
+    // 与 OpenDesign 工作区协议允许的包大小一致。按完整 JSON 包的实际字节校验。
+    internal const long MaxQuickCreationInputBytes = 64L * 1024 * 1024;
     // The runtime result is a JSON envelope whose file payloads are base64 encoded. Keep the
     // published-file contract at 6 MiB while allowing that same package to cross the runtime API.
     public const long MaxPublicOutputBytes = 6_291_456;
@@ -199,6 +199,12 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
             var briefFile = DesignArtifactWorkspaceContract.ToFile(
                 QuickCreationInput.BriefUserRequestsPath, "text/plain", Encoding.UTF8.GetBytes(userRequests));
             package = package with { Files = [.. package.Files, briefFile] };
+        }
+        if (run.QuickCreation is { UseWorkspaceRequest: true } request)
+        {
+            var requestFile = DesignArtifactWorkspaceContract.ToFile(
+                QuickCreationInput.WorkspaceRequestPath, "text/plain", Encoding.UTF8.GetBytes(request.Ask));
+            package = package with { Files = [.. package.Files, requestFile] };
         }
         var inputLimit = InputLimit(run);
         var bytes = DesignArtifactWorkspaceContract.ValidateInputPackageSize(package, inputLimit);
@@ -430,14 +436,18 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
     {
         if (run.ReferenceImages is not { Count: > 0 } images) return null;
         var files = new List<DesignWorkspaceFile>();
+        var remaining = InputLimit(run);
         for (var index = 0; index < images.Count; index++)
         {
             var image = images[index];
+            if (image.Size > remaining)
+                throw new InvalidOperationException("参考图总体积超出工作区传输容量，请压缩图片后重试");
             byte[]? bytes;
             try { bytes = string.IsNullOrWhiteSpace(image.StorageKey) ? null : await _storage.TryDownloadBytesAsync(image.StorageKey, ct); }
             catch (Exception error) when (error is not OperationCanceledException) { bytes = null; }
             if (bytes == null || bytes.LongLength == 0 || bytes.LongLength != image.Size)
                 throw new InvalidOperationException($"截图「{image.FileName}」读取失败，请重新上传后再试");
+            remaining -= bytes.LongLength;
             var extension = image.MimeType switch
             {
                 "image/jpeg" => ".jpg",

@@ -33,7 +33,7 @@ import { ProgressPreview, VideoPlayer, WebPreview } from './ResultPanel';
 import { StyleLibrary, StylePickerChip } from './StyleLibrary';
 import { AssetLibrary } from './AssetLibrary';
 import { WorksList } from './WorksList';
-import { CHAR_BUDGET, MAX_ATTACHMENTS, MAX_REFERENCE_IMAGES, formatChars, formatClock, summarizeAttachments } from './format';
+import { formatChars, formatClock, summarizeAttachments } from './format';
 import type { AssetScope, OutputKind, QcAsset, QcAttachment, QcBriefContext, QcBriefSession, QcFailure, QcRun, QcTemplate, QcTemplateCategory, QcTemplateSource, QcWork } from './types';
 import './quickCreation.css';
 
@@ -215,21 +215,17 @@ export function QuickCreationAgentPage() {
   };
   const addFiles = async (files: File[]) => {
     if (!files.length || adding || addingFiles.current || restoringBrief || submitting) return;
-    const remaining = MAX_ATTACHMENTS - attachments.length;
-    if (remaining < 1) { toast.info('已达到资料上限', '移除不需要的附件后再上传'); return; }
-    const selected = files.slice(0, remaining);
-    if (files.length > remaining) toast.info('已达到资料上限', `这次最多加入 ${remaining} 份`);
-    const rows: QcAttachment[] = selected.map(file => ({
+    const rows: QcAttachment[] = files.map(file => ({
       id: `upload-${crypto.randomUUID()}`, name: file.name, kind: /\.(png|jpe?g|webp)$/i.test(file.name) ? 'image' : 'doc',
       meta: `${(file.size / 1024).toLocaleString('zh-CN', { maximumFractionDigits: 1 })} KB`, status: 'reading',
     }));
     addingFiles.current = true;
     setAdding(true);
     setAttachments(list => [...list, ...rows]);
-    rows.forEach((row, index) => failedUploads.current.set(row.id, selected[index]));
+    rows.forEach((row, index) => failedUploads.current.set(row.id, files[index]));
     try {
       for (const [index, row] of rows.entries()) {
-        if (failedUploads.current.has(row.id)) await uploadFileRow(row.id, selected[index]);
+        if (failedUploads.current.has(row.id)) await uploadFileRow(row.id, files[index]);
       }
     } finally {
       addingFiles.current = false;
@@ -254,10 +250,6 @@ export function QuickCreationAgentPage() {
   };
   const addSelectedKnowledge = async () => {
     if (adding || addingFiles.current || restoringBrief || submitting) return;
-    if (knowledgeSelection.length > MAX_ATTACHMENTS - attachments.length) {
-      toast.error('资料已到上限', '可以先移除不需要的附件');
-      return;
-    }
     setKnowledgeOpen(false);
     setAdding(true);
     try {
@@ -279,7 +271,7 @@ export function QuickCreationAgentPage() {
   const PASTE_AS_DOC = 300;
   const onAskPaste = async (event: ClipboardEvent<HTMLTextAreaElement>) => {
     const pasted = event.clipboardData.getData('text/plain');
-    if (pasted.length < PASTE_AS_DOC || attachments.length >= MAX_ATTACHMENTS || adding || addingFiles.current) return;
+    if (pasted.length < PASTE_AS_DOC || adding || addingFiles.current) return;
     event.preventDefault();
     setAdding(true);
     const res = await addTextAttachment({ name: '粘贴的正文.md', text: pasted });
@@ -289,9 +281,7 @@ export function QuickCreationAgentPage() {
   };
   const sum = summarizeAttachments(attachments);
   const hasText = attachments.some(a => a.status === 'ready' && a.kind !== 'image');
-  const attachmentBlockReason = adding || sum.reading ? '还有附件在读取，读完即可生成'
-    : sum.chars > CHAR_BUDGET ? '稿件超过 20,000 字，请精简或分次生成'
-    : attachments.filter(a => a.status === 'ready' && a.kind === 'image').length > MAX_REFERENCE_IMAGES ? '一次最多使用三张图片，请移除多余图片' : null;
+  const attachmentBlockReason = adding || sum.reading ? '还有附件在读取，读完即可生成' : null;
   const blockReason = attachmentBlockReason ?? (!hasText ? '放进至少一份稿件或知识库文档后即可生成' : null);
   const draftTitle = attachments.find(a => a.status === 'ready' && a.kind !== 'image')?.name.replace(/\.(md|markdown|txt)$/i, '') ?? (template ? `未命名 · ${template.name}` : '未命名');
   const briefContext = useMemo<QcBriefContext>(() => ({

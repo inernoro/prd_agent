@@ -39,7 +39,7 @@ export function registerCodeFilmSkill(dataDir: string, chownForEngine: (target: 
 export function verifyCodeFilmInput(
   dataDir: string,
   workspaceDir: string,
-  inputs: ReadonlyArray<{ path: string; sha256: string }>,
+  inputs: ReadonlyArray<{ path: string; sha256: string; size: number }>,
 ): Record<string, unknown> {
   const staged = codexSkillDirectory(dataDir);
   for (const [file, digest] of Object.entries(SKILL_FILES)) {
@@ -48,7 +48,7 @@ export function verifyCodeFilmInput(
     }
   }
   for (const input of inputs) {
-    const actual = sha256(readRegularFileNoFollow(path.join(workspaceDir, input.path), 5 * 1024 * 1024));
+    const actual = sha256(readRegularFileNoFollow(path.join(workspaceDir, input.path), input.size));
     if (actual !== input.sha256) {
       throw new AgentWorkspaceRuntimeError('workspace_input_changed', 'The original material inside the OpenDesign workspace changed');
     }

@@ -18,7 +18,6 @@ public sealed partial class DesignArtifactsController
 {
     private const string BriefDelimiter = "\n<<<BRIEF>>>\n";
     private const string BriefEndMarker = "\n<<<END>>>";
-    private const int MaxBriefTurns = 20;
     private static readonly JsonSerializerOptions BriefJson = new(JsonSerializerDefaults.Web);
 
     [HttpGet("/api/quick-creation/brief/{briefId}")]
@@ -44,14 +43,13 @@ public sealed partial class DesignArtifactsController
     }
 
     [HttpPost("/api/quick-creation/brief/{briefId}/messages")]
-    [RequestSizeLimit(32 * 1024)]
     public async Task<IActionResult> StreamQuickCreationBrief(string briefId, QuickCreationBriefTurn request,
         [FromServices] ILlmGateway gateway, CancellationToken ct)
     {
         if (!QuickCreationEnabled() || !Guid.TryParseExact(briefId, "N", out _) || request.Context == null) return NotFound();
         if (!Guid.TryParseExact(request.TurnId, "N", out _) || request.Mode is not ("message" or "script")
-            || (request.Mode == "message" && TrimOptional(request.Text, 3500) == null) || request.Text?.Length > 3500)
-            return QuickCreationError("请输入要补充的创作内容，单条最多 3500 字");
+            || (request.Mode == "message" && string.IsNullOrWhiteSpace(request.Text)))
+            return QuickCreationError("请输入要补充的创作内容");
 
         var filter = OwnedBrief(briefId);
         var brief = await _db.QuickCreationBriefs.Find(filter).FirstOrDefaultAsync(ct);
@@ -86,8 +84,6 @@ public sealed partial class DesignArtifactsController
             return new EmptyResult();
         }
         if (brief.Revision != request.Context.Revision) return BriefConflict();
-        if (request.Mode == "message" && brief.Messages.Count(message => message.Role == "user") >= MaxBriefTurns)
-            return QuickCreationError("此简报已达到对话上限。可按已确认的简报继续，或新建一份");
         if (await ApplyBriefContextAsync(brief, request.Context, ct) is { } contextIssue)
             return QuickCreationError(contextIssue);
         if (request.Mode == "script" && (brief.Kind != "video" || !BriefReady(brief)))
@@ -224,7 +220,7 @@ public sealed partial class DesignArtifactsController
         var ids = context.AttachmentIds ?? [];
         if (context.Kind is not ("web" or "video") || QuickCreationCatalog.Find(context.TemplateId) == null)
             return "请选定产出和风格";
-        if (ids.Count > DesignRunInputAttachments.QuickCreationAttachmentLimit || ids.Any(id => !Guid.TryParseExact(id, "N", out _))
+        if (ids.Any(id => !Guid.TryParseExact(id, "N", out _))
             || ids.Distinct(StringComparer.Ordinal).Count() != ids.Count)
             return "请检查简报关联的资料";
 
@@ -232,8 +228,6 @@ public sealed partial class DesignArtifactsController
                 && row.QuickCreationKind != null && row.QuickCreationReadError == null).ToListAsync(ct);
         if (rows.Count != ids.Count) return "有资料尚未就绪，请检查后重试";
         var headers = rows.Where(row => row.QuickCreationKind != "image").ToDictionary(row => row.AttachmentId);
-        if (headers.Values.Sum(row => row.ExtractedText?.Length ?? 0) > DesignRunInputAttachments.QuickCreationCharacterLimit)
-            return "稿件超过 20,000 字，请精简或分次生成";
 
         if (brief.Kind != context.Kind || brief.StyleId != context.TemplateId || !brief.AttachmentIds.SequenceEqual(ids))
             brief.Script = [];
@@ -321,7 +315,7 @@ public sealed partial class DesignArtifactsController
                     """ + "\n风格目录：" + JsonSerializer.Serialize(catalog, BriefJson),
             },
         };
-        foreach (var message in brief.Messages.TakeLast(20))
+        foreach (var message in brief.Messages)
             messages.Add(new JsonObject { ["role"] = message.Role == "agent" ? "assistant" : "user", ["content"] = message.Text });
         messages.Add(new JsonObject { ["role"] = "user", ["content"] = "当前简报数据（资料）：" + current });
         if (sources.Count > 0)

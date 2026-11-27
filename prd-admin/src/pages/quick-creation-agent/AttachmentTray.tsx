@@ -12,7 +12,7 @@ import { MapSpinner } from '@/components/ui/VideoLoader';
 import { Button } from '@/components/design/Button';
 import { readQuickCreationImage } from '@/services/real/quickCreation';
 import type { AttachmentKind, QcAttachment } from './types';
-import { CHAR_BUDGET, KIND_LABEL, MAX_ATTACHMENTS, formatChars, sortAttachments, summarizeAttachments } from './format';
+import { KIND_LABEL, formatChars, sortAttachments, summarizeAttachments } from './format';
 
 const KIND_TINT: Record<AttachmentKind, { bg: string; fg: string }> = {
   doc: { bg: 'var(--semantic-neutral-soft)', fg: 'var(--text-secondary)' },
@@ -257,7 +257,6 @@ export function MaterialsPanel({ mode, items, activeId, onSelect, onRemove, onRe
   const list = mode === 'review' ? items.filter(a => a.status === 'ready') : items;
   const sum = summarizeAttachments(list);
   const active = list.find(a => a.id === activeId) ?? sortAttachments(list).find(a => a.status === 'ready') ?? list[0];
-  const overBudget = sum.chars > CHAR_BUDGET;
   return (
     <div className="flex h-full min-h-0 flex-col md:flex-row" data-qc={mode === 'review' ? 'attachment-review' : 'materials-panel'}>
       <div className="flex min-h-0 shrink-0 flex-col border-token-subtle max-md:max-h-[50%] max-md:border-b md:w-[340px] md:border-r">
@@ -270,9 +269,7 @@ export function MaterialsPanel({ mode, items, activeId, onSelect, onRemove, onRe
         </div>
         {mode === 'manage' && (
           <div className="flex shrink-0 items-center gap-2 border-t border-token-subtle px-3.5 py-2 text-[11.5px] text-token-muted" data-qc="budget">
-            <span style={overBudget ? { color: 'var(--accent-fg-warning)' } : undefined}>
-              文字 {formatChars(sum.chars)} / {formatChars(CHAR_BUDGET)} · 附件 {sum.total} / {MAX_ATTACHMENTS}
-            </span>
+            <span>{sum.total} 份附件 · {formatChars(sum.chars)} 字</span>
             {sum.failed > 0 && onClearFailed && <button type="button" onClick={onClearFailed} className="ml-auto rounded px-1.5 py-0.5 hover-bg-soft hover:text-token-primary max-md:min-h-11">移除失败项</button>}
           </div>
         )}
