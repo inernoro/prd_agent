@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { mkdir, writeFile } from 'node:fs/promises';
+import { setTimeout as delay } from 'node:timers/promises';
 
 import { launch, loadConfig, createMobileContext, stepClick, stepShot, writeManifest } from
   '../.claude/skills/create-visual-test-to-kb/scripts/harness.mjs';
@@ -13,6 +14,9 @@ assert.match(commit, /^[a-f0-9]{40}$/);
 const config = loadConfig(new URL('../.claude/skills/create-visual-test-to-kb/acceptance.config.json', import.meta.url));
 const out = join(process.env.RUNNER_TEMP, 'dsn-1400e277-evidence');
 const environment = { kind: 'cds', branch: 'codex/dsn-1400e277-v6', commit, baseUrl: origin.origin };
+const verifyUserRequests = process.env.E2E_QC_BRIEF_HANDOFF === 'true';
+if (verifyUserRequests) assert.equal(process.env.GITHUB_RUN_ATTEMPT, '1');
+let desktopToken;
 
 async function switchToLight(page, mobile) {
   if (mobile) await page.getByRole('button', { name: '打开导航菜单', exact: true }).click();
@@ -34,12 +38,12 @@ async function enter(page, mobile) {
     page.getByRole('button', { name: '开始身份确认', exact: true }).click(),
   ]);
   assert.ok(login.ok(), '登录失败');
+  if (!mobile) desktopToken = (await login.json()).data.accessToken;
   if (!mobile && process.env.E2E_QC_POLL_ID) {
     const runId = process.env.E2E_QC_POLL_ID;
     assert.match(runId, /^[a-f0-9]{32}$/);
-    const { accessToken } = (await login.json()).data;
     const response = await page.request.get(new URL(`/api/quick-creation/runs/${runId}`, origin).href,
-      { headers: { Authorization: `Bearer ${accessToken}` } });
+      { headers: { Authorization: `Bearer ${desktopToken}` } });
     assert.ok(response.ok(), '读取原视频任务失败');
     const { id, status, kind, elapsedSec, stages, durationSec, captions, publish, failure } = (await response.json()).data;
     assert.equal(id, runId);
@@ -70,6 +74,89 @@ async function enter(page, mobile) {
   return composer;
 }
 
+async function verifyWebHandoff(page) {
+  const prefix = '/api/quick-creation';
+  const api = async path => {
+    const response = await page.request.get(new URL(path, origin).href,
+      { headers: { Authorization: `Bearer ${desktopToken}`, 'X-Client': 'admin' }, timeout: 20_000 });
+    assert.ok(response.ok(), `阅读任务或简报失败 HTTP ${response.status()}`);
+    return (await response.json()).data;
+  };
+  const [attachmentReply] = await Promise.all([
+    page.waitForResponse(r => new URL(r.url()).pathname === prefix + '/attachments/knowledge'),
+    page.locator('[data-qc=sample-doc]').click(),
+  ]);
+  const source = (await attachmentReply.json()).data;
+  assert.equal(createHash('sha256').update(source.excerpt).digest('hex'), 'ae2105b8889429e1444ebb3922e82b67cd707b63a10747d45824c1145cb5fcf1');
+  const messages = [
+    '请把这份稿件做成一页网页，保留先读目标、再画边界、最后对验收三个习惯。',
+    '把页面主标题写成「评审入门手记」，省略首段介绍，从三个习惯开始。',
+  ];
+  let brief;
+  for (const message of messages) {
+    await page.getByRole('textbox', { name: '发给快速创作', exact: true }).fill(message);
+    const [reply] = await Promise.all([
+      page.waitForResponse(r => new URL(r.url()).pathname.endsWith('/messages') && r.request().method() === 'POST'),
+      page.locator('[data-qc=brief-send]').click(),
+    ]);
+    assert.ok(reply.ok());
+    assert.match(reply.headers()['content-type'], /text\/event-stream/);
+    const id = new URL(page.url()).searchParams.get('brief');
+    assert.match(id, /^[a-f0-9]{32}$/);
+    const deadline = Date.now() + 110_000;
+    let saved;
+    do {
+      saved = await api(`${prefix}/brief/${id}`);
+      if (!saved.busy && saved.revision > (brief?.revision ?? 0)) break;
+      await delay(1000);
+    } while (Date.now() < deadline);
+    assert.ok(!saved.busy && saved.revision > (brief?.revision ?? 0), '多轮对话未持久化');
+    assert.equal(saved.kind, 'web');
+    assert.ok(saved.messages.some(row => row.role === 'user' && row.text === message));
+    brief = saved;
+  }
+  assert.deepEqual(brief.attachments.map(attachment => attachment.id), [source.id]);
+  await page.screenshot({ path: join(out, 'brief-handoff-input.png'), scale: 'css' });
+  const [queued] = await Promise.all([
+    page.waitForResponse(r => new URL(r.url()).pathname === prefix + '/runs' && r.request().method() === 'POST'),
+    page.locator('[data-qc=brief-start]').click(),
+  ]);
+  assert.ok(queued.ok());
+  const payload = queued.request().postDataJSON();
+  assert.equal(payload.ask, '', '测试必须从已保存对话传递要求');
+  assert.equal(payload.briefId, brief.id);
+  const { id } = (await queued.json()).data;
+  assert.match(id, /^[a-f0-9]{32}$/);
+  const result = { id, commit, briefId: brief.id, status: 'accepted', messages };
+  const resultFile = join(out, 'brief-handoff.json');
+  await writeFile(resultFile, JSON.stringify(result, null, 2));
+  const deadline = Date.now() + 20 * 60_000;
+  let current;
+  do {
+    current = await api(`${prefix}/runs/${id}`);
+    result.status = current.status;
+    result.stages = current.stages;
+    await writeFile(resultFile, JSON.stringify(result, null, 2));
+    if (['done', 'failed'].includes(current.status)) break;
+    await delay(20_000);
+  } while (Date.now() < deadline);
+  assert.equal(current.status, 'done', current.failure?.message ?? '网页未在验收时限内完成');
+  assert.equal(createHash('sha256').update(current.attachments[0].excerpt).digest('hex'),
+    'ae2105b8889429e1444ebb3922e82b67cd707b63a10747d45824c1145cb5fcf1');
+  await page.locator('[data-qc=done-card]').waitFor();
+  const frame = page.frameLocator('[data-qc=web-preview] iframe');
+  result.headings = await frame.locator('h1, h2, h3').allTextContents();
+  const visible = await frame.locator('body').innerText();
+  result.result = { exactHeading: result.headings.some(heading => heading.replace(/\s/g, '').includes('评审入门手记')),
+    originalTopics: ['先读目标', '再画边界', '最后对验收'].filter(topic => visible.includes(topic)),
+    introOmitted: !visible.replace(/\s/g, '').includes('刚加入团队的同学，第一次参加需求评审时常常不知道该看什么') };
+  await page.screenshot({ path: join(out, 'brief-handoff-result.png'), scale: 'css' });
+  await writeFile(resultFile, JSON.stringify(result, null, 2));
+  assert.ok(result.result.exactHeading, '第二轮要求的主标题未进入成品');
+  assert.equal(result.result.originalTopics.length, 3);
+  assert.ok(result.result.introOmitted, '成品保留了要求省略的开头');
+}
+
 const { browser, page } = await launch(config, { environment });
 let themeSupport;
 let verdict = 'fail';
@@ -78,55 +165,59 @@ try {
   assert.equal((await version.json()).actualCommit, commit);
   await enter(page, false);
   themeSupport = { supportsLight: true, verifiedBy: 'skin settings then real landing' };
-  await page.screenshot({ path: join(out, 'desktop-light-compose-css.png'), scale: 'css' });
-  await stepShot(page, out, 3, 'desktop-web-compose', '快速创作：桌面入口默认选中网页，空稿时快捷生成禁用',
-    page.locator('[data-qc=composer-tools]'));
-  assert.equal(await page.locator('[data-qc=submit]').isEnabled(), false);
-  await stepClick(page, out, 4, page.locator('[data-qc=style-chip]'), 'desktop-style-click', '风格入口：从同一个输入框打开风格库');
-  await page.locator('[data-qc=style-popover]').waitFor();
+  if (verifyUserRequests) {
+    await verifyWebHandoff(page);
+  } else {
+    await page.screenshot({ path: join(out, 'desktop-light-compose-css.png'), scale: 'css' });
+    await stepShot(page, out, 3, 'desktop-web-compose', '快速创作：桌面入口默认选中网页，空稿时快捷生成禁用',
+      page.locator('[data-qc=composer-tools]'));
+    assert.equal(await page.locator('[data-qc=submit]').isEnabled(), false);
+    await stepClick(page, out, 4, page.locator('[data-qc=style-chip]'), 'desktop-style-click', '风格入口：从同一个输入框打开风格库');
+    await page.locator('[data-qc=style-popover]').waitFor();
 
-  const { ctx, page: phone } = await createMobileContext(browser, config, { viewport: { width: 390, height: 844 }, environment });
-  try {
-    await enter(phone, true);
-    const tools = phone.locator('[data-qc=composer-tools]');
-    assert.equal(await tools.locator('[data-qc=brief-send]').isEnabled(), false);
-    assert.equal(await phone.locator('[data-qc=block-reason]').count(), 0);
-    assert.equal(await phone.evaluate(() => document.documentElement.scrollWidth), 390);
-    await phone.screenshot({ path: join(out, 'mobile-light-compose-css.png'), scale: 'css' });
-    await stepClick(phone, out, 7, tools.locator('[data-qc=composer-plus]'), 'mobile-plus-click', '添加资料：点左下的加号');
-    const plus = phone.locator('[data-qc=plus-menu]');
-    await plus.waitFor();
-    assert.deepEqual(await plus.getByRole('button').allTextContents(), ['上传稿件或图片', '从知识库选择']);
-    await phone.screenshot({ path: join(out, 'mobile-light-plus-css.png'), scale: 'css' });
-    await stepShot(phone, out, 8, 'mobile-plus-menu', '添加资料：上传和知识库两项在同一菜单', plus);
-    await phone.keyboard.press('Escape');
-    await plus.waitFor({ state: 'hidden' });
-    await stepClick(phone, out, 9, tools.locator('[data-qc=style-chip]'), 'mobile-style-click', '产出与风格：用组合按钮打开面板');
-    const panel = phone.locator('[data-qc=style-popover]');
-    await panel.waitFor();
-    assert.equal(await panel.getByRole('radio', { name: '网页', exact: true }).getAttribute('aria-checked'), 'true');
-    await stepShot(phone, out, 10, 'mobile-output-menu', '风格面板：视频与网页切换位于顶部，当前选中网页', panel);
-    await phone.keyboard.press('Escape');
-    await panel.waitFor({ state: 'hidden' });
-    const [response] = await Promise.all([
-      phone.waitForResponse(reply => new URL(reply.url()).pathname === '/api/quick-creation/attachments/knowledge'),
-      phone.locator('[data-qc=sample-doc]').click(),
-    ]);
-    const sample = (await response.json()).data;
-    assert.equal(createHash('sha256').update(sample.excerpt).digest('hex'), 'ae2105b8889429e1444ebb3922e82b67cd707b63a10747d45824c1145cb5fcf1');
-    const generate = tools.getByRole('button', { name: '生成', exact: true });
-    await generate.waitFor();
-    assert.ok(await generate.isEnabled());
-    await stepShot(phone, out, 11, 'mobile-input-ready', '快捷生成：固定稿件就绪后右侧显示「生成」', tools);
-    await phone.getByRole('textbox', { name: '发给快速创作', exact: true }).fill('保留原文的三个评审习惯');
-    assert.ok(await tools.locator('[data-qc=brief-send]').isEnabled());
-    assert.equal(await generate.count(), 0);
-    await stepShot(phone, out, 12, 'mobile-input-send', '快捷创作：输入文字后，同一位置切换为发送', tools);
-  } finally {
-    await ctx.close();
+    const { ctx, page: phone } = await createMobileContext(browser, config, { viewport: { width: 390, height: 844 }, environment });
+    try {
+      await enter(phone, true);
+      const tools = phone.locator('[data-qc=composer-tools]');
+      assert.equal(await tools.locator('[data-qc=brief-send]').isEnabled(), false);
+      assert.equal(await phone.locator('[data-qc=block-reason]').count(), 0);
+      assert.equal(await phone.evaluate(() => document.documentElement.scrollWidth), 390);
+      await phone.screenshot({ path: join(out, 'mobile-light-compose-css.png'), scale: 'css' });
+      await stepClick(phone, out, 7, tools.locator('[data-qc=composer-plus]'), 'mobile-plus-click', '添加资料：点左下的加号');
+      const plus = phone.locator('[data-qc=plus-menu]');
+      await plus.waitFor();
+      assert.deepEqual(await plus.getByRole('button').allTextContents(), ['上传稿件或图片', '从知识库选择']);
+      await phone.screenshot({ path: join(out, 'mobile-light-plus-css.png'), scale: 'css' });
+      await stepShot(phone, out, 8, 'mobile-plus-menu', '添加资料：上传和知识库两项在同一菜单', plus);
+      await phone.keyboard.press('Escape');
+      await plus.waitFor({ state: 'hidden' });
+      await stepClick(phone, out, 9, tools.locator('[data-qc=style-chip]'), 'mobile-style-click', '产出与风格：用组合按钮打开面板');
+      const panel = phone.locator('[data-qc=style-popover]');
+      await panel.waitFor();
+      assert.equal(await panel.getByRole('radio', { name: '网页', exact: true }).getAttribute('aria-checked'), 'true');
+      await stepShot(phone, out, 10, 'mobile-output-menu', '风格面板：视频与网页切换位于顶部，当前选中网页', panel);
+      await phone.keyboard.press('Escape');
+      await panel.waitFor({ state: 'hidden' });
+      const [response] = await Promise.all([
+        phone.waitForResponse(reply => new URL(reply.url()).pathname === '/api/quick-creation/attachments/knowledge'),
+        phone.locator('[data-qc=sample-doc]').click(),
+      ]);
+      const sample = (await response.json()).data;
+      assert.equal(createHash('sha256').update(sample.excerpt).digest('hex'), 'ae2105b8889429e1444ebb3922e82b67cd707b63a10747d45824c1145cb5fcf1');
+      const generate = tools.getByRole('button', { name: '生成', exact: true });
+      await generate.waitFor();
+      assert.ok(await generate.isEnabled());
+      await stepShot(phone, out, 11, 'mobile-input-ready', '快捷生成：固定稿件就绪后右侧显示「生成」', tools);
+      await phone.getByRole('textbox', { name: '发给快速创作', exact: true }).fill('保留原文的三个评审习惯');
+      assert.ok(await tools.locator('[data-qc=brief-send]').isEnabled());
+      assert.equal(await generate.count(), 0);
+      await stepShot(phone, out, 12, 'mobile-input-send', '快捷创作：输入文字后，同一位置切换为发送', tools);
+    } finally {
+      await ctx.close();
+    }
   }
   verdict = 'conditional';
 } finally {
-  writeManifest(out, { target: 'MAP 快速创作 V8 入口及手机输入框', verdict, commit, themeSupport });
+  if (!verifyUserRequests) writeManifest(out, { target: 'MAP 快速创作 V8 入口及手机输入框', verdict, commit, themeSupport });
   await browser.close();
 }

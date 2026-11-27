@@ -303,6 +303,7 @@ jobs:
         env:
           E2E_BASE_URL: ${{ inputs.e2e_base_url }}
           E2E_EXPECTED_COMMIT: ${{ inputs.quick_creation_commit }}
+          E2E_QC_BRIEF_HANDOFF: ${{ inputs.quick_creation_generate }}
           E2E_QC_POLL_ID: ${{ inputs.quick_creation_retry_film_id }}
           E2E_USER: ${{ secrets.E2E_USER }}
           E2E_PASSWORD: ${{ secrets.E2E_PASSWORD }}
