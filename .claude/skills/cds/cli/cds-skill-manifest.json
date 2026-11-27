@@ -40,7 +40,7 @@
     "cds/scripts/design/changes-index.mjs": "a368f01702398ac860cc718e63268ffa4024caa4fe73fb20bf74e6ccb1de9afd",
     "cds/scripts/design/gate.mjs": "1f64e08859c37999311c6a7eae85dd94c27b4161f4f2a7c284b1ce5b22567277",
     "cds/scripts/design/handoff.mjs": "d9d1b9808da6fe8f0ecc3b2bdbd8a6af1ed9ce31775f065f8d8f5f8ee334dbe1",
-    "cds/scripts/design/prototype-build.mjs": "09bc6cb162342cd53e036b948fd460b849c410c6f6e37d435b67d7fd5be61c43",
+    "cds/scripts/design/prototype-build.mjs": "f56e3f948f53caa9b08d4e535cec9a89c81c98d6287b7bcebfab2ac466d92dad",
     "cds/scripts/design/release.mjs": "48028a24e1181834d675dfabcffce6f57de2f39a74e96c6c8a7cc00050c902b1",
     "cds/scripts/design/version-diff.mjs": "8c20ff8e54981a7321d3709afbb3f47897304bc648c2cbbdd82f90f5e5ad4bca",
     "cds/scripts/refresh_manifest.py": "48913d12887e76b01f564f7439a53b1326abed070a547101f8f97ddbf458252f",
@@ -95,5 +95,5 @@
     "cds-release/SKILL.md": "7a80c34792d75c327d360f5c84963de33b78e43b818465cfbe6213db6b70ee90",
     "preview-url/SKILL.md": "cba546b198bc1e0bad384d447078663d0e6906f1d080722dd29db7b14a33f65b"
   },
-  "generatedAt": "2026-11-27T14:51:03.407522+00:00"
+  "generatedAt": "2026-11-27T14:51:09.237588+00:00"
 }
