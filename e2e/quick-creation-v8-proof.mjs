@@ -109,6 +109,9 @@ async function verifyExistingFilm(page, id) {
   } finally {
     await rm(filmFile, { force: true });
   }
+  const proof = { id, commit, duration, frameTimes, streams: probe.streams };
+  const proofPath = join(out, 'retained-film-review.json');
+  await writeFile(proofPath, JSON.stringify(proof, null, 2));
   await page.locator('[data-qc=open-hosting]').click();
   let siteId;
   await page.waitForURL(url => {
@@ -117,8 +120,11 @@ async function verifyExistingFilm(page, id) {
   });
   assert.match(siteId, /^[a-f0-9]{32}$/);
   await page.locator(`[data-hosted-site-id="${siteId}"]`).first().waitFor();
-  const proof = { id, commit, duration, frameTimes, siteId, streams: probe.streams };
-  await writeFile(join(out, 'retained-film-review.json'), JSON.stringify(proof, null, 2));
+  await page.waitForFunction(id => {
+    const card = document.querySelector(`[data-hosted-site-id="${id}"]`);
+    return card?.style.outline.includes('var(--accent-primary)');
+  }, siteId);
+  await writeFile(proofPath, JSON.stringify({ ...proof, siteId, highlighted: true }, null, 2));
   await page.screenshot({ path: join(out, 'retained-film-hosting.png'), scale: 'css' });
 }
 

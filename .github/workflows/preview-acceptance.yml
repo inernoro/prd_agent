@@ -298,6 +298,11 @@ jobs:
           E2E_USER: ${{ secrets.E2E_USER }}
           E2E_PASSWORD: ${{ secrets.E2E_PASSWORD }}
         run: node e2e/quick-creation-v6-acceptance.mjs
+      - name: Install cloud media inspection tools
+        if: inputs.quick_creation_brief_admission == 'proof' && inputs.quick_creation_retry_film_id != ''
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
       - name: Capture annotated V8 acceptance evidence
         if: inputs.quick_creation_brief_admission == 'proof'
         env:
