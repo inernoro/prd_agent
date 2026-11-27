@@ -42,12 +42,12 @@
     "cds/scripts/design/handoff-run.mjs": "024dfae7e75c89f4bf08a70226d2f495fe4a4037cb4aa8af2c0d1559a4fa983e",
     "cds/scripts/design/handoff.mjs": "d9d1b9808da6fe8f0ecc3b2bdbd8a6af1ed9ce31775f065f8d8f5f8ee334dbe1",
     "cds/scripts/design/prototype-build.mjs": "f56e3f948f53caa9b08d4e535cec9a89c81c98d6287b7bcebfab2ac466d92dad",
-    "cds/scripts/design/release.mjs": "c8b28558e02ca89b24ecf09c9eeeae0bae416ecbc670270510f1c3a1ba6238b3",
+    "cds/scripts/design/release.mjs": "ca05c94905b92ef2c9a2da61ef8fc44d095206354528184ad7a01951b32ac53b",
     "cds/scripts/design/version-diff.mjs": "8c20ff8e54981a7321d3709afbb3f47897304bc648c2cbbdd82f90f5e5ad4bca",
     "cds/scripts/refresh_manifest.py": "48913d12887e76b01f564f7439a53b1326abed070a547101f8f97ddbf458252f",
     "cds/scripts/skill-fresh.mjs": "c992eae49eeeb442da344b7097c3cf5ee9d0bf492d5b928dd2fcc2e693997968",
     "cds/SKILL.md": "037cf4ada560c01693e44c0e417e836e07f7a9578b8737a315f3d519fe45d455",
-    "cds/tests/test_cdscli_acceptance_standard.py": "4c04b213da30ccc64be92cbe3559dfbcf72ccf04801c83d9c4c186b24274211f",
+    "cds/tests/test_cdscli_acceptance_standard.py": "f4f64dc48e6885c8090a3da9308f2d6200ab2b26ab797f7a3101966f32899104",
     "cds/tests/test_cdscli_agent_identity.py": "706e9c146eab1fef080a79380cd8c03b2a5e0a90384ded4587754b77be293434",
     "cds/tests/test_cdscli_code_review.py": "9f4b73be9b267351d0588e96d61c90ebe0b9f5fb742739213d4633eee38b53dd",
     "cds/tests/test_cdscli_connect.py": "649a4a6081ad4399b68191447af31705bacb97c29a64b7fdaed62be630f9ab3a",
@@ -96,5 +96,5 @@
     "cds-release/SKILL.md": "7a80c34792d75c327d360f5c84963de33b78e43b818465cfbe6213db6b70ee90",
     "preview-url/SKILL.md": "cba546b198bc1e0bad384d447078663d0e6906f1d080722dd29db7b14a33f65b"
   },
-  "generatedAt": "2026-11-27T23:22:14.821Z"
+  "generatedAt": "2026-11-27T23:31:55.123Z"
 }
