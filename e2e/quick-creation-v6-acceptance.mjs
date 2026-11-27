@@ -298,8 +298,14 @@ async function verifyBriefJourney(page, api) {
   }
 }
 
-async function verifyPreview(page, view, row) {
-  await page.goto(new URL(`/quick-creation-agent?run=${encodeURIComponent(view.id)}`, origin).href);
+async function openExistingWork(page, id) {
+  await page.getByRole('button', { name: /^我的作品，共/ }).click();
+  await page.locator(`[data-qc=works] button[data-run-id="${id}"]`).click();
+  assert.equal(new URL(page.url()).searchParams.get('run'), id);
+}
+
+async function verifyPreview(page, view, row, alreadyOpen = false) {
+  if (!alreadyOpen) await page.goto(new URL(`/quick-creation-agent?run=${encodeURIComponent(view.id)}`, origin).href);
   await page.locator(`[data-run-id="${view.id}"] [data-qc=done-card]`).waitFor();
   if (view.kind === 'video') {
     const video = page.locator('[data-qc=film]');
@@ -350,7 +356,8 @@ async function verifyExistingVideo(page, api) {
   assert.equal(digest(film.attachments[0]?.excerpt), '940ba09667ffdbabd5693a800e977ff4d287100309af306479c9ccd86667428b');
   const row = { id: film.id, kind: film.kind, templateId: film.templateId, reused: true, elapsedSec: film.elapsedSec, captionCount: film.captions?.length ?? 0 };
   receipt.runs.push(row);
-  try { await verifyPreview(page, film, row); }
+  await openExistingWork(page, film.id);
+  try { await verifyPreview(page, film, row, true); }
   catch (error) { receipt.failures.push({ id: film.id, kind: 'video', code: 'player', details: String(error.message).slice(0, 250) }); }
   const video = page.locator('[data-qc=film]');
   for (const percent of [8, 26, 53, 79]) {
@@ -476,6 +483,16 @@ try {
     assert.equal(phoneWidth.scroll, phoneWidth.viewport);
     await phone.screenshot({ path: join(out, '04-phone-compose.png') });
     receipt.cases.push('distinct touch context and no 375px page overflow');
+    if (existingVideoId) {
+      await openExistingWork(phone, existingVideoId);
+      await phone.getByRole('tab', { name: /预览/ }).click();
+      await phone.locator('[data-qc=film]').waitFor();
+      await phone.waitForFunction(() => document.querySelector('[data-qc=film]')?.readyState >= 2);
+      await phone.locator('[data-qc=play-toggle]').click();
+      await phone.waitForFunction(() => document.querySelector('[data-qc=film]')?.currentTime > 0);
+      await phone.screenshot({ path: join(out, '23-phone-watercolor-playback.png') });
+      receipt.cases.push('mobile reopens and plays the same published watercolour movie from My works');
+    }
   } catch (error) {
     await phone.screenshot({ path: join(out, '04-phone-failure.png') }).catch(() => {});
     receipt.failures.push({ kind: 'mobile', code: 'navigation', details: String(error.message).slice(0, 250) });
