@@ -42,6 +42,7 @@ public sealed class OpenDesignStageProgress
 
     private readonly bool _editing;
     private readonly bool _codeFilm;
+    private bool _resumingFilm;
     private Macro _macro = Macro.None;
     private int _repairAttempt;
     private int _progress;
@@ -62,6 +63,11 @@ public sealed class OpenDesignStageProgress
     /// </summary>
     public OpenDesignProgressUpdate? Observe(string? reason, int? elapsedSeconds, int? attempt)
     {
+        if (_codeFilm && reason == "code_film_workspace_restored")
+        {
+            _resumingFilm = true;
+            return new OpenDesignProgressUpdate(_progress, DesignArtifactPhaseCodes.PreparingWorkspace, "已取回上次保存的内容，正在继续");
+        }
         var next = MacroOf(reason);
         if (next == null)
             return null;
@@ -150,9 +156,9 @@ public sealed class OpenDesignStageProgress
             Macro.Preparing => "正在准备隔离工作区",
             Macro.Importing => _codeFilm ? "OpenDesign 正在读取原稿和风格"
                 : _editing ? "OpenDesign 正在读取当前页面与修改要求" : "OpenDesign 正在读取素材与任务书",
-            Macro.Starting => _codeFilm ? "OpenDesign 开始创作视频"
+            Macro.Starting => _resumingFilm ? "OpenDesign 开始续跑视频" : _codeFilm ? "OpenDesign 开始创作视频"
                 : _editing ? "OpenDesign 开始修改页面" : "OpenDesign 开始设计页面",
-            Macro.Designing => (_codeFilm ? "OpenDesign 正在创作视频"
+            Macro.Designing => (_resumingFilm ? "OpenDesign 正在从已保留的内容继续" : _codeFilm ? "OpenDesign 正在创作视频"
                 : _editing ? "OpenDesign 正在修改页面" : "OpenDesign 正在设计并写出页面") + suffix,
             Macro.Reviewing => "OpenDesign 正在逐项自查" + suffix,
             Macro.ReviewConverged => "模型自查已按时间预算收口，正在进入浏览器检查",
