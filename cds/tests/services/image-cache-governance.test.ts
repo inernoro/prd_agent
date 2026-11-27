@@ -351,7 +351,9 @@ with socketserver.UnixStreamServer(${JSON.stringify(socket)},Handler) as server:
       nativePull: true, peakBytes: 1024, budgetBytes: 33 * 1024, reuseVerifiedRevision: commit };
     const writeLedger = (pulls: typeof old) => fs.writeFileSync(ledgerPath, JSON.stringify({ ...ledger, pulls }));
     writeLedger({ ...old, ['0'.repeat(32)]: { ...old['0'.repeat(32)], startedAt: now } });
+    const callsBeforeBlock = fs.readFileSync(f.calls, 'utf8').length;
     expect(() => f.request(request)).toThrow(/unsettled-image-pull-budget-reached/);
+    expect(fs.readFileSync(f.calls, 'utf8').slice(callsBeforeBlock)).not.toContain('["image", "ls"');
     writeLedger(old);
     expect(() => f.request({ ...request, budgetBytes: 33 * 1024 - 1 })).toThrow(/host-image-cache-budget-exceeded/);
     expect(() => f.request({ ...request, reuseVerifiedRevision: undefined })).toThrow(/unsettled-image-pull-budget-reached/);

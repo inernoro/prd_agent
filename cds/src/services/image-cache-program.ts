@@ -92,7 +92,7 @@ def matched_local_docker_socket():
  except (OSError,ValueError,http.client.HTTPException):pass
  return None
 
-local_socket=matched_local_docker_socket() if action in ('prepare','preview','reconcile','adopt') else None
+local_socket=matched_local_docker_socket() if action in ('preview','reconcile','adopt') else None
 def docker_summary(endpoint):
  try:
   rows=local_docker_json(local_socket,endpoint)
@@ -338,11 +338,14 @@ def pull_has_been_overdue(pull):
  started=pull.get('startedAt',created)
  return type(created) is int and type(started) is int and now-max(created,started)>PULL_OVERDUE_MS
 
-def reserve_pull(image,present,peak,allow_recovery=False):
+def check_pull_slots(allow_recovery=False):
  unsettled=[p for p in state['pulls'].values() if not p.get('confirmed')]
  recovery=len(unsettled)>=MAX_UNSETTLED_PULLS
  if recovery and not (allow_recovery and len(unsettled)==MAX_UNSETTLED_PULLS and all(map(pull_has_been_overdue,unsettled))):
   raise ValueError('unsettled-image-pull-budget-reached')
+ return recovery
+
+def reserve_pull(image,present,peak,recovery):
  token=secrets.token_hex(16)
  state['pulls'][token]={'image':image,'instanceId':instance,'createdAt':now,'beforeId':present['Id'] if present else None,'reserveBytes':peak}
  if req.get('nativePull'):state['pulls'][token]['nativePull']=True
@@ -381,9 +384,14 @@ if action=='prepare':
   # A present immutable reference cannot create a new image. Pin its exact identity without scanning unrelated images.
   present=inspect_image(image)
   if not present and req.get('requirePresent'):print(json.dumps({'absent':True}));sys.exit(0)
-  if present and not force_new:reserve_pull(image,present,0)
+  if present and not force_new:reserve_pull(image,present,0,check_pull_slots())
+ budget=req.get('budgetBytes',0)
+ peak_limit=req.get('peakBytes',DEFAULT_PULL_PEAK_BYTES)
+ # No transfer can be admitted without a slot. Check under the same lock before scanning the whole Docker daemon.
+ recovery=check_pull_slots(allow_recovery=exact_retry and force_new and peak_limit>0 and budget>0)
+ local_socket=matched_local_docker_socket()
  rows=images();by_ref={reference_key(value):row for row in rows for value in refs(row)}
- image=req['image'];present=by_ref.get(reference_key(image));budget=req.get('budgetBytes',0)
+ present=by_ref.get(reference_key(image))
  if req.get('requirePresent') and not present:print(json.dumps({'absent':True}));sys.exit(0)
  foreign=set(state.get('seenForeignIds',[]))&{r['Id'] for r in rows}
  starting={reference_key(p['image']) for p in state['pulls'].values() if not p.get('beforeId')}
@@ -391,10 +399,10 @@ if action=='prepare':
   if row['Id'] not in state['images'] and not any(reference_key(value) in starting for value in refs(row)):foreign.add(row['Id'])
  state['seenForeignIds']=sorted(foreign)
  reserved=sum(p.get('reserveBytes',0) for p in state['pulls'].values() if not p.get('confirmed'))
- peak=req.get('peakBytes',DEFAULT_PULL_PEAK_BYTES) if not present or req.get('forceNew') else 0
+ peak=peak_limit if not present or force_new else 0
  if peak and budget and sum(r['Size'] for r in rows)+reserved+peak>budget:raise ValueError('host-image-cache-budget-exceeded')
  # Recover one exact deployment retry while every regular slot is overdue. All old pins and bytes remain charged.
- reserve_pull(image,present,peak,allow_recovery=exact_retry and peak>0 and budget>0)
+ reserve_pull(image,present,peak,recovery)
 def confirm_pull(pull,row):
  if row['Id']!=pull['beforeId'] and row['Id'] not in state.get('seenForeignIds',[]):
   previous=state['images'].get(row['Id'])
