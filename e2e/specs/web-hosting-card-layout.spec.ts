@@ -528,8 +528,12 @@ for (const mode of ['list', 'account-share', 'guest-share'] as const) {
       else if (path === '/api/changelog/current-week') data = { weekStart: sites[0].createdAt, weekEnd: sites[0].createdAt, fetchedAt: sites[0].createdAt, dataSourceAvailable: true, source: 'local', totalDays: 0, totalEntries: 0, daysOffset: 0, hasMore: false, fragments: [] };
       else if (path === '/api/web-pages') data = { items: sites, total: sites.length };
       else if (path === '/api/web-pages/related-documents/summaries') data = { items: { source: { count: 1, isMain: true, titles: ['关联目标'] } } };
-      else if (path.endsWith('/collection-contexts')) data = { items: [], total: 0, totalContexts: 0, page: 1, pageSize: 20 };
-      else if (path.endsWith('/related-documents')) data = { version: 1, mainSiteId: 'source', canManage: false,
+      else if (path.endsWith('/collection-contexts')) data = {
+        items: [{ id: 'collection:qa-related', title: '来源分享', memberCount: sites.length, updatedAt: sites[0].updatedAt,
+          collectionId: 'qa-related', legacyShareId: null, shareCount: 0, primaryLink: null }],
+        total: 1, totalContexts: 1, page: 1, pageSize: 20,
+      };
+      else if (path.endsWith('/related-documents') || path.endsWith('/documents')) data = { version: 1, mainSiteId: 'source', canManage: false,
         hasPermissionDifferences: false, items: sites.map(site => ({ ...site, isMain: site.id === 'source',
           // 访客通过合集快照读取成员；评论引用仍附在该成员上。
           isManual: true,
