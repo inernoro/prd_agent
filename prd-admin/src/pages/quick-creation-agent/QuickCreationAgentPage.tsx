@@ -386,7 +386,11 @@ export function QuickCreationAgentPage() {
               <div className="min-w-0 flex-1">
                 <div className="text-[15px] font-semibold text-token-primary">{run.kind === 'video' ? '成片已生成' : '网页已生成'}</div>
                 <div className="mt-0.5 text-[12.5px] leading-5 text-token-secondary">
-                  {run.kind === 'video' ? `${formatClock(run.durationSec ?? 0)} · ${run.scenes?.length ?? 0} 幕 · 1080p` : `${run.sections?.length ?? 0} 节 · 适配手机`}，右边可以直接{run.kind === 'video' ? '播放' : '浏览'}。
+                  {run.kind === 'video' ? [
+                    run.durationSec ? formatClock(run.durationSec) : null,
+                    run.scenes?.length ? `${run.scenes.length} 幕` : null,
+                    '在右侧播放',
+                  ].filter(Boolean).join(' · ') : '在右侧预览网页'}
                 </div>
               </div>
             </div>
@@ -426,7 +430,7 @@ export function QuickCreationAgentPage() {
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-secondary)] px-3.5 py-2.5 text-[12px] leading-5 text-token-secondary">
       {run.status === 'queued' || run.status === 'running' ? (
         <>
-          <span className="min-w-0 flex-1">可以离开，完成后会发站内通知，也能在「我的作品」找到它。</span>
+          <span className="min-w-0 flex-1">可以离开，稍后从「我的作品」查看结果。</span>
           <Button size="sm" variant="secondary" className="max-md:min-h-11" data-qc="leave" onClick={() => setParams({ view: 'works' })}>离开，稍后回来</Button>
         </>
       ) : run.status === 'failed' ? (

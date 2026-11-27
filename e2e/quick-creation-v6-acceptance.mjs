@@ -9,11 +9,13 @@ const origin = new URL(process.env.E2E_BASE_URL);
 const commit = process.env.E2E_EXPECTED_COMMIT;
 const generate = process.env.E2E_QC_GENERATE === 'true';
 const retryFilmId = process.env.E2E_QC_RETRY_FILM || '';
+const existingWebId = process.env.E2E_QC_EXISTING_WEB || '';
 assert.equal(origin.origin, 'https://dsn-1400e277-v6-codex-prd-agent.miduo.org');
 assert.match(commit, /^[a-f0-9]{40}$/);
 assert.ok(process.env.E2E_USER && process.env.E2E_PASSWORD && process.env.RUNNER_TEMP);
 if (generate) assert.equal(process.env.GITHUB_RUN_ATTEMPT, '1', 'Review original tasks before repeating paid jobs');
 if (retryFilmId) assert.match(retryFilmId, /^[a-f0-9]{32}$/);
+if (existingWebId) assert.match(existingWebId, /^[a-f0-9]{32}$/);
 const out = join(process.env.RUNNER_TEMP, 'dsn-1400e277-evidence');
 await mkdir(out, { recursive: true });
 const receipt = { design: 'DSN-1400E277', version: 6, commit, origin: origin.origin, cases: [], runs: [], failures: [] };
@@ -155,16 +157,30 @@ try {
     receipt.cases.push('generation is rejected unless the authenticated request supplies explicit intent');
     let web;
     try {
-      const [created] = await Promise.all([
-        page.waitForResponse(match(base + '/runs', 'POST')),
-        page.locator('[data-qc=submit]').click(),
-      ]);
-      web = await data(created, 'queue real webpage');
-      receipt.runs.push({ id: web.id, kind: 'web', admitted: web.status });
-      console.log(`Quick creation web ${web.id}: ${web.status}`);
-      assert.equal(web.kind, 'web');
-      assert.equal(web.attachments[0].id, original.id);
-      assert.equal(web.templateId, 'ink-wash');
+      if (existingWebId) {
+        const existing = await data(await api(`${base}/runs/${existingWebId}`), 'read existing published webpage');
+        assert.equal(existing.status, 'done');
+        assert.equal(existing.kind, 'web');
+        assert.equal(existing.templateId, 'ink-wash');
+        assert.equal(existing.attachments[0]?.excerpt, original.excerpt);
+        assert.ok(existing.publish.siteId);
+        const row = { id: existing.id, kind: 'web', currentStatus: 'done', siteId: existing.publish.siteId, reused: true };
+        receipt.runs.push(row);
+        await verifyPreview(page, existing, row);
+        await page.locator('[data-qc=published]').waitFor();
+        receipt.cases.push('the previously published webpage and its preview survived the deployment');
+      } else {
+        const [created] = await Promise.all([
+          page.waitForResponse(match(base + '/runs', 'POST')),
+          page.locator('[data-qc=submit]').click(),
+        ]);
+        web = await data(created, 'queue real webpage');
+        receipt.runs.push({ id: web.id, kind: 'web', admitted: web.status });
+        console.log(`Quick creation web ${web.id}: ${web.status}`);
+        assert.equal(web.kind, 'web');
+        assert.equal(web.attachments[0].id, original.id);
+        assert.equal(web.templateId, 'ink-wash');
+      }
     } catch (error) {
       receipt.failures.push({ kind: 'web', code: 'admission', details: String(error.message).slice(0, 250) });
     }
@@ -215,7 +231,7 @@ try {
         receipt.failures.push({ id: web.id, kind: 'web', code: 'recovery', details: String(error.message).slice(0, 250) });
       }
     }
-    const expected = new Map(receipt.runs.map(row => [row.id, (row.kind === 'web' ? 22 : 135) * 60_000]));
+    const expected = new Map(receipt.runs.filter(row => !row.reused).map(row => [row.id, (row.kind === 'web' ? 22 : 135) * 60_000]));
     const started = Date.now();
     while (expected.size) {
       for (const [id, budget] of expected) {
