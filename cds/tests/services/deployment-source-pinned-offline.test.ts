@@ -40,6 +40,33 @@ describe('frozen full deployment commit does not require a second remote fetch',
     expect(f.git(f.local, 'rev-parse', 'HEAD')).toBe(f.a);
     expect(f.fetches).toEqual([]);
   });
+  it('validates a literal branch without depending on the configured repository directory', async () => {
+    const f = await fixture();
+    const branch = 'codex/web-hosting-collection-flow';
+    f.git(f.local, 'branch', branch, f.a);
+    f.setOffline();
+
+    const target = await f.service.resolveDeploymentCommit(branch, f.local, f.a, path.join(f.root, 'missing-repo'));
+    expect(target.afterFull).toBe(f.a);
+    expect(f.fetches).toEqual([]);
+  });
+
+  it.each(['HEAD', '-option', 'codex/bad..ref', '@{-1}'])('rejects non-literal or invalid branches before resolving a commit (%s)', async (branch) => {
+    const f = await fixture();
+    await expect(f.service.resolveDeploymentCommit(branch, f.local, f.a)).rejects.toMatchObject({ code: 'invalid-branch-ref' });
+    expect(f.fetches).toEqual([]);
+  });
+
+  it.each([
+    { exitCode: 127, stdout: '', stderr: 'git: command not found' },
+    { exitCode: 1, stdout: '', stderr: 'Process error' },
+  ])('reports Git execution failure separately from invalid branch format ($exitCode)', async (failed) => {
+    const f = await fixture();
+    const service = new WorktreeService({ exec: async () => failed });
+    await expect(service.resolveDeploymentCommit('codex/web-hosting-collection-flow', f.local, f.a))
+      .rejects.toMatchObject({ code: 'git-ref-validation-unavailable', message: '暂时无法校验部署分支，请检查执行器后重试' });
+  });
+
   it('fetches missing exact B and never falls back to local A for an unavailable commit', async () => {
     const f = await fixture();
     expect((await f.service.resolveDeploymentCommit('main', f.local, f.b)).afterFull).toBe(f.b);

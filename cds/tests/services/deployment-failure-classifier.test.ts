@@ -42,6 +42,13 @@ describe('classifyDeploymentFailure', () => {
       .toMatchObject({ code, owner, retryable });
   });
 
+  it.each([
+    ['部署分支名不符合 Git 规则，请核对分支名后重试', 'config.git.branch-invalid', 'config', false],
+    ['暂时无法校验部署分支，请检查执行器后重试', 'cds.git.ref-validation-unavailable', 'cds', true],
+  ])('classifies source preparation errors as %s', (message, code, owner, retryable) => {
+    expect(classifyDeploymentFailure({ message, phase: 'deploy' })).toMatchObject({ code, owner, retryable });
+  });
+
   it('falls back to an explicit unknown code instead of inventing a root cause', () => {
     expect(classifyDeploymentFailure({ message: 'unrecognized failure', phase: 'deploy' })).toMatchObject({
       code: 'deploy.unknown', owner: 'unknown', retryable: true,
