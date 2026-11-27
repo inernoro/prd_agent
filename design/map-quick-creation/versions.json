@@ -44,6 +44,13 @@
    "tag": "design/DSN-1400E277/v6",
    "committedAt": "2026-11-26T17:38:19+00:00",
    "subject": "Merge remote-tracking branch 'origin/main' into claude/map-quick-creation-agent-9aslcd"
+  },
+  {
+   "version": 7,
+   "commit": "cab85382a3cc6dea667aa85e339e7ba589728d99",
+   "tag": "design/DSN-1400E277/v7",
+   "committedAt": "2026-11-27T07:48:52+00:00",
+   "subject": "feat(design): 快速创作 V7 对话起稿"
   }
  ]
 }
