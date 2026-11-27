@@ -2,7 +2,7 @@ import '@/components/workspace/workspace.css';
 import '@/components/web-hosting/web-hosting-toolbar.css';
 import { HostedCollectionEditor, HostedCollectionLibrary } from '@/components/web-hosting/HostedCollectionManager';
 import { getWebHostingUploadError, WEB_HOSTING_UPLOAD_ACCEPT, WEB_HOSTING_UPLOAD_EXTENSIONS } from '@/lib/webHostingUploadLimits';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type CompositionEvent } from 'react';
 import { useHostedSiteSelection } from '@/components/web-hosting/useHostedSiteSelection';
 import { CheckSquare2 } from 'lucide-react';
 import { Button } from '@/components/design/Button';
@@ -344,6 +344,31 @@ export default function WebPagesPage() {
   // 团队空间下我的有效角色（owner/editor/viewer）；个人空间为 null（=自己的，全权）
   const [myWebHostingRole, setMyWebHostingRole] = useState<WebHostingRole | null>(null);
   const [keyword, setKeyword] = useState('');
+  const [searchText, setSearchText] = useState('');
+  const [searchFocused, setSearchFocused] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const searchComposing = useRef(false);
+  const searchInput = {
+    ref: searchInputRef,
+    value: searchText,
+    onFocus: () => setSearchFocused(true),
+    onBlur: () => {
+      if (searchComposing.current) setSearchText(keyword);
+      searchComposing.current = false;
+      setSearchFocused(false);
+    },
+    onChange: (event: ChangeEvent<HTMLInputElement>) => {
+      const value = event.currentTarget.value;
+      setSearchText(value);
+      if (!searchComposing.current) setKeyword(value);
+    },
+    onCompositionStart: () => { searchComposing.current = true; },
+    onCompositionEnd: (event: CompositionEvent<HTMLInputElement>) => {
+      searchComposing.current = false;
+      setSearchText(event.currentTarget.value);
+      setKeyword(event.currentTarget.value);
+    },
+  };
   const [activeTag, setActiveTag] = useState<string | null>(null);
   // 来源筛选（手动上传 / 工作流生成 / MCP 生成 / 保存自分享）；null = 不限
   const [activeSource, setActiveSource] = useState<string | null>(null);
@@ -518,6 +543,13 @@ export default function WebPagesPage() {
    * 后台只保留一个「以访客身份预览」的动作。
    */
   const [workspaceTab, setWorkspaceTab] = useState<'library' | 'shares'>('library');
+  useLayoutEffect(() => {
+    // 响应式切换可能直接卸载搜索框，浏览器这时不会派发 blur。
+    if (!searchFocused || (workspaceTab === 'library' && searchInputRef.current === document.activeElement)) return;
+    if (searchComposing.current) setSearchText(keyword);
+    searchComposing.current = false;
+    setSearchFocused(false);
+  }, [isMobile, keyword, searchFocused, workspaceTab]);
 
   useEffect(() => {
     if (checkedRecentDelivery.current || location.search || !seenDeliveryKey) return;
@@ -555,7 +587,7 @@ export default function WebPagesPage() {
       if (!preferredSpace && target.ownerUserId !== currentUserId) throw new Error('暂时无法进入这个网页所属的团队空间');
       const space: Space = preferredSpace ?? { kind: 'personal' };
       if (!preferredSpace) setOwnerReturnSite(target);
-      setKeyword(''); setActiveTag(null); setActiveSource(null);
+      setSearchText(''); setKeyword(''); setActiveTag(null); setActiveSource(null);
       setActiveFolder(null); setActiveGroupId(null); setWorkspaceTab('library'); setVisibilityFilter('all');
       setCurrentSpace(space); rememberSpace(space);
       setSites(previous => [target, ...previous.filter(site => site.id !== target.id)]);
@@ -1275,6 +1307,7 @@ export default function WebPagesPage() {
           <div key={site.id} className="min-w-0">
             <SiteCard
               site={site}
+              pauseLivePreview={searchFocused}
               size={cardSize}
               selected={selectedIds.has(site.id)}
               selectionMode={selectionMode}
@@ -1411,8 +1444,7 @@ export default function WebPagesPage() {
                   <input
                     type="text"
                     placeholder="搜索标题、描述、标签"
-                    value={keyword}
-                    onChange={e => setKeyword(e.target.value)}
+                    {...searchInput}
                     className="web-hosting-toolbar-input"
                   />
                   {/* 设计稿右端的 `/` 快捷键提示片 */}
@@ -1679,8 +1711,7 @@ export default function WebPagesPage() {
                 <input
                   type="text"
                   placeholder="搜索站点名称、描述..."
-                  value={keyword}
-                  onChange={e => setKeyword(e.target.value)}
+                  {...searchInput}
                   className="min-h-11 w-full pl-9 pr-3 py-2 rounded-lg text-sm outline-none"
                   style={{
                     background: 'var(--bg-sunken)',
@@ -2170,6 +2201,7 @@ export default function WebPagesPage() {
           ) : (
             <SiteContextPanel
               site={contextSite}
+              pauseLivePreview={searchFocused}
               links={shareLinks}
               visitorCount={contextSite ? siteVisitors[contextSite.id] : undefined}
               pulse={weeklyPulse}
