@@ -68,6 +68,7 @@ public partial class WebPagesController : ControllerBase
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly PrdAgent.Api.Services.IHostedSitePrivateSourceGate? _privateSources;
     private readonly IConfiguration? _commentAvatarConfiguration;
+    private readonly ILogger<WebPagesController>? _logger;
 
     public WebPagesController(
         IHostedSiteService siteService,
@@ -78,7 +79,8 @@ public partial class WebPagesController : ControllerBase
         IHttpClientFactory httpClientFactory,
         PrdAgent.Api.Services.IHostedSitePrivateSourceGate? privateSources = null,
         PrdAgent.Infrastructure.Services.AssetStorage.IAssetStorage? assetStorage = null,
-        IConfiguration? configuration = null)
+        IConfiguration? configuration = null,
+        ILogger<WebPagesController>? logger = null)
     {
         _siteService = siteService;
         _optimizationService = optimizationService;
@@ -86,6 +88,7 @@ public partial class WebPagesController : ControllerBase
         _db = db;
         _teams = teams;
         _httpClientFactory = httpClientFactory;
+        _logger = logger;
         // 生产由 Program.cs 注册（HostedSitePrivateSourceGateTests 的接线守卫盯着）；只有不涉及发布的单测构造才为 null。
         _privateSources = privateSources;
         _reviewStorage = assetStorage;

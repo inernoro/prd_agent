@@ -38,11 +38,23 @@ public partial class WebPagesController
             || directory.CosKey != entry.CosKey[..^site.EntryFile.Length] + CoursePath)
             return html;
 
-        if (!await LargeSiteHtmlReads.WaitAsync(LargeSiteHtmlWait, ct))
-            return html;
+        var holdsLargeSlot = false;
         try
         {
-            var bytes = await storage.TryDownloadBytesAsync(directory.CosKey, ct);
+            holdsLargeSlot = await LargeSiteHtmlReads.WaitAsync(LargeSiteHtmlWait, ct);
+            if (!holdsLargeSlot)
+                return html;
+
+            byte[]? bytes;
+            try
+            {
+                bytes = await storage.TryDownloadBytesAsync(directory.CosKey, ct);
+            }
+            catch (Exception ex) when (ex is not (OperationCanceledException or OutOfMemoryException))
+            {
+                _logger?.LogWarning("读取网页托管课程目录失败，保留入口页面: {SiteId}, {ErrorType}", site.Id, ex.GetType().Name);
+                return html;
+            }
             if (bytes == null || bytes.LongLength != directory.Size)
                 return html;
             using var json = JsonDocument.Parse(bytes);
@@ -70,7 +82,7 @@ public partial class WebPagesController
                 """;
             return html.Insert(head + "<head>".Length, bootstrap);
         }
-        catch (Exception ex) when (ex is JsonException or HttpRequestException or IOException or OperationCanceledException)
+        catch (Exception ex) when (ex is JsonException or OperationCanceledException)
         {
             // The directory is optional for other views of the uploaded HTML. Leave it unchanged
             // if the course data cannot be read from storage.
@@ -78,7 +90,8 @@ public partial class WebPagesController
         }
         finally
         {
-            LargeSiteHtmlReads.Release();
+            if (holdsLargeSlot)
+                LargeSiteHtmlReads.Release();
         }
     }
 }

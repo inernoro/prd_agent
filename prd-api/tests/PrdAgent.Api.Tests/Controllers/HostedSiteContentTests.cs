@@ -76,9 +76,11 @@ public sealed class HostedSiteContentTests
     }
 
     [Theory]
-    [InlineData("v2", true)]
-    [InlineData("v1", false)]
-    public async Task CoursePreviewUsesTheRequestedPublicationAndPreservesRawHtml(string directoryVersion, bool embedded)
+    [InlineData("v2", true, false)]
+    [InlineData("v1", false, false)]
+    [InlineData("v2", false, true)]
+    public async Task CoursePreviewUsesTheRequestedPublicationAndPreservesRawHtml(
+        string directoryVersion, bool embedded, bool directoryUnavailable)
     {
         const string html = """<!doctype html><html><head><base href="review/"></head><body><script src="app.js"></script></body></html>""";
         const string directory = """{"chapters":[{"title":"目录</script>"}],"lessons":[]}""";
@@ -89,8 +91,11 @@ public sealed class HostedSiteContentTests
         var directoryKey = $"{scope}.versions/{directoryVersion}/review/course.json";
         storage.Setup(s => s.BuildSiteKey("site", "__course_directory_scope__"))
             .Returns(scope + "__course_directory_scope__");
-        storage.Setup(s => s.TryDownloadBytesAsync(directoryKey, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Encoding.UTF8.GetBytes(directory));
+        var download = storage.Setup(s => s.TryDownloadBytesAsync(directoryKey, It.IsAny<CancellationToken>()));
+        if (directoryUnavailable)
+            download.ThrowsAsync(new UnauthorizedAccessException());
+        else
+            download.ReturnsAsync(Encoding.UTF8.GetBytes(directory));
         storage.Setup(s => s.TryOpenReadByKeyAsync(entryKey, It.IsAny<CancellationToken>()))
             .ReturnsAsync(() => new AssetReadHandle(new MemoryStream(htmlBytes), "text/html", htmlBytes.LongLength));
         var site = Site("/local-assets/" + entryKey, entryKey);
@@ -112,7 +117,8 @@ public sealed class HostedSiteContentTests
         if (!embedded)
         {
             Assert.Equal(html, sharedHtml);
-            storage.Verify(s => s.TryDownloadBytesAsync(directoryKey, It.IsAny<CancellationToken>()), Times.Never);
+            storage.Verify(s => s.TryDownloadBytesAsync(directoryKey, It.IsAny<CancellationToken>()),
+                directoryUnavailable ? Times.Exactly(2) : Times.Never());
             return;
         }
 
