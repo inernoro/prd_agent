@@ -17,11 +17,11 @@
     "cds/cli/acceptance/design-browser.mjs": "1d2e474d5d4a6f93e34f78b52bae070b174a5cbb793871bf4be6e475dc997c97",
     "cds/cli/acceptance/driver.template.mjs": "8da890248268ecb8a578cb37bc3e8c645b916487690f7706d59f9965c38e8dd3",
     "cds/cli/acceptance/proxyroute.mjs": "9800de2267fa8c02aa34350c5c1fbc5652caaa77c65d4b789ec865c40022f8fb",
-    "cds/cli/cdscli.py": "f19b0cfead44eda0ddb9e688a371aadf0ce47c07066887d31a77cc1db68864ca",
+    "cds/cli/cdscli.py": "fa139432df4768d10b4019b9fed47afb49b11a17f0ea3a362bf785e5f48295a7",
     "cds/reference/acceptance-reports.md": "dc7a834ec6e41a4eb51be4054cf7e3dea5752a0f4a2892e928c5457cc4ac31d5",
     "cds/reference/api.md": "6309ef6683f7e4b73779c69c0c3b37efb8fa69403ccb63bf4cec5c9fb27ca708",
     "cds/reference/auth.md": "958f28c4f5eaa60e3b245984cd978110b4969f1baf54fd00ed59ef579fe189bd",
-    "cds/reference/design-intake.md": "1b51732b8339bf416c87de8653a56623681f6970f9b7c690ce53e7c88257be37",
+    "cds/reference/design-intake.md": "acf0c34d78ca8f4a805df771f01eda809a0c88937986c95f4aadc3699abf49cc",
     "cds/reference/design-loop.md": "52a581998c3d7078a0ba1c4914dab5a54242bf121acb0b6ea679bb976d7bbffc",
     "cds/reference/diagnose.md": "0b4d1c3957f560c095f3cbca5e43f277e3cc75f92b5573d6833e85a6ce248b78",
     "cds/reference/drop-in.md": "f4cde6d2f3705d3bea763ffc33f01dbafd48e04afdd52da4e29f3eccd98fcbb4",
@@ -33,7 +33,7 @@
     "cds/reference/smoke.md": "5bf8b1642555d87ccca5525df7f6250c7848c5a64d1b5c2f5b07b562d8326d44",
     "cds/reference/test-loop.md": "9586672041ad02916fa5df767343972dcf63f91dbbd2c9b81f3a52994cc0e0c4",
     "cds/scripts/design/changes-index.mjs": "a368f01702398ac860cc718e63268ffa4024caa4fe73fb20bf74e6ccb1de9afd",
-    "cds/scripts/design/gate.mjs": "6efb13450c4c9aeec6840d5f722e1cc11075b885276f422950bf1527eb3bf012",
+    "cds/scripts/design/gate.mjs": "604c1c59595a628b9002e97bf254538fa903bc3ceb475d79b9c5974c90a20597",
     "cds/scripts/design/handoff.mjs": "0c1fa3a05dcaf2762d8964c3329d83726fb55082328d6584a3c57db599afecd9",
     "cds/scripts/design/prototype-build.mjs": "d0b3979f30ce9a5c8aff4643db2a61c756efc5f2dd277bac65df3eecaf6d26c8",
     "cds/scripts/design/release.mjs": "ce3e532fdec861bd45dbff7b78ee342e5ac939e63264f6756f39b5fb2ca3faca",
@@ -48,7 +48,7 @@
     "cds/tests/test_cdscli_deploy_trigger_failure_reason.py": "e0723fdd5f734d6de38b4a6886a5450d94320ba4a40a4bb7ddb91bbd7a5898e3",
     "cds/tests/test_cdscli_deployment_run.py": "f4a4522456d3aeb60b36c30d259c34b1ee09de3f0afb5bc65c5bf15a468e34f1",
     "cds/tests/test_cdscli_deployment_version.py": "9acc9773bba8fe93d1b57781c1b8e6a142820e284d4629e6168ee7ecf20883bf",
-    "cds/tests/test_cdscli_design_scaffold.py": "0894ced108eca51f1b225073c10ebcf5e4087683828f5e4bf18628118295cc3c",
+    "cds/tests/test_cdscli_design_scaffold.py": "d5213b5e4c12012209669c8aca6fa8bd63958cfc69253616870f82f62bec4c34",
     "cds/tests/test_cdscli_disk.py": "9eaa6fd1dc4669f26ba325533fc0497afde5bdda335d35aa6e6f872405f5a42a",
     "cds/tests/test_cdscli_dts.py": "83bd88247122e23194a4bcfaf1780de6fca0937a5d898f9a2818fb6ecf8906db",
     "cds/tests/test_cdscli_env.py": "1556d0403f60d6f6695f33f96b52db324ce62fe18d4e8fd20ad8c4906c8bfa99",
@@ -86,5 +86,5 @@
     "cds-release/SKILL.md": "7a80c34792d75c327d360f5c84963de33b78e43b818465cfbe6213db6b70ee90",
     "preview-url/SKILL.md": "cba546b198bc1e0bad384d447078663d0e6906f1d080722dd29db7b14a33f65b"
   },
-  "generatedAt": "2026-11-25T12:42:04.770487+00:00"
+  "generatedAt": "2026-11-27T07:22:30.659303+00:00"
 }

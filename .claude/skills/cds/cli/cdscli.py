@@ -4637,7 +4637,7 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
                       for index, rule in enumerate(rules, start=1)]
         manifest = {"project": project, "title": args.title, "framework": args.framework, "frameworkVersion": latest["version"],
                     "prototypeVersion": 1, "date": __import__("datetime").date.today().isoformat(),
-                    "prototype": "dist/index.html", "screens": [screen], "acceptance": acceptance}
+                    "prototype": "dist/index.html", "source": "src", "screens": [screen], "acceptance": acceptance}
         (directory / "design.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n")
         checks = {"total": len(acceptance), "passed": 0,
                   "items": [{"id": row["id"], "ruleId": row["ruleId"], "name": f'{row["id"]} {row["ruleId"]} {row.get("rule", "")}'.strip(),
