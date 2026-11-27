@@ -187,6 +187,35 @@ public static class HostedSiteRevisionRules
     private static readonly string TrustedVerifiedPackageCspEnvelope =
         $"<head>{TrustedVerifiedPackageCspMeta}</head>";
 
+    /// <summary>只为已校验的包生成隔离阅读副本。源文件仍采用原始发布策略。</summary>
+    public static string? PrepareVerifiedPackageReviewHtml(string html, string siteUrl)
+    {
+        if (!Uri.TryCreate(siteUrl, UriKind.Absolute, out var entry) || entry.Scheme != Uri.UriSchemeHttps
+            || !string.IsNullOrEmpty(entry.UserInfo))
+            return null;
+        var directory = new Uri(entry, ".").AbsoluteUri;
+        if (directory.Any(c => char.IsWhiteSpace(c) || c is '\'' or '"' or ';' or '<' or '>' or '&'))
+            return null;
+        var root = System.Text.RegularExpressions.Regex.Match(html, DocumentRootPattern, RegexOptions, TimeSpan.FromSeconds(1));
+        if (!root.Success)
+            return null;
+        var afterRoot = root.Index + root.Length;
+        var htmlHead = System.Text.RegularExpressions.Regex.Match(
+            html[afterRoot..], DocumentHeadPattern, RegexOptions, TimeSpan.FromSeconds(1));
+        var policyStart = afterRoot + htmlHead.Index + htmlHead.Length;
+        if (!htmlHead.Success || !html.AsSpan(policyStart).StartsWith(TrustedVerifiedPackageCspMeta, StringComparison.Ordinal))
+            return null;
+        // 允许 base 和图片等资源指向同一包的目录。脚本仍限于内联，网络请求、表单和内嵌页面仍禁用。
+        // 先放 CSP 再放 base，避免 srcdoc 先处理默认的基址。
+        var policy = VerifiedPackageArtifactCsp
+            .Replace("base-uri 'none'", $"base-uri {directory}", StringComparison.Ordinal)
+            .Replace("script-src 'self' 'unsafe-inline'", "script-src 'unsafe-inline'", StringComparison.Ordinal)
+            .Replace("worker-src 'self' blob:", "worker-src 'none'", StringComparison.Ordinal)
+            .Replace("'self'", directory, StringComparison.Ordinal);
+        var head = $"<meta http-equiv=\"Content-Security-Policy\" content=\"{policy}\"><base href=\"{directory}\">";
+        return html[..policyStart] + head + html[(policyStart + TrustedVerifiedPackageCspMeta.Length)..];
+    }
+
     public static string NormalizeGeneratedHtml(string raw)
     {
         var value = (raw ?? string.Empty)

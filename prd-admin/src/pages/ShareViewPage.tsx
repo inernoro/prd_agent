@@ -50,6 +50,7 @@ import {
   SRCDOC_PREVIEW_SANDBOX,
   canUseSrcDocPreview,
   shouldFetchPreviewHtml,
+  shouldFetchReviewHtml,
   resolvePreviewSource,
   withPreviewBase,
 } from '@/components/web-hosting/previewHtml';
@@ -314,6 +315,7 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
         entryFile: updated.entryFile,
         contentShape: updated.contentShape,
         requiresPreviewBridge: updated.requiresPreviewBridge,
+        canPrepareGeneratedReview: updated.canPrepareGeneratedReview,
         totalSize: updated.totalSize,
         fileCount: updated.files.length,
         coverImageUrl: updated.coverImageUrl,
@@ -502,7 +504,7 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
   // 守卫见 ShareViewPage.preview.test.ts。
   useEffect(() => {
     const site = readsSingleSite ? data!.sites[0] : null;
-    if (!site || !token || !shouldFetchPreviewHtml(site)) {
+    if (!site || !token || !shouldFetchReviewHtml(site)) {
       // 多文件网站和包装资产站（PDF/视频）走真实地址——直接落到 settled，
       // 让 resolvePreviewSource 立刻给 direct，不要让这类站点白等一个超时窗口。
       setEmbeddedHtml(null);
@@ -530,10 +532,12 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
       directExposedAtRef.current = Date.now();
       setDirectFallbackFor(site.siteUrl);
     }, DIRECT_FALLBACK_TIMEOUT_MS);
-    getShareSiteContent(token, site.id, password || undefined)
+    const generatedReview = site.canPrepareGeneratedReview === true;
+    getShareSiteContent(token, site.id, password || undefined, generatedReview)
       .then((res) => {
         if (!alive) return;
         if (res.success && res.data?.html) {
+          if (generatedReview && !res.data.preparedGeneratedReview) return;
           // 「是不是幻灯片」必须在这里就判掉，不能等 embeddedHtml。
           // 下面那条早退（已经转直链就不自动换）会让 embeddedHtml 停在 null，
           // 于是 deck 邀请条在「原文回得比那个窗口慢」的每一次都静默消失——
@@ -901,7 +905,7 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
      * 判据本体在 previewHtml.ts 的 resolvePreviewSource（那里有完整缘由）。
      */
     const previewSource = review.historical ? (review.loading ? 'pending' : iframeHtml ? 'srcdoc' : 'direct') : resolvePreviewSource({
-      fetchable: shouldFetchPreviewHtml(site),
+      fetchable: shouldFetchReviewHtml(site),
       inlineHtml: iframeHtml,
       // 对不上 siteUrl 就当这一趟还没开始，绝不拿上一趟的结论去判 direct
       settled: previewFetch?.siteUrl === site.siteUrl && previewFetch.settled,

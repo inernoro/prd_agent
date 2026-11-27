@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { getSiteContent, getShareSiteContent } from '@/services/real/webPages';
-import { canUseSrcDocPreview, shouldFetchPreviewHtml, withPreviewBase } from './previewHtml';
+import { canUseSrcDocPreview, shouldFetchPreviewHtml, shouldFetchReviewHtml, withPreviewBase } from './previewHtml';
 
 /**
  * 取回托管站点入口 HTML，备好可以直接塞进 iframe `srcDoc` 的字符串。
@@ -34,15 +34,16 @@ export interface SitePreviewHtmlSite {
   pdfFilePaths?: readonly string[];
   contentShape?: 'self-contained-html' | 'multi-file';
   requiresPreviewBridge?: boolean;
+  canPrepareGeneratedReview?: boolean;
   shareAccess?: { token: string; password?: string };
 }
 
-function cacheKey(site: SitePreviewHtmlSite) {
-  return `${site.shareAccess?.token ?? 'account'}::${site.shareAccess?.password ?? ''}::${site.id}::${site.siteUrl}::${site.contentShape ?? ''}::${site.wrappedAssetType ?? ''}::${shouldFetchPreviewHtml(site)}`;
+function cacheKey(site: SitePreviewHtmlSite, generatedReview: boolean) {
+  return `${site.shareAccess?.token ?? 'account'}::${site.shareAccess?.password ?? ''}::${site.id}::${site.siteUrl}::${site.contentShape ?? ''}::${site.wrappedAssetType ?? ''}::${shouldFetchPreviewHtml(site)}::${generatedReview}`;
 }
 
-async function loadSrcDoc(site: SitePreviewHtmlSite): Promise<CacheEntry> {
-  const key = cacheKey(site);
+async function loadSrcDoc(site: SitePreviewHtmlSite, generatedReview: boolean): Promise<CacheEntry> {
+  const key = cacheKey(site, generatedReview);
   const cached = cache.get(key);
   if (cached) return cached;
 
@@ -51,11 +52,13 @@ async function loadSrcDoc(site: SitePreviewHtmlSite): Promise<CacheEntry> {
 
   const task = (async (): Promise<CacheEntry> => {
     try {
+      const prepare = generatedReview ? [true] as const : [] as const;
       const res = site.shareAccess
-        ? await getShareSiteContent(site.shareAccess.token, site.id, site.shareAccess.password)
-        : await getSiteContent(site.id);
+        ? await getShareSiteContent(site.shareAccess.token, site.id, site.shareAccess.password, ...prepare)
+        : await getSiteContent(site.id, ...prepare);
       if (res.success && res.data?.html) {
         const html = res.data.html;
+        if (generatedReview && !res.data.preparedGeneratedReview) return { srcDoc: null, error: null };
         // 打包型 SPA（入口是外链 module 脚本）必须留在直链：srcDoc 的不透明源会让模块脚本
         // 因缺 CORS 被拦，整页白屏。判据见 canUseSrcDocPreview。
         if (!canUseSrcDocPreview(html)) return { srcDoc: null, error: null };
@@ -81,13 +84,14 @@ async function loadSrcDoc(site: SitePreviewHtmlSite): Promise<CacheEntry> {
  * @param site   站点；传 null 表示还没有可用站点信息
  * @param enabled 只有真的要显示这一屏时才取（缩略图靠它做「进视口才拉」）
  */
-export function useSitePreviewHtml(site: SitePreviewHtmlSite | null, enabled: boolean) {
+export function useSitePreviewHtml(site: SitePreviewHtmlSite | null, enabled: boolean, review = false) {
   const [entry, setEntry] = useState<CacheEntry & { key: string }>({ key: '', srcDoc: null, error: null });
   const [loading, setLoading] = useState(false);
   const [attempt, setAttempt] = useState(0);
 
-  const key = site ? cacheKey(site) : '';
-  const fetchable = !!site && shouldFetchPreviewHtml(site);
+  const generatedReview = review && site?.canPrepareGeneratedReview === true;
+  const key = site ? cacheKey(site, generatedReview) : '';
+  const fetchable = !!site && (review ? shouldFetchReviewHtml(site) : shouldFetchPreviewHtml(site));
   const retry = useCallback(() => {
     if (!enabled || !fetchable) return;
     cache.delete(key);
@@ -111,13 +115,13 @@ export function useSitePreviewHtml(site: SitePreviewHtmlSite | null, enabled: bo
 
     let alive = true;
     setLoading(true);
-    loadSrcDoc(site)
+    loadSrcDoc(site, generatedReview)
       .then((res) => { if (alive) setEntry({ key, ...res }); })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
     // site 是每次渲染新建的对象字面量，依赖它会无限重取；key 已经涵盖 id + siteUrl 的变化。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, enabled, fetchable, attempt]);
+  }, [key, enabled, fetchable, attempt, generatedReview]);
 
   const current = entryForKey(entry, key);
   return {

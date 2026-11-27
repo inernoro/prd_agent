@@ -3411,6 +3411,7 @@ public class HostedSiteService : IHostedSiteService
                 EntryFile = s.EntryFile,
                 ContentShape = HostedSiteContentShapeRules.Resolve(s),
                 RequiresPreviewBridge = s.RequiresPreviewBridge,
+                CanPrepareGeneratedReview = s.CanPrepareGeneratedReview,
                 ZipHomepageAssetPath = s.ZipHomepageAssetPath,
                 TotalSize = s.TotalSize,
                 // 入口那一份自己的大小。前端拿它判「取正文的代理装不装得下」——

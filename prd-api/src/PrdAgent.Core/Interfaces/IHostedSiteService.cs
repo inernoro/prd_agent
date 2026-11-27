@@ -798,6 +798,7 @@ public class SharedSiteInfo
     /// <summary>与站内预览相同的文件结构判据；多文件网站需要真实文档 URL。</summary>
     public string ContentShape { get; set; } = string.Empty;
     public bool RequiresPreviewBridge { get; set; }
+    public bool CanPrepareGeneratedReview { get; set; }
     public string? ZipHomepageAssetPath { get; set; }
     public long TotalSize { get; set; }
 

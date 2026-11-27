@@ -111,6 +111,10 @@ export function shouldFetchPreviewHtml(site: Parameters<typeof hasFetchableHtml>
       || Boolean(site.pdfFilePaths?.length) || site.contentShape !== 'multi-file');
 }
 
+export function shouldFetchReviewHtml(site: Parameters<typeof shouldFetchPreviewHtml>[0] & { canPrepareGeneratedReview?: boolean }) {
+  return shouldFetchPreviewHtml(site) || (site.canPrepareGeneratedReview === true && hasFetchableHtml(site));
+}
+
 /**
  * 这份 HTML 能不能安全地走 srcDoc 预览。
  *

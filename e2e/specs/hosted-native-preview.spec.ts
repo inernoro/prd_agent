@@ -101,7 +101,7 @@ for (const width of [1440, 900, 390]) test(`${width}px 合集两份工具栏只�
 });
 
 async function serve(page: Page, options: { shape?: string; wrapper?: string; html?: string; staleArchiveShape?: boolean;
-  pdfFilePaths?: string[]; requiresPreviewBridge?: boolean; sameOrigin?: boolean; nativeHtml?: string; modal?: boolean; inlineHistory?: boolean; extraHistory?: boolean; unarchivedHistory?: boolean; multiFileHistory?: boolean; metadataLag?: boolean; ask?: boolean; noPublicAssetUrl?: boolean } = {}) {
+  pdfFilePaths?: string[]; requiresPreviewBridge?: boolean; sameOrigin?: boolean; nativeHtml?: string; modal?: boolean; inlineHistory?: boolean; extraHistory?: boolean; unarchivedHistory?: boolean; multiFileHistory?: boolean; metadataLag?: boolean; ask?: boolean; noPublicAssetUrl?: boolean; generatedReview?: boolean } = {}) {
   const requests: string[] = [];
   let contentRequests = 0;
   let listRequests = 0;
@@ -115,6 +115,7 @@ async function serve(page: Page, options: { shape?: string; wrapper?: string; ht
     id: 'qa-native', title: '临时预览测试', siteUrl: siteEntry, entryFile: 'index.html',
     contentShape: options.shape, wrappedAssetType: options.wrapper,
     pdfFilePaths: options.pdfFilePaths, requiresPreviewBridge: options.requiresPreviewBridge,
+    canPrepareGeneratedReview: options.generatedReview,
     totalSize: 3000, entrySize: 600, fileCount: 10, viewerCanEdit: !!options.inlineHistory,
     ownerUserId: 'qa-preview-user', files: [], tags: [], folder: '', sourceType: 'upload',
     createdAt: '2026-11-03T00:00:00Z', updatedAt: '2026-11-03T00:00:00Z', askEnabled: false,
@@ -156,7 +157,8 @@ async function serve(page: Page, options: { shape?: string; wrapper?: string; ht
       return;
     } else if (path.endsWith('/content')) {
       contentRequests++;
-      data = { html: options.html ?? files['index.html'] };
+      const preparedGeneratedReview = options.generatedReview && new URL(route.request().url()).searchParams.get('prepareGeneratedReview') === 'true';
+      data = { html: options.html ?? files['index.html'], preparedGeneratedReview };
     } else if (path.endsWith('/comments')) {
       data = { siteId: site.id, commentsEnabled: true, canComment: !!options.inlineHistory, comments: [
         ...(options.extraHistory || options.unarchivedHistory ? [{
@@ -213,6 +215,37 @@ async function serve(page: Page, options: { shape?: string; wrapper?: string; ht
   const preview = page.locator('iframe[title="临时预览测试"]');
   await expect(preview).toBeVisible();
   return { releaseVersions, requests, contentRequests: () => contentRequests, listRequests: () => listRequests, frame: preview.contentFrame(), preview };
+}
+
+for (const modal of [true, false]) {
+  test(`${modal ? '站内' : '分享'}生成网页加载批注脚本并保留同包图片`, async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const runtime = await readFile(new URL('../../prd-api/src/PrdAgent.Infrastructure/Services/Assets/hostedAnnotations.js', import.meta.url), 'utf8');
+    const base = new URL('.', entry).href;
+    const { preview, frame, contentRequests } = await serve(page, { modal, inlineHistory: true, generatedReview: true, shape: 'multi-file',
+      html: `<!doctype html><html><head><meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; base-uri ${base}; img-src ${base}; script-src 'unsafe-inline'; style-src 'unsafe-inline'">
+        <base href="${base}"></head><body style="padding: 50px"><p><span id="quote">这段文字可以选中批注</span></p>
+        <img src="./图片 空格.svg" alt="同包图片"><script data-map-annotations="v1">${runtime}</script></body></html>` });
+    await expect(preview).toHaveAttribute('srcdoc', /data-map-annotations/);
+    expect(await frame.locator('body').evaluate(() => window.origin)).toBe('null');
+    await expect.poll(() => frame.getByRole('img', { name: '同包图片' }).evaluate((image: HTMLImageElement) => image.naturalWidth)).toBeGreaterThan(0);
+    expect(contentRequests()).toBe(1);
+    const discussion = page.getByRole('button', { name: '批注与讨论' });
+    if (!modal) await discussion.click();
+    await expect(page.getByText(/选中正文中的文字可添加批注/)).toBeVisible();
+    await expect(page.getByRole('textbox', { name: '批注内容' })).toBeEditable();
+    await discussion.click();
+    const quote = frame.locator('#quote');
+    const bounds = (await quote.boundingBox())!;
+    await page.mouse.move(bounds.x + 1, bounds.y + bounds.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(bounds.x + bounds.width - 1, bounds.y + bounds.height / 2, { steps: 10 });
+    await page.mouse.up();
+    expect(await quote.evaluate(() => window.getSelection()?.toString())).toContain('文字');
+    await page.getByRole('button', { name: '批注所选文字', exact: true }).click();
+    await expect(page.getByRole('textbox', { name: '批注内容' })).toHaveAttribute('placeholder', '写下对这段文字的意见…');
+  });
 }
 
 for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {

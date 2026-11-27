@@ -1234,11 +1234,11 @@ public partial class WebPagesController : ControllerBase
     /// 服务端代理取回，绕开浏览器跨域限制；供「知识库从网页托管导入」等场景使用。
     /// 仅适用 HTML 入口的站点；包装资产站（pdf/video/markdown）与超大文件拒绝。</summary>
     [HttpGet("{id}/content")]
-    public async Task<IActionResult> GetSiteContent(string id)
+    public async Task<IActionResult> GetSiteContent(string id, [FromQuery] bool prepareGeneratedReview = false)
     {
         var site = await _siteService.GetByIdAsync(id, GetUserId());
         if (site == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "站点不存在或无权访问"));
-        return await FetchSiteHtmlResultAsync(site);
+        return await FetchSiteHtmlResultAsync(site, prepareGeneratedReview: prepareGeneratedReview);
     }
 
     /// <summary>
@@ -1250,7 +1250,8 @@ public partial class WebPagesController : ControllerBase
     /// </summary>
     [HttpGet("shares/view/{token}/content")]
     [AllowAnonymous]
-    public async Task<IActionResult> GetShareSiteContent(string token, [FromQuery] string? siteId, [FromQuery] string? password)
+    public async Task<IActionResult> GetShareSiteContent(string token, [FromQuery] string? siteId, [FromQuery] string? password,
+        [FromQuery] bool prepareGeneratedReview = false)
     {
         var viewerUserId = User.Identity?.IsAuthenticated == true ? GetUserId() : null;
         var resolved = await _siteService.ResolveShareSiteAsync(token, siteId, password, viewerUserId);
@@ -1258,7 +1259,7 @@ public partial class WebPagesController : ControllerBase
             return MapCommentError(resolved.Error, resolved.HttpStatus, resolved.ErrorCode, resolved.RetryAfterSeconds);
         if (resolved.Site == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "站点不存在"));
-        return await FetchSiteHtmlResultAsync(resolved.Site);
+        return await FetchSiteHtmlResultAsync(resolved.Site, prepareGeneratedReview: prepareGeneratedReview);
     }
 
     /// <summary>
@@ -1274,9 +1275,11 @@ public partial class WebPagesController : ControllerBase
     private static readonly HashSet<string> SrcDocReadableWrappers =
         new(StringComparer.OrdinalIgnoreCase) { "markdown" };
 
-    private sealed record SiteHtmlContent(string SiteId, string Title, string ContentType, string SiteUrl, string Html);
+    private sealed record SiteHtmlContent(string SiteId, string Title, string ContentType, string SiteUrl, string Html,
+        bool PreparedGeneratedReview);
 
-    private async Task<IActionResult> FetchSiteHtmlResultAsync(HostedSite site, CancellationToken cancellationToken = default)
+    private async Task<IActionResult> FetchSiteHtmlResultAsync(HostedSite site, CancellationToken cancellationToken = default,
+        bool prepareGeneratedReview = false)
     {
         // 只拒「壳子里没有正文」的那几类：PDF / 视频壳本身只是一个指向同目录资产的容器，
         // 取回它的 HTML 没有意义，而且它必须以托管域名为文档源才能加载那份资产。
@@ -1293,6 +1296,7 @@ public partial class WebPagesController : ControllerBase
         {
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             cts.CancelAfter(TimeSpan.FromSeconds(20));
+            var generatedReview = prepareGeneratedReview && site.CanPrepareGeneratedReview;
             if (site.SiteUrl.StartsWith("/local-assets/", StringComparison.Ordinal))
             {
                 // LocalAssetStorage 的地址是站内相对路径。按已授权站点清单中的 key 读取，
@@ -1303,7 +1307,7 @@ public partial class WebPagesController : ControllerBase
                 if (handle == null)
                     return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "站点入口文件不存在或当前存储不支持读取"));
                 await using var local = handle.Content;
-                return await ReadSiteHtmlStreamAsync(site, local, handle.Length, cts.Token);
+                return await ReadSiteHtmlStreamAsync(site, local, handle.Length, cts.Token, generatedReview);
             }
             if (!Uri.TryCreate(site.SiteUrl, UriKind.Absolute, out var address)
                 || address.Scheme is not ("http" or "https"))
@@ -1316,7 +1320,7 @@ public partial class WebPagesController : ControllerBase
             if (!resp.IsSuccessStatusCode)
                 return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"站点内容读取失败（HTTP {(int)resp.StatusCode}）"));
             await using var remote = await resp.Content.ReadAsStreamAsync(cts.Token);
-            return await ReadSiteHtmlStreamAsync(site, remote, resp.Content.Headers.ContentLength, cts.Token);
+            return await ReadSiteHtmlStreamAsync(site, remote, resp.Content.Headers.ContentLength, cts.Token, generatedReview);
         }
         catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException or IOException)
         {
@@ -1339,7 +1343,8 @@ public partial class WebPagesController : ControllerBase
 
     internal static TimeSpan LargeSiteHtmlWait = TimeSpan.FromSeconds(10);
 
-    private async Task<IActionResult> ReadSiteHtmlStreamAsync(HostedSite site, Stream stream, long? declaredLength, CancellationToken ct)
+    private async Task<IActionResult> ReadSiteHtmlStreamAsync(HostedSite site, Stream stream, long? declaredLength, CancellationToken ct,
+        bool prepareGeneratedReview = false)
     {
         if (declaredLength is > SiteHtmlMaxBytes)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "站点入口文件超过 16MB，不支持读取"));
@@ -1376,7 +1381,10 @@ public partial class WebPagesController : ControllerBase
             var length = (int)buffered.Length;
             var bom = length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF ? 3 : 0;
             var html = Encoding.UTF8.GetString(bytes, bom, length - bom);
-            return Ok(ApiResponse<SiteHtmlContent>.Ok(new(site.Id, site.Title, "text/html", site.SiteUrl, html)));
+            var reviewHtml = prepareGeneratedReview ? HostedSiteRevisionRules.PrepareVerifiedPackageReviewHtml(html, site.SiteUrl) : null;
+            if (reviewHtml != null)
+                html = HostedSiteAnnotationRuntime.Inject(reviewHtml);
+            return Ok(ApiResponse<SiteHtmlContent>.Ok(new(site.Id, site.Title, "text/html", site.SiteUrl, html, reviewHtml != null)));
         }
         finally
         {

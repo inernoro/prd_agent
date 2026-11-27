@@ -74,6 +74,9 @@ public class HostedSite
         || Files?.Any(file => string.Equals(file.Path, "downloads/tutorial-package.json", StringComparison.OrdinalIgnoreCase)) == true;
 
     [BsonIgnore]
+    public bool CanPrepareGeneratedReview => HostedSiteContentShapeRules.CanPrepareGeneratedReview(this);
+
+    [BsonIgnore]
     public string? ZipHomepageAssetPath => Files?.FirstOrDefault(file => file.IsZipHomepageAsset)?.Path;
 
     /// <summary>
@@ -313,6 +316,11 @@ public static class HostedSiteContentShapes
 
 public static class HostedSiteContentShapeRules
 {
+    private static readonly HashSet<string> ReviewPackageAssets = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".json", ".css", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico",
+    };
+
     private static readonly string[] GeneratedPackagePaths =
     [
         "assets/accessibility-static-report.json",
@@ -341,6 +349,25 @@ public static class HostedSiteContentShapeRules
         IsSelfContainedHtml(site)
             ? HostedSiteContentShapes.SelfContainedHtml
             : HostedSiteContentShapes.MultiFile;
+
+    public static bool CanPrepareGeneratedReview(HostedSite site)
+    {
+        if (site.SourceType != "design-agent" || site.EntryFile != "index.html" || site.Files is not { Count: > 0 } files)
+            return false;
+        var entry = files.FirstOrDefault(file => file.Path == site.EntryFile);
+        const string entryName = "index.html";
+        var marker = $"web-hosting/sites/{site.Id}/.generated/";
+        if (entry is null || !entry.CosKey.EndsWith("/" + entryName, StringComparison.Ordinal))
+            return false;
+        var directory = entry.CosKey[..^entryName.Length];
+        var package = directory.LastIndexOf(marker, StringComparison.Ordinal);
+        if (package < 0 || directory.Length - package - marker.Length != 33
+            || !Guid.TryParseExact(directory.AsSpan(package + marker.Length, 32), "N", out _))
+            return false;
+        // srcdoc 无法保留真实页面地址与资源同源执行；带独立脚本或子页面的包继续走直链。
+        return files.All(file => file.CosKey == directory + file.Path
+            && (file == entry || ReviewPackageAssets.Contains(Path.GetExtension(file.Path))));
+    }
 }
 
 /// <summary>

@@ -64,6 +64,7 @@ export interface HostedSite {
   /** 服务端依据文件角色判定：系统 sidecar 不会把自包含 HTML 误标成多文件站。 */
   contentShape?: 'self-contained-html' | 'multi-file';
   requiresPreviewBridge?: boolean;
+  canPrepareGeneratedReview?: boolean;
   totalSize: number;
   tags: string[];
   folder?: string;
@@ -1018,8 +1019,11 @@ export async function getSite(id: string): Promise<ApiResponse<HostedSite>> {
 }
 
 /** 读取站点入口 HTML 原文（服务端代理，绕开 CORS）。供知识库「从网页托管导入」使用。 */
-export async function getSiteContent(id: string): Promise<ApiResponse<{ siteId: string; title: string; contentType: string; html: string }>> {
-  return apiRequest(api.webPages.content(encodeURIComponent(id)), { method: 'GET' });
+type HostedSiteHtmlContent = { siteId: string; title: string; contentType: string; siteUrl: string; html: string; preparedGeneratedReview?: boolean };
+
+export async function getSiteContent(id: string, prepareGeneratedReview = false): Promise<ApiResponse<Omit<HostedSiteHtmlContent, 'siteUrl'>>> {
+  const path = api.webPages.content(encodeURIComponent(id));
+  return apiRequest(prepareGeneratedReview ? `${path}?prepareGeneratedReview=true` : path, { method: 'GET' });
 }
 
 export async function updateSite(id: string, data: {
@@ -1340,6 +1344,7 @@ export interface SharedSiteInfo {
   /** 与站内预览共用服务端文件结构分类；旧服务端缺字段时沿用原策略。 */
   contentShape?: HostedSite['contentShape'];
   requiresPreviewBridge?: boolean;
+  canPrepareGeneratedReview?: boolean;
   totalSize: number;
   /** 入口文件自己的字节数（不是 totalSize 那个所有文件之和）。后端取不到时为 0 */
   entrySize: number;
@@ -1635,10 +1640,12 @@ export async function getShareSiteContent(
   token: string,
   siteId?: string,
   password?: string,
-): Promise<ApiResponse<{ siteId: string; title: string; contentType: string; siteUrl: string; html: string }>> {
+  prepareGeneratedReview = false,
+): Promise<ApiResponse<HostedSiteHtmlContent>> {
   const params = new URLSearchParams();
   if (siteId) params.set('siteId', siteId);
   if (password) params.set('password', password);
+  if (prepareGeneratedReview) params.set('prepareGeneratedReview', 'true');
   const q = params.toString() ? `?${params.toString()}` : '';
   const url = joinUrl(getApiBaseUrl(), `/api/web-pages/shares/view/${encodeURIComponent(token)}/content${q}`);
   const headers: Record<string, string> = { Accept: 'application/json' };
@@ -1646,7 +1653,7 @@ export async function getShareSiteContent(
   if (authToken) headers.Authorization = `Bearer ${authToken}`;
   try {
     const res = await fetch(url, { headers });
-    return (await res.json()) as ApiResponse<{ siteId: string; title: string; contentType: string; siteUrl: string; html: string }>;
+    return (await res.json()) as ApiResponse<HostedSiteHtmlContent>;
   } catch {
     return { success: false, data: null as never, error: { code: 'NETWORK_ERROR', message: '网络请求失败' } };
   }

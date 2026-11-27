@@ -22,8 +22,8 @@ let observed: ReturnType<typeof useSitePreviewHtml>;
 const site: SitePreviewHtmlSite = { id: 'test', siteUrl: 'https://storage.example/test/index.html', entryFile: 'index.html' };
 const content = (html: string) => ({ siteId: site.id, title: '测试站点', contentType: 'text/html', html });
 
-function Probe({ value }: { value: SitePreviewHtmlSite }) {
-  observed = useSitePreviewHtml(value, true);
+function Probe({ value, review = false }: { value: SitePreviewHtmlSite; review?: boolean }) {
+  observed = useSitePreviewHtml(value, true, review);
   return null;
 }
 
@@ -39,6 +39,20 @@ it('多文件站不请求正文，也不产生正文错误或等待状态', asyn
   await act(async () => root.render(<Probe value={{ ...site, contentShape: 'multi-file' }} />));
   expect(getSiteContent).not.toHaveBeenCalled();
   expect(observed).toMatchObject({ srcDoc: null, error: null, loading: false, settled: true });
+});
+
+it('仅阅读器请求生成网页的批注副本，服务端未生成时保留直链', async () => {
+  const generated: SitePreviewHtmlSite = { ...site, contentShape: 'multi-file', canPrepareGeneratedReview: true };
+  vi.mocked(getSiteContent)
+    .mockResolvedValueOnce(ok({ ...content('<html><body>供审阅的原文</body></html>'), preparedGeneratedReview: true }))
+    .mockResolvedValueOnce(ok(content('<html><body>仍需在独立域名运行</body></html>')));
+  await act(async () => root.render(<Probe value={generated} />));
+  expect(getSiteContent).not.toHaveBeenCalled();
+  await act(async () => root.render(<Probe value={generated} review />));
+  expect(getSiteContent).toHaveBeenCalledWith(site.id, true);
+  expect(observed.srcDoc).toContain('供审阅的原文');
+  await act(async () => root.render(<Probe value={{ ...generated, siteUrl: generated.siteUrl + '?v=2' }} review />));
+  expect(observed).toMatchObject({ srcDoc: null, error: null, settled: true });
 });
 
 it('相同 URL 的站点类型变化不会复用旧正文，迟到响应不能覆盖当前策略', async () => {

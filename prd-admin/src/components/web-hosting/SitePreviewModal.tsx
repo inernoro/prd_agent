@@ -23,7 +23,7 @@ import { ShareMoreMenu } from './SharePageControls';
 import AskPanelInline from './ask/AskPanelInline';
 import AskConfigDrawer from './ask/AskConfigDrawer';
 import { resolveSitePreviewSource, supportsNativePdfViewer } from './sitePreviewSource';
-import { directPreviewSandbox, SRCDOC_PREVIEW_SANDBOX, canUseSrcDocPreview, shouldFetchPreviewHtml, withPreviewBase } from './previewHtml';
+import { directPreviewSandbox, SRCDOC_PREVIEW_SANDBOX, canUseSrcDocPreview, shouldFetchPreviewHtml, shouldFetchReviewHtml, withPreviewBase } from './previewHtml';
 import { useSitePreviewHtml } from './useSitePreviewHtml';
 
 /** 多久之后提示「加载较慢」。只影响提示，不影响是否判定失败。 */
@@ -134,6 +134,7 @@ export default function SitePreviewModal({
   const { srcDoc: currentSrcDoc, loading: currentHtmlLoading } = useSitePreviewHtml(
     previewSource.usingNativePdfViewer ? null : { ...originalSite, ...review.liveSite },
     true,
+    true,
   );
   const historicalLoading = review.historical && review.loading;
   const historicalRevisionId = review.historical ? review.selected?.id : null;
@@ -150,7 +151,7 @@ export default function SitePreviewModal({
    * （与 ShareViewPage 的取舍一致）。这里必须是latch，不能写成 `srcDoc && !超时` 这种会翻回去的表达式。
    */
   const [renderMode, setRenderMode] = useState<'waiting' | 'srcdoc' | 'direct'>('waiting');
-  const currentPreviewFetchable = shouldFetchPreviewHtml({ ...originalSite, ...review.liveSite });
+  const currentPreviewFetchable = shouldFetchReviewHtml({ ...originalSite, ...review.liveSite });
   useEffect(() => {
     if (review.historical) return;
     // 迟到的元数据可能令内联正文失效。只退出失效路径，已加载的直链不重置或重载。
