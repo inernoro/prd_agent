@@ -122,7 +122,7 @@ public sealed partial class DesignArtifactsController
             {
                 try
                 {
-                    var gatewayRequest = BuildBriefRequest(brief, sources, request.Mode, text, request.TurnId!, timing, correction);
+                    var gatewayRequest = BuildBriefRequest(brief, sources, request.Mode, text, request.TurnId!, timing, correction, QuickCreationModel());
                     result = await ReadBriefReplyAsync(gateway, gatewayRequest, briefId, request.TurnId!, deadline.Token);
                     if (result is null) return new EmptyResult();
                     if (timing == null) break;
@@ -349,7 +349,7 @@ public sealed partial class DesignArtifactsController
     }
 
     private static GatewayRequest BuildBriefRequest(QuickCreationBrief brief, List<DesignUploadedSource> sources, string mode, string text, string turnId,
-        QuickCreationDurationEstimate? timing = null, string? correction = null)
+        QuickCreationDurationEstimate? timing = null, string? correction = null, string? expectedModel = null)
     {
         var catalog = QuickCreationCatalog.Get().Items.Select(style => new { style.Id, style.Name, style.Line });
         var current = JsonSerializer.Serialize(new
@@ -395,7 +395,7 @@ public sealed partial class DesignArtifactsController
         return new GatewayRequest
         {
             AppCallerCode = AppCallerRegistry.Admin.WebHosting.QuickCreationBrief,
-            ModelType = ModelTypes.Chat,
+            ModelType = ModelTypes.Chat, ExpectedModel = expectedModel,
             Stream = true, TimeoutSeconds = 90,
             RequestBody = new JsonObject { ["messages"] = messages, ["max_tokens"] = timing == null ? 4800 : 2_000 + timing.TargetSec * 20 },
             Context = new GatewayRequestContext

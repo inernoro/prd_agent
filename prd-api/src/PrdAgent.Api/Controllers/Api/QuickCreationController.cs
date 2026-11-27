@@ -68,6 +68,9 @@ public sealed partial class DesignArtifactsController
     private bool BrowserFilmEnabled() => _configuration.GetValue<bool?>("DesignRuntime:QuickCreation:BrowserFilmEnabled")
         ?? QuickCreationAcceptanceBranch();
 
+    private string? QuickCreationModel() => _configuration["DesignRuntime:QuickCreation:Model"]
+        ?? (QuickCreationAcceptanceBranch() ? "gpt-6.2-sol" : null);
+
     private bool QuickCreationEnabled() => _configuration.GetValue<bool>("DesignRuntime:QuickCreation:Enabled")
         || QuickCreationAcceptanceBranch();
 
@@ -264,6 +267,7 @@ public sealed partial class DesignArtifactsController
                     && row.QuickCreation.BriefRevision == request.BriefRevision)).FirstOrDefaultAsync(ct);
             if (existing != null) return Accepted(ApiResponse<object>.Ok(await ToQuickRunAsync(existing, ct)));
             if (brief.Revision != request.BriefRevision || !BriefReady(brief) || brief.Kind != request.Kind
+                || (request.Duration.HasValue && durationChoice != brief.DurationChoiceSec)
                 || (brief.PendingTurnId != null && brief.PendingUntil > DateTime.UtcNow)
                 || brief.StyleId != template.Id || !brief.AttachmentIds.SequenceEqual(ids)
                 || (request.BriefMode == "confirm" && (brief.Kind != "video" || brief.Script.Count == 0)))
