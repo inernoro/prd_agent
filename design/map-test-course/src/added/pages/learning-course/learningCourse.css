@@ -1,0 +1,123 @@
+/* 课程与练习页样式：颜色只取 tokens.css 语义变量，深浅主题各自成立。 */
+.lc-page { --lc-rail: 300px; --lc-gap: 12px; color: var(--text-primary); }
+.lc-surface { background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: var(--radius-card, 12px); }
+.lc-nested { background: var(--nested-block-bg); border: 1px solid var(--border-faint); border-radius: var(--radius-field, 10px); }
+.lc-muted { color: var(--text-muted); }
+.lc-secondary { color: var(--text-secondary); }
+.lc-eyebrow { font-size: 11px; letter-spacing: 0.08em; color: var(--text-muted); font-weight: 600; }
+.lc-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.lc-scroll { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+
+/* 顶栏 */
+.lc-topbar { display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 6px 14px; }
+.lc-crumb { display: inline-flex; align-items: center; gap: 4px; min-height: 44px; font-size: 13px; color: var(--text-secondary); border-radius: var(--radius-control, 9px); padding: 0 6px; }
+.lc-crumb:hover { color: var(--text-primary); background: var(--bg-card-hover); }
+.lc-progress-track { height: 6px; border-radius: 999px; background: var(--nested-block-bg); overflow: hidden; }
+.lc-progress-fill { height: 100%; border-radius: 999px; background: var(--accent-primary); transition: width 600ms cubic-bezier(.4,0,.2,1); }
+
+/* 目录栏 */
+.lc-lesson { display: flex; gap: 10px; align-items: flex-start; width: 100%; text-align: left; min-height: 56px; padding: 10px 10px; border-radius: var(--radius-field, 10px); border: 1px solid transparent; transition: background 160ms ease, border-color 160ms ease; }
+.lc-lesson:hover { background: var(--bg-card-hover); }
+.lc-lesson[aria-current='true'] { background: var(--nested-block-bg); border-color: var(--border-default); }
+.lc-lesson-index { width: 26px; height: 26px; flex-shrink: 0; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; border: 1.5px solid var(--border-default); color: var(--text-secondary); }
+.lc-lesson[data-status='done'] .lc-lesson-index { border-color: var(--accent-fg-success); color: var(--accent-fg-success); }
+.lc-lesson[aria-current='true'] .lc-lesson-index { border-color: var(--accent-primary); color: var(--accent-primary); }
+.lc-practice-card { display: flex; gap: 10px; width: 100%; text-align: left; padding: 12px; min-height: 64px; border-radius: var(--radius-field, 10px); border: 1px solid var(--border-subtle); background: var(--bg-card); transition: border-color 160ms ease, transform 160ms ease; }
+.lc-practice-card:hover { border-color: var(--border-default); transform: translateY(-1px); }
+
+/* 材料切换 */
+.lc-media-switch { display: inline-flex; gap: 4px; padding: 4px; border-radius: 14px; background: var(--nested-block-bg); border: 1px solid var(--border-subtle); max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+.lc-media-btn { display: inline-flex; align-items: center; gap: 7px; min-height: 44px; padding: 0 14px; border-radius: 11px; font-size: 13px; font-weight: 600; color: var(--text-secondary); white-space: nowrap; flex-shrink: 0; transition: background 160ms ease, color 160ms ease; }
+.lc-media-btn:hover:not(:disabled) { color: var(--text-primary); }
+.lc-media-btn[aria-pressed='true'] { background: var(--bg-elevated); color: var(--text-primary); box-shadow: 0 0 0 1px var(--border-default); }
+.lc-media-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.lc-media-btn .lc-unit { font-weight: 500; font-size: 12px; color: var(--text-muted); }
+
+/* 视频 */
+.lc-video-frame { position: relative; width: 100%; aspect-ratio: 16 / 9; border-radius: var(--radius-card, 12px); overflow: hidden; background: var(--bg-base); border: 1px solid var(--border-subtle); }
+.lc-video-frame video { width: 100%; height: 100%; display: block; object-fit: contain; background: var(--bg-base); }
+.lc-chapter { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 12px; border-radius: var(--radius-control, 9px); font-size: 12.5px; border: 1px solid var(--border-subtle); color: var(--text-secondary); white-space: nowrap; flex-shrink: 0; }
+.lc-chapter[aria-current='true'] { border-color: var(--accent-primary); color: var(--text-primary); }
+.lc-line { display: flex; gap: 10px; width: 100%; text-align: left; min-height: 44px; padding: 8px 10px; border-radius: var(--radius-control, 9px); font-size: 13px; line-height: 1.6; color: var(--text-secondary); transition: background 160ms ease, color 160ms ease; }
+.lc-line:hover { background: var(--bg-card-hover); }
+.lc-line[aria-current='true'] { color: var(--text-primary); background: var(--nested-block-bg); }
+.lc-line[aria-current='true'] .lc-line-time { color: var(--accent-primary); }
+.lc-timeline { position: relative; height: 6px; border-radius: 999px; background: var(--nested-block-bg); }
+.lc-timeline-fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 999px; background: var(--accent-primary); }
+.lc-timeline-mark { position: absolute; top: -3px; width: 2px; height: 12px; background: var(--text-muted); border-radius: 2px; }
+
+/* PDF */
+.lc-thumb { display: block; width: 100%; padding: 6px; border-radius: var(--radius-field, 10px); border: 1px solid transparent; text-align: center; font-size: 11px; color: var(--text-muted); }
+.lc-thumb img { width: 100%; border-radius: 4px; border: 1px solid var(--border-subtle); display: block; }
+.lc-thumb[aria-current='true'] { border-color: var(--accent-primary); color: var(--text-primary); }
+.lc-thumb[data-in-lesson='true'] { background: var(--nested-block-bg); }
+.lc-pdf-page { margin: 0 auto; border-radius: 6px; overflow: hidden; border: 1px solid var(--border-subtle); background: var(--bg-elevated); }
+.lc-pdf-page img { display: block; width: 100%; height: auto; }
+
+/* 图文 */
+.lc-article { max-width: 760px; margin: 0 auto; font-size: 15px; line-height: 1.85; color: var(--text-secondary); }
+.lc-article h2 { font-size: 19px; line-height: 1.4; color: var(--text-primary); font-weight: 700; margin: 30px 0 10px; scroll-margin-top: 12px; }
+.lc-article p { margin: 10px 0; }
+.lc-article ul { margin: 10px 0; padding-left: 20px; list-style: disc; }
+.lc-article pre { margin: 14px 0; padding: 14px 16px; border-radius: var(--radius-field, 10px); background: var(--nested-block-bg); border: 1px solid var(--border-faint); color: var(--text-primary); font-size: 13px; line-height: 1.7; overflow-x: auto; }
+.lc-article figure img { width: 100%; border-radius: var(--radius-field, 10px); border: 1px solid var(--border-subtle); }
+.lc-article figcaption { font-size: 12.5px; color: var(--text-muted); margin-top: 6px; text-align: center; }
+.lc-callout { margin: 14px 0; padding: 12px 14px; border-radius: var(--radius-field, 10px); border: 1px solid var(--border-subtle); border-left: 3px solid var(--accent-fg-info); background: var(--nested-block-bg); }
+.lc-callout[data-tone='warn'] { border-left-color: var(--accent-fg-warning); }
+.lc-toc-link { display: flex; align-items: center; min-height: 36px; padding: 0 10px; border-left: 2px solid var(--border-subtle); font-size: 13px; color: var(--text-muted); }
+.lc-toc-link[aria-current='true'] { border-left-color: var(--accent-primary); color: var(--text-primary); }
+
+/* 练习 */
+.lc-stepper { display: flex; align-items: center; gap: 4px; overflow-x: auto; scrollbar-width: none; }
+.lc-step { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--text-muted); white-space: nowrap; flex-shrink: 0; }
+.lc-step-dot { width: 22px; height: 22px; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; border: 1.5px solid var(--border-default); }
+.lc-step[data-state='current'] { color: var(--text-primary); font-weight: 600; }
+.lc-step[data-state='current'] .lc-step-dot { border-color: var(--accent-primary); color: var(--accent-primary); }
+.lc-step[data-state='done'] .lc-step-dot { border-color: var(--accent-fg-success); color: var(--accent-fg-success); }
+.lc-step-sep { width: 18px; height: 1px; background: var(--border-default); flex-shrink: 0; }
+.lc-code { font-size: 13px; line-height: 1.75; }
+.lc-code-row { display: grid; grid-template-columns: 28px 44px 1fr; align-items: stretch; transition: background 200ms ease; }
+.lc-code-row[data-flag='true'] { background: var(--nested-block-bg); }
+.lc-code-row[data-selected='true'] { box-shadow: inset 3px 0 0 var(--accent-primary); background: var(--bg-card-hover); }
+.lc-code-row .lc-ln { text-align: right; padding-right: 12px; color: var(--text-muted); user-select: none; }
+.lc-code-row .lc-src { white-space: pre; padding-right: 16px; color: var(--text-primary); }
+.lc-code-row[data-diff='del'] .lc-src { color: var(--accent-fg-error); text-decoration: line-through; text-decoration-thickness: 1px; }
+.lc-code-row[data-diff='add'] .lc-src { color: var(--accent-fg-success); }
+.lc-gutter-flag { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; margin: 2px 4px; border-radius: 6px; font-size: 10px; font-weight: 800; border: 1.5px solid currentColor; }
+.lc-finding { border: 1px solid var(--border-subtle); border-radius: var(--radius-card, 12px); background: var(--bg-card); padding: 12px; transition: border-color 200ms ease, opacity 300ms ease, transform 300ms ease; }
+.lc-finding[data-selected='true'] { border-color: var(--accent-primary); }
+.lc-finding-enter { animation: lc-enter 420ms cubic-bezier(.2,.7,.2,1) both; }
+@keyframes lc-enter { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.lc-choice { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 44px; padding: 0 14px; border-radius: var(--radius-control, 9px); border: 1px solid var(--border-subtle); font-size: 13px; font-weight: 600; color: var(--text-secondary); flex: 1; transition: border-color 160ms ease, color 160ms ease, background 160ms ease; }
+.lc-choice:hover { color: var(--text-primary); border-color: var(--border-default); }
+.lc-choice[aria-pressed='true'][data-kind='accept'] { border-color: var(--accent-fg-success); color: var(--accent-fg-success); background: var(--nested-block-bg); }
+.lc-choice[aria-pressed='true'][data-kind='reject'] { border-color: var(--accent-fg-warning); color: var(--accent-fg-warning); background: var(--nested-block-bg); }
+.lc-chip-btn { display: inline-flex; align-items: center; min-height: 44px; padding: 0 12px; border-radius: 999px; border: 1px dashed var(--border-default); font-size: 12.5px; color: var(--text-secondary); }
+.lc-chip-btn:hover { color: var(--text-primary); border-style: solid; }
+.lc-input { width: 100%; min-height: 44px; padding: 10px 12px; border-radius: var(--radius-field, 10px); background: var(--bg-input); border: 1px solid var(--border-subtle); color: var(--text-primary); font-size: 13.5px; line-height: 1.6; outline: none; }
+.lc-input:focus { border-color: var(--accent-primary); }
+.lc-stage-row { display: flex; align-items: center; gap: 10px; min-height: 34px; font-size: 13px; }
+.lc-stage-icon { width: 20px; height: 20px; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.lc-pulse { width: 10px; height: 10px; border-radius: 999px; background: var(--accent-primary); animation: lc-pulse 1.2s ease-in-out infinite; }
+@keyframes lc-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .35; transform: scale(.7); } }
+.lc-region { position: absolute; border: 2px solid var(--accent-fg-error); border-radius: 6px; transition: opacity 300ms ease; }
+.lc-region[data-severity='P1'] { border-color: var(--accent-fg-warning); }
+.lc-region[data-severity='P2'] { border-color: var(--accent-fg-info); border-style: dashed; }
+.lc-region[data-selected='true'] { box-shadow: 0 0 0 3px var(--accent-primary); }
+.lc-region-tag { position: absolute; top: -12px; left: -12px; min-width: 24px; height: 24px; padding: 0 6px; border-radius: 999px; background: var(--panel-solid); border: 1.5px solid currentColor; font-size: 11px; font-weight: 800; display: inline-flex; align-items: center; justify-content: center; }
+.lc-check { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; line-height: 1.6; }
+
+@media (prefers-reduced-motion: reduce) {
+  .lc-finding-enter, .lc-pulse { animation: none; }
+  .lc-progress-fill, .lc-practice-card, .lc-finding { transition: none; }
+}
+
+/* 视频布局：宽屏逐字稿在右，较窄时在下方 */
+.lc-video-layout { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(220px, 1fr); gap: 12px; }
+@media (min-width: 1400px) {
+  .lc-video-layout { grid-template-columns: minmax(0, 1fr) 300px; grid-template-rows: minmax(0, 1fr); align-items: start; }
+  .lc-video-layout > aside { height: 100%; }
+}
+/* 手机：本课内容整体滚动，逐字稿限高；PDF 与图文给足阅读高度 */
+.lc-mobile-media .lc-video-layout { grid-template-rows: auto 340px; }
+.lc-mobile-media [data-lc-ready='pdf'], .lc-mobile-media [data-lc-ready='article'] { height: 72vh; }

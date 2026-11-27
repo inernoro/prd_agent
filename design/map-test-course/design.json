@@ -1,0 +1,1108 @@
+{
+  "project": "prd-agent",
+  "title": "MAP 课程 · 自动化测试实践",
+  "framework": "FW-MAP-ADMIN",
+  "frameworkVersion": 1,
+  "acceptanceMode": "objective",
+  "acceptancePlan": {
+    "mece": {
+      "applicable": true
+    },
+    "compare": {
+      "applicable": true
+    },
+    "visual": {
+      "applicable": true
+    },
+    "regress": {
+      "applicable": true,
+      "reason": "沿用学习中心与 AppShell 的历史易错项：双主题硬编码颜色、手机控制条堆叠、静止加载超过 2 秒"
+    },
+    "flow": {
+      "applicable": true
+    },
+    "human": {
+      "applicable": true
+    },
+    "smoke": {
+      "applicable": true
+    },
+    "debt": {
+      "applicable": true
+    }
+  },
+  "prototypeVersion": 1,
+  "date": "2026-11-27",
+  "prototype": "dist/index.html",
+  "rationale": "思路.md",
+  "checks": "checks/result.json",
+  "docs": [
+    "设计文档/目标与验收.md",
+    "设计文档/验收计划.md",
+    "设计文档/演示数据.json",
+    "设计文档/源码差异.diff",
+    "交付说明.md",
+    "spec/rules.md"
+  ],
+  "notes": "课程挂在学习中心下：学习中心新增课程区，课程页（视频 / PDF 教材 / 图文三选一）与练习页（检查 → 判断 → 修复 → 复测 → 交付）。示例内容：1 门课 5 课、2 段视频、8 页教材、3 个练习，全部为虚构演示数据，见 设计文档/演示数据.json。",
+  "screens": [
+    {
+      "id": "center",
+      "name": "学习中心 · 课程区",
+      "route": "#/learning-center",
+      "viewport": "desktop",
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "entryReadySelector": "[data-lc=course-card]",
+      "impl": "/learning-center"
+    },
+    {
+      "id": "lesson-video",
+      "name": "第 1 课 · 视频与逐字稿",
+      "route": "#/learning-center/courses/automation-testing?lesson=l1&media=video",
+      "viewport": "desktop",
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "entryReadySelector": "[data-lc-ready=video]",
+      "impl": "/learning-center/courses/automation-testing?lesson=l1&media=video"
+    },
+    {
+      "id": "lesson-pdf",
+      "name": "第 1 课 · PDF 教材",
+      "route": "#/learning-center/courses/automation-testing?lesson=l1&media=pdf",
+      "viewport": "desktop",
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "entryReadySelector": "[data-lc-ready=pdf]",
+      "impl": "/learning-center/courses/automation-testing?lesson=l1&media=pdf"
+    },
+    {
+      "id": "lesson-article",
+      "name": "第 1 课 · 图文教程",
+      "route": "#/learning-center/courses/automation-testing?lesson=l1&media=article",
+      "viewport": "desktop",
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "entryReadySelector": "[data-lc-ready=article]",
+      "impl": "/learning-center/courses/automation-testing?lesson=l1&media=article"
+    },
+    {
+      "id": "lesson-no-video",
+      "name": "第 2 课 · 没有视频时",
+      "route": "#/learning-center/courses/automation-testing?lesson=l2",
+      "viewport": "desktop",
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "entryReadySelector": "[data-lc-ready=pdf]",
+      "impl": "/learning-center/courses/automation-testing?lesson=l2"
+    },
+    {
+      "id": "practice-brief",
+      "name": "练习 · 读任务",
+      "route": "#/learning-center/courses/automation-testing/practice/p-review",
+      "viewport": "desktop",
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "entryReadySelector": "[data-lc-ready=practice-brief]",
+      "impl": "/learning-center/courses/automation-testing/practice/p-review"
+    },
+    {
+      "id": "practice-review",
+      "name": "练习 · Agent 评审中（意见逐条出现）",
+      "route": "#/learning-center/courses/automation-testing/practice/p-review?run=run-reviewing",
+      "viewport": "desktop",
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "entryReadySelector": "[data-lc-ready=practice-review]",
+      "impl": "/learning-center/courses/automation-testing/practice/p-review"
+    },
+    {
+      "id": "practice-review-failed",
+      "name": "练习 · 评审没有完成",
+      "route": "#/learning-center/courses/automation-testing/practice/p-review?run=run-review-failed",
+      "viewport": "desktop",
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "entryReadySelector": "[data-lc-ready=practice-review-failed]",
+      "impl": "/learning-center/courses/automation-testing/practice/p-review"
+    },
+    {
+      "id": "practice-triage",
+      "name": "练习 · 逐条判断",
+      "route": "#/learning-center/courses/automation-testing/practice/p-review?run=run-triage",
+      "viewport": "desktop",
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "entryReadySelector": "[data-lc-ready=practice-triage]",
+      "impl": "/learning-center/courses/automation-testing/practice/p-review"
+    },
+    {
+      "id": "practice-retest-failed",
+      "name": "练习 · 复测没通过",
+      "route": "#/learning-center/courses/automation-testing/practice/p-review?run=run-retest-failed",
+      "viewport": "desktop",
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "entryReadySelector": "[data-lc-ready=practice-retest-failed]",
+      "impl": "/learning-center/courses/automation-testing/practice/p-review"
+    },
+    {
+      "id": "practice-deliver",
+      "name": "练习 · 写交付说明",
+      "route": "#/learning-center/courses/automation-testing/practice/p-review?run=run-deliver",
+      "viewport": "desktop",
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "entryReadySelector": "[data-lc-ready=practice-deliver]",
+      "impl": "/learning-center/courses/automation-testing/practice/p-review"
+    },
+    {
+      "id": "practice-done",
+      "name": "练习 · 完成",
+      "route": "#/learning-center/courses/automation-testing/practice/p-review?run=run-done",
+      "viewport": "desktop",
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "entryReadySelector": "[data-lc-ready=practice-done]",
+      "impl": "/learning-center/courses/automation-testing/practice/p-review"
+    },
+    {
+      "id": "practice-visual",
+      "name": "练习 · 视觉验收逐条判断",
+      "route": "#/learning-center/courses/automation-testing/practice/p-visual?run=run-visual-triage",
+      "viewport": "desktop",
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "entryReadySelector": "[data-lc-ready=practice-triage]",
+      "impl": "/learning-center/courses/automation-testing/practice/p-visual"
+    },
+    {
+      "id": "practice-unit",
+      "name": "练习 · 审生成的测试",
+      "route": "#/learning-center/courses/automation-testing/practice/p-unit?run=run-unit-triage",
+      "viewport": "desktop",
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "entryReadySelector": "[data-lc-ready=practice-triage]",
+      "impl": "/learning-center/courses/automation-testing/practice/p-unit"
+    },
+    {
+      "id": "phone-lesson",
+      "name": "手机 · 第 1 课视频",
+      "route": "#/learning-center/courses/automation-testing?lesson=l1&media=video",
+      "viewport": "phone",
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "entryReadySelector": "[data-lc-ready=video]",
+      "impl": "/learning-center/courses/automation-testing?lesson=l1&media=video"
+    },
+    {
+      "id": "phone-practice",
+      "name": "手机 · 逐条判断",
+      "route": "#/learning-center/courses/automation-testing/practice/p-review?run=run-triage",
+      "viewport": "phone",
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "entryReadySelector": "[data-lc-ready=practice-triage]",
+      "impl": "/learning-center/courses/automation-testing/practice/p-review"
+    }
+  ],
+  "acceptance": [
+    {
+      "id": "A-01",
+      "screenId": "lesson-video",
+      "how": "measure",
+      "slots": [
+        "desktop-light",
+        "desktop-dark",
+        "phone-light",
+        "phone-dark"
+      ],
+      "rule": "页面挂在正式 AppShell，左侧导航来自服务端菜单目录，不另画导航",
+      "expected": "检查：学习中心、课程页、练习页的 DOM 都在 AppShell 主区 Outlet 内，侧栏为壳自带",
+      "dimension": "compatibility",
+      "ruleId": "R-01"
+    },
+    {
+      "id": "A-02",
+      "screenId": "lesson-video",
+      "how": "measure",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "页面组件颜色只取 tokens.css 语义变量；课程素材（视频帧、教材页图、截图）是作品画面，不受此限",
+      "expected": "检查：pages/learning-course 与改动的学习中心页源码里十六进制与 rgb 字面量为 0",
+      "dimension": "compatibility",
+      "ruleId": "R-02"
+    },
+    {
+      "id": "A-03",
+      "screenId": "practice-triage",
+      "how": "measure",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "白天与黑天都可读，正文对比度不低于 4.5，状态色用 --accent-fg-* 成对取值",
+      "expected": "检查：两个主题下课程页与练习页正文、次要文字与背景的对比度均 ≥ 4.5",
+      "dimension": "compatibility",
+      "ruleId": "R-03"
+    },
+    {
+      "id": "A-04",
+      "screenId": "lesson-video",
+      "how": "measure",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "图标只用 lucide-react；代码、界面、文案不出现 emoji",
+      "expected": "检查：源码与 16 个画面的渲染文本扫描 emoji 为 0",
+      "dimension": "compatibility",
+      "ruleId": "R-04"
+    },
+    {
+      "id": "A-05",
+      "screenId": "practice-brief",
+      "how": "human",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "按钮用 components/design/Button，每一屏只有一个 primary 主动作",
+      "expected": "逐画面数 primary：课程页「开始练习」、读任务「让 Agent 开始评审」、判断「应用修复并复测」、复测失败「回到判断」、交付「提交交付」、完成「回到课程」，各一个",
+      "dimension": "experience",
+      "ruleId": "R-05"
+    },
+    {
+      "id": "A-06",
+      "screenId": "phone-lesson",
+      "how": "measure",
+      "slots": [
+        "phone-light",
+        "phone-dark"
+      ],
+      "rule": "窄屏两栏改为页内切换，375 宽无整页横向溢出；本页新增的可点元素触控高度不小于 44px，公共组件 SegmentedTabs 用 data-qc-touch-exempt 标出",
+      "expected": "检查：375 宽视口 document.scrollWidth 等于视口宽；未标出的新增可点元素高度 ≥ 44",
+      "dimension": "compatibility",
+      "ruleId": "R-06"
+    },
+    {
+      "id": "A-07",
+      "screenId": "center",
+      "how": "measure",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "课程与练习路由在 navRegistry 注册（学习中心子页，不另进导航）；课程数据带 wip，学习中心课程卡与课程页显示「试运行」，验收后去掉",
+      "expected": "检查：navRegistry 有 /learning-center/courses/:courseId 与练习路由；课程卡与课程页顶栏都有「试运行」",
+      "dimension": "operations",
+      "ruleId": "R-07"
+    },
+    {
+      "id": "A-08",
+      "screenId": "practice-review",
+      "how": "measure",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "Agent 评审与复测显示当前阶段、进度、已用与预计剩余及依据；任务在服务端跑，离开页面不取消，回来能恢复",
+      "expected": "检查：评审中画面有阶段列表、进度条、「已用 / 预计还需约 / 依据」；带 ?run 重新打开仍是同一次练习",
+      "dimension": "operations",
+      "ruleId": "R-08"
+    },
+    {
+      "id": "A-09",
+      "screenId": "practice-review-failed",
+      "how": "human",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "用户可见错误先说结果和恢复动作，内部诊断只进日志",
+      "expected": "评审失败写「已保存这次练习，重新评审会从头开始，不会重复计费」并给「重新评审」；课程与练习加载失败写进度已保存并给「重新加载 / 回到课程」",
+      "dimension": "experience",
+      "ruleId": "R-09"
+    },
+    {
+      "id": "A-10",
+      "screenId": "lesson-video",
+      "how": "measure",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "前端请求走 services/real 与 apiRequest，响应以 success 判断，错误取 error.message",
+      "expected": "检查：services/real/learningCourses.ts 只经 apiRequest 发请求，页面只读 res.success 与 res.error?.message",
+      "dimension": "security",
+      "ruleId": "R-10"
+    },
+    {
+      "id": "A-11",
+      "screenId": "center",
+      "how": "screenshot",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "学习中心在短教程之前有「课程」区；课程卡显示课数、时长、练习完成数、进度条和「开始 / 继续：第 n 课」，点击直达那一课",
+      "expected": "1440×900 首屏同时看到掌握度总览、课程区（课程卡带封面、试运行、进度与下一课）和本页教程标题",
+      "dimension": "experience"
+    },
+    {
+      "id": "A-12",
+      "screenId": "lesson-video",
+      "how": "screenshot",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "课程页首屏：左栏目录（5 课，每课时长与有哪几种材料）与练习列表；右侧本课标题、材料切换与播放器同屏，底部给出本课练习",
+      "expected": "1440×900 不滚动看到目录 5 课、3 个练习、本课标题、「视频 0:27 / PDF 教材 本课 2 页 / 图文 6 分钟」、播放器、逐字稿与「开始练习」",
+      "dimension": "experience"
+    },
+    {
+      "id": "A-13",
+      "screenId": "lesson-video",
+      "how": "measure",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "视频可播放；章节与逐字稿在同一栏，播放时当前行高亮并自动滚到可见，点任一行跳到那一秒",
+      "expected": "检查：点第 4 行后 video.currentTime ≈ 该行时间，且该行 aria-current=true；所在章节标题为高亮色",
+      "dimension": "correctness",
+      "interaction": true
+    },
+    {
+      "id": "A-14",
+      "screenId": "lesson-video",
+      "how": "measure",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "再次打开视频从上次位置继续，并提示「已从上次看到的 m:ss 继续」与「从头看」；位置每 10 秒与暂停时由服务端保存",
+      "expected": "检查：打开第 1 课视频时 currentTime = 9 并显示继续提示；暂停后 PUT progress 带 positionSec",
+      "dimension": "correctness"
+    },
+    {
+      "id": "A-15",
+      "screenId": "lesson-pdf",
+      "how": "measure",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "PDF 教材逐页连续阅读：缩略图标出本课页码；打开定位到上次读到的页，没有记录则到本课第一页；可翻页、切换适合宽度 / 整页、下载原文件",
+      "expected": "检查：第 2 课打开即显示「第 4 / 8 页」且主区可见第 4 页；下一页变为 5 并提示「本课在第 4–4 页」与「回到本课」；下载链接指向 PDF 原文件",
+      "dimension": "correctness",
+      "interaction": true
+    },
+    {
+      "id": "A-16",
+      "screenId": "lesson-article",
+      "how": "measure",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "图文：阅读栏加本篇目录，目录随滚动高亮；读到底记为读完",
+      "expected": "检查：滚到底部或点文末「读到这里就算读完」后出现「本篇已读完，进度已记下」，并发出 completed=true 的进度请求",
+      "dimension": "correctness",
+      "interaction": true
+    },
+    {
+      "id": "A-17",
+      "screenId": "lesson-no-video",
+      "how": "measure",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "本课缺某类材料时，按钮留在原位、不可点，写「无」并提示原因；默认打开本课已有的第一种材料",
+      "expected": "检查：第 2 课「视频」按钮 disabled、显示「无」、title 为原因；默认打开 PDF 教材",
+      "dimension": "experience"
+    },
+    {
+      "id": "A-18",
+      "screenId": "lesson-video",
+      "how": "measure",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "地址记住当前课与材料（?lesson=&media=），刷新或分享后回到同一处",
+      "expected": "检查：切到图文后地址带 lesson=l1&media=article，用该地址重新打开仍是第 1 课图文",
+      "dimension": "correctness"
+    },
+    {
+      "id": "A-19",
+      "screenId": "lesson-article",
+      "how": "measure",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "本课是否学完由服务端判定（视频看到 90%、图文读到底），目录勾选与顶部「已学 x/5 课」随之更新，不整页重载",
+      "expected": "检查：读完第 1 课图文后，目录第 1 课变为勾选、顶部变为「已学 1/5 课」，页面其余部分不闪烁重载",
+      "dimension": "correctness",
+      "interaction": true
+    },
+    {
+      "id": "A-20",
+      "screenId": "lesson-pdf",
+      "how": "measure",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "素材按需加载：视频 preload=metadata，缩略图懒加载，首屏不下载整段视频",
+      "expected": "检查：video 元素 preload=metadata；缩略图 img 带 loading=lazy",
+      "dimension": "performance"
+    },
+    {
+      "id": "A-21",
+      "screenId": "practice-brief",
+      "how": "screenshot",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "读任务：场景、你要练的判断、交付时要满足、怎么进行；唯一主动作「让 Agent 开始评审」",
+      "expected": "1440×900 右栏完整看到四段与主按钮；左栏是被评审的代码",
+      "dimension": "experience"
+    },
+    {
+      "id": "A-22",
+      "screenId": "practice-review",
+      "how": "screenshot",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "评审进行中：意见逐条出现，同时以编号标在代码行上；模型名与平台来自网关返回",
+      "expected": "评审中画面右栏列出已发现的 2 处，左栏第 13、14 行带编号标记；运行面板写「anthropic/claude-sonnet-4.5 · OpenRouter」",
+      "dimension": "experience"
+    },
+    {
+      "id": "A-23",
+      "screenId": "practice-triage",
+      "how": "measure",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "逐条判断：先证据后建议；定位可跳到代码行或截图区域；二选一判断，驳回必须写理由（可点常用理由一键填入）；全部判断完主按钮才可用，否则写明还差几处",
+      "expected": "检查：第 1 条已采纳时提示「还有 3 处没判断完」；采纳第 2 条后为 2；驳回第 3 条不写理由仍为 2；点常用理由后为 1；全部判断完主按钮可用",
+      "dimension": "correctness",
+      "interaction": true
+    },
+    {
+      "id": "A-24",
+      "screenId": "practice-retest-failed",
+      "how": "measure",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "复测用同一组输入，对错由服务端判定；判错时对应检查失败，回到判断后判错那条下面写明复测看到了什么，已作判断保留",
+      "expected": "检查：误采纳第 3 条后复测「联合测试」失败；点「回到判断」后第 3 条出现「复测反馈」，其余判断不变",
+      "dimension": "correctness",
+      "interaction": true
+    },
+    {
+      "id": "A-25",
+      "screenId": "practice-retest-failed",
+      "how": "screenshot",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "复测后，被采纳的修复以删除 / 新增两种标记插回代码，看得见改了什么",
+      "expected": "左栏第 4、13、14 行原文划掉，下方是新增行；没采纳的第 18 行保持原样",
+      "dimension": "experience"
+    },
+    {
+      "id": "A-26",
+      "screenId": "practice-deliver",
+      "how": "measure",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "复测通过后给出三段式交付说明草稿（能做什么 / 怎么证明 / 还没做到什么），驳回理由自动进入「还没做到」，可编辑后提交",
+      "expected": "检查：草稿含三段标题、复测项列表和两条驳回理由；清空后「提交交付」不可用",
+      "dimension": "correctness"
+    },
+    {
+      "id": "A-27",
+      "screenId": "practice-done",
+      "how": "measure",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "完成页给出经验值与时间线，主按钮回课程换练习；课程目录里这个练习显示「已完成」",
+      "expected": "检查：完成后回到课程，练习卡状态为「已完成」，顶部「练习 1/3」",
+      "dimension": "correctness",
+      "interaction": true
+    },
+    {
+      "id": "A-28",
+      "screenId": "practice-visual",
+      "how": "screenshot",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "视觉练习：基线与实际并排或叠加对照，差异区域编号标在实际截图上；判断说法换成「判为缺陷 / 在容差内」",
+      "expected": "并排模式下实际截图有 3 个编号框，右栏每条两个按钮为「判为缺陷」「在容差内」",
+      "dimension": "experience"
+    },
+    {
+      "id": "A-29",
+      "screenId": "practice-unit",
+      "how": "measure",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "测试练习：说法为「保留这条测试 / 删掉这条」；保留依赖当前日期的测试会在复测「稳定性」检查失败",
+      "expected": "检查：保留第 3 条后复测「稳定性：连续 3 次结果一致」失败，并给出反馈",
+      "dimension": "correctness"
+    },
+    {
+      "id": "A-30",
+      "screenId": "practice-triage",
+      "how": "measure",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "判定口径在服务端：前端拿不到每条意见的「正确答案」，只收复测结果与逐条反馈",
+      "expected": "检查：练习接口返回的意见不含 truth 等答案字段；对错只出现在复测结果里",
+      "dimension": "security"
+    },
+    {
+      "id": "A-31",
+      "screenId": "practice-review",
+      "how": "measure",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "一次练习是一条服务端记录（?run=），离开课程或刷新后从原处继续；课程页练习按钮变为「接着做」",
+      "expected": "检查：开始练习后地址带 run；回到课程练习卡写「进行中，可续上」，按钮为「接着做」并带回同一 run",
+      "dimension": "operations"
+    },
+    {
+      "id": "A-32",
+      "screenId": "practice-review-failed",
+      "how": "screenshot",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "评审失败：阶段列表标出失败在哪一步，说明原因、已保存与是否重复计费，主按钮「重新评审」",
+      "expected": "失败画面第 2 阶段为失败标记，红色说明块与「重新评审」主按钮同屏",
+      "dimension": "experience"
+    },
+    {
+      "id": "A-33",
+      "screenId": "phone-lesson",
+      "how": "screenshot",
+      "slots": [
+        "phone-light",
+        "phone-dark"
+      ],
+      "rule": "手机课程页：一条顶栏（返回 + 本课 / 目录切换），本课内容整体滚动，练习入口吸底",
+      "expected": "375×812 首屏：顶栏一条、本课标题、材料切换、播放器，底部吸住「开始练习」",
+      "dimension": "experience"
+    },
+    {
+      "id": "A-34",
+      "screenId": "phone-practice",
+      "how": "screenshot",
+      "slots": [
+        "phone-light",
+        "phone-dark"
+      ],
+      "rule": "手机练习页：一条顶栏（返回 + 标题 + 第 n/5 步），「这一步 / 工作台」切换，点意见的定位切到工作台",
+      "expected": "375×812 顶栏写「第 3/5 步 · 判断与修复」，意见卡完整可读，主按钮吸底",
+      "dimension": "experience"
+    },
+    {
+      "id": "A-35",
+      "screenId": "lesson-video",
+      "how": "human",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "课程或练习加载失败时说明原因与「重新加载 / 回到课程」，并说明进度已保存",
+      "expected": "断网打开课程页，看到原因、「你的学习进度已保存在服务端」与「重新加载」",
+      "dimension": "operations"
+    },
+    {
+      "id": "A-36",
+      "screenId": "center",
+      "how": "human",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "课程卡、课程页、练习页文案用学员的话：不出现 runId、appCallerCode 等内部名",
+      "expected": "逐画面通读，内部编号只出现在地址栏",
+      "dimension": "experience"
+    }
+  ],
+  "goals": [
+    {
+      "id": "G-01",
+      "goal": "学员在学习中心找到课程，知道从哪一课接着学",
+      "doneWhen": "学习中心有课程区，课程卡给出进度与下一课，点击直达；试运行标记可见",
+      "items": [
+        "A-07",
+        "A-11",
+        "A-36"
+      ]
+    },
+    {
+      "id": "G-02",
+      "goal": "一课的视频、PDF 教材、图文三种材料由学员自选，进度能接上",
+      "doneWhen": "三种材料在同一处切换，缺的材料说明原因；视频从上次位置继续、PDF 到上次的页、图文读完记下；地址记住课与材料",
+      "items": [
+        "A-12",
+        "A-13",
+        "A-14",
+        "A-15",
+        "A-16",
+        "A-17",
+        "A-18",
+        "A-19",
+        "A-20"
+      ]
+    },
+    {
+      "id": "G-03",
+      "goal": "选一个练习，亲手走完 Agent 检查 → 判断 → 修复 → 复测 → 交付",
+      "doneWhen": "三个练习任选；Agent 运行过程可见；逐条判断有证据可看、驳回要理由；复测判错会指出哪条错；交付说明三段式；完成后课程里记为已完成",
+      "items": [
+        "A-21",
+        "A-22",
+        "A-23",
+        "A-24",
+        "A-25",
+        "A-26",
+        "A-27",
+        "A-28",
+        "A-29",
+        "A-30",
+        "A-31"
+      ]
+    },
+    {
+      "id": "G-04",
+      "goal": "手机上也能学、能练",
+      "doneWhen": "375 宽无横向溢出，进内容前只有一条控制栏，主动作吸底",
+      "items": [
+        "A-06",
+        "A-33",
+        "A-34"
+      ]
+    },
+    {
+      "id": "G-05",
+      "goal": "出错时学员知道发生了什么、能接着做",
+      "doneWhen": "评审失败、加载失败都说明结果、已保存的进度和下一步",
+      "items": [
+        "A-09",
+        "A-32",
+        "A-35"
+      ]
+    }
+  ],
+  "risks": [
+    {
+      "dimension": "correctness",
+      "risk": "学员学完了，进度没记上或记错课",
+      "ruleIds": [
+        "A-14",
+        "A-19"
+      ]
+    },
+    {
+      "dimension": "correctness",
+      "risk": "练习对错判断放在前端，学员看源码就能拿到答案，或前后端口径不一",
+      "ruleIds": [
+        "A-24"
+      ]
+    },
+    {
+      "dimension": "security",
+      "risk": "练习答案随接口下发",
+      "ruleIds": [
+        "A-30"
+      ]
+    },
+    {
+      "dimension": "security",
+      "risk": "前端绕过统一鉴权直接请求",
+      "ruleIds": [
+        "A-10"
+      ]
+    },
+    {
+      "dimension": "performance",
+      "risk": "视频和教材页图一次全量下载，手机流量与首屏变慢",
+      "ruleIds": [
+        "A-20"
+      ]
+    },
+    {
+      "dimension": "performance",
+      "risk": "评审与复测的真实耗时与并发",
+      "reason": "原型按压缩时间演示（约 9 秒对应真实约 70 秒），实现时按网关实测中位数校准预计耗时，并发上限按服务端容量确定"
+    },
+    {
+      "dimension": "operations",
+      "risk": "练习中途离开或刷新，评审被取消或要从头来",
+      "ruleIds": [
+        "A-08",
+        "A-31"
+      ]
+    },
+    {
+      "dimension": "compatibility",
+      "risk": "手机与深浅主题下布局挤压、对比度不足",
+      "ruleIds": [
+        "A-03",
+        "A-06"
+      ]
+    },
+    {
+      "dimension": "experience",
+      "risk": "材料缺失时按钮消失或跳位，学员以为页面坏了",
+      "ruleIds": [
+        "A-17"
+      ]
+    }
+  ],
+  "source": "src",
+  "group": "MAP · 学习",
+  "handoff": {
+    "cases": [
+      {
+        "id": "watch-and-seek",
+        "title": "播放中点逐字稿第 4 行，跳到那一秒并高亮",
+        "screenId": "lesson-video",
+        "theme": "light",
+        "ruleIds": [
+          "A-13"
+        ],
+        "steps": [
+          {
+            "action": "expect",
+            "selector": "[data-lc=resume-note]",
+            "check": "visible"
+          },
+          {
+            "action": "click",
+            "selector": "[data-line=\"3\"]"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-line=\"3\"]",
+            "check": "attribute",
+            "attribute": "aria-current",
+            "equals": "true"
+          }
+        ]
+      },
+      {
+        "id": "switch-to-pdf",
+        "title": "从视频切到 PDF 教材，再切到图文",
+        "screenId": "lesson-video",
+        "theme": "dark",
+        "ruleIds": [
+          "A-18"
+        ],
+        "steps": [
+          {
+            "action": "click",
+            "selector": "[data-lc=media-pdf]"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-lc=pdf-page]",
+            "check": "text",
+            "equals": "第 2 / 8 页"
+          },
+          {
+            "action": "click",
+            "selector": "[data-lc=media-article]"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-lc=article]",
+            "check": "visible"
+          }
+        ]
+      },
+      {
+        "id": "pdf-page-nav",
+        "title": "第 2 课教材定位到本课页，翻到下一页提示回到本课",
+        "screenId": "lesson-no-video",
+        "theme": "light",
+        "ruleIds": [
+          "A-15",
+          "A-17"
+        ],
+        "steps": [
+          {
+            "action": "expect",
+            "selector": "[data-lc=media-video]",
+            "check": "enabled",
+            "equals": "false"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-lc=pdf-page]",
+            "check": "text",
+            "equals": "第 4 / 8 页"
+          },
+          {
+            "action": "click",
+            "selector": "[aria-label=下一页]"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-lc=pdf-page]",
+            "check": "text",
+            "equals": "第 5 / 8 页"
+          }
+        ]
+      },
+      {
+        "id": "article-finish",
+        "title": "读完第 1 课图文，目录与顶部进度同步更新",
+        "screenId": "lesson-article",
+        "theme": "light",
+        "ruleIds": [
+          "A-16",
+          "A-19"
+        ],
+        "steps": [
+          {
+            "action": "click",
+            "selector": "[data-lc=article-end]"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-lc=article-end]",
+            "check": "attribute",
+            "attribute": "data-finished",
+            "equals": "true"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-lesson=l1]",
+            "check": "attribute",
+            "attribute": "data-status",
+            "equals": "done"
+          }
+        ]
+      },
+      {
+        "id": "start-review",
+        "title": "读完任务后让 Agent 开始评审，立即看到运行面板",
+        "screenId": "practice-brief",
+        "theme": "light",
+        "ruleIds": [
+          "A-21",
+          "A-22"
+        ],
+        "steps": [
+          {
+            "action": "click",
+            "selector": "[data-lc=start-run]"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-lc=agent-run]",
+            "check": "visible"
+          }
+        ]
+      },
+      {
+        "id": "triage-gating",
+        "title": "逐条判断：驳回要写理由，判断完才能复测",
+        "screenId": "practice-triage",
+        "theme": "dark",
+        "ruleIds": [
+          "A-23"
+        ],
+        "steps": [
+          {
+            "action": "expect",
+            "selector": "[data-lc=undecided-hint]",
+            "check": "attribute",
+            "attribute": "data-remaining",
+            "equals": "3"
+          },
+          {
+            "action": "click",
+            "selector": "[data-finding=R2] [data-lc=decide-accept]"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-lc=undecided-hint]",
+            "check": "attribute",
+            "attribute": "data-remaining",
+            "equals": "2"
+          },
+          {
+            "action": "click",
+            "selector": "[data-finding=R3] [data-lc=decide-reject]"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-lc=undecided-hint]",
+            "check": "attribute",
+            "attribute": "data-remaining",
+            "equals": "2"
+          },
+          {
+            "action": "click",
+            "selector": "[data-finding=R3] .lc-chip-btn:nth-child(1)"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-lc=undecided-hint]",
+            "check": "attribute",
+            "attribute": "data-remaining",
+            "equals": "1"
+          },
+          {
+            "action": "click",
+            "selector": "[data-finding=R4] [data-lc=decide-accept]"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-lc=submit-decisions]",
+            "check": "enabled"
+          },
+          {
+            "action": "click",
+            "selector": "[data-lc=submit-decisions]"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-lc=agent-run]",
+            "check": "visible"
+          }
+        ]
+      },
+      {
+        "id": "retest-failed-reopen",
+        "title": "复测没通过，回到判断后看到判错那条的复测反馈",
+        "screenId": "practice-retest-failed",
+        "theme": "light",
+        "ruleIds": [
+          "A-24"
+        ],
+        "steps": [
+          {
+            "action": "click",
+            "selector": "[data-lc=reopen-triage]"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-finding=R3] [data-lc=finding-feedback]",
+            "check": "visible"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-finding=R1] [data-lc=decide-accept]",
+            "check": "attribute",
+            "attribute": "aria-pressed",
+            "equals": "true"
+          }
+        ]
+      },
+      {
+        "id": "deliver-and-back",
+        "title": "提交交付说明，回到课程看到练习已完成",
+        "screenId": "practice-deliver",
+        "theme": "light",
+        "ruleIds": [
+          "A-26",
+          "A-27"
+        ],
+        "steps": [
+          {
+            "action": "expect",
+            "selector": "[data-lc=submit-delivery]",
+            "check": "enabled"
+          },
+          {
+            "action": "click",
+            "selector": "[data-lc=submit-delivery]"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-lc=timeline]",
+            "check": "visible"
+          },
+          {
+            "action": "click",
+            "selector": "[data-lc=back-course]"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-practice=p-review]",
+            "check": "attribute",
+            "attribute": "data-status",
+            "equals": "done"
+          }
+        ]
+      }
+    ]
+  }
+}

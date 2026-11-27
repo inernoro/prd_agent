@@ -1,0 +1,18 @@
+{
+ "web": "prd-admin",
+ "baseline": "2c230222d37d1ea7e56dd7c6a0f8173a9b3f7dc3",
+ "entry": "src/main.tsx",
+ "shellFile": "src/layouts/AppShell.tsx",
+ "overrides": {
+  "src/app/navRegistry.tsx": "src/overrides/app/navRegistry.tsx",
+  "src/pages/learning-center/LearningCenterPage.tsx": "src/overrides/pages/learning-center/LearningCenterPage.tsx"
+ },
+ "added": {
+  "src/pages/learning-course/": "src/added/pages/learning-course/",
+  "src/services/real/learningCourses.ts": "src/added/services/real/learningCourses.ts"
+ },
+ "lazyPlaceholders": ["src/app/navRegistry.tsx"],
+ "omitAssets": ["src/assets/agent-card-art/"],
+ "skipPreloads": [],
+ "title": "MAP 课程 · 自动化测试实践 · 原型"
+}

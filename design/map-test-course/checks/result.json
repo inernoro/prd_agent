@@ -1,0 +1,285 @@
+{
+  "runAt": "2026-11-27",
+  "browser": "Chromium（Playwright），本机还原 CDS 预览容器（技能 design-preview-contract.json 的 CSP 响应头与桥接脚本、sandbox=\"allow-scripts\"），桌面 1440×900 与手机 375×812、浅色与深色",
+  "url": "dist/index.html",
+  "total": 38,
+  "passed": 38,
+  "items": [
+    {
+      "id": "A-01",
+      "ruleId": "R-01",
+      "name": "A-01 R-01 页面挂在正式 AppShell，左侧导航来自服务端菜单目录，不另画导航",
+      "pass": true,
+      "status": "passed",
+      "note": "测量：32 次打开都在 AppShell 主区内，壳的导航在页面之外"
+    },
+    {
+      "id": "A-02",
+      "ruleId": "R-02",
+      "name": "A-02 R-02 页面组件颜色只取 tokens.css 语义变量；课程素材（视频帧、教材页图、截图）是作品画面，不受此限",
+      "pass": true,
+      "status": "passed",
+      "note": "测量：pages/learning-course 14 个文件与学习中心页新增行无颜色字面量"
+    },
+    {
+      "id": "A-03",
+      "ruleId": "R-03",
+      "name": "A-03 R-03 白天与黑天都可读，正文对比度不低于 4.5，状态色用 --accent-fg-* 成对取值",
+      "pass": true,
+      "status": "passed",
+      "note": "测量：lesson-video/light：正文 14.89，次要 7.98，弱化 5.69；lesson-video/dark：正文 17.19，次要 11.24，弱化 8.31；practice-triage/light：正文 14.89，次要 7.98，弱化 5.69；practice-triage/dark：正文 17.19，次要 11.24，弱化 8.31"
+    },
+    {
+      "id": "A-04",
+      "ruleId": "R-04",
+      "name": "A-04 R-04 图标只用 lucide-react；代码、界面、文案不出现 emoji",
+      "pass": true,
+      "status": "passed",
+      "note": "测量：源码与全部画面渲染文本无 emoji"
+    },
+    {
+      "id": "A-05",
+      "ruleId": "R-05",
+      "name": "A-05 R-05 按钮用 components/design/Button，每一屏只有一个 primary 主动作",
+      "pass": true,
+      "status": "passed",
+      "note": "逐画面数 primary（自检 C-02 测量佐证）：学习中心无 primary；课程页「开始练习」；读任务「让 Agent 开始评审」；评审失败「重新评审」；判断「应用修复并复测」；复测失败「回到判断」；交付「提交交付」；完成「回到课程，换一个练习」，各一个"
+    },
+    {
+      "id": "A-06",
+      "ruleId": "R-06",
+      "name": "A-06 R-06 窄屏两栏改为页内切换，375 宽无整页横向溢出；本页新增的可点元素触控高度不小于 44px，公共组件 SegmentedTabs 用 data-qc-touch-exempt 标出",
+      "pass": true,
+      "status": "passed",
+      "note": "测量：phone-lesson/light：溢出 0px，新增可点元素均 ≥ 44px；phone-lesson/dark：溢出 0px，新增可点元素均 ≥ 44px；phone-practice/light：溢出 0px，新增可点元素均 ≥ 44px；phone-practice/dark：溢出 0px，新增可点元素均 ≥ 44px"
+    },
+    {
+      "id": "A-07",
+      "ruleId": "R-07",
+      "name": "A-07 R-07 课程与练习路由在 navRegistry 注册（学习中心子页，不另进导航）；课程数据带 wip，学习中心课程卡与课程页显示「试运行」，验收后去掉",
+      "pass": true,
+      "status": "passed",
+      "note": "测量：navRegistry 有课程与练习两条路由；课程数据 wip: true，课程卡与课程页顶栏显示「试运行」"
+    },
+    {
+      "id": "A-08",
+      "ruleId": "R-08",
+      "name": "A-08 R-08 Agent 评审与复测显示当前阶段、进度、已用与预计剩余及依据；任务在服务端跑，离开页面不取消，回来能恢复",
+      "pass": true,
+      "status": "passed",
+      "note": "测量：阶段 done,done,running,waiting；有「已用 / 预计还需约 / 依据」"
+    },
+    {
+      "id": "A-09",
+      "ruleId": "R-09",
+      "name": "A-09 R-09 用户可见错误先说结果和恢复动作，内部诊断只进日志",
+      "pass": true,
+      "status": "passed",
+      "note": "核对评审失败（结果 + 已保存 + 不重复计费 + 重新评审）、课程加载失败（进度已保存 + 重新加载）、练习加载失败（回到课程）、提交失败（已保存你的进度，可以再试一次）四处文案"
+    },
+    {
+      "id": "A-10",
+      "ruleId": "R-10",
+      "name": "A-10 R-10 前端请求走 services/real 与 apiRequest，响应以 success 判断，错误取 error.message",
+      "pass": true,
+      "status": "passed",
+      "note": "测量：learningCourses.ts 全部经 apiRequest（无裸 fetch）；3 个页面文件按 res.success 分支、错误取 res.error?.message"
+    },
+    {
+      "id": "A-11",
+      "name": "A-11 学习中心在短教程之前有「课程」区；课程卡显示课数、时长、练习完成数、进度条和「开始 / 继续：第 n 课」，点击直达那一课",
+      "pass": true,
+      "status": "passed",
+      "note": "center 两主题截图：掌握度总览之下是「课程」区，课程卡带封面、试运行、5 课 · 约 75 分钟、练习完成数、进度条与「开始：第 1 课」；其下是本页教程"
+    },
+    {
+      "id": "A-12",
+      "name": "A-12 课程页首屏：左栏目录（5 课，每课时长与有哪几种材料）与练习列表；右侧本课标题、材料切换与播放器同屏，底部给出本课练习",
+      "pass": true,
+      "status": "passed",
+      "note": "lesson-video 两主题 1440×900：左栏 5 课与 3 个练习、右侧标题行与「视频 0:27 / PDF 教材 本课 2 页 / 图文 6 分钟」同一行，播放器与章节逐字稿同屏，底部「开始练习」，无需滚动"
+    },
+    {
+      "id": "A-13",
+      "name": "A-13 视频可播放；章节与逐字稿在同一栏，播放时当前行高亮并自动滚到可见，点任一行跳到那一秒",
+      "pass": true,
+      "status": "passed",
+      "note": "测量：点第 4 行（0:13）后 currentTime=13.7，该行 aria-current=true"
+    },
+    {
+      "id": "A-14",
+      "name": "A-14 再次打开视频从上次位置继续，并提示「已从上次看到的 m:ss 继续」与「从头看」；位置每 10 秒与暂停时由服务端保存",
+      "pass": true,
+      "status": "passed",
+      "note": "测量：打开即 currentTime=9.0，提示「已从上次看到的 0:09 继续从头看」；播放后暂停发出 1 次 PUT（含 positionSec）"
+    },
+    {
+      "id": "A-15",
+      "name": "A-15 PDF 教材逐页连续阅读：缩略图标出本课页码；打开定位到上次读到的页，没有记录则到本课第一页；可翻页、切换适合宽度 / 整页、下载原文件",
+      "pass": true,
+      "status": "passed",
+      "note": "测量：打开「第 4 / 8 页」且第 4 页在视口内；下一页「第 5 / 8 页」，提示本课页码与「回到本课」；下载链接 data:application/pdf;base64,…"
+    },
+    {
+      "id": "A-16",
+      "name": "A-16 图文：阅读栏加本篇目录，目录随滚动高亮；读到底记为读完",
+      "pass": true,
+      "status": "passed",
+      "note": "测量：滚到底部后 data-finished=true，文末显示「本篇已读完，进度已记下」"
+    },
+    {
+      "id": "A-17",
+      "name": "A-17 本课缺某类材料时，按钮留在原位、不可点，写「无」并提示原因；默认打开本课已有的第一种材料",
+      "pass": true,
+      "status": "passed",
+      "note": "测量：视频按钮 disabled、显示「无」、提示「本课没有视频：操作都在图文里一步步截了图」；默认打开 PDF 教材"
+    },
+    {
+      "id": "A-18",
+      "name": "A-18 地址记住当前课与材料（?lesson=&media=），刷新或分享后回到同一处",
+      "pass": true,
+      "status": "passed",
+      "note": "测量：用地址 ?lesson=l1&media=article 打开即为第 1 课图文（aria-pressed=true）；切换时写回同两个参数"
+    },
+    {
+      "id": "A-19",
+      "name": "A-19 本课是否学完由服务端判定（视频看到 90%、图文读到底），目录勾选与顶部「已学 x/5 课」随之更新，不整页重载",
+      "pass": true,
+      "status": "passed",
+      "note": "测量：已学 0/5 课 → 已学 1/5 课，目录第 1 课 data-status=done（服务端返回 done 后只更新这一课）"
+    },
+    {
+      "id": "A-20",
+      "name": "A-20 素材按需加载：视频 preload=metadata，缩略图懒加载，首屏不下载整段视频",
+      "pass": true,
+      "status": "passed",
+      "note": "测量：缩略图 全部 loading=lazy；视频 preload=metadata（见 VideoLesson.tsx）"
+    },
+    {
+      "id": "A-21",
+      "name": "A-21 读任务：场景、你要练的判断、交付时要满足、怎么进行；唯一主动作「让 Agent 开始评审」",
+      "pass": true,
+      "status": "passed",
+      "note": "practice-brief 两主题：右栏场景、你要练的判断、交付时要满足 3 条、怎么进行与唯一主按钮；左栏是被评审的 applyCoupons.ts"
+    },
+    {
+      "id": "A-22",
+      "name": "A-22 评审进行中：意见逐条出现，同时以编号标在代码行上；模型名与平台来自网关返回",
+      "pass": true,
+      "status": "passed",
+      "note": "测量：代码第 13,14 行带编号标记；模型「anthropic/claude-sonnet-4.5 · OpenRouter」来自运行记录"
+    },
+    {
+      "id": "A-23",
+      "name": "A-23 逐条判断：先证据后建议；定位可跳到代码行或截图区域；二选一判断，驳回必须写理由（可点常用理由一键填入）；全部判断完主按钮才可用，否则写明还差几处",
+      "pass": true,
+      "status": "passed",
+      "note": "测量：未判断数 3 → 2 → 2 → 1 → 0；初始主按钮不可用，全部判断后可用"
+    },
+    {
+      "id": "A-24",
+      "name": "A-24 复测用同一组输入，对错由服务端判定；判错时对应检查失败，回到判断后判错那条下面写明复测看到了什么，已作判断保留",
+      "pass": true,
+      "status": "passed",
+      "note": "测量：误采纳第 3 条（加锁）→ 复测「联合测试」失败 → 回到判断后只有 R3 出现复测反馈，第 1 条仍为采纳"
+    },
+    {
+      "id": "A-25",
+      "name": "A-25 复测后，被采纳的修复以删除 / 新增两种标记插回代码，看得见改了什么",
+      "pass": true,
+      "status": "passed",
+      "note": "practice-retest-failed / practice-deliver 截图：第 4、13、14 行原文划掉，下方新增行；未采纳的第 18 行原样"
+    },
+    {
+      "id": "A-26",
+      "name": "A-26 复测通过后给出三段式交付说明草稿（能做什么 / 怎么证明 / 还没做到什么），驳回理由自动进入「还没做到」，可编辑后提交",
+      "pass": true,
+      "status": "passed",
+      "note": "测量：草稿含三段、复测 3 项与两条驳回理由；清空后「提交交付」不可用=true"
+    },
+    {
+      "id": "A-27",
+      "name": "A-27 完成页给出经验值与时间线，主按钮回课程换练习；课程目录里这个练习显示「已完成」",
+      "pass": true,
+      "status": "passed",
+      "note": "测量：提交后完成页「+40 经验」与时间线；回到课程练习卡 data-status=done，顶部「练习 1/3」"
+    },
+    {
+      "id": "A-28",
+      "name": "A-28 视觉练习：基线与实际并排或叠加对照，差异区域编号标在实际截图上；判断说法换成「判为缺陷 / 在容差内」",
+      "pass": true,
+      "status": "passed",
+      "note": "practice-visual 两主题：并排模式实际截图上 3 个编号框（P0 实线红、P1 实线橙、P2 虚线蓝），右栏按钮为「判为缺陷」「在容差内」；叠加模式有基线 / 实际滑杆"
+    },
+    {
+      "id": "A-29",
+      "name": "A-29 测试练习：说法为「保留这条测试 / 删掉这条」；保留依赖当前日期的测试会在复测「稳定性」检查失败",
+      "pass": true,
+      "status": "passed",
+      "note": "测量：按钮为「保留这条测试」；保留第 3 条后「稳定性」失败，反馈「这条测试依赖当前日期，连续跑 3 次模拟不同日期，结果是 绿 / 红 …」"
+    },
+    {
+      "id": "A-30",
+      "name": "A-30 判定口径在服务端：前端拿不到每条意见的「正确答案」，只收复测结果与逐条反馈",
+      "pass": true,
+      "status": "passed",
+      "note": "测量：意见字段：id、severity、title、location、evidence、suggestion、fix；不含答案字段"
+    },
+    {
+      "id": "A-31",
+      "name": "A-31 一次练习是一条服务端记录（?run=），离开课程或刷新后从原处继续；课程页练习按钮变为「接着做」",
+      "pass": true,
+      "status": "passed",
+      "note": "测量：练习卡 doing「进行中，可续上」；底部按钮「接着做」；点回去仍是同一次评审"
+    },
+    {
+      "id": "A-32",
+      "name": "A-32 评审失败：阶段列表标出失败在哪一步，说明原因、已保存与是否重复计费，主按钮「重新评审」",
+      "pass": true,
+      "status": "passed",
+      "note": "practice-review-failed 两主题：标题「代码评审 Agent 的评审停在第 2 步」，第 2 阶段失败标记并写原因，红色说明块与「重新评审」同屏，已发现的 1 处保留"
+    },
+    {
+      "id": "A-33",
+      "name": "A-33 手机课程页：一条顶栏（返回 + 本课 / 目录切换），本课内容整体滚动，练习入口吸底",
+      "pass": true,
+      "status": "passed",
+      "note": "phone-lesson 两主题 375×812：一条顶栏（返回 + 「第 1 课 / 目录与练习 · 0/5」），标题、材料切换（横向滚动）、播放器、章节逐字稿，底部吸住「开始练习」；无横向溢出"
+    },
+    {
+      "id": "A-34",
+      "name": "A-34 手机练习页：一条顶栏（返回 + 标题 + 第 n/5 步），「这一步 / 工作台」切换，点意见的定位切到工作台",
+      "pass": true,
+      "status": "passed",
+      "note": "phone-practice 两主题 375×812：顶栏「返回 + 标题 + 第 3/5 步 · 判断与修复」，下方「这一步 / 代码 · 4 处标注」切换，意见卡完整，主按钮吸底"
+    },
+    {
+      "id": "A-35",
+      "name": "A-35 课程或练习加载失败时说明原因与「重新加载 / 回到课程」，并说明进度已保存",
+      "pass": true,
+      "status": "passed",
+      "note": "源码走查：课程页加载失败分支显示原因、「你的学习进度已保存在服务端」与「重新加载」；练习页加载失败给「回到课程」。原型的模拟服务端不断网，未截图，实现时按此验收"
+    },
+    {
+      "id": "A-36",
+      "name": "A-36 课程卡、课程页、练习页文案用学员的话：不出现 runId、appCallerCode 等内部名",
+      "pass": true,
+      "status": "passed",
+      "note": "16 个画面通读：界面不出现 runId、AppCallerCode、truth 等内部名；run 编号只在地址栏"
+    },
+    {
+      "id": "C-01",
+      "name": "C-01 预览容器零报错（所有画面 × 主题）",
+      "pass": true,
+      "status": "passed",
+      "note": "32 次打开，控制台与 CSP 报错 0 条"
+    },
+    {
+      "id": "C-02",
+      "name": "C-02 每屏 primary 按钮不超过一个（测量，供 A-05 人工核对）",
+      "pass": true,
+      "status": "passed",
+      "note": "center：无；lesson-video：开始练习；lesson-pdf：开始练习；lesson-article：开始练习；lesson-no-video：开始练习；practice-brief：让 Agent 开始评审；practice-review：无；practice-review-failed：重新评审；practice-triage：应用修复并复测；practice-retest-failed：回到判断，看哪条判错了；practice-deliver：提交交付；practice-done：回到课程，换一个练习；practice-visual：应用修复并复测；practice-unit：应用修复并复测"
+    }
+  ]
+}
