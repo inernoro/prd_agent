@@ -1290,6 +1290,26 @@ public sealed class DesignArtifactWorkspaceContractTests
     }
 
     [Fact]
+    public void QuickCreationInputBudgetAcceptsThreeAdvertisedReferenceImages()
+    {
+        var run = BuildRun();
+        run.QuickCreation = new QuickCreationInput { TemplateId = "sketchnote" };
+        var imageBytes = new byte[DesignRunInputAttachments.MaxReferenceImageBytes];
+        new Random(2).NextBytes(imageBytes);
+        var references = Enumerable.Range(1, 3).Select(index => DesignArtifactWorkspaceContract.ToFile(
+            $"reference/screenshot-{index:D2}.png", "image/png", imageBytes)).ToList();
+        var source = DesignArtifactWorkspaceContract.ToFile("source-1.md", "text/markdown", Encoding.UTF8.GetBytes("完整原稿"));
+        var package = new DesignWorkspacePackage(DesignArtifactWorkspaceBroker.SchemaVersion, run.Id, "revision", [source, .. references]);
+        var bytes = DesignArtifactWorkspaceContract.ValidateInputPackageSize(package, DesignArtifactWorkspaceBroker.InputLimit(run));
+
+        Assert.True(bytes.LongLength > DesignArtifactWorkspaceBroker.MaxInputBytes);
+        var roundTrip = JsonSerializer.Deserialize<DesignWorkspacePackage>(bytes, DesignArtifactWorkspaceContract.JsonOptions)!;
+        Assert.Equal(package.Files.Select(file => file.Sha256), roundTrip.Files.Select(file => file.Sha256));
+        Assert.Equal(Convert.FromBase64String(source.ContentBase64), Convert.FromBase64String(roundTrip.Files[0].ContentBase64));
+        Assert.All(roundTrip.Files.Skip(1), reference => Assert.Equal(imageBytes, Convert.FromBase64String(reference.ContentBase64)));
+    }
+
+    [Fact]
     public void ResultPackageRejectsBytesBeyondConfiguredLimitBeforeParsing()
     {
         var error = Assert.Throws<InvalidOperationException>(() =>

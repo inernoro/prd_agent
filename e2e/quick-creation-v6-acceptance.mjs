@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -19,7 +19,7 @@ if (retryFilmId) assert.match(retryFilmId, /^[a-f0-9]{32}$/);
 if (existingWebId) assert.match(existingWebId, /^[a-f0-9]{32}$/);
 const out = join(process.env.RUNNER_TEMP, 'dsn-1400e277-evidence');
 await mkdir(out, { recursive: true });
-const receipt = { design: 'DSN-1400E277', version: 7, commit, origin: origin.origin, cases: [], runs: [], failures: [] };
+const receipt = { design: 'DSN-1400E277', version: 8, commit, origin: origin.origin, cases: [], runs: [], failures: [] };
 const base = '/api/quick-creation';
 
 const match = (path, method = 'GET') => response => new URL(response.url()).origin === origin.origin
@@ -85,6 +85,119 @@ async function verifyHostingEntry(page, mobile = false) {
   receipt.cases.push(`${mobile ? 'mobile' : 'desktop'} hosting generate button opens quick creation with webpage selected`);
 }
 
+const digest = value => createHash('sha256').update(value).digest('hex');
+
+async function stopAtSubmission(page, click) {
+  const target = new URL(`${base}/runs`, origin).href;
+  let payload;
+  const handler = async route => {
+    if (route.request().method() !== 'POST') { await route.continue(); return; }
+    payload = route.request().postDataJSON();
+    await route.fulfill({ status: 409, json: { success: false, error: { code: 'ACCEPTANCE_CAPTURED', message: '验收已记录提交数据' } } });
+  };
+  await page.route(target, handler);
+  try {
+    const [response] = await Promise.all([page.waitForResponse(match(base + '/runs', 'POST')), click()]);
+    assert.equal(response.status(), 409);
+    assert.equal((await response.json()).error.code, 'ACCEPTANCE_CAPTURED');
+    assert.ok(payload);
+    return payload;
+  } finally { await page.unroute(target, handler); }
+}
+
+async function verifyMaterialsBeforeGeneration(page, api, original) {
+  const longSource = '# 核对正文\n\n' + '这是用来检查完整读取的段落。'.repeat(680) + '\n\n尾注：保留结尾校验字样。';
+  assert.ok(longSource.length > 8000 && longSource.length < 20000);
+  const imageBytes = Buffer.from(await page.evaluate(() => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 720; canvas.height = 570;
+    const context = canvas.getContext('2d');
+    const pixels = context.createImageData(canvas.width, canvas.height);
+    let seed = 250147;
+    for (let i = 0; i < pixels.data.length; i++) {
+      seed ^= seed << 13; seed ^= seed >>> 17; seed ^= seed << 5;
+      pixels.data[i] = i % 4 === 3 ? 255 : seed & 255;
+    }
+    context.putImageData(pixels, 0, 0);
+    return canvas.toDataURL('image/png').split(',')[1];
+  }), 'base64');
+  assert.ok(imageBytes.length > 1024 * 1024);
+  let releaseUpload;
+  const holdUpload = new Promise(resolve => { releaseUpload = resolve; });
+  await page.route(new URL(`${base}/attachments`, origin).href, async route => {
+    await holdUpload;
+    await route.continue();
+  }, { times: 1 });
+  const uploads = [];
+  const capture = response => { if (match(base + '/attachments', 'POST')(response)) uploads.push(response); };
+  page.on('response', capture);
+  const tray = page.locator('[data-qc=attachment-tray]');
+  const submit = page.locator('[data-qc=submit]');
+  try {
+    await page.locator('[data-qc=file-input]').setInputFiles([
+      { name: '完整正文.md', mimeType: 'text/markdown', buffer: Buffer.from(longSource) },
+      { name: '参考图.png', mimeType: 'image/png', buffer: imageBytes },
+      { name: '备注.txt', mimeType: 'text/plain', buffer: Buffer.from('只作为本次核对的补注。') },
+      { name: '空白.txt', mimeType: 'text/plain', buffer: Buffer.alloc(0) },
+      { name: '损坏参考.png', mimeType: 'image/png', buffer: imageBytes.subarray(0, 40) },
+    ]);
+    await page.locator('[data-qc=attachment-tray][data-reading-count="5"]').waitFor();
+    assert.equal(await submit.isDisabled(), true);
+    await page.screenshot({ path: join(out, '15-pre-submit-reading.png') });
+    releaseUpload();
+    await page.locator('[data-qc=attachment-tray][data-count="6"][data-reading-count="0"][data-failed-count="2"]').waitFor();
+    assert.equal(uploads.length, 5);
+    const received = await Promise.all(uploads.filter(response => response.ok()).map(response => data(response, 'attachment scan')));
+    const long = received.find(item => item.name === '完整正文.md');
+    const reference = received.find(item => item.name === '参考图.png');
+    const memo = received.find(item => item.name === '备注.txt');
+    assert.equal(long.excerpt, longSource);
+    assert.equal(reference.kind, 'image');
+    assert.equal(received.find(item => item.name === '空白.txt').status, 'failed');
+    assert.equal(uploads.find(response => !response.ok()).status(), 400);
+    assert.equal(await tray.locator('[data-att-tile]').count(), 2);
+    await tray.getByRole('button', { name: '查看另外 4 份资料' }).waitFor();
+    assert.ok((await tray.boundingBox()).height <= 88);
+    await tray.locator('[data-qc=tray-toggle]').click();
+    const materials = page.locator('[data-qc=materials-panel]');
+    const list = materials.locator('[data-qc=attachment-list]');
+    assert.equal(await list.locator('section').first().getAttribute('aria-label'), '读取失败');
+    assert.equal(await list.evaluate(element => getComputedStyle(element).overflowY), 'auto');
+    await materials.getByRole('button', { name: '完整正文.md', exact: true }).click();
+    assert.equal(await materials.locator('[data-qc=attachment-content]').textContent(), longSource);
+    await page.screenshot({ path: join(out, '16-pre-submit-read-source.png') });
+    await materials.getByRole('button', { name: '参考图.png', exact: true }).click();
+    await materials.locator('[data-qc=reference-image] img').waitFor();
+    await page.waitForFunction(() => document.querySelector('[data-qc=reference-image] img')?.naturalWidth === 720);
+    const referenceDownload = await api(`${base}/attachments/${reference.id}/image`);
+    assert.equal(referenceDownload.status(), 200);
+    assert.equal(digest(await referenceDownload.body()), digest(imageBytes));
+    await page.screenshot({ path: join(out, '17-pre-submit-image.png') });
+    await page.getByRole('button', { name: '完成', exact: true }).click();
+
+    const requirement = '以完整正文为准，保留尾注，并用参考图作为画面参考。';
+    await page.locator('#qc-ask').fill(requirement);
+    const expectedIds = [original.id, long.id, reference.id, memo.id];
+    const payload = await stopAtSubmission(page, () => submit.click());
+    assert.equal(payload.kind, 'web');
+    assert.equal(payload.templateId, 'ink-wash');
+    assert.equal(payload.ask, requirement);
+    assert.deepEqual(payload.attachmentIds, expectedIds);
+    assert.equal(payload.title, '需求评审的三个习惯');
+    assert.equal(await page.locator('#qc-ask').inputValue(), requirement);
+    await page.getByRole('radiogroup', { name: '选择产出' }).getByRole('radio', { name: '视频', exact: true }).click();
+    const film = await stopAtSubmission(page, () => submit.click());
+    assert.deepEqual(film, { ...payload, kind: 'video' });
+    receipt.preSubmission = { generatedJobs: 0, sourceSha256: digest(longSource), referenceSha256: digest(imageBytes),
+      readable: expectedIds.length, rejected: 2, sourceCharacters: longSource.length, referenceBytes: imageBytes.length,
+      outputs: [payload.kind, film.kind], template: film.templateId, preservedRequirement: true };
+    receipt.cases.push('real source scan and image preview; verified exact web and video payloads intercepted before admission');
+  } finally {
+    releaseUpload();
+    page.off('response', capture);
+  }
+}
+
 async function verifyBriefJourney(page, api) {
   const createdRuns = [];
   const observe = request => {
@@ -141,6 +254,18 @@ async function verifyBriefJourney(page, api) {
     await page.screenshot({ path: join(out, '13-brief-script-restored.png') });
     receipt.brief = { id: briefId, model: planned.messages.at(-1)?.model, selectedStyle: planned.styleId,
       revision: planned.revision, scenes: planned.script.length, admittedBeforeConfirm: createdRuns.length };
+    if (!generate) {
+      const confirm = await stopAtSubmission(page, () => page.locator('[data-qc=script-confirm]').click());
+      const skip = await stopAtSubmission(page, () => page.locator('[data-qc=brief-skip-script]').click());
+      assert.equal(confirm.briefId, briefId);
+      assert.equal(confirm.briefRevision, planned.revision);
+      assert.equal(confirm.templateId, planned.styleId);
+      assert.equal(confirm.kind, 'video');
+      assert.equal(confirm.briefMode, 'confirm');
+      assert.deepEqual(skip, { ...confirm, briefMode: 'skip' });
+      receipt.brief.submittedModesBeforeAdmission = ['confirm', 'skip'];
+      receipt.brief.generatedJobs = 0;
+    }
     receipt.cases.push('real model, 3 style recommendations, current recommendation selection, storyboard no-queue and restored brief');
   } finally {
     page.off('request', observe);
@@ -246,6 +371,13 @@ try {
     receipt.failures.push({ kind: 'mobile', code: 'navigation', details: String(error.message).slice(0, 250) });
   } finally {
     await phone.close();
+  }
+  if (!generate && !verifyBrief) {
+    try { await verifyMaterialsBeforeGeneration(page, api, original); }
+    catch (error) {
+      await page.screenshot({ path: join(out, '15-pre-submit-failure.png') }).catch(() => {});
+      receipt.failures.push({ kind: 'pre-submit', code: 'materials', details: String(error.message).slice(0, 350) });
+    }
   }
   if (generate) {
     const filmInput = { kind: 'video', templateId: 'sketchnote', ask: '', attachmentIds: [original.id], title: '需求评审的三个习惯' };

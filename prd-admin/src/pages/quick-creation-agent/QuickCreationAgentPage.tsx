@@ -90,6 +90,8 @@ export function QuickCreationAgentPage() {
   };
   const [submitting, setSubmitting] = useState(false);
   const [adding, setAdding] = useState(false);
+  const addingFiles = useRef(false);
+  const failedUploads = useRef(new Map<string, File>());
   const [knowledgeOpen, setKnowledgeOpen] = useState(false);
   const [knowledgeSelection, setKnowledgeSelection] = useState<KnowledgeEntrySelection[]>([]);
   const [recentKnowledge, setRecentKnowledge] = useState<RecentDocumentEntry[]>([]);
@@ -198,14 +200,45 @@ export function QuickCreationAgentPage() {
     setParams(query, { replace });
   };
   const openRun = (id: string) => showPage({ run: id });
-  const startNew = () => { showPage({}); setKind(fromHosting ? 'web' : 'video'); setAsk(''); setAttachments([]); setPane('chat'); };
+  const startNew = () => { failedUploads.current.clear(); showPage({}); setKind(fromHosting ? 'web' : 'video'); setAsk(''); setAttachments([]); setPane('chat'); };
 
   /* ---------- 附件 ---------- */
-  const addFile = async (file: File) => {
-    if (attachments.length >= MAX_ATTACHMENTS) { toast.warning('附件已达上限', `一次最多 ${MAX_ATTACHMENTS} 个，可先移除不需要的`); return; }
+  const uploadFileRow = async (id: string, file: File) => {
     const res = await uploadQuickCreationAttachment(file);
-    if (res.success) setAttachments(list => [...list, res.data]);
-    else toast.error('附件没有添加', res.error?.message || '请稍后重试');
+    if (res.success) {
+      failedUploads.current.delete(id);
+      setPanel(current => current?.mode === 'manage' && current.id === id ? { ...current, id: res.data.id } : current);
+    }
+    setAttachments(list => list.map(item => item.id !== id ? item : res.success ? res.data : {
+      ...item, status: 'failed', progress: undefined, error: res.error?.message || '这次没有上传成功，请重试',
+    }));
+  };
+  const addFiles = async (files: File[]) => {
+    if (!files.length || adding || addingFiles.current || restoringBrief || submitting) return;
+    const remaining = MAX_ATTACHMENTS - attachments.length;
+    if (remaining < 1) { toast.info('已达到资料上限', '移除不需要的附件后再上传'); return; }
+    const selected = files.slice(0, remaining);
+    if (files.length > remaining) toast.info('已达到资料上限', `这次最多加入 ${remaining} 份`);
+    const rows: QcAttachment[] = selected.map(file => ({
+      id: `upload-${crypto.randomUUID()}`, name: file.name, kind: /\.(png|jpe?g|webp)$/i.test(file.name) ? 'image' : 'doc',
+      meta: `${(file.size / 1024).toLocaleString('zh-CN', { maximumFractionDigits: 1 })} KB`, status: 'reading',
+    }));
+    addingFiles.current = true;
+    setAdding(true);
+    setAttachments(list => [...list, ...rows]);
+    rows.forEach((row, index) => failedUploads.current.set(row.id, selected[index]));
+    try {
+      for (const [index, row] of rows.entries()) {
+        if (failedUploads.current.has(row.id)) await uploadFileRow(row.id, selected[index]);
+      }
+    } finally {
+      addingFiles.current = false;
+      setAdding(false);
+    }
+  };
+  const removeAttachment = (id: string) => {
+    failedUploads.current.delete(id);
+    setAttachments(list => list.filter(item => item.id !== id));
   };
   const addKnowledge = async (entryId: string, storeId?: string) => {
     const res = await addKnowledgeAttachment(entryId, storeId);
@@ -220,6 +253,7 @@ export function QuickCreationAgentPage() {
     });
   };
   const addSelectedKnowledge = async () => {
+    if (adding || addingFiles.current || restoringBrief || submitting) return;
     if (knowledgeSelection.length > MAX_ATTACHMENTS - attachments.length) {
       toast.error('资料已到上限', '可以先移除不需要的附件');
       return;
@@ -234,6 +268,8 @@ export function QuickCreationAgentPage() {
   };
   const retryRead = async (id: string) => {
     setAttachments(list => list.map(a => (a.id === id ? { ...a, status: 'reading', progress: 0, error: undefined } : a)));
+    const file = failedUploads.current.get(id);
+    if (file) { await uploadFileRow(id, file); return; }
     const res = await retryAttachmentRead(id);
     /* 重试本身失败时退回「读取失败」并写明原因，不能停在读取中 */
     setAttachments(list => list.map(a => (a.id !== id ? a : res.success ? res.data
@@ -243,7 +279,7 @@ export function QuickCreationAgentPage() {
   const PASTE_AS_DOC = 300;
   const onAskPaste = async (event: ClipboardEvent<HTMLTextAreaElement>) => {
     const pasted = event.clipboardData.getData('text/plain');
-    if (pasted.length < PASTE_AS_DOC || attachments.length >= MAX_ATTACHMENTS || adding) return;
+    if (pasted.length < PASTE_AS_DOC || attachments.length >= MAX_ATTACHMENTS || adding || addingFiles.current) return;
     event.preventDefault();
     setAdding(true);
     const res = await addTextAttachment({ name: '粘贴的正文.md', text: pasted });
@@ -253,10 +289,10 @@ export function QuickCreationAgentPage() {
   };
   const sum = summarizeAttachments(attachments);
   const hasText = attachments.some(a => a.status === 'ready' && a.kind !== 'image');
-  const blockReason = adding || sum.reading ? '还有附件在读取，读完即可生成'
-    : !hasText ? '放进至少一份稿件或知识库文档后即可生成'
+  const attachmentBlockReason = adding || sum.reading ? '还有附件在读取，读完即可生成'
     : sum.chars > CHAR_BUDGET ? '稿件超过 20,000 字，请精简或分次生成'
     : attachments.filter(a => a.status === 'ready' && a.kind === 'image').length > MAX_REFERENCE_IMAGES ? '一次最多使用三张图片，请移除多余图片' : null;
+  const blockReason = attachmentBlockReason ?? (!hasText ? '放进至少一份稿件或知识库文档后即可生成' : null);
   const draftTitle = attachments.find(a => a.status === 'ready' && a.kind !== 'image')?.name.replace(/\.(md|markdown|txt)$/i, '') ?? (template ? `未命名 · ${template.name}` : '未命名');
   const briefContext = useMemo<QcBriefContext>(() => ({
     revision: brief?.revision ?? 0, kind, templateId: template?.id ?? '', stylePicked,
@@ -264,6 +300,8 @@ export function QuickCreationAgentPage() {
   }), [brief?.revision, kind, template?.id, stylePicked, attachments]);
   const briefMatches = !!brief && brief.kind === kind && brief.styleId === template?.id
     && brief.attachments.map(a => a.id).join(',') === briefContext.attachmentIds.join(',');
+  const latestMaterials = useRef({ ids: '', blocked: false });
+  latestMaterials.current = { ids: briefContext.attachmentIds.join(','), blocked: attachmentBlockReason !== null };
   const syncAttempt = useRef('');
   useEffect(() => {
     if (!brief || briefMatches || pendingBrief || restoringBrief || syncingBrief || !briefContext.templateId) return;
@@ -276,7 +314,11 @@ export function QuickCreationAgentPage() {
   const submitLock = useRef(false);
   const submit = async (fromBrief?: QcBriefSession, mode: 'confirm' | 'skip' = 'skip', extraAsk = ask) => {
     if (submitLock.current || (!fromBrief && (blockReason || pendingBrief || restoringBrief)) || !template
-      || (fromBrief && (adding || sum.reading || !fromBrief.brief.ready))) return;
+      || (fromBrief && !fromBrief.brief.ready)) return;
+    if (fromBrief && (latestMaterials.current.blocked || fromBrief.attachments.map(item => item.id).join(',') !== latestMaterials.current.ids)) {
+      toast.info('请先确认资料', '检查读取状态和数量，再按当前简报生成');
+      return;
+    }
     speech.cancel();
     submitLock.current = true;
     setSubmitting(true);
@@ -289,6 +331,10 @@ export function QuickCreationAgentPage() {
     }).finally(() => { submitLock.current = false; setSubmitting(false); });
     if (!res.success) { toast.error('没有提交成功', `${res.error?.message || '请稍后重试'}，稿件仍在输入框里`); return; }
     openRun(res.data.id);
+  };
+  const quickSubmit = () => {
+    if (pendingBrief || restoringBrief || syncingBrief || (brief && (!briefMatches || !brief.brief.ready))) return;
+    void submit(brief ?? undefined);
   };
   const acceptBrief = (value: QcBriefSession) => {
     setKind(value.kind);
@@ -316,7 +362,7 @@ export function QuickCreationAgentPage() {
   };
   const sendToBrief = async (value: string) => {
     const text = value.trim();
-    if (!text || !template || pendingBrief || restoringBrief || syncingBrief || adding || submitLock.current) return;
+    if (!text || !template || pendingBrief || restoringBrief || syncingBrief || adding || sum.reading || submitLock.current) return;
     speech.cancel();
     const id = briefId ?? crypto.randomUUID().replaceAll('-', '');
     if (!briefId) showPage({ brief: id }, true);
@@ -324,7 +370,7 @@ export function QuickCreationAgentPage() {
     await continueBrief(await briefFlow.send({ id, turnId: crypto.randomUUID().replaceAll('-', ''), mode: 'message', text, context: briefContext }));
   };
   const selectStyle = (id: string) => { setStylePicked(true); setTemplateId(id); setPanel(null); };
-  const briefDisabled = !!pendingBrief || syncingBrief || restoringBrief || adding || submitting || !briefMatches;
+  const briefDisabled = !!pendingBrief || syncingBrief || restoringBrief || !!attachmentBlockReason || submitting || !briefMatches;
 
   /* ---------- 任务动作 ---------- */
   const onRecover = async (action: QcFailure['actions'][number]) => {
@@ -377,6 +423,7 @@ export function QuickCreationAgentPage() {
   }
 
   const openManage = () => { setPanel(p => (p?.mode === 'manage' ? null : { mode: 'manage' })); setPane('preview'); };
+  const openMaterial = (id: string) => { setPanel({ mode: 'manage', id }); setPane('preview'); };
   const openReview = (id?: string) => { setPanel({ mode: 'review', id }); setPane('preview'); };
 
   /* ---------- 左栏 · 新建：助手的开场 + 输入框 ---------- */
@@ -437,7 +484,8 @@ export function QuickCreationAgentPage() {
   );
 
   const mobileGenerate = !ask.trim() && !blockReason && !brief?.brief.ready;
-  const composerBusy = !!pendingBrief || restoringBrief || syncingBrief || adding || submitting;
+  const composerBusy = !!pendingBrief || restoringBrief || syncingBrief || adding || sum.reading > 0 || submitting;
+  const quickBlockReason = blockReason ?? (brief && (!briefMatches || !brief.brief.ready) ? '请确认当前创作简报后再生成' : null);
   const outputSwitch = (
     <span data-qc-touch-exempt className="shrink-0">
       <Segmented<OutputKind> label="选择产出" value={kind} onChange={setKind}
@@ -448,7 +496,7 @@ export function QuickCreationAgentPage() {
     <div>
       {brief && <BriefStrip session={brief} />}
       <div className="flex flex-col rounded-2xl border border-[var(--border-default)] bg-[var(--bg-input)] shadow-[var(--shadow-input-inset)] transition-[border-color,box-shadow] has-[textarea:focus]:border-[color:var(--accent-primary)] has-[textarea:focus]:shadow-[0_0_0_3px_var(--selection-bg)]">
-        <AttachmentTray items={attachments} managing={panel?.mode === 'manage'} onRemove={id => setAttachments(l => l.filter(a => a.id !== id))} onManage={openManage} />
+        <AttachmentTray items={attachments} managing={panel?.mode === 'manage'} onRemove={removeAttachment} onManage={openManage} onOpen={openMaterial} />
         {attachments.length > 0 && <div className="mx-3 h-px bg-[var(--border-subtle)]" />}
         <label htmlFor="qc-ask" className="sr-only">发给快速创作</label>
         <textarea id="qc-ask" ref={askRef} rows={isMobile ? 1 : 2} value={ask} onChange={e => {
@@ -458,7 +506,7 @@ export function QuickCreationAgentPage() {
           onKeyDown={e => {
             if (e.key !== 'Enter' || e.shiftKey || e.nativeEvent.isComposing) return;
             e.preventDefault();
-            if (e.metaKey || e.ctrlKey) void submit();
+            if (e.metaKey || e.ctrlKey) quickSubmit();
             else void sendToBrief(ask);
           }}
           placeholder="说说你想做什么，或者补充生成要求"
@@ -468,14 +516,7 @@ export function QuickCreationAgentPage() {
             onChange={e => {
               const files = Array.from(e.target.files ?? []);
               e.target.value = '';
-              if (adding) return;
-              const remaining = MAX_ATTACHMENTS - attachments.length;
-              if (files.length > remaining) toast.info('已达到资料上限', `最多再读取 ${remaining} 份`);
-              setAdding(true);
-              void (async () => {
-                try { for (const file of files.slice(0, remaining)) await addFile(file); }
-                finally { setAdding(false); }
-              })();
+              void addFiles(files);
             }} />
           {isMobile ? (
             <Popover.Root open={plusOpen} onOpenChange={setPlusOpen}>
@@ -519,14 +560,14 @@ export function QuickCreationAgentPage() {
             {(!isMobile || mobileGenerate) && (
               <Button variant={brief?.brief.ready ? 'secondary' : 'primary'} size="sm"
                 className={`qc-face relative shrink-0 ${brief?.brief.ready ? 'qc-face-secondary' : 'qc-face-primary'}`}
-                disabled={!!blockReason || composerBusy} onClick={() => void submit()} data-qc="submit">
+                disabled={!!quickBlockReason || composerBusy} onClick={quickSubmit} data-qc="submit">
                 {submitting ? <MapSpinner size={13} /> : <Send size={13} aria-hidden />}{isMobile ? '生成' : '快捷生成'}
               </Button>
             )}
           </div>
         </div>
       </div>
-      {blockReason && !isMobile && <p className="m-0 px-2 pt-1.5 text-[11.5px] text-token-muted" data-qc="block-reason">{blockReason}</p>}
+      {quickBlockReason && !isMobile && <p className="m-0 px-2 pt-1.5 text-[11.5px] text-token-muted" data-qc="block-reason">{quickBlockReason}</p>}
     </div>
   );
 
@@ -640,7 +681,10 @@ export function QuickCreationAgentPage() {
     nextHint = '';
     actions = <Button size="sm" variant="secondary" className="max-md:min-h-11" onClick={() => { setPanel(null); setPane('chat'); }}>完成</Button>;
     body = <MaterialsPanel mode="manage" items={attachments} activeId={panel.id} onSelect={id => setPanel({ mode: 'manage', id })}
-      onRemove={id => setAttachments(l => l.filter(a => a.id !== id))} onRetry={id => void retryRead(id)} onClearFailed={() => setAttachments(l => l.filter(a => a.status !== 'failed'))} />;
+      onRemove={removeAttachment} onRetry={id => void retryRead(id)} onClearFailed={() => {
+        attachments.filter(item => item.status === 'failed').forEach(item => failedUploads.current.delete(item.id));
+        setAttachments(list => list.filter(item => item.status !== 'failed'));
+      }} />;
   } else if (panel?.mode === 'review' && run) {
     previewTitle = `原稿 · ${run.attachments.filter(a => a.status === 'ready').length} 份资料`;
     previewNote = '提交时交给生成的资料，只读';

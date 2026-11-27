@@ -116,6 +116,8 @@ export function BriefConversation({ session, pending, error, templates, disabled
               </ol>
               <div className="flex flex-wrap items-center gap-2 p-2.5">
                 <Button size="sm" data-qc="script-confirm" className="qc-face qc-face-primary relative px-3.5" disabled={disabled} onClick={() => onGenerate('confirm')}><Play size={14} aria-hidden />按这个脚本开始生成</Button>
+                <Button size="sm" variant="ghost" data-qc="brief-skip-script" className="max-md:min-h-11" disabled={disabled}
+                  onClick={() => onGenerate('skip')}>跳过脚本，直接开始</Button>
                 <span className="text-[12px] text-token-muted">想改的地方可以直接在对话里说</span>
               </div>
             </section>

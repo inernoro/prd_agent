@@ -76,6 +76,13 @@ export async function readQuickCreationFilm(runId: string, subtitleFreePreview =
   return file.blob;
 }
 
+export async function readQuickCreationImage(attachmentId: string) {
+  const result = await apiDownload(`${base}/attachments/${encodeURIComponent(attachmentId)}/image`, 'reference-image');
+  if (!['image/png', 'image/jpeg', 'image/webp'].includes(result.contentType.split(';')[0]))
+    throw new Error('图片暂时无法读取');
+  return result.blob;
+}
+
 export function readQuickCreationPage(siteId: string) {
   return apiRequest<{ siteUrl: string; html: string }>(`/api/web-pages/${encodeURIComponent(siteId)}/content`);
 }

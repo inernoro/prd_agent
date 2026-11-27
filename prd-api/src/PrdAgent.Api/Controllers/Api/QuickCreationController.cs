@@ -8,6 +8,8 @@ using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Services;
 using PrdAgent.Infrastructure.Services.AssetStorage;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.Formats;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -71,8 +73,8 @@ public sealed partial class DesignArtifactsController
         await file.CopyToAsync(input, ct);
         var bytes = input.ToArray();
         var isImage = mime.StartsWith("image/", StringComparison.Ordinal);
-        if (isImage && !ValidQuickCreationImage(mime, bytes))
-            return QuickCreationError("图片内容无法识别，请重新导出为受支持的格式再试");
+        if (isImage && GetQuickCreationImageError(mime, bytes) is { } imageError)
+            return QuickCreationError(imageError);
         string? content = null;
         string? issue = null;
         if (!isImage)
@@ -147,8 +149,9 @@ public sealed partial class DesignArtifactsController
         if (bytes == null) return QuickCreationError("原文件暂时没有读到，可以稍后重试或重新上传");
         try
         {
-            attachment.ExtractedText = DecodeQuickCreationText(bytes);
-            attachment.QuickCreationReadError = GetQuickCreationTextError(attachment.ExtractedText);
+            var content = DecodeQuickCreationText(bytes);
+            attachment.QuickCreationReadError = GetQuickCreationTextError(content);
+            attachment.ExtractedText = attachment.QuickCreationReadError == null ? content : null;
             await _db.Attachments.UpdateOneAsync(filter, Builders<Attachment>.Update
                 .Set(row => row.ExtractedText, attachment.ExtractedText)
                 .Set(row => row.QuickCreationReadError, attachment.QuickCreationReadError), cancellationToken: ct);
@@ -158,6 +161,24 @@ public sealed partial class DesignArtifactsController
             return QuickCreationError("文件仍无法读取，请另存为 UTF-8 后重新上传");
         }
         return Ok(ApiResponse<object>.Ok(ToQuickAttachment(attachment)));
+    }
+
+    [HttpGet("/api/quick-creation/attachments/{attachmentId}/image")]
+    public async Task<IActionResult> ReadQuickCreationAttachmentImage(
+        string attachmentId, [FromServices] IAssetStorage storage, CancellationToken ct)
+    {
+        if (!QuickCreationEnabled()) return NotFound();
+        var userId = this.GetRequiredUserId();
+        var attachment = await _db.Attachments.Find(row => row.AttachmentId == attachmentId
+            && row.UploaderId == userId && row.QuickCreationKind == "image" && row.QuickCreationReadError == null)
+            .FirstOrDefaultAsync(ct);
+        if (attachment?.StorageKey is not { Length: > 0 } key
+            || attachment.MimeType is not ("image/png" or "image/jpeg" or "image/webp")) return NotFound();
+        var bytes = await storage.TryDownloadBytesAsync(key, ct);
+        if (bytes == null || bytes.LongLength != attachment.Size || !ValidQuickCreationImage(attachment.MimeType, bytes))
+            return NotFound();
+        Response.Headers.CacheControl = "private, no-store";
+        return File(bytes, attachment.MimeType);
     }
 
     [HttpPost("/api/quick-creation/runs")]
@@ -561,7 +582,7 @@ public sealed partial class DesignArtifactsController
             AttachmentId = Guid.NewGuid().ToString("N"), UploaderId = this.GetRequiredUserId(), FileName = name,
             MimeType = mime, Size = bytes.Length, Url = stored?.Url ?? "", StorageKey = stored?.Key,
             Type = kind == "image" ? AttachmentType.Image : AttachmentType.Document,
-            QuickCreationKind = kind, ExtractedText = content, QuickCreationReadError = issue,
+            QuickCreationKind = kind, ExtractedText = issue == null ? content : null, QuickCreationReadError = issue,
         };
         await _db.Attachments.InsertOneAsync(attachment, cancellationToken: CancellationToken.None);
         return Ok(ApiResponse<object>.Ok(ToQuickAttachment(attachment)));
@@ -572,7 +593,7 @@ public sealed partial class DesignArtifactsController
         id = attachment.AttachmentId, kind = attachment.QuickCreationKind, name = attachment.FileName,
         meta = $"{attachment.Size / 1024.0:0.#} KB", status = attachment.QuickCreationReadError == null ? "ready" : "failed",
         chars = attachment.ExtractedText?.Length, error = attachment.QuickCreationReadError,
-        excerpt = attachment.ExtractedText is { Length: > 8000 } text ? text[..8000] : attachment.ExtractedText,
+        excerpt = attachment.QuickCreationReadError == null ? attachment.ExtractedText : null,
     };
 
     private static string DecodeQuickCreationText(byte[] bytes) => new UTF8Encoding(false, true).GetString(bytes).TrimStart('\uFEFF');
@@ -589,6 +610,25 @@ public sealed partial class DesignArtifactsController
             && bytes.AsSpan(8, 4).SequenceEqual("WEBP"u8),
         _ => false,
     };
+
+    private static string? GetQuickCreationImageError(string mime, byte[] bytes)
+    {
+        const string unreadable = "图片内容无法读取，请重新导出为 PNG、JPEG 或 WebP 后再试";
+        if (!ValidQuickCreationImage(mime, bytes)) return unreadable;
+        try
+        {
+            var options = new DecoderOptions { MaxFrames = 1, SkipMetadata = true };
+            var info = Image.Identify(options, bytes);
+            if (info.Width <= 0 || info.Height <= 0 || (long)info.Width * info.Height > 64L * 1024 * 1024)
+                return "参考图像素尺寸过大，请缩小图片后重新上传";
+            using var decoded = Image.Load(options, bytes);
+            return decoded.Width == info.Width && decoded.Height == info.Height ? null : unreadable;
+        }
+        catch (Exception error) when (error is UnknownImageFormatException or InvalidImageContentException or NotSupportedException or IOException)
+        {
+            return unreadable;
+        }
+    }
 
     private BadRequestObjectResult QuickCreationError(string message) =>
         BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, message));

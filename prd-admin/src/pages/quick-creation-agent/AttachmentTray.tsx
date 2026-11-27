@@ -5,11 +5,12 @@
  * - 已发送消息里：两张资料卡 + 「全部 N 份」，点开在右栏回看（同一个面板的只读形态）。
  * 管理放到右栏：左栏装不下一张像样的列表，输入框也不该被它撑高。
  */
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, BookOpen, ChevronRight, FileText, Image as ImageIcon, RotateCcw, X } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { Button } from '@/components/design/Button';
+import { readQuickCreationImage } from '@/services/real/quickCreation';
 import type { AttachmentKind, QcAttachment } from './types';
 import { CHAR_BUDGET, KIND_LABEL, MAX_ATTACHMENTS, formatChars, sortAttachments, summarizeAttachments } from './format';
 
@@ -78,10 +79,11 @@ function Tile({ item, onRemove, onOpen }: { item: QcAttachment; onRemove?: () =>
 }
 
 /** 输入框顶部的资料托盘（只有收起形态；管理在右栏） */
-export function AttachmentTray({ items, onRemove, onManage, managing }: {
+export function AttachmentTray({ items, onRemove, onManage, onOpen, managing }: {
   items: QcAttachment[];
   onRemove: (id: string) => void;
   onManage: () => void;
+  onOpen: (id: string) => void;
   managing: boolean;
 }) {
   const sum = useMemo(() => summarizeAttachments(items), [items]);
@@ -104,7 +106,7 @@ export function AttachmentTray({ items, onRemove, onManage, managing }: {
         <span className="ml-auto inline-flex shrink-0 items-center gap-0.5 text-token-secondary">{managing ? '管理中' : '管理'}<ChevronRight size={13} /></span>
       </button>
       <div className="flex items-center gap-1.5 pb-2 pt-1">
-        {visible.map(a => <Tile key={a.id} item={a} onRemove={() => onRemove(a.id)} />)}
+        {visible.map(a => <Tile key={a.id} item={a} onRemove={() => onRemove(a.id)} onOpen={() => onOpen(a.id)} />)}
         {hidden > 0 && (
           <button type="button" onClick={onManage} aria-label={`查看另外 ${hidden} 份资料`}
             className="inline-flex h-11 shrink-0 flex-col items-center justify-center rounded-[10px] border border-dashed border-[var(--border-default)] px-3 text-[12px] font-medium leading-4 text-token-primary hover-bg-soft">
@@ -194,6 +196,31 @@ function GroupedList({ items, activeId, onRemove, onRetry, onOpen }: {
   );
 }
 
+function ReferenceImage({ item }: { item: QcAttachment }) {
+  const [url, setUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    let disposed = false;
+    let objectUrl: string | undefined;
+    void readQuickCreationImage(item.id).then(blob => {
+      if (disposed) return;
+      objectUrl = URL.createObjectURL(blob);
+      setUrl(objectUrl);
+    }).catch(() => { if (!disposed) setFailed(true); });
+    return () => {
+      disposed = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [item.id, attempt]);
+  if (failed) return <button type="button" className="min-h-11 underline" onClick={() => { setFailed(false); setUrl(null); setAttempt(value => value + 1); }}>重试读取图片</button>;
+  if (!url) return <span className="inline-flex items-center gap-2" role="status"><MapSpinner size={14} />正在打开参考图</span>;
+  return <figure className="m-0 space-y-2" data-qc="reference-image">
+    <img src={url} alt={item.name} className="mx-auto max-h-[65vh] max-w-full rounded-lg object-contain" onError={() => setFailed(true)} />
+    <figcaption>作为画面参考使用。</figcaption>
+  </figure>;
+}
+
 function Excerpt({ item }: { item?: QcAttachment }) {
   if (!item) return <div className="flex h-full items-center justify-center p-6 text-[13px] text-token-muted">选一份资料查看正文</div>;
   return (
@@ -205,10 +232,10 @@ function Excerpt({ item }: { item?: QcAttachment }) {
           <div className="truncate text-[11.5px] text-token-muted">{rowMeta(item)}</div>
         </div>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto whitespace-pre-wrap px-5 py-4 text-[13.5px] leading-7 text-token-secondary" style={{ overscrollBehavior: 'contain' }}>
+      <div className="min-h-0 flex-1 overflow-y-auto whitespace-pre-wrap px-5 py-4 text-[13.5px] leading-7 text-token-secondary" style={{ overscrollBehavior: 'contain' }} data-qc="attachment-content">
         {item.status === 'reading' ? '正在读取，读完后这里显示正文。'
           : item.status === 'failed' ? '这份资料没有读出正文，不会用于生成。可以重试，或移除后换一个文件。'
-            : item.kind === 'image' ? '这张图作为画面参考使用，不读入旁白。' : item.excerpt ?? '（正文较短，已全部读入）'}
+            : item.kind === 'image' ? <ReferenceImage key={item.id} item={item} /> : item.excerpt ?? '正文暂时不可读取'}
       </div>
     </div>
   );

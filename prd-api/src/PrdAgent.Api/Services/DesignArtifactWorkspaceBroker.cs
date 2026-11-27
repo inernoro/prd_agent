@@ -82,6 +82,8 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
     public const string SchemaVersion = "map-design-workspace-v1";
     public const string ManifestSchemaVersion = "map-design-artifact-public-manifest-v2";
     public const long MaxInputBytes = 1_048_576;
+    // 快速创作可附三张各 5 MiB 的参考图。上限按含 Base64 和 JSON 的完整包计算。
+    internal const long MaxQuickCreationInputBytes = 32L * 1024 * 1024;
     // The runtime result is a JSON envelope whose file payloads are base64 encoded. Keep the
     // published-file contract at 6 MiB while allowing that same package to cross the runtime API.
     public const long MaxPublicOutputBytes = 6_291_456;
@@ -198,7 +200,8 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
                 QuickCreationInput.BriefUserRequestsPath, "text/plain", Encoding.UTF8.GetBytes(userRequests));
             package = package with { Files = [.. package.Files, briefFile] };
         }
-        var bytes = DesignArtifactWorkspaceContract.ValidateInputPackageSize(package, MaxInputBytes);
+        var inputLimit = InputLimit(run);
+        var bytes = DesignArtifactWorkspaceContract.ValidateInputPackageSize(package, inputLimit);
         var inputSha256 = Sha256Hex(bytes);
         var inputAssetKey = _storage.TryBuildContentAddressedKey(
             bytes,
@@ -268,7 +271,7 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
                 ProtectTicket(run, "model", expiresAt),
                 "map-managed",
                 package.BaseRevision,
-                MaxInputBytes,
+                inputLimit,
                 MaxOutputBytes,
                 AllowedOutputPaths,
                 MaxPublicOutputBytes);
@@ -285,7 +288,7 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
             modelGrant.ApiKey,
             modelGrant.Model,
             package.BaseRevision,
-            MaxInputBytes,
+            inputLimit,
             ResultLimit(run),
             isCodeFilm ? run.QuickCreation == null ? ["film.mp4"] : ["film.mp4", "film.json", "film-preview.mp4"] : AllowedOutputPaths,
             isCodeFilm ? MaxCodeFilmOutputBytes : MaxPublicOutputBytes);
@@ -433,7 +436,7 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
             byte[]? bytes;
             try { bytes = string.IsNullOrWhiteSpace(image.StorageKey) ? null : await _storage.TryDownloadBytesAsync(image.StorageKey, ct); }
             catch (Exception error) when (error is not OperationCanceledException) { bytes = null; }
-            if (bytes == null || bytes.LongLength == 0)
+            if (bytes == null || bytes.LongLength == 0 || bytes.LongLength != image.Size)
                 throw new InvalidOperationException($"截图「{image.FileName}」读取失败，请重新上传后再试");
             var extension = image.MimeType switch
             {
@@ -505,7 +508,7 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
             throw new InvalidOperationException("设计任务输入尚未准备完成，请稍后重试");
         var bytes = await _storage.TryDownloadBytesAsync(run.WorkspaceInputAssetKey, CancellationToken.None)
             ?? throw new InvalidOperationException("设计任务输入暂时无法读取，请稍后重试");
-        if (bytes.LongLength > MaxInputBytes
+        if (bytes.LongLength > InputLimit(run)
             || !FixedEquals(run.WorkspaceInputSha256, Sha256Hex(bytes)))
             throw new InvalidOperationException("设计任务输入校验失败，请重新发起任务");
         return bytes;
@@ -513,6 +516,8 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
 
     private static long ResultLimit(DesignArtifactRun run) =>
         run.ArtifactType == DesignArtifactTypes.CodeFilm ? MaxCodeFilmOutputBytes : MaxOutputBytes;
+
+    internal static long InputLimit(DesignArtifactRun run) => run.QuickCreation == null ? MaxInputBytes : MaxQuickCreationInputBytes;
 
     public async Task<long> ValidatePreviewAsync(string runId, string token, CancellationToken ct)
     {
