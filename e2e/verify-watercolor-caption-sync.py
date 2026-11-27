@@ -2,9 +2,11 @@ from difflib import SequenceMatcher
 import json
 from pathlib import Path
 from statistics import median
+import subprocess
 import sys
 
 from faster_whisper import WhisperModel
+import numpy as np
 from opencc import OpenCC
 
 
@@ -18,7 +20,10 @@ def normalized(text):
 
 
 model = WhisperModel('small', device='cpu', compute_type='int8', cpu_threads=4)
-segments, _ = model.transcribe(str(movie), language='zh', beam_size=3, word_timestamps=True, vad_filter=True)
+pcm = subprocess.check_output(['ffmpeg', '-v', 'error', '-nostdin', '-i', str(movie), '-map', '0:a:0',
+                               '-ac', '1', '-ar', '16000', '-f', 'f32le', '-'])
+segments, _ = model.transcribe(np.frombuffer(pcm, dtype='<f4'), language='zh', beam_size=3,
+                               word_timestamps=True, vad_filter=True)
 words = []
 transcript = []
 for segment in segments:
