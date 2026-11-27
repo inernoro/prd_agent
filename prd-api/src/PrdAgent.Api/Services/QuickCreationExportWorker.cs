@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Security.Cryptography;
 using System.Text.Json;
 using MongoDB.Driver;
 using PrdAgent.Core.Models;
@@ -45,9 +46,10 @@ public sealed class QuickCreationExportWorker(IServiceScopeFactory scopes, IHttp
                     }, stoppingToken);
                 if (run == null) continue;
                 var owned = filter.Eq(row => row.Id, run.Id) & filter.Eq(row => row.BrowserFilmExport!.Lease, claim);
+                var attempt = new QuickCreationExportAttempt { Id = claim };
                 try
                 {
-                    var key = await ExportAsync(run, scope.ServiceProvider, stoppingToken);
+                    var key = await ExportAsync(run, scope.ServiceProvider, attempt, stoppingToken);
                     await FinishAsync(key == null ? "queued" : "done", key, null);
                 }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -64,12 +66,19 @@ public sealed class QuickCreationExportWorker(IServiceScopeFactory scopes, IHttp
                 async Task FinishAsync(string state, string? key, string? error)
                 {
                     using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-                    await db.DesignArtifactRuns.UpdateOneAsync(owned,
-                        updates.Set(row => row.BrowserFilmExport!.Status, state)
-                            .Set(row => row.BrowserFilmExport!.AssetKey, key)
-                            .Set(row => row.BrowserFilmExport!.Error, error)
-                            .Set(row => row.BrowserFilmExport!.Lease, null)
-                            .Set(row => row.BrowserFilmExport!.ExpiresAt, null), cancellationToken: deadline.Token);
+                    var change = updates.Set(row => row.BrowserFilmExport!.Status, state)
+                        .Set(row => row.BrowserFilmExport!.AssetKey, key)
+                        .Set(row => row.BrowserFilmExport!.Error, error)
+                        .Set(row => row.BrowserFilmExport!.Lease, null)
+                        .Set(row => row.BrowserFilmExport!.ExpiresAt, null);
+                    if (attempt.StartedAt != default)
+                    {
+                        attempt.EndedAt = DateTime.UtcNow;
+                        change = updates.Combine(change,
+                            updates.PushEach(row => row.BrowserFilmExportAttempts, new[] { attempt }, slice: -100),
+                            updates.Inc(row => row.BrowserFilmExportAttemptCount, 1L));
+                    }
+                    await db.DesignArtifactRuns.UpdateOneAsync(owned, change, cancellationToken: deadline.Token);
                 }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -83,7 +92,8 @@ public sealed class QuickCreationExportWorker(IServiceScopeFactory scopes, IHttp
         }
     }
 
-    private async Task<string?> ExportAsync(DesignArtifactRun run, IServiceProvider scope, CancellationToken ct)
+    private async Task<string?> ExportAsync(DesignArtifactRun run, IServiceProvider scope,
+        QuickCreationExportAttempt attempt, CancellationToken ct)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
         deadline.CancelAfter(TimeSpan.FromMinutes(46));
@@ -105,19 +115,67 @@ public sealed class QuickCreationExportWorker(IServiceScopeFactory scopes, IHttp
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", transport.ApiKey);
         using var client = http.CreateClient(OpenDesignTransportServiceCollectionExtensions.ServiceHttpClientName);
         client.Timeout = Timeout.InfiniteTimeSpan;
+        attempt.StartedAt = DateTime.UtcNow;
         using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token);
-        if (response.StatusCode == HttpStatusCode.Conflict) return null;
-        if (!response.IsSuccessStatusCode || response.Content.Headers.ContentType?.MediaType != "video/mp4"
-            || response.Content.Headers.ContentLength is not (>= 32 and <= MaxExportBytes))
+        attempt.HttpStatus = (int)response.StatusCode;
+        attempt.MediaType = response.Content.Headers.ContentType?.MediaType switch
         {
-            logger.LogWarning("OpenDesign film export response run={RunId} status={Status}", run.Id, (int)response.StatusCode);
-            throw new InvalidOperationException("Cloud export did not return a complete MP4");
+            null => null,
+            "video/mp4" => "video/mp4",
+            "application/json" => "application/json",
+            _ => "other",
+        };
+        attempt.ContentBytes = response.Content.Headers.ContentLength;
+        if (!response.IsSuccessStatusCode)
+        {
+            attempt.Outcome = "rejected";
+            attempt.ResponseCode = await ReadResponseCodeAsync(response.Content, token);
+            if (response.StatusCode == HttpStatusCode.Conflict)
+            {
+                attempt.Outcome = "busy";
+                return null;
+            }
+            throw new InvalidOperationException("Cloud export refused the request");
         }
+        attempt.Outcome = "invalid_mp4";
+        if (attempt.MediaType != "video/mp4" || attempt.ContentBytes is not (>= 32 and <= MaxExportBytes))
+            throw new InvalidOperationException("Cloud export did not return a complete MP4");
         var content = await response.Content.ReadAsByteArrayAsync(token);
-        if (content.Length != response.Content.Headers.ContentLength || content.Length < 32 || !content.AsSpan(4, 4).SequenceEqual("ftyp"u8))
+        if (content.Length != attempt.ContentBytes || content.Length < 32 || !content.AsSpan(4, 4).SequenceEqual("ftyp"u8))
             throw new InvalidOperationException("Cloud export file is incomplete");
+        attempt.ContentSha256 = Convert.ToHexString(SHA256.HashData(content)).ToLowerInvariant();
+        attempt.Outcome = "storage_failed";
         var saved = await storage.SaveAsync(content, "video/mp4", token, "web-hosting", "video", run.Id + ".mp4", ".mp4");
-        return saved.Key ?? throw new InvalidOperationException("Cloud export did not report a storage key");
+        var key = saved.Key ?? throw new InvalidOperationException("Cloud export did not report a storage key");
+        attempt.Outcome = "stored";
+        return key;
+    }
+
+    private static async Task<string> ReadResponseCodeAsync(HttpContent content, CancellationToken ct)
+    {
+        if (content.Headers.ContentType?.MediaType != "application/json") return "non_json";
+        using var stream = await content.ReadAsStreamAsync(ct);
+        var buffer = new byte[4097];
+        var size = await stream.ReadAtLeastAsync(buffer, buffer.Length, throwOnEndOfStream: false, cancellationToken: ct);
+        if (size == buffer.Length) return "body_too_large";
+        try
+        {
+            using var json = JsonDocument.Parse(buffer.AsMemory(0, size));
+            if (json.RootElement.ValueKind != JsonValueKind.Object
+                || !json.RootElement.TryGetProperty("error", out var error) || error.ValueKind != JsonValueKind.Object
+                || !error.TryGetProperty("code", out var code) || code.ValueKind != JsonValueKind.String)
+                return "missing_code";
+            return code.GetString() switch
+            {
+                "export_busy" => "export_busy",
+                "export_unavailable" => "export_unavailable",
+                "export_failed" => "export_failed",
+                "unauthorized" => "unauthorized",
+                "api_key_not_configured" => "api_key_not_configured",
+                _ => "unrecognized_code",
+            };
+        }
+        catch (JsonException) { return "invalid_json"; }
     }
 
     private static async Task<bool> DelayAsync(CancellationToken token)

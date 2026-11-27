@@ -50,3 +50,16 @@ public sealed class QuickCreationBrowserExport
     public string? AssetKey { get; set; }
     public string? Error { get; set; }
 }
+
+public sealed class QuickCreationExportAttempt
+{
+    public string Id { get; set; } = "";
+    public DateTime StartedAt { get; set; }
+    public DateTime EndedAt { get; set; }
+    public int? HttpStatus { get; set; }
+    public string? MediaType { get; set; }
+    public long? ContentBytes { get; set; }
+    public string? ResponseCode { get; set; }
+    public string? ContentSha256 { get; set; }
+    public string Outcome { get; set; } = "no_response";
+}

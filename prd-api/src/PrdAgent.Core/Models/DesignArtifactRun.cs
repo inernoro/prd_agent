@@ -82,6 +82,10 @@ public class DesignArtifactRun : PrdAgent.Core.Interfaces.ITaskAuthorizedRun
     public DateTime? QuickCreationPublishedAt { get; set; }
     public QuickCreationMedia? QuickCreationMedia { get; set; }
     public QuickCreationBrowserExport? BrowserFilmExport { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public List<QuickCreationExportAttempt> BrowserFilmExportAttempts { get; set; } = new();
+    [System.Text.Json.Serialization.JsonIgnore]
+    public long BrowserFilmExportAttemptCount { get; set; }
     public string? RetryOfRunId { get; set; }
     public string? ResumeFilmFromRunId { get; set; }
     public int? RetryFilmSceneIndex { get; set; }
