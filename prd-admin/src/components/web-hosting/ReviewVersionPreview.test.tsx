@@ -120,7 +120,7 @@ it.each(['site', 'share'] as const)('当前行复用 %s 正文加载策略，等
   const source: HostedReviewSource = mode === 'site' ? { mode, siteId: 'site' } : { mode, siteId: 'site', token: 'share', password: 'secret' };
   const { main, preview } = await setupReaderVersion('self-contained-html', source);
   expect(preview()).toBeNull();
-  expect(request).toHaveBeenCalledWith(...(mode === 'site' ? ['site'] : ['share', 'site', 'secret']));
+  expect(request).toHaveBeenCalledWith(...(mode === 'site' ? ['site', { preview: true }] : ['share', 'site', 'secret']));
   await act(async () => { complete({ success: true, data: { html: '<h1>当前 V3 的正文</h1>' } }); });
   expect(preview()?.srcdoc).toContain('当前 V3 的正文');
   expect(preview()?.hasAttribute('src')).toBe(false);

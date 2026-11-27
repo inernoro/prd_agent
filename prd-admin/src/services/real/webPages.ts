@@ -1018,8 +1018,9 @@ export async function getSite(id: string): Promise<ApiResponse<HostedSite>> {
 }
 
 /** 读取站点入口 HTML 原文（服务端代理，绕开 CORS）。供知识库「从网页托管导入」使用。 */
-export async function getSiteContent(id: string): Promise<ApiResponse<{ siteId: string; title: string; contentType: string; html: string }>> {
-  return apiRequest(api.webPages.content(encodeURIComponent(id)), { method: 'GET' });
+export async function getSiteContent(id: string, options?: { preview?: boolean }): Promise<ApiResponse<{ siteId: string; title: string; contentType: string; html: string }>> {
+  const path = api.webPages.content(encodeURIComponent(id));
+  return apiRequest(options?.preview ? `${path}?preview=true` : path, { method: 'GET' });
 }
 
 export async function updateSite(id: string, data: {

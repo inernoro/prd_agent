@@ -76,6 +76,53 @@ public sealed class HostedSiteContentTests
     }
 
     [Theory]
+    [InlineData("v2", true)]
+    [InlineData("v1", false)]
+    public async Task CoursePreviewUsesTheRequestedPublicationAndPreservesRawHtml(string directoryVersion, bool embedded)
+    {
+        const string html = """<!doctype html><html><head><base href="review/"></head><body><script src="app.js"></script></body></html>""";
+        const string directory = """{"chapters":[{"title":"目录</script>"}],"lessons":[]}""";
+        var htmlBytes = Encoding.UTF8.GetBytes(html);
+        var storage = new Mock<IAssetStorage>(MockBehavior.Strict);
+        const string scope = "web-hosting/sites/site/";
+        const string entryKey = scope + ".versions/v2/index.html";
+        var directoryKey = $"{scope}.versions/{directoryVersion}/review/course.json";
+        storage.Setup(s => s.BuildSiteKey("site", "__course_directory_scope__"))
+            .Returns(scope + "__course_directory_scope__");
+        storage.Setup(s => s.TryDownloadBytesAsync(directoryKey, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Encoding.UTF8.GetBytes(directory));
+        storage.Setup(s => s.TryOpenReadByKeyAsync(entryKey, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => new AssetReadHandle(new MemoryStream(htmlBytes), "text/html", htmlBytes.LongLength));
+        var site = Site("/local-assets/" + entryKey, entryKey);
+        site.Files.Add(new HostedSiteFile { Path = "review/course.json", CosKey = directoryKey, Size = Encoding.UTF8.GetByteCount(directory) });
+        site.Files.Add(new HostedSiteFile { Path = "downloads/tutorial-package.json" });
+        var sites = Sites(site);
+        sites.Setup(s => s.ResolveShareSiteAsync("share", "site", null, "viewer", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ShareSiteResolveResult { Site = site });
+        var controller = Controller(sites.Object, storage.Object, new Mock<IHttpClientFactory>(MockBehavior.Strict).Object);
+
+        string ReadHtml(IActionResult result) =>
+            JsonSerializer.SerializeToElement(Assert.IsType<OkObjectResult>(result).Value, WebJson)
+                .GetProperty("data").GetProperty("html").GetString()!;
+
+        Assert.Equal(html, ReadHtml(await controller.GetSiteContent("site")));
+        var sharedHtml = ReadHtml(await controller.GetShareSiteContent("share", "site", null));
+        var ownedHtml = ReadHtml(await controller.GetSiteContent("site", preview: true));
+        Assert.Equal(sharedHtml, ownedHtml);
+        if (!embedded)
+        {
+            Assert.Equal(html, sharedHtml);
+            storage.Verify(s => s.TryDownloadBytesAsync(directoryKey, It.IsAny<CancellationToken>()), Times.Never);
+            return;
+        }
+
+        Assert.Contains("<head><script data-map-course-directory>", sharedHtml);
+        Assert.Contains("atob('" + Convert.ToBase64String(Encoding.UTF8.GetBytes(directory)) + "')", sharedHtml);
+        Assert.DoesNotContain("目录</script>", sharedHtml);
+        Assert.Contains("""<script src="app.js"></script>""", sharedHtml);
+    }
+
+    [Theory]
     [InlineData(null)]
     [InlineData(1L)]
     public async Task RemoteUnknownOrIncorrectLengthStillStopsAtTheSameSixteenMegabyteLimit(long? length)
