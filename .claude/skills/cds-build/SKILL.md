@@ -31,7 +31,8 @@ description: 实现 CDS 中获准的设计稿。用户说「/cds-build 帮我实
 ### 验收前自动核对 PR 预览
 
 - 已有已授权的 PR 时，从 GitHub 读取该 PR 当前提交和源分支，用 `cdscli preview-url`、`cdscli branch status <分支>` 和 `cdscli pr show <PR> --project <项目>` 核对同一项目、同一 PR 与运行提交。继续到真实预览读取产品版本。等待中的部署用 `deployment-run` 跟进同一运行，避免重复部署。
-- 运行提交已匹配但 CDS 查不到 PR 时，检查真实 GitHub 投递记录及 CDS 工程规划索引。对确认缺失的有效投递，用已有权限重投该真实 GitHub 事件。PR 缺少真实 `Preview:` 页面入口时，可以按原 PR 授权补充页面路径并核对编辑事件是否同步。禁止用其他环境、手填 URL 或伪造 PR 事件来替代绑定。
+- 从 `branch status` 取 `currentVersionId`，用 `cdscli deployment-version show <版本编号>` 核对部署记录、分支与完整 SHA。如果分支指向的版本记录缺失，且本次已授权部署，使用同一 SHA 的可验证 CI 预构建触发一次 `branch deploy <分支> --commit <完整提交>`。同一部署到终态后重新读回版本记录和公网版本，再执行验收。
+- 部署记录齐备仍无法绑定时，检查实际 GitHub 投递及 CDS 预览解析。工程规划的 PR 列表只投影关联了规划事项的 PR，未列出不等于缺少底层记录。对确认缺失的有效投递，用已有权限重投真实 GitHub 事件。PR 缺少真实 `Preview:` 入口时，可按原 PR 授权补充并核对编辑事件。禁止用其他环境、手填 URL 或伪造事件代替绑定。
 - 绑定恢复后执行 `cdscli --workspace-credential design accept <稿件> --project <项目> --version <固定版> --pr <PR> --commit <完整提交> --start-only`，用 `design result` 读回同一版本、提交和公开预览。只有读回一致后才启动耗时的生成验收。可自行恢复的问题直接处理。无法恢复时，在原反馈记录 GitHub PR、部署 SHA、索引和验收命令的回执，继续可独立完成的准备工作。
 
 ### 验收与交接
