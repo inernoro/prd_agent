@@ -464,7 +464,9 @@ public sealed partial class DesignArtifactsController
         object? failure = status == "failed" ? new
         {
             stageKey = run.PhaseCode,
-            message = run.Status == RunStatuses.Cancelled ? "任务已停止，稿件和要求仍可回看" : "这次没有生成完，原稿和要求已保存",
+            message = run.Status == RunStatuses.Cancelled ? "任务已停止，稿件和要求仍可回看"
+                : run.RuntimeFailure?.Code == "open_design_run_timeout" ? "生成超时，已停止"
+                : "这次没有生成完，原稿和要求已保存",
             saved = new[] { "稿件", "创作要求", "所选风格" },
             actions = run.Status == RunStatuses.Error ? new[] { "requeue" } : Array.Empty<string>(),
         } : null;

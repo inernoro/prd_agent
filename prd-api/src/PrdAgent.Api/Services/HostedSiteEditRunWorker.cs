@@ -1164,6 +1164,8 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             .Set(x => x.UpdatedAt, DateTime.UtcNow)
             .Set(x => x.CompletedAt, DateTime.UtcNow)
             .Set(x => x.LeaseExpiresAt, null);
+        if (current?.ArtifactType == DesignArtifactTypes.CodeFilm && remoteDiagnostic?.ToRuntimeFailure() is { } filmFailure)
+            update = update.Set(x => x.RuntimeFailure, filmFailure);
         var write = await db.DesignArtifactRuns.UpdateOneAsync(
             x => x.DeploymentSlug == DeploymentScope.Current && (x.Id == runId
                  && (usesPublicLifecycle

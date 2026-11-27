@@ -945,6 +945,42 @@ public sealed class OpenDesignServiceArtifactExecutorTests
         service.EventRequests[1].AfterSeq.ShouldBe("1");
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task LostCodeFilmEventStream_UsesOnlyTheCommittedFilm(bool committed)
+    {
+        var service = new FakeDesignService();
+        service.OnSubmit(_ => Json(HttpStatusCode.Accepted, new JsonObject { ["task"] = TaskView("running") }));
+        service.OnEvents(_ => Json(HttpStatusCode.NotFound, new JsonObject
+        {
+            ["error"] = new JsonObject { ["code"] = "task_not_found", ["message"] = "task not found" },
+        }));
+        var run = BuildRun();
+        run.ArtifactType = DesignArtifactTypes.CodeFilm;
+        var broker = BuildBroker();
+        var film = new DesignWorkspaceFile("film.mp4", "", new string('a', 64), 128, "video/mp4");
+        if (committed)
+            broker.Setup(x => x.ReadResultAsync(run.Id, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new ParsedDesignWorkspaceResult("", [film]));
+        else
+            broker.Setup(x => x.ReadResultAsync(run.Id, It.IsAny<CancellationToken>()))
+                .ThrowsAsync(new InvalidOperationException("no result"));
+        var executor = BuildExecutor(service, broker.Object);
+
+        if (committed)
+        {
+            var chunks = await CollectAsync(executor, run);
+            chunks.Single(chunk => chunk.Type == "delta").VerifiedFiles!.Single().ShouldBe(film);
+        }
+        else
+        {
+            await Should.ThrowAsync<InvalidOperationException>(() => CollectAsync(executor, run));
+        }
+        service.Submissions.Count.ShouldBe(1);
+        broker.Verify(x => x.ReadResultAsync(run.Id, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     /// <summary>
     /// 同一件事走 worker 真实的 ProcessAsync：执行方丢了任务之后，任务记录在这一轮里就收敛为「失败」
     /// 并带着给用户看的原因，实时流也推出 error 终态——查询接口不会再一直说「在跑」。

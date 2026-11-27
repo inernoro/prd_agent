@@ -365,19 +365,31 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
             var eventsDeadline = UtcNow() + TimeSpan.FromSeconds(timeoutSeconds) + EventGrace;
             var afterSeq = 0L;
             var consecutiveFailures = 0;
-            while (true)
+            Exception? streamFailure = null;
+            while (streamFailure == null)
             {
                 if (UtcNow() >= eventsDeadline)
-                    throw new InvalidOperationException(OpenDesignFailureMessage.Describe(
-                        OpenDesignFailureStage.Deadline(TimeSpan.FromSeconds(timeoutSeconds)), remoteReason: null));
+                {
+                    streamFailure = OpenDesignFailureMessage.Failure(
+                        OpenDesignFailureStage.Deadline(TimeSpan.FromSeconds(timeoutSeconds)),
+                        remoteReason: null, remoteCode: codeFilm ? "open_design_run_timeout" : null, codeFilm: codeFilm);
+                    break;
+                }
 
                 var open = await OpenEventStreamAsync(transport, run.Id, afterSeq, ct);
-                if (open.Failure != null) throw open.Failure;
+                if (open.Failure != null)
+                {
+                    streamFailure = open.Failure;
+                    break;
+                }
                 if (open.Session == null)
                 {
                     consecutiveFailures++;
                     if (consecutiveFailures >= MaxConsecutiveStreamFailures)
-                        throw StreamBroken(consecutiveFailures, open.Error);
+                    {
+                        streamFailure = StreamBroken(consecutiveFailures, open.Error);
+                        break;
+                    }
                     await Delay(ReconnectBackoff(consecutiveFailures), ct);
                     continue;
                 }
@@ -457,13 +469,21 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
                 {
                     consecutiveFailures++;
                     if (consecutiveFailures >= MaxConsecutiveStreamFailures)
-                        throw StreamBroken(consecutiveFailures, breakError);
+                    {
+                        streamFailure = StreamBroken(consecutiveFailures, breakError);
+                        break;
+                    }
                 }
                 _logger.LogInformation(
                     "设计执行服务事件流中断，按序号续读 transport={Transport} run={RunId} afterSeq={AfterSeq} reason={Reason}",
                     TransportLogName, run.Id, afterSeq, breakError?.GetType().Name ?? "stream_closed");
                 await Delay(ReconnectBackoff(Math.Max(consecutiveFailures, 1)), ct);
             }
+
+            var retainedFilm = await TryReadCommittedFilmAsync(run, ct);
+            if (retainedFilm is null) throw streamFailure!;
+            remoteTerminal = true;
+            yield return retainedFilm;
         }
         finally
         {
@@ -499,6 +519,24 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
                         workspace.ModelGrantId);
                 }
             }
+        }
+    }
+
+    private async Task<DesignArtifactExecutorChunk?> TryReadCommittedFilmAsync(DesignArtifactRun run, CancellationToken ct)
+    {
+        if (run.ArtifactType != DesignArtifactTypes.CodeFilm) return null;
+        ct.ThrowIfCancellationRequested();
+        try
+        {
+            var result = await _workspaceBroker.ReadResultAsync(run.Id, ct);
+            if (result.Files.All(file => file.Path != "film.mp4")) return null;
+            _logger.LogInformation("已取回事件流中断前提交的原影片 run={RunId}", run.Id);
+            return new DesignArtifactExecutorChunk("delta", result.IndexHtml, result.Files);
+        }
+        catch (Exception ex) when (ex is KeyNotFoundException or InvalidOperationException or IOException or HttpRequestException)
+        {
+            _logger.LogInformation(ex, "事件流中断后没有可读取的影片结果 run={RunId}", run.Id);
+            return null;
         }
     }
 
