@@ -101,7 +101,8 @@ if (command === 'check') {
     const designId = registry.design ?? opt('design');
     if (!designId) fail('登记要知道稿件编号：首次登记带 --design');
     const root = git(['rev-parse', '--show-toplevel']);
-    const cli = path.join(tools, '..', '..', 'cli', 'cdscli.py');
+    /* 读 CDS 用本技能的 cdscli；CDS_DESIGN_CLI 只用于离线测试换成替身脚本，检查本身不变 */
+    const cli = process.env.CDS_DESIGN_CLI ?? path.join(tools, '..', '..', 'cli', 'cdscli.py');
     const python = process.env.CDSCLI_PYTHON ?? (process.platform === 'win32' ? 'python' : 'python3');
     const cds = (...args) => {
       const out = spawnSync(python, ['-I', '-X', 'utf8', cli, ...(useWorkspace ? ['--workspace-credential'] : []), ...args], { cwd: root, encoding: 'utf8', maxBuffer: 1 << 26, env: { ...process.env, CDSCLI_NO_DRIFT_CHECK: '1' } });
