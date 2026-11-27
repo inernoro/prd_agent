@@ -19,6 +19,7 @@ public sealed class QuickCreationMedia
 {
     public double DurationSec { get; set; }
     public bool HasAudio { get; set; }
+    public bool CaptionsBurnedIn { get; set; }
     public List<QuickCreationCaption> Captions { get; set; } = new();
 }
 

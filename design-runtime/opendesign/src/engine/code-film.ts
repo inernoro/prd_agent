@@ -153,6 +153,25 @@ export function parseFilmCaptions(text: string, durationSec: number) {
   }).sort((first, second) => first.fromSec - second.fromSec);
 }
 
+export function readFilmCaptionSidecar(file: string, durationSec: number) {
+  const directory = path.dirname(file);
+  const nativeSidecars = fs.readdirSync(directory, { withFileTypes: true })
+    .filter(entry => entry.isFile() && /^subtitles_[a-z]{2,3}(?:[-_][a-z0-9]{2,8})*\.srt$/i.test(entry.name))
+    .map(entry => entry.name).sort();
+  const candidates = [...nativeSidecars, path.parse(file).name + '.srt', 'captions.srt', 'subtitles.srt'];
+  for (const name of candidates) {
+    const candidate = path.join(directory, name);
+    if (!fs.lstatSync(candidate, { throwIfNoEntry: false })?.isFile() || fs.realpathSync(candidate) !== candidate) continue;
+    try {
+      const captions = parseFilmCaptions(readRegularFileNoFollow(candidate, 128 * 1024).toString('utf8'), durationSec);
+      if (captions.length) return { captions, captionsBurnedIn: nativeSidecars.includes(name) };
+    } catch {
+      // A subsequent sidecar may still contain the complete track.
+    }
+  }
+  return { captions: [], captionsBurnedIn: false };
+}
+
 /** Reads the finished file and adjacent caption output. Does not compose or modify the film. */
 export function readCodeFilmMetadata(file: string): WorkspacePackageFile {
   const probe = JSON.parse(execFileSync('ffprobe', [
@@ -168,17 +187,7 @@ export function readCodeFilmMetadata(file: string): WorkspacePackageFile {
       || !probe.streams?.some(stream => stream.codec_type === 'video') || !hasAudio) {
     throw new AgentWorkspaceRuntimeError('design_output_invalid', 'The completed file must contain playable video and audio');
   }
-  const stem = file.slice(0, -4);
-  const candidate = [stem + '.srt', path.join(path.dirname(file), 'captions.srt'), path.join(path.dirname(file), 'subtitles.srt')]
-    .find(item => fs.lstatSync(item, { throwIfNoEntry: false })?.isFile() && fs.realpathSync(item) === item);
-  let captions: ReturnType<typeof parseFilmCaptions> = [];
-  if (candidate) {
-    try {
-      captions = parseFilmCaptions(readRegularFileNoFollow(candidate, 128 * 1024).toString('utf8'), durationSec);
-    } catch {
-      // Captions may be embedded in the image rather than delivered as a separate track.
-    }
-  }
-  const bytes = Buffer.from(JSON.stringify({ durationSec, hasAudio, captions }), 'utf8');
+  const captions = readFilmCaptionSidecar(file, durationSec);
+  const bytes = Buffer.from(JSON.stringify({ durationSec, hasAudio, ...captions }), 'utf8');
   return { path: 'film.json', mediaType: 'application/json', size: bytes.length, sha256: sha256(bytes), contentBase64: bytes.toString('base64') };
 }

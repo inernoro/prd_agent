@@ -1,10 +1,11 @@
 // map-design-executor-v1 协议层测试：能力、鉴权、提交、忙时 409、幂等、事件续读（JSON 与 SSE）、取消、
 // 超时、失败，以及隔离方案 A 的核心不变量——任务无论怎样结束，工作目录与引擎数据都被清空、引擎换新令牌重启。
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { codeFilmDefaultAnswers, parseFilmCaptions } from '../src/engine/code-film.js';
+import { codeFilmDefaultAnswers, parseFilmCaptions, readFilmCaptionSidecar } from '../src/engine/code-film.js';
 import { FilmRecoveryStore } from '../src/engine/film-recovery.js';
 import { normalizeTaskRequest } from '../src/protocol.js';
 import { sha256 } from '../src/workspace/primitives.js';
@@ -313,6 +314,26 @@ describe('POST /v1/tasks', () => {
     const captions = parseFilmCaptions('1\n00:00:01,000 --> 00:00:03,600\n<i>架构决定</i>\n\n'
       + '2\n00:00:06,000 --> 00:00:08,000\n超出成片\n\n不合法的字幕', 3);
     expect(captions).toEqual([{ fromSec: 1, toSec: 3, text: '架构决定' }]);
+  });
+
+  it('reads the original skill subtitle filename without overlaying its burned captions', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'film-captions-'));
+    try {
+      const film = path.join(directory, 'review.mp4');
+      const sidecar = path.join(directory, 'subtitles_zh-CN.srt');
+      const separate = path.join(directory, 'review.srt');
+      fs.writeFileSync(separate, '1\n00:00:07,000 --> 00:00:09,000\n先画出边界');
+      const captions = [{ fromSec: 7, toSec: 9, text: '先画出边界' }];
+      fs.writeFileSync(sidecar, 'invalid');
+      expect(readFilmCaptionSidecar(film, 14)).toEqual({ captions, captionsBurnedIn: false });
+      fs.copyFileSync(separate, sidecar);
+      expect(readFilmCaptionSidecar(film, 14)).toEqual({ captions, captionsBurnedIn: true });
+      fs.rmSync(sidecar);
+      fs.symlinkSync(separate, sidecar);
+      expect(readFilmCaptionSidecar(film, 14)).toEqual({ captions, captionsBurnedIn: false });
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   it('accepts only the configured direct LLMGW authority and binds its identity to the task', async () => {

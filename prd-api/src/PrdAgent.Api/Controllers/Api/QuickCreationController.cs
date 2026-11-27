@@ -480,6 +480,7 @@ public sealed partial class DesignArtifactsController
             estimateBasis = estimate.HasValue ? "近期同风格成功任务的执行时长中位数" : null,
             durationSec = run.QuickCreationMedia?.DurationSec,
             captions = run.QuickCreationMedia?.Captions,
+            captionsBurnedIn = run.QuickCreationMedia?.CaptionsBurnedIn,
             stages = new[] { new { key = run.PhaseCode, label = run.Phase, status = stageStatus, run.Progress } },
             media = run.ArtifactType == DesignArtifactTypes.CodeFilm && status == "done"
                 ? new { url = $"/api/design-artifacts/runs/{run.Id}/film.mp4", mime = "video/mp4" } : null,

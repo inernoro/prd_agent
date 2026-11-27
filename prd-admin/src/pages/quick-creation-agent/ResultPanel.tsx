@@ -159,9 +159,10 @@ export function VideoPlayer({ run, template }: { run: QcRun; template: QcTemplat
   }, [run.id, mediaAvailable, filmAttempt]);
   const media = mediaUrl ? { url: mediaUrl } : null;
   const current = useMemo(() => [...scenes].reverse().find(s => t >= s.startSec) ?? scenes[0], [scenes, t]);
-  const currentCaption = run.captions?.find(caption => caption.fromSec <= t && t < caption.toSec)?.text ?? current?.caption;
-  const hasCaptions = Boolean(run.captions?.length || scenes.length);
-  const captionAction = !hasCaptions ? '本片没有可切换的字幕轨' : captions ? '关闭字幕' : '打开字幕';
+  const currentCaption = run.captions?.find(caption => caption.fromSec <= t && t < caption.toSec)?.text;
+  const hasCaptions = !run.captionsBurnedIn && Boolean(run.captions?.length);
+  const captionAction = run.captionsBurnedIn ? '字幕已印在画面上'
+    : !hasCaptions ? '本片没有可切换的字幕轨' : captions ? '关闭字幕' : '打开字幕';
 
   const seek = (sec: number) => {
     const el = video.current;
@@ -201,7 +202,7 @@ export function VideoPlayer({ run, template }: { run: QcRun; template: QcTemplat
               </div>}
             </div>
           )}
-          {captions && currentCaption && media && (
+          {hasCaptions && captions && currentCaption && media && (
             <div data-qc="caption" className="pointer-events-none absolute bottom-[6%] left-1/2 max-w-[90%] -translate-x-1/2 rounded-md bg-black/75 px-2.5 py-1 text-center text-[12px] leading-5 text-white sm:px-3 sm:py-1.5 sm:text-[15px] sm:leading-6">{currentCaption}</div>
           )}
         </div>
