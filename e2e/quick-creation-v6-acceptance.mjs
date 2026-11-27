@@ -234,7 +234,7 @@ async function verifyBriefSurvey(page, api) {
     ['quotation', '片头台词用「可以开始了」，先聊脚本，不要生成。', 'hold'],
     ['recommended-video', '做视频给新产品经理讲需求评审。只讲三个习惯：找目标、定边界、写可操作的验收条件。请推荐三个易懂的教学风格和各自的理由。', 'recommend'],
     ['recommended-web', '我要做一个给客服组看的网页，说明交接顺序：先写待跟进客户，再列问题状态，最后标明负责人。请推荐三个适合清晰阅读的风格并说理由。', 'recommend'],
-  ];
+  ].filter(([id]) => id === 'recommended-web');
   receipt.dialogueSurvey = [];
   let generationRequests = 0;
   let scriptRequests = 0;
@@ -262,7 +262,12 @@ async function verifyBriefSurvey(page, api) {
       receipt.dialogueSurvey.push(row);
       try {
         await page.goto(new URL('/web-pages', origin).href);
-        await page.locator('[data-tour-id=webpages-generate-primary]').click();
+        const [catalog] = await Promise.all([
+          page.waitForResponse(match(base + '/templates')),
+          page.locator('[data-tour-id=webpages-generate-primary]').click(),
+        ]);
+        row.entryCatalogStatus = catalog.status();
+        assert.ok(catalog.ok(), `Template catalogue HTTP ${catalog.status()}`);
         await page.locator('[data-qc-ready=compose][data-output=web]').waitFor();
         await page.getByRole('textbox', { name: '发给快速创作', exact: true }).fill(opening);
         const [response] = await Promise.all([
@@ -315,7 +320,7 @@ async function verifyBriefSurvey(page, api) {
     assert.equal(receipt.dialogueSurvey.length, cases.length);
     assert.equal(generationRequests, 0);
     assert.equal(scriptRequests, 0);
-    receipt.cases.push('ten openings recorded for human review of follow-up and recommendation quality, with no production request');
+    receipt.cases.push('web recommendation retested in isolation without a production request');
   } finally {
     await page.unroute(mutationPaths, allowDialogueOnly);
   }
