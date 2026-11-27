@@ -42,7 +42,7 @@ on:
         type: boolean
         default: false
       quick_creation_retry_film_id:
-        description: '可选的本账号旧视频任务编号，复用该任务稿件和风格完成重试验收'
+        description: '可选的本账号视频任务编号，关闭生成时回看水彩成片，开启生成时重试失败任务'
         required: false
         default: ''
       quick_creation_existing_web_id:

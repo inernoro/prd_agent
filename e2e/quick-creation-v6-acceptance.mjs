@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
+import { execFile } from 'node:child_process';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
+import { promisify } from 'node:util';
 import { chromium } from '@playwright/test';
 
 const origin = new URL(process.env.E2E_BASE_URL);
@@ -11,6 +13,8 @@ const generate = process.env.E2E_QC_GENERATE === 'true';
 const verifyBrief = process.env.E2E_QC_BRIEF === 'true';
 const retryFilmId = process.env.E2E_QC_RETRY_FILM || '';
 const existingWebId = process.env.E2E_QC_EXISTING_WEB || '';
+const existingVideoId = !generate ? retryFilmId : '';
+const runProcess = promisify(execFile);
 assert.equal(origin.origin, 'https://dsn-1400e277-v6-codex-prd-agent.miduo.org');
 assert.match(commit, /^[a-f0-9]{40}$/);
 assert.ok(process.env.E2E_USER && process.env.E2E_PASSWORD && process.env.RUNNER_TEMP);
@@ -337,6 +341,65 @@ async function verifyPreview(page, view, row) {
   row.preview = 'pass';
 }
 
+async function verifyExistingVideo(page, api) {
+  const film = await data(await api(`${base}/runs/${existingVideoId}`), 'read the existing cloud movie');
+  assert.equal(film.status, 'done');
+  assert.equal(film.kind, 'video');
+  assert.equal(film.templateId, 'watercolor');
+  assert.equal(digest(film.attachments[0]?.excerpt), '940ba09667ffdbabd5693a800e977ff4d287100309af306479c9ccd86667428b');
+  const row = { id: film.id, kind: film.kind, templateId: film.templateId, reused: true, elapsedSec: film.elapsedSec, captionCount: film.captions?.length ?? 0 };
+  receipt.runs.push(row);
+  try { await verifyPreview(page, film, row); }
+  catch (error) { receipt.failures.push({ id: film.id, kind: 'video', code: 'player', details: String(error.message).slice(0, 250) }); }
+  const video = page.locator('[data-qc=film]');
+  for (const percent of [8, 26, 53, 79]) {
+    await video.evaluate((element, fraction) => new Promise(resolve => {
+      element.addEventListener('seeked', () => resolve(), { once: true });
+      element.currentTime = element.duration * fraction;
+    }), percent / 100);
+    await page.screenshot({ path: join(out, `20-watercolor-${percent}.png`) });
+  }
+  const publishPath = `${base}/runs/${film.id}/publish`;
+  let published = film;
+  if (!film.publish.siteId) {
+    const [response] = await Promise.all([
+      page.waitForResponse(match(publishPath, 'POST')),
+      page.locator('[data-qc=publish]').click(),
+    ]);
+    published = await data(response, 'publish existing video through MAP');
+  }
+  await page.locator('[data-qc=published]').waitFor();
+  assert.equal(published.publish.status, 'done');
+  assert.ok(published.publish.siteId);
+  const repeated = await data(await api(publishPath, { method: 'POST', data: {} }), 'repeat video publication');
+  assert.equal(repeated.publish.siteId, published.publish.siteId);
+  row.siteId = repeated.publish.siteId;
+  await page.screenshot({ path: join(out, '21-watercolor-published.png') });
+  await page.locator('[data-qc=open-hosting]').click();
+  await page.locator(`[data-hosted-site-id="${row.siteId}"]`).waitFor();
+  assert.equal(new URL(page.url()).pathname, '/web-pages');
+  await page.screenshot({ path: join(out, '22-watercolor-hosted.png') });
+  row.locatedHostedSite = true;
+
+  const response = await api(film.media.url, { timeout: 90_000 });
+  assert.equal(response.status(), 200);
+  const bytes = await response.body();
+  const media = join(process.env.RUNNER_TEMP, 'watercolor-acceptance.mp4');
+  await writeFile(media, bytes);
+  const { stdout } = await runProcess('ffprobe', ['-v', 'error', '-show_format', '-show_streams', '-of', 'json', media]);
+  const probe = JSON.parse(stdout);
+  const picture = probe.streams.find(stream => stream.codec_type === 'video');
+  const voice = probe.streams.find(stream => stream.codec_type === 'audio');
+  assert.ok(picture && voice, 'MP4 needs video and audio streams');
+  row.media = { sha256: digest(bytes), duration: Number(probe.format.duration), picture: { codec: picture.codec_name, width: picture.width, height: picture.height },
+    audio: { codec: voice.codec_name, duration: Number(voice.duration), channels: voice.channels } };
+  if (!film.captions?.length || row.captionSeek !== 'pass') {
+    receipt.failures.push({ id: film.id, kind: 'video', code: 'captions_not_independently_verified' });
+  } else {
+    assert.ok(film.captions.every(cue => cue.fromSec >= 0 && cue.toSec > cue.fromSec && cue.toSec <= row.media.duration + 0.5));
+  }
+}
+
 const browser = await chromium.launch();
 try {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
@@ -394,7 +457,14 @@ try {
   } finally {
     await phone.close();
   }
-  if (!generate && !verifyBrief) {
+  if (existingVideoId) {
+    try { await verifyExistingVideo(page, api); }
+    catch (error) {
+      await page.screenshot({ path: join(out, '20-watercolor-failed.png') }).catch(() => {});
+      receipt.failures.push({ kind: 'video', code: 'existing_movie', details: String(error.message).slice(0, 320) });
+    }
+  }
+  if (!generate && !verifyBrief && !existingVideoId) {
     try { await verifyMaterialsBeforeGeneration(page, api, original); }
     catch (error) {
       await page.screenshot({ path: join(out, '15-pre-submit-failure.png') }).catch(() => {});
