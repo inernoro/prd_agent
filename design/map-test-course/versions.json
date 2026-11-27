@@ -1,3 +1,14 @@
 {
-  "versions": []
+ "design": "DSN-4B17A376",
+ "path": "design/map-test-course",
+ "note": "版本登记由程序写入（version-diff.mjs --register）。commit 是发布时的来源提交；tag 只在本地，供 git 计算差异。",
+ "versions": [
+  {
+   "version": 1,
+   "commit": "c934126ee54a25a138cd8319476d26558967f889",
+   "tag": "design/DSN-4B17A376/v1",
+   "committedAt": "2026-11-27T21:23:09+00:00",
+   "subject": "docs(design): 交接场景的可用性检查改用布尔期望值"
+  }
+ ]
 }
