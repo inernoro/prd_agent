@@ -327,7 +327,7 @@ if action=='publish':
  state['masters'][instance]={'references':list(set(req['references'])),'updatedAt':now}
  # Clear only this master's acknowledged pulls after its current + persisted in-flight pins were published.
  for token,pull in list(state['pulls'].items()):
-  if pull['instanceId']==instance and pull.get('confirmed') and now-pull['createdAt']>PULL_OVERDUE_MS:del state['pulls'][token]
+  if pull['instanceId']==instance and pull.get('confirmed') and now>max(pull['createdAt']+PULL_OVERDUE_MS,pull.get('reuseUntil',0)):del state['pulls'][token]
  save();print(json.dumps({'published':True}));sys.exit(0)
 def reserve_pull(image,present,peak):
  if sum(not p.get('confirmed') for p in state['pulls'].values())>=32:raise ValueError('unsettled-image-pull-budget-reached')
@@ -337,6 +337,22 @@ def reserve_pull(image,present,peak):
  save();print(json.dumps({'token':token,'alreadyPresent':bool(present)}));sys.exit(0)
 if action=='prepare':
  image=req['image'];force_new=req.get('forceNew')
+ revision=req.get('reuseVerifiedRevision')
+ if req.get('nativePull') and isinstance(revision,str) and re.fullmatch(r'[a-f0-9]{40}',revision) and image.endswith(':sha-'+revision):
+  confirmed=[p for p in state['pulls'].values() if p['instanceId']==instance and p['image']==image and p.get('nativePull') and p.get('confirmed')]
+  if confirmed:
+   present=inspect_image(image)
+   if present:
+    pin=next((p for p in confirmed if p.get('identity')==present['Id']),None)
+    labels=(present.get('Config') or {}).get('Labels') or {}
+    arch={'x86_64':'amd64','aarch64':'arm64'}.get(info.get('Architecture'),info.get('Architecture'))
+    digests=[ref for ref in present.get('RepoDigests') or [] if re.fullmatch(r'.+@sha256:[a-f0-9]{64}',ref) and repository(ref)==repository(image)]
+    if pin and digests and labels.get('org.opencontainers.image.revision')==revision and present.get('Os')==info.get('OSType') and present.get('Architecture')==arch:
+     # Reuse a successful, identity-checked pull. Keep its image protected without consuming a new reservation.
+     pin['reuseUntil']=now+PULL_OVERDUE_MS
+     evidence={'Id':present['Id'],'RepoDigests':digests,'Os':present['Os'],'Architecture':arch,
+               'Config':{'Labels':{'org.opencontainers.image.revision':revision}}}
+     save();print(json.dumps({'confirmedImage':evidence}));sys.exit(0)
  if req.get('requirePresent') or not force_new and '@sha256:' in image:
   # A present immutable reference cannot create a new image. Pin its exact identity without scanning unrelated images.
   present=inspect_image(image)
@@ -379,12 +395,12 @@ if action=='abort':
 
 def pull_public_id(token):return 'pull:'+hashlib.sha256(token.encode()).hexdigest()[:16]
 
-def settle_pull(token,pull):
+def settle_pull(token,pull,release_unstarted=False):
  if not pull or pull['instanceId']!=instance or not pull.get('nativePull') or pull.get('confirmed'):
   return None
  if 'startedAt' not in pull:
   # This token cannot start after it is removed under the same host lock.
-  if now-pull['createdAt']<=PULL_OVERDUE_MS:return None
+  if not release_unstarted and now-pull['createdAt']<=PULL_OVERDUE_MS:return None
   return {'outcome':'never-started','completedAt':now}
  receipt=read_pull_receipt(token,pull)
  if not receipt or receipt['exitCode'] is None:return None
@@ -412,7 +428,7 @@ if action=='settle-pulls':
   if time.monotonic()>deadline-4:break
   try:
    cache_token(token)
-   receipt=settle_pull(token,pull)
+   receipt=settle_pull(token,pull,bool(specific) and req.get('releaseUnstarted') is True)
   except (OSError,ValueError,KeyError,TypeError):
    pending.append(pull_public_id(token));continue
   if not receipt:continue

@@ -198,6 +198,7 @@ import {
 import { WorkspaceService } from './services/workspace-service.js';
 import { createGithubAuthMiddleware } from './middleware/github-auth.js';
 import { createHumanProjectAccessMiddleware } from './middleware/human-project-access.js';
+import { ARTIFACT_VERIFICATION_SOURCE } from './shared/artifact-verification-metrics.js';
 import { createUserProjectAccessRouter } from './routes/user-project-access.js';
 import { resolveActorFromRequest } from './services/actor-resolver.js';
 import type { StateService } from './services/state.js';
@@ -5344,9 +5345,29 @@ export function createServer(deps: ServerDeps): express.Express {
     }
     const limitRaw = Number.parseInt(String(req.query.limit || '200'), 10) || 200;
     const limit = Math.max(1, Math.min(limitRaw, 1000));
+    const source = typeof req.query.source === 'string' ? req.query.source : undefined;
+    let projectId = typeof req.query.projectId === 'string' ? req.query.projectId : undefined;
+    if (source === ARTIFACT_VERIFICATION_SOURCE) {
+      const caller = req as express.Request & Parameters<typeof assertProjectAccess>[0];
+      projectId ||= caller.cdsProjectKey?.projectId;
+      if (!projectId && Array.isArray(caller.cdsAccess?.access.projects)) {
+        res.status(403).json({ error: 'project_required', message: '请指定授权范围内的项目以读取核验操作日志。' });
+        return;
+      }
+      const denied = assertProjectAccess(caller, projectId);
+      if (denied) {
+        res.status(denied.status).json(denied.body);
+        return;
+      }
+    }
     const since = typeof req.query.since === 'string' ? req.query.since : undefined;
+    const before = typeof req.query.before === 'string' ? req.query.before : undefined;
     if (since && Number.isNaN(Date.parse(since))) {
       res.status(400).json({ error: 'invalid_since', message: 'since must be an ISO timestamp' });
+      return;
+    }
+    if (before && Number.isNaN(Date.parse(before))) {
+      res.status(400).json({ error: 'invalid_before', message: 'before must be an ISO timestamp' });
       return;
     }
     const categoryRaw = typeof req.query.category === 'string' ? req.query.category : undefined;
@@ -5366,12 +5387,12 @@ export function createServer(deps: ServerDeps): express.Express {
       category,
       severity,
       minSeverity,
-      source: typeof req.query.source === 'string' ? req.query.source : undefined,
+      source,
       action: typeof req.query.action === 'string' ? req.query.action : undefined,
       containerName: typeof req.query.containerName === 'string' ? req.query.containerName : undefined,
       branchId: typeof req.query.branchId === 'string' ? req.query.branchId : undefined,
       profileId: typeof req.query.profileId === 'string' ? req.query.profileId : undefined,
-      projectId: typeof req.query.projectId === 'string' ? req.query.projectId : undefined,
+      projectId,
       requestId: typeof req.query.requestId === 'string' ? req.query.requestId : undefined,
       operationId: typeof req.query.operationId === 'string' ? req.query.operationId : undefined,
       operationKind: typeof req.query.operationKind === 'string' ? req.query.operationKind : undefined,
@@ -5380,6 +5401,7 @@ export function createServer(deps: ServerDeps): express.Express {
       operationSource: typeof req.query.operationSource === 'string' ? req.query.operationSource : undefined,
       commitSha: typeof req.query.commitSha === 'string' ? req.query.commitSha : undefined,
       since,
+      before,
     });
     res.json({ ok: true, disabled: false, events, total: events.length });
   });

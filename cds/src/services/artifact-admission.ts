@@ -1,14 +1,15 @@
 import type { BuildProfile, IShellExecutor } from '../types.js';
 import type { WorktreeService } from './worktree.js';
 import { shellQuoteArg } from './secure-database-cli.js';
-import { configuredImageCacheGovernance, ImageCacheBudgetError } from './image-cache-governance.js';
+import { configuredImageCacheGovernance, ImageCacheBudgetError, ImageCachePullSlotLimitError } from './image-cache-governance.js';
+import type { ArtifactVerificationStep, ArtifactWaitReason } from '../shared/artifact-verification-metrics.js';
+import type { ArtifactVerificationAttempt } from './artifact-verification-probe.js';
 import {
   componentInputComparator, imageRepositoryOf, normalizeBuildScope, normalizeFallbackImages, normalizeImageRevision, proveFallbackImage,
   type ProveFallbackImageInput,
 } from './prebuilt-reuse.js';
 
-export type ArtifactWaitReason = 'target-unresolved' | 'image-unresolved' | 'missing' | 'access-denied'
-  | 'verification-unavailable' | 'revision-mismatch' | 'platform-mismatch' | 'cache-budget';
+export type { ArtifactWaitReason } from '../shared/artifact-verification-metrics.js';
 
 export interface VerifiedDeploymentArtifact {
   profileIds: string[];
@@ -22,6 +23,8 @@ export interface VerifiedDeploymentArtifact {
 
 export interface ArtifactInspectionOptions {
   inspectLocalArtifacts?: boolean;
+  retry?: { profileId?: string };
+  measurement?: ArtifactVerificationAttempt;
   /** Identity pinned by the runtime storage admission for this local profile. */
   localStorageImageId?: string;
   isComponentUnchangedSince?: ProveFallbackImageInput['isComponentUnchangedSince'];
@@ -30,16 +33,19 @@ export interface ArtifactInspectionOptions {
 
 /** 每轮一次封顶；旧无 owner 的执行器请求保留只读比较，不能借此取得 fetch 资格。 */
 export function artifactInspectionContext(shell: IShellExecutor, worktree: Pick<WorktreeService, 'ensureCommitAvailable'> | undefined,
-  repoRoot: string, assertCurrent: () => void, limitMs = 120_000): ArtifactInspectionOptions & { remainingMs: () => number } {
+  repoRoot: string, assertCurrent: () => void, limitMs = 120_000, measurement?: ArtifactVerificationAttempt): ArtifactInspectionOptions & { remainingMs: () => number } {
   if (!Number.isFinite(limitMs) || limitMs <= 0) throw new Error('产物核验剩余时间无效');
   const deadline = performance.now() + Math.min(limitMs, 120_000);
   const remainingMs = () => {
     assertCurrent(); const remaining = Math.floor(deadline - performance.now());
-    if (remaining <= 0) throw new Error('产物核验已超时，请稍后重试');
+    if (remaining <= 0) {
+      measurement?.signal('deadline');
+      throw new Error('产物核验已超时，请稍后重试');
+    }
     return remaining;
   };
   const compare = componentInputComparator(shell, repoRoot, () => { remainingMs(); }, remainingMs);
-  return { remainingMs, isComponentUnchangedSince: async (from, to, scope) => {
+  return { remainingMs, measurement, isComponentUnchangedSince: async (from, to, scope) => {
     if (worktree) for (const sha of [from, to]) await worktree.ensureCommitAvailable(repoRoot, sha, assertCurrent, remainingMs);
     return compare(from, to, scope);
   } };
@@ -85,8 +91,12 @@ export async function inspectDeploymentArtifacts(
   options: ArtifactInspectionOptions = {},
 ): Promise<ArtifactAdmission> {
   const target = targetCommitSha.toLowerCase();
+  const measurement = options.measurement;
+  const time = <T>(step: ArtifactVerificationStep, work: () => Promise<T>) => measurement ? measurement.time(step, work) : work();
   const checkedAt = new Date().toISOString();
   const required = profiles.filter(profile => profile.prebuiltImage && !profile.managedBuild && (options.inspectLocalArtifacts || !profile.localArtifact));
+  const blocked = required.find(profile => profile.id === options.retry?.profileId);
+  const inspectionOrder = blocked ? [blocked, ...required.filter(profile => profile !== blocked)] : required;
   const waiting = (reason: ArtifactWaitReason, profileIds?: string[]): ArtifactAdmission => ({
     state: 'waiting', targetCommitSha: target, checkedAt, reason, profileIds, artifacts: [],
   });
@@ -107,7 +117,7 @@ export async function inspectDeploymentArtifacts(
     return result;
   };
   // 实际Docker daemon平台，不能用Master进程或开发者电脑的架构代替执行器。
-  const daemon = await exec("docker info --format '{{json .}}'").catch(() => undefined);
+  const daemon = await time('daemon', () => exec("docker info --format '{{json .}}'")).catch(() => undefined);
   if (!daemon || daemon.exitCode) return waiting('verification-unavailable');
   const info = readJson(daemon.stdout);
   const arch = platformArchitecture(info?.Architecture);
@@ -121,6 +131,7 @@ export async function inspectDeploymentArtifacts(
     const cached = inspections.get(key); if (cached) return cached;
     const promise = (async (): Promise<Inspection> => {
       const cache = configuredImageCacheGovernance();let pin: { token: string } | undefined;
+      let confirmedImage: { Id: string; RepoDigests: string[]; Os: string; Architecture: string; Config: { Labels: Record<string, string> } } | undefined;
       const digestPinned = /^.+@sha256:[0-9a-f]{64}$/.test(image);
       const storagePinned = !needsPull && options.localStorageImageId &&
         (digestPinned || /^sha256:[0-9a-f]{64}$/.test(image));
@@ -128,36 +139,63 @@ export async function inspectDeploymentArtifacts(
       // not issue another pull receipt in parallel startup; still verify Docker's
       // current identity, revision and platform against that graph.
       if (cache && !storagePinned) {
-        try { const prepared = await cache.prepare(image, checkInspection, !needsPull, needsPull && !digestPinned, needsPull);if (prepared.token) pin = prepared; }
-        catch (error) { assertCurrent();return { reason: error instanceof ImageCacheBudgetError ? 'cache-budget' : 'verification-unavailable' }; }
+        const reuseRevision = options.retry && exactTarget && image.endsWith(`:sha-${target}`) ? target : undefined;
+        try {
+          const prepared = await time('reserve', () => cache.prepare(image, checkInspection, !needsPull, needsPull && !digestPinned, needsPull, reuseRevision));
+          if (prepared.token) pin = { token: prepared.token };
+          confirmedImage = prepared.confirmedImage;
+          if (confirmedImage) measurement?.reuseImage();
+        }
+        catch (error) {
+          assertCurrent();
+          if (error instanceof ImageCacheBudgetError) measurement?.signal('image-budget');
+          if (error instanceof ImageCachePullSlotLimitError) measurement?.signal('pull-slot-limit');
+          return { reason: error instanceof ImageCacheBudgetError ? 'cache-budget' : 'verification-unavailable' };
+        }
       }
       let failure: ArtifactWaitReason | undefined;
-      if (needsPull && cache) {
+      if (needsPull && cache && !confirmedImage) {
         if (!pin) return { reason: 'verification-unavailable' };
         const token = pin.token;
-        const pull = await cache.executePull(token, image, checkInspection, options.remainingMs).catch(() => undefined);
-        if (!pull?.recorded) { assertCurrent(); return { reason: 'verification-unavailable' }; }
+        measurement?.requestPull();
+        const pull = await time('pull', () => cache.executePull(token, image, checkInspection, options.remainingMs)).catch(() => undefined);
+        if (!pull?.recorded) {
+          // The host lock fences late launches. Started pulls with no proof remain reserved.
+          const settled = await time('receipt', () => cache.settlePulls(token, true)).catch(() => []);
+          measurement?.signal(settled.some(item => item.outcome === 'never-started') ? 'pull-never-started' : 'pull-result-unknown');
+          assertCurrent(); return { reason: 'verification-unavailable' };
+        }
         // The native receipt is durable. Try the fast path before rechecking
         // this caller's deadline. The scheduled pass can finish without it.
-        const settlements = await cache.settlePulls(token).catch(() => []);
+        if (pull.outcome === 'success') measurement?.succeedPull();
+        const settlements = await time('receipt', () => cache.settlePulls(token)).catch(() => []);
         if (pull.outcome !== 'success') failure = pull.outcome;
         else if (!settlements.some(row => row.outcome === 'success')) {
+          measurement?.signal('receipt-unconfirmed');
           assertCurrent();return { reason: 'verification-unavailable' };
         }
         pin = undefined;
-      } else if (needsPull) {
-        const pull = await startCommand(`docker pull ${shellQuoteArg(image)}`, 90_000, 'operation').catch(() => undefined);
+      } else if (needsPull && !cache) {
+        measurement?.requestPull();
+        const pull = await time('pull', () => startCommand(`docker pull ${shellQuoteArg(image)}`, 90_000, 'operation')).catch(() => undefined);
         if (!pull) { assertCurrent();return { reason: 'verification-unavailable' }; }
         if (pull.exitCode) failure = pullFailureReason(pull.stdout, pull.stderr, image);
+        else measurement?.succeedPull();
       }
       try { checkInspection(); }
       catch { assertCurrent(); return { reason: 'verification-unavailable' }; }
       if (failure) return { reason: failure };
-      const inspection = await exec(`docker image inspect ${shellQuoteArg(image)}`).catch(() => undefined);
-      if (!inspection || inspection.exitCode) { assertCurrent(); return { reason: 'verification-unavailable' }; }
-      const parsed = readJson(inspection.stdout);
-      const metadata = Array.isArray(parsed) && parsed.length === 1 ? parsed[0] : undefined;
-      if (pin) { try { await cache!.confirm(pin.token, assertCurrent); } catch { assertCurrent();return { reason: 'verification-unavailable' }; } }
+      let metadata = confirmedImage;
+      if (!metadata) {
+        const inspection = await time('inspect', () => exec(`docker image inspect ${shellQuoteArg(image)}`)).catch(() => undefined);
+        if (!inspection || inspection.exitCode) { assertCurrent(); return { reason: 'verification-unavailable' }; }
+        const parsed = readJson(inspection.stdout);
+        metadata = Array.isArray(parsed) && parsed.length === 1 ? parsed[0] : undefined;
+      }
+      if (pin) {
+        try { await time('receipt', () => cache!.confirm(pin!.token, assertCurrent)); }
+        catch { assertCurrent(); measurement?.signal('receipt-unconfirmed'); return { reason: 'verification-unavailable' }; }
+      }
       const revision = normalizeImageRevision(metadata?.Config?.Labels?.['org.opencontainers.image.revision']);
       if (!revision || exactTarget && revision !== target) return { reason: 'revision-mismatch' };
       const imageArch = platformArchitecture(metadata?.Architecture);
@@ -168,7 +206,7 @@ export async function inspectDeploymentArtifacts(
       if (storagePinned && immutable !== options.localStorageImageId) return { reason: 'verification-unavailable' };
       // 已按固定仓库digest查询并核验内容，保留可跨执行器取回的引用。
       const digest = digestPinned ? `${imageRepositoryOf(image)}@${image.split('@')[1]}`
-        : !needsPull ? immutable : Array.isArray(metadata.RepoDigests)
+        : !needsPull ? immutable : Array.isArray(metadata?.RepoDigests)
         ? metadata.RepoDigests.find((value: unknown) => typeof value === 'string' && /^.+@sha256:[0-9a-f]{64}$/.test(value)
           && imageRepositoryOf(value) === imageRepositoryOf(image)) : undefined;
       if (!digest) return { reason: 'verification-unavailable' };
@@ -176,7 +214,7 @@ export async function inspectDeploymentArtifacts(
     })();
     inspections.set(key, promise); return promise;
   };
-  for (const profile of required) {
+  for (const profile of inspectionOrder) {
     const primary = profile.dockerImage.trim(), scope = normalizeBuildScope(profile.buildScope);
     const candidates = [primary, ...normalizeFallbackImages(profile.fallbackImage).filter(image => image !== primary
       && !image.includes('${') && imageRepositoryOf(image) === imageRepositoryOf(primary))];
@@ -196,8 +234,8 @@ export async function inspectDeploymentArtifacts(
       if (!index && result.revision !== target && !profile.localArtifact && !primary.includes('@sha256:')) {
         return waiting('revision-mismatch', [profile.id]);
       }
-      const proof = await proveFallbackImage({ revision: result.revision, targetSha: target,
-        buildScope: scope, isComponentUnchangedSince: options.isComponentUnchangedSince });
+      const proof = await time('compare', () => proveFallbackImage({ revision: result.revision, targetSha: target,
+        buildScope: scope, isComponentUnchangedSince: options.isComponentUnchangedSince }));
       assertCurrent();
       if (!proof.accepted) { lastReason = 'revision-mismatch'; continue; }
       item = { profileIds: [profile.id], requestedImage: primary, selectedImage, image: result.image,
