@@ -380,7 +380,11 @@ describe('V17 交付工作区', () => {
       expect(await page.getByRole('combobox', { name: '稿件版本' }).inputValue()).toBe('2');
       await copy.click();
       const link = await checkCopiedBuildPrompt(page, bound.id, 1);
-      await page.getByRole('status').filter({ hasText: '已复制 V1 实现提示词。' }).waitFor();
+      expect(await copy.getAttribute('data-copied')).toBe('true');
+      expect(await copy.locator('.lucide-check').count()).toBe(1);
+      expect(await header.getByRole('status').textContent()).toBe('已复制 V1 实现提示词');
+      expect(await page.getByText('已复制 V1 实现提示词。', { exact: true }).count()).toBe(0);
+      await expect.poll(() => copy.getAttribute('data-copied'), { timeout: 3000 }).toBe(null);
       expect(await copyBuildPromptFromDesignInfo(page, bound.id, 1)).toBe(link);
       await page.goto(link);
       expect(await page.getByRole('combobox', { name: '稿件版本' }).inputValue()).toBe('1');
@@ -849,6 +853,24 @@ describe('V17 交付工作区', () => {
 });
 
 describe('已发布的演示、评论和交付布局', () => {
+  it('A-10/A-51/A-63 从旧地址进入记录、查看实际反馈，并保留交付的三个入口', async () => {
+    await withDesignBrowser(() => guidedWorkspace, async page => {
+      const document = { design: guidedDraft.id, version: '18' };
+      await page.goto(browserDesignUrl({ ...document, tab: 'delivery', full: 'delivery', part: 'feedback' }));
+      await page.locator('.dr-views').getByRole('tab', { name: '反馈和资料', exact: true }).waitFor({ timeout: 3_000 });
+      expect(await page.locator('.dw-full').count()).toBe(0);
+      await page.locator('.dr-views').getByRole('tab', { name: '按版本', exact: true }).click();
+      await page.locator('.dr-top').getByRole('searchbox', { name: '搜索记录' }).waitFor();
+      await page.locator('.dr-card-h').getByRole('navigation', { name: '切换版本' }).waitFor();
+      await page.goto(browserDesignUrl({ ...document, tab: 'delivery', pane: 'deliver' }));
+      await page.getByRole('tab', { name: '要点', exact: true }).waitFor({ timeout: 3_000 });
+      expect(await page.getByRole('tab', { name: '要点', exact: true }).getAttribute('aria-selected')).toBe('true');
+      await page.getByRole('tab', { name: '画面', exact: true }).waitFor();
+      await page.getByRole('tab', { name: '评论', exact: true }).waitFor();
+      await page.getByRole('heading', { name: '这一屏要做到', exact: true }).waitFor();
+    });
+  }, 15_000);
+
   it('同一份稿件的新版展示新右栏，历史版沿用原画面入口', async () => {
     await withDesignBrowser(() => guidedWorkspace, async page => {
       await page.goto(browserDesignUrl({ design: guidedDraft.id, version: '18' }));
@@ -1261,7 +1283,7 @@ function getBrowserDesignScript() {
   }).then(result => result.outputFiles[0].text);
 }
 
-async function withDesignBrowser(input: () => DesignWorkspace,
+async function withDesignBrowser(input: (url?: URL) => DesignWorkspace,
   check: (page: Page, commands: RecordedDesignCommand[], views: FixtureView[]) => Promise<void>, options?: BrowserContextOptions) {
   const script = await getBrowserDesignScript();
   const page = await fixturePage(options);
@@ -1283,7 +1305,7 @@ async function withDesignBrowser(input: () => DesignWorkspace,
       if (url.pathname === '/api/projects') {
         return route.fulfill({ json: { projects: [{ id: projectId, name: '虚拟工程项目' }] } });
       }
-      if (url.pathname === designPath) return route.fulfill({ json: { ...input(), ...(viewer ? { viewer } : {}) } });
+      if (url.pathname === designPath) return route.fulfill({ json: { ...input(url), ...(viewer ? { viewer } : {}) } });
       if (url.pathname === `${designPath}/viewed` && viewer && route.request().method() === 'POST') {
         const view: FixtureView = route.request().postDataJSON();
         views.push(view);
@@ -2267,9 +2289,11 @@ describe('工程规划与设计 V2 前端回归', () => {
       expect(await version.inputValue()).toBe('4');
       await page.getByRole('button', { name: '对比', exact: true }).click();
       const left = page.getByRole('combobox', { name: '对比左侧版本' });
+      const right = page.getByRole('combobox', { name: '对比右侧版本' });
       const baselineShortcut = page.getByRole('button', { name: '和基线 V2 对比', exact: true });
       expect(await left.inputValue()).toBe('2');
-      expect(await baselineShortcut.count()).toBe(0);
+      expect(await right.inputValue()).toBe('implementation');
+      expect(await baselineShortcut.count()).toBe(1);
       await left.selectOption('3');
       await baselineShortcut.click();
       await page.waitForURL(url => url.searchParams.get('compareFrom') === '2');
@@ -2300,6 +2324,71 @@ describe('工程规划与设计 V2 前端回归', () => {
       expect(commands[0]).toMatchObject({ type: 'design.freeze', designId: layoutDraft.id, version: 4, requestId: expect.any(String) });
     });
   }, 20_000);
+
+  it('默认以锁定版对照同版、同画面和同主题的真实截图，提示和取证入口对应实际缺项', async () => {
+    const approved: DesignScreen = { id: 'approved-view', name: '获准版界面', route: '#approved', impl: '/fixture/approved',
+      viewport: 'desktop', themes: ['light', 'dark'] };
+    const appendix: DesignScreen = { ...approved, id: 'approved-extra', name: '获准版第二个界面', impl: null };
+    const latest: DesignScreen = { ...approved, id: 'draft-view', name: '续稿界面', impl: '/fixture/draft' };
+    const target = { ...second, screens: [approved, appendix] };
+    const head = { ...second, version: 4, screens: [latest] };
+    const run: DesignRun = { id: 'RUN-compare-v2', version: 2, pullRequest: 41, commit: 'e'.repeat(40), createdAt: at,
+      previewUrl: 'https://preview.fixture.invalid', verdict: 'needs_evidence', issues: {}, cells: [], upgradeId: 'UPG-compare-v2',
+      visual: {
+        'approved-view/desktop-light': { imageId: 'fixture-actual', referenceImageId: 'fixture-reference',
+          measured: { width: 1280, height: 800, path: approved.impl!, theme: 'light' }, checks: {}, at, by: author.id },
+        'approved-view/desktop-dark': { imageId: 'fixture-wrong-path',
+          measured: { width: 1280, height: 800, path: latest.impl!, theme: 'dark' }, checks: {}, at, by: author.id },
+      } };
+    const draft: DesignEntry = { ...bound, frozen: 2, pullRequest: 41, versions: [first, target, head],
+      upgrade: { id: 'UPG-compare-v2', targetVersion: 2, fromVersion: 1, startedAt: at, startedBy: author.id, status: 'active' },
+      runs: [run, { ...run, id: 'RUN-unrelated', pullRequest: 88, visual: undefined }] };
+    let hasImplementation = false;
+    const expanded: number[] = [];
+    await withDesignBrowser(url => {
+      const version = Number(url?.searchParams.get('version')) || 4;
+      if (url) expanded.push(version);
+      return { ...workspace, designs: [{ ...draft, pullRequest: hasImplementation ? draft.pullRequest : undefined,
+        versions: draft.versions.map(row => row.version === version ? row : { ...row, prototypeId: '', screens: [] }),
+        runs: hasImplementation ? draft.runs.map(row => row.version === version ? row : { ...row, visual: undefined }) : [] }] };
+    }, async page => {
+      const current = { design: draft.id, version: '4', compare: '1', screen: approved.id };
+      let shotAvailable = false;
+      await page.route(`**/api/projects/${projectId}/design/artifacts/fixture-actual`,
+        route => shotAvailable ? route.fulfill({ contentType: 'image/png', body: thumbnailPng }) : route.fulfill({ status: 404 }));
+      await page.goto(browserDesignUrl(current));
+      const canvas = page.locator('.dw-canvas');
+      const missing = canvas.getByText('尚未关联实现预览或验收运行', { exact: true });
+      await missing.waitFor();
+      expect(await canvas.getByRole('link', { name: '打开验收', exact: true }).getAttribute('href')).toContain('version=2');
+
+      hasImplementation = true;
+      await page.reload();
+      await canvas.getByText('实拍图片暂时无法读取', { exact: true }).waitFor();
+      shotAvailable = true;
+      await canvas.getByRole('button', { name: '重试加载', exact: true }).click();
+      const screenshot = canvas.getByRole('img', { name: '获准版界面真实页面截图' });
+      await screenshot.waitFor();
+      expect(await page.getByRole('combobox', { name: '对比左侧版本' }).inputValue()).toBe('2');
+      expect(await page.getByRole('combobox', { name: '对比右侧版本' }).inputValue()).toBe('implementation');
+      expect(await screenshot.getAttribute('src')).toContain('/artifacts/fixture-actual');
+      await expect.poll(() => screenshot.evaluate(node => (node as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
+      expect(await page.getByRole('combobox', { name: '选择画面' }).locator('option').allTextContents())
+        .toEqual(['1 / 2 · 获准版界面', '2 / 2 · 获准版第二个界面']);
+      expect(expanded).toContain(2);
+      await page.getByRole('button', { name: '切换为深色', exact: true }).click();
+      await canvas.getByText('本次运行缺少该画面和主题的实拍', { exact: true }).waitFor();
+      expect(await screenshot.count()).toBe(0);
+      const acceptance = new URL((await canvas.getByRole('link', { name: '打开验收' }).getAttribute('href'))!, browserDesignOrigin);
+      expect(acceptance.searchParams.get('run')).toBe(run.id);
+      expect(acceptance.searchParams.get('compare-slot')).toBe('desktop-dark');
+      await page.getByRole('combobox', { name: '选择画面' }).selectOption(appendix.id);
+      await canvas.getByText('此画面待绑定实现地址', { exact: true }).waitFor();
+      await page.reload();
+      await canvas.getByText('此画面待绑定实现地址', { exact: true }).waitFor();
+      expect(await page.getByRole('combobox', { name: '选择画面' }).inputValue()).toBe(appendix.id);
+    }, { viewport: { width: 1280, height: 800 } });
+  }, 25_000);
 
   it('A-27 稿件信息有具名分组，危险操作在底部靠右，缩窄后仍在视口内', async () => {
     const entry: DesignEntry = {

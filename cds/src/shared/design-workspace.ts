@@ -96,9 +96,19 @@ export type DesignVideoChapter = { method: DesignMethodId; title: string; start:
 export type DesignVideo = { page: 'accept'; file: string; artifactId: string; title: string; chapters: DesignVideoChapter[] };
 export const designFeedbackCategories = ['reuse', 'implementation', 'gap', 'constraint', 'acceptance'] as const;
 export type DesignFeedbackCategory = typeof designFeedbackCategories[number];
-type DesignFeedbackAuthor = { id: string; label: string };
+export type DesignAuthor = { id: string; label: string; kind?: 'person' | 'design-agent' | 'impl-agent' | 'agent' };
+export type DesignFeedbackStage = 'raised' | 'working' | 'review' | 'returned' | 'done';
+export type DesignFeedbackAction = 'take' | 'deliver' | 'confirm' | 'return';
+export type DesignFeedbackProof = { runId: string; screenId: string; slot: DesignSlot; imageId: string; commit: string };
+export type DesignFeedbackMessage = { kind: 'answer'; lead: string; items: string[] }
+  | { kind: 'propose'; lead: string; conclusion: string; scope: string }
+  | { kind: 'evidence'; lead: string; runId: string; commit: string }
+  | { kind: 'confirm'; lead: string };
+export type DesignFeedbackTransition = { action: DesignFeedbackAction; body: string; author: DesignAuthor; at: string; proof?: DesignFeedbackProof };
+export type DesignInboxItem = { designId: string; feedbackId: string; version: number; title: string;
+  stage: DesignFeedbackStage; stageAt: string; owed: number; stalledDays: number };
 export type DesignFeedbackAttachment = {
-  id: string; title: string; size: number; sha256: string; author: DesignFeedbackAuthor; at: string;
+  id: string; title: string; size: number; sha256: string; author: DesignAuthor; at: string;
   version?: number; screenId?: string; slot?: DesignSlot;
 };
 export type DesignFeedback = {
@@ -109,13 +119,17 @@ export type DesignFeedback = {
   title: string;
   body: string;
   evidence: string[];
-  author: DesignFeedbackAuthor;
+  author: DesignAuthor;
   createdAt: string;
   status: 'open' | 'responded' | 'closed';
+  handler?: DesignAuthor;
+  stage?: DesignFeedbackStage;
+  stageAt?: string;
+  transitions?: DesignFeedbackTransition[];
   filePath?: string;
   attachments?: DesignFeedbackAttachment[];
-  replies: Array<{ body: string; revision?: number; author: DesignFeedbackAuthor; at: string; supplement?: true }>;
-  decisions: Array<{ decision: 'close' | 'reopen'; body: string; author: DesignFeedbackAuthor; at: string }>;
+  replies: Array<{ body: string; revision?: number; author: DesignAuthor; at: string; supplement?: true; message?: DesignFeedbackMessage }>;
+  decisions: Array<{ decision: 'close' | 'reopen'; body: string; author: DesignAuthor; at: string }>;
 };
 
 export type DesignModuleRef = { systemId: string; moduleId: string };
@@ -159,9 +173,9 @@ export function designAcceptanceTarget(version: DesignVersion, rule: DesignRule,
 }
 export type DesignComment = {
   id: string; version: number; screenId: string; body: string; x: number; y: number; createdAt: string;
-  author: { id: string; label: string }; closed: boolean;
-  replies: Array<{ body: string; createdAt: string; author: { id: string; label: string } }>;
-  reviews: Array<{ version: number; decision: 'resolved' | 'rejected'; body: string; by: string; at: string }>;
+  author: DesignAuthor; closed: boolean;
+  replies: Array<{ body: string; createdAt: string; author: DesignAuthor; message?: DesignFeedbackMessage }>;
+  reviews: Array<{ version: number; decision: 'resolved' | 'rejected'; body: string; by: string; at: string; author?: DesignAuthor }>;
 };
 export type DesignCell = DesignCaptureProvenance & {
   itemId: string; slot: DesignSlot; status: DesignCellStatus; actual: string; imageId?: string; recordedBy?: string;
@@ -296,7 +310,7 @@ export type DesignRequirement = {
   designKey: string; planId: string; planVersion: number; proposalId: string;
   title: string; requirements: string; sharedAt: string;
   scope?: DesignScope; owner?: DesignReviewer; assignee?: DesignReviewer;
-  replies?: Array<{ id: string; author: DesignFeedbackAuthor; body: string; at: string; planVersion: number }>;
+  replies?: Array<{ id: string; author: DesignAuthor; body: string; at: string; planVersion: number }>;
 };
 export type DesignIntake = {
   acceptancePolicy?: typeof designAcceptancePolicy;
@@ -317,7 +331,7 @@ export type DesignIntake = {
   }>;
   frameworks: Array<{ id: string; title: string; latestVersion: number; adoptedVersion?: number }>;
 };
-export type DesignReadMark = { version: number; feedbackAt?: string };
+export type DesignReadMark = { version: number; feedbackAt?: string; recordAt?: string };
 export type DesignViewerState = {
   firstVisitAt?: string; lastVisitAt?: string;
   designs: Record<string, DesignReadMark>;
@@ -327,10 +341,21 @@ export type DesignViewerState = {
 export function latestDesignFeedbackAt(entry: DesignEntry): string {
   let latest = '';
   for (const item of entry.feedback ?? []) {
-    for (const at of [item.createdAt, item.replies.at(-1)?.at, item.decisions.at(-1)?.at, item.attachments?.at(-1)?.at]) {
+    for (const at of [item.createdAt, item.replies.at(-1)?.at, item.decisions.at(-1)?.at, item.attachments?.at(-1)?.at, item.stageAt]) {
       if (at && at > latest) latest = at;
     }
   }
+  return latest;
+}
+
+export function latestDesignRecordAt(entry: DesignEntry): string {
+  let latest = latestDesignFeedbackAt(entry);
+  for (const item of entry.comments) {
+    for (const at of [item.createdAt, item.replies.at(-1)?.createdAt, item.reviews.at(-1)?.at]) {
+      if (at && at > latest) latest = at;
+    }
+  }
+  for (const version of entry.versions) if (version.createdAt > latest && Object.keys(version.resolves).length) latest = version.createdAt;
   return latest;
 }
 
@@ -347,6 +372,6 @@ export type DesignWorkspace = {
   requirements?: DesignRequirement[];
   systems?: DesignSystem[];
   viewer?: DesignViewerState;
-  permissions: { write: boolean; feedback?: boolean; feedbackSupplement?: boolean; frameworkPublish?: boolean; handoffCheck?: boolean; visual?: boolean; review: boolean; sign?: boolean;
+  permissions: { write: boolean; feedback?: boolean; feedbackSupplement?: boolean; frameworkPublish?: boolean; handoffCheck?: boolean; visual?: boolean; review: boolean; sign?: boolean; human?: boolean;
     installedAcceptance?: boolean; programRecheck?: boolean; implementation?: boolean; steward: boolean; actorId: string };
 };

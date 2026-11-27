@@ -1,16 +1,17 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { marked, type Tokens } from 'marked';
 import { useLocation, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Download, FileCode, FileImage, FileText, MessageSquare, Plus } from 'lucide-react';
+import { ArrowLeft, Bot, Download, FileCode, FileImage, FileText, MessageSquare, Plus } from 'lucide-react';
 import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import {
-  designFeedbackCategories, designSlots, type DesignFeedbackAttachment, type DesignSlot, type DesignDeliveryFile, type DesignEntry, type DesignFeedback, type DesignVersion, type DesignWorkspace,
+  designFeedbackCategories, designSlots, type DesignAuthor, type DesignFeedbackAction, type DesignFeedbackAttachment, type DesignFeedbackProof, type DesignSlot, type DesignDeliveryFile, type DesignEntry, type DesignFeedback, type DesignVersion, type DesignWorkspace,
 } from '../../../../src/shared/design-workspace';
 import { designHandoffStatusNames } from '../../../../src/shared/design-handoff';
-import { feedbackSummary } from '../../../../src/shared/design-feedback';
+import { feedbackActionLabels, feedbackMessageLabels, feedbackMessageText, feedbackProgramProof, feedbackSummary } from '../../../../src/shared/design-feedback';
 import { usePlanningRead } from '../engineering-planning/planning-ui';
 import { ReadableNotes } from './DesignMarkdown';
 import { designArtifact, designDate, designFeedbackAwaitsViewer, designPath, designPublisherLabel, designSourceNames, slotNames, type DesignCommand } from './design-ui';
+import { actorNames, actorOf, DesignMessageForm, handoverOf, plainCheck, stageGlyph, stageNames, type Handover } from './DesignConversation';
 
 const fileNames: Record<DesignDeliveryFile['kind'], string> = {
   manifest: '稿件清单', guide: '交付说明', rationale: '设计思路', document: '设计与开发文档', framework: '框架材料',
@@ -19,17 +20,26 @@ const fileNames: Record<DesignDeliveryFile['kind'], string> = {
 const feedbackNames: Record<DesignFeedback['category'], string> = {
   reuse: '复用建议', implementation: '实施做法', gap: '需求缺漏', constraint: '落地约束', acceptance: '验收建议',
 };
-const feedbackStates: Record<DesignFeedback['status'], string> = { open: '待回复', responded: '待复核', closed: '已确认' };
+/* V26：状态词换成交接状态（待接手、处理中、待确认、退回重做、完结），见 DesignConversation.tsx 的 handoverOf */
 type FileChunk = { artifactId: string; path: string; sha256: string; offset: number; nextOffset: number | null; text: string };
 type OpenScreen = (version: number, screenId: string, from: string) => void;
 type Permissions = DesignWorkspace['permissions'];
 type Part = 'feedback' | 'files' | 'handoff';
 type Go = (fields: Record<string, string>) => void;
 
-const figuresOf = (row: DesignFeedback) => row.attachments ?? [];
+type FeedbackFigure = Pick<DesignFeedbackAttachment, 'id' | 'title' | 'version' | 'screenId' | 'slot'>;
+function figuresOf(row: DesignFeedback, entry: DesignEntry): FeedbackFigure[] {
+  const figures = (row.transitions ?? []).flatMap(({ proof }) => proof ? [{
+    id: proof.imageId, title: '程序截图', version: entry.runs.find(run => run.id === proof.runId)?.version,
+    screenId: proof.screenId, slot: proof.slot,
+  }] : []);
+  const attachments = row.stage === 'done' ? [] : row.attachments ?? [];
+  return [...new Map([...attachments, ...figures].map(shot => [shot.id, shot])).values()];
+}
 const size = (bytes: number) => bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MiB` : `${(bytes / 1024).toFixed(1)} KiB`;
 const isImage = (file: DesignDeliveryFile) => /\.png$/i.test(file.path);
-const lastActivity = (row: DesignFeedback) => [row.createdAt, ...row.replies.map(reply => reply.at), ...row.decisions.map(item => item.at)].sort().at(-1)!;
+const lastActivity = (row: DesignFeedback) => [row.createdAt, row.replies.at(-1)?.at, row.decisions.at(-1)?.at, row.stageAt]
+  .filter((at): at is string => Boolean(at)).sort().at(-1)!;
 /* 先看的文件排在前面；截图和源码数量多，默认收起 */
 /* V5 第三轮（用户反馈：资料不够结构化）：分组按「为什么要看」排，编号、大标题、一句用途。
  * 先读 → 设计依据 → 对照证据 → 画面截图 → 可运行 → 源码；截图和源码数量多，默认收起 */
@@ -88,37 +98,61 @@ function DeliveryNote({ version }: { version: DesignVersion }) {
 }
 
 /* ── 反馈 ─────────────────────────── */
-function FeedbackList({ rows, selected, filter, setFilter, onSelect, onCreate, entry, permissions }: {
+/* V26（用户：「反馈和资料」右侧清楚，像原稿一样记录了顺序，要保留；但左侧比较混乱，也看不出是谁说的）：
+ * 左侧按「轮到谁」分三组——等你、等对方、已敲定（收起）；每条两行：
+ *   第一行 状态符号 + 标题（一行，多的省略）+ 最后一句的时间；
+ *   第二行 提出方 → 交接方 · 交接状态 · 停了几天（第三轮改）。
+ * 类别、版本、回复数、图片数挪到右侧标题下面，列表里不再一行塞五样。 */
+/* 往来里超过 600 字的消息先收起到 10 行，写明全文多少字（真实记录单条最长 3,392 字、76 行） */
+function LongNotes({ source }: { source: string }) {
+  const long = source.length > 600 || source.split('\n').length > 14;
+  const [open, setOpen] = useState(false);
+  return <div className="dw-fl-body" data-clamp={long && !open ? true : undefined}>
+    <ReadableNotes source={source} />
+    {long && <button type="button" className="ep-link dw-fl-more" onClick={() => setOpen(value => !value)}>{open ? '收起' : `展开全文（共 ${source.length.toLocaleString('zh-CN')} 字）`}</button>}
+  </div>;
+}
+export function ActorTag({ author }: { author: { label: string; kind?: string } }) {
+  const kind = actorOf(author);
+  return <span className="dw-fl-who" data-kind={kind}><b>{designPublisherLabel(author.label)}</b>{kind !== 'person' && <em>{actorNames[kind]}</em>}</span>;
+}
+function FeedbackList({ rows, selected, onSelect, onCreate, entry, permissions }: {
   rows: DesignFeedback[]; selected?: string; filter: 'pending' | 'all'; setFilter: (value: 'pending' | 'all') => void;
   onSelect: (id: string) => void; onCreate: () => void; entry: DesignEntry; permissions: Permissions;
 }) {
-  const pending = rows.filter(row => row.status !== 'closed');
-  const shown = filter === 'pending' ? rows.filter(row => row.status !== 'closed' || row.id === selected) : rows;
-  const screens = new Map(entry.versions.flatMap(version => version.screens.map(screen => [screen.id, screen.name] as const)));
-  return <div className="dw-dl-list" aria-label="反馈列表">
+  /* V26 第二轮：按「球在谁手里」分组；每条第二行写 提出方 → 交接方 · 状态 · 停了几天；完结的收起，只留截图 */
+  const items = rows.map(row => ({ row, hand: handoverOf(row) })).sort((a, b) => (b.hand.stalledDays - a.hand.stalledDays) || lastActivity(b.row).localeCompare(lastActivity(a.row)));
+  const mine = (hand: Handover) => hand.holder?.id === permissions.actorId;
+  const groups = [
+    { key: 'mine', label: '在你手上', rows: items.filter(item => item.hand.stage !== 'done' && mine(item.hand)) },
+    { key: 'others', label: '在别人手上', rows: items.filter(item => item.hand.stage !== 'done' && !mine(item.hand)) },
+  ].filter(group => group.rows.length);
+  const done = items.filter(item => item.hand.stage === 'done');
+  const item = ({ row, hand }: { row: DesignFeedback; hand: Handover }) => <li key={row.id}><button type="button" className="dw-fl-row" data-fb={row.id} data-stage={hand.stage}
+    aria-current={row.id === selected || undefined} onClick={() => onSelect(row.id)}>
+    <span className="dw-fl-l1"><i className={`dw-fl-gl ${stageGlyph[hand.stage]}`} aria-label={stageNames[hand.stage]} /><strong title={row.title}>{row.title}</strong>
+      <time>{designDate(lastActivity(row))}</time></span>
+    <span className="dw-fl-l2"><span className="dw-fl-hand">{designPublisherLabel(hand.raiser.label)} → {hand.handler ? designPublisherLabel(hand.handler.label) : '未指定'}</span>
+      <span className="dw-fl-stage" data-stage={hand.stage}>{stageNames[hand.stage]}</span>
+      {hand.stall && <span className="dw-fl-stall" data-stall={hand.stall}>停了 {hand.stalledDays} 天</span>}</span>
+  </button></li>;
+  return <div className="dw-dl-list dw-fl-list" aria-label="反馈列表">
     <div className="dw-dl-list-tools">
-      <div className="dw-dl-seg" role="group" aria-label="筛选反馈">
-        <button type="button" aria-pressed={filter === 'pending'} onClick={() => setFilter('pending')}>待处理 {pending.length}</button>
-        <button type="button" aria-pressed={filter === 'all'} onClick={() => setFilter('all')}>全部 {rows.length}</button>
-      </div>
+      <p className="dw-fl-sum"><b>{rows.length - done.length}</b> 条进行中 · 停得久的在上</p>
       {permissions.feedback && <button type="button" className="ep-button" data-action="feedback-new" onClick={onCreate}><Plus />登记反馈</button>}
     </div>
-    <ul>
-      {shown.map(row => {
-        const mine = permissions.feedback && designFeedbackAwaitsViewer(entry, row, permissions.actorId);
-        const figures = figuresOf(row).length;
-        return <li key={row.id}>
-          <button type="button" className="dw-dl-row" data-fb={row.id} aria-current={row.id === selected || undefined} onClick={() => onSelect(row.id)}>
-            <span className="dw-dl-row-top"><span className={`dw-dl-state dw-dl-state--${row.status}`}>{feedbackStates[row.status]}</span>
-              {mine && <span className="dw-dl-mine">等你</span>}<small>{designDate(lastActivity(row))}</small></span>
-            <strong>{row.title}</strong>
-            <small>{feedbackNames[row.category]} · V{row.version}{row.screenId && screens.get(row.screenId) ? ` · ${screens.get(row.screenId)}` : ''}
-              {row.replies.length ? ` · ${row.replies.length} 条回复` : ''}{figures ? ` · ${figures} 张图` : ''}</small>
-          </button>
-        </li>;
-      })}
-      {!shown.length && <li className="dw-muted dw-dl-empty">{rows.length ? '没有待处理的反馈。' : '还没有实施反馈。'}</li>}
-    </ul>
+    {groups.map(group => <section key={group.key} className="dw-fl-group" data-group={group.key}><h4>{group.label}<small>{group.rows.length}</small></h4><ul>{group.rows.map(item)}</ul></section>)}
+    {done.length > 0 && <details className="dw-fl-group dw-fl-done" open={done.some(({ row }) => row.id === selected) || undefined}>
+      <summary>完结<small>{done.length}</small><span>只留截图为证</span></summary>
+      <ul>{done.map(({ row, hand }) => <li key={row.id}><button type="button" className="dw-fl-row dw-fl-proof" data-fb={row.id} aria-current={row.id === selected || undefined} onClick={() => onSelect(row.id)}>
+        <span className="dw-fl-l1"><i className="dw-fl-gl ok" aria-label="完结" /><strong title={row.title}>{row.title}</strong><time>{designDate(lastActivity(row))}</time></span>
+        {figuresOf(row, entry).length ? <span className="dw-fl-shots">{figuresOf(row, entry).slice(0, 4).map(shot => <img key={shot.id} loading="lazy" src={designArtifact(entry.projectId, shot.id)} alt={shot.title} />)}
+          {figuresOf(row, entry).length > 4 && <small>+{figuresOf(row, entry).length - 4}</small>}</span>
+          : <span className="dw-fl-noproof">没有截图（旧数据；新规则下完结必须附截图）</span>}
+        <span className="dw-fl-l2"><span className="dw-fl-hand">{designPublisherLabel(hand.raiser.label)} → {hand.handler ? designPublisherLabel(hand.handler.label) : '未指定'}</span></span>
+      </button></li>)}</ul>
+    </details>}
+    {!rows.length && <p className="dw-muted dw-dl-empty">还没有实施反馈。</p>}
   </div>;
 }
 
@@ -183,11 +217,55 @@ function FeedbackAttachmentForm({ entry, row, viewedVersion, submit, busy }: {
   </details>;
 }
 
-function attachmentCaption(entry: DesignEntry, thread: DesignFeedback, shot: DesignFeedbackAttachment) {
+function attachmentCaption(entry: DesignEntry, thread: DesignFeedback, shot: FeedbackFigure) {
   const revision = shot.version ?? thread.version;
   const screenId = shot.screenId ?? (revision === thread.version ? thread.screenId : undefined);
   const screen = entry.versions.find(item => item.version === revision)?.screens.find(item => item.id === screenId);
   return [shot.title, 'V' + revision, screen?.name, shot.slot && slotNames[shot.slot]].filter(Boolean).join(' · ');
+}
+
+/* 交接条：提出 → 接手 → 交付待确认 → 完结；写清球在谁手里、欠几句、停了几天；只给轮到的人对应的按钮（提议命令 feedback.stage） */
+const stageSteps: [Handover['stage'][], string][] = [[['raised'], '提出'], [['working', 'returned'], '处理'], [['review'], '待确认'], [['done'], '完结']];
+function HandoverBar({ hand, canAct, human, actorId, busy, proofs, figures, onStage }: {
+  hand: Handover; canAct: boolean; human: boolean; actorId?: string; busy: boolean; proofs: DesignFeedbackProof[]; figures: number;
+  onStage: (action: DesignFeedbackAction, body: string, proof?: DesignFeedbackProof) => Promise<boolean>;
+}) {
+  const [asking, setAsking] = useState<DesignFeedbackAction>();
+  const [note, setNote] = useState('');
+  const [imageId, setImageId] = useState('');
+  const at = stageSteps.findIndex(([stages]) => stages.includes(hand.stage));
+  const actions: DesignFeedbackAction[] = canAct && hand.holder?.id === actorId
+    ? hand.stage === 'raised' ? ['take'] : hand.stage === 'review' ? (human ? ['confirm', 'return'] : ['return']) : ['deliver'] : [];
+  const selection = asking && actions.includes(asking) ? asking : undefined;
+  const label = (action: DesignFeedbackAction) => action === 'confirm' ? '确认完结' : feedbackActionLabels[action];
+  const needProof = selection === 'confirm' || selection === 'deliver';
+  const proof = proofs.find(row => row.imageId === imageId) ?? (proofs.length === 1 ? proofs[0] : undefined);
+  const issue = note.trim() ? plainCheck(note, '').problems[0] : undefined;
+  return <div className="dw-fl-handover" data-stage={hand.stage}>
+    <ol className="dw-fl-steps">{stageSteps.map(([, label], index) => <li key={label} data-on={index === at || undefined} data-past={index < at || undefined}>
+      <b>{index < at ? '✓' : index + 1}</b>{hand.stage === 'returned' && index === 1 ? '退回重做' : label}</li>)}</ol>
+    <p className="dw-fl-who-line"><span>{designPublisherLabel(hand.raiser.label)} 提出</span><span aria-hidden>→</span>
+      <span>{hand.handler ? <>{designPublisherLabel(hand.handler.label)} 处理</> : '还没指定交接方'}</span>
+      {hand.holder ? <span className="dw-fl-ball">球在 <b>{designPublisherLabel(hand.holder.label)}</b>{hand.owed > 0 && ` · 欠 ${hand.owed} 句`}</span> : <span className="dw-fl-ball">完结，只留截图为证（{figures} 张）</span>}
+      {hand.stall && <span className="dw-fl-stall" data-stall={hand.stall}>{hand.stall === 'bad' ? `停了 ${hand.stalledDays} 天，需要人介入` : `停了 ${hand.stalledDays} 天`}</span>}</p>
+    {actions.length > 0 && !selection && <span className="dw-fl-acts">{actions.map(action => <button key={action} type="button"
+      className={action === 'return' ? 'ep-button' : 'ep-button ep-button--primary'} data-action={`stage-${action}`}
+      onClick={() => { setAsking(action); setNote(''); setImageId(''); }}>{label(action)}</button>)}</span>}
+    {selection && <form className="dw-fl-stage-form" onSubmit={async event => {
+      event.preventDefault();
+      if (issue || needProof && !proof) return;
+      if (await onStage(selection, note.trim(), needProof ? proof : undefined)) { setAsking(undefined); setNote(''); }
+    }}>
+      <label><span className="dw-fl-lab">{selection === 'take' ? '打算怎么处理' : selection === 'return' ? '哪里还需要修改' : '一句话结论'}</span>
+        <input value={note} onChange={event => setNote(event.target.value)} required maxLength={40} autoFocus /></label>
+      {issue && <p className="dw-fl-hint" role="status">{issue}</p>}
+      {needProof && (proofs.length ? <label>选择本次运行的程序截图<select required value={proof?.imageId ?? ''} onChange={event => setImageId(event.target.value)}>
+        <option value="">选择截图</option>{proofs.map(row => <option key={row.imageId} value={row.imageId}>{row.screenId} · {slotNames[row.slot]} · {row.commit.slice(0, 8)}</option>)}
+      </select></label> : <p className="dw-fl-hint" role="alert">还没有程序截图。请先到验收页为需要核对的画面取证。</p>)}
+      <span className="dw-dl-compose-actions"><button type="button" className="ep-button" onClick={() => setAsking(undefined)}>取消</button>
+        <button type="submit" className="ep-button ep-button--primary" disabled={busy || !note.trim() || Boolean(issue) || needProof && !proof}>{label(selection)}</button></span>
+    </form>}
+  </div>;
 }
 
 function FeedbackDetail({ row, entry, version, permissions, busy, command, openScreen, openVersion, onBack }: {
@@ -198,15 +276,29 @@ function FeedbackDetail({ row, entry, version, permissions, busy, command, openS
   const [resolving, setResolving] = useState(false);
   const [supplementing, setSupplementing] = useState(false);
   const revisions = entry.versions.filter(item => item.version >= row.version && (permissions.steward || item.publisher.id === permissions.actorId));
-  const canResolve = permissions.feedback && (permissions.steward || row.author.id === permissions.actorId);
-  const canSupplement = canResolve || permissions.feedback && permissions.feedbackSupplement;
+  const isAuthor = permissions.feedback && (permissions.steward || row.author.id === permissions.actorId);
+  const canResolve = Boolean(!row.stage && isAuthor && (permissions.human ?? permissions.review));
+  const canSupplement = isAuthor || permissions.feedback && permissions.feedbackSupplement;
   const screens = new Map(entry.versions.flatMap(item => item.screens.map(screen => [screen.id, screen.name] as const)));
   const history = [
-    ...row.replies.map(reply => ({ ...reply, label: reply.supplement ? '补写诉求和完成标准' : '回复' })),
+    ...row.replies.map(reply => ({ ...reply, label: reply.supplement ? '补写诉求和完成标准' : reply.message ? feedbackMessageLabels[reply.message.kind] : '回复' })),
     ...row.decisions.map(decision => ({ ...decision, revision: undefined, label: decision.decision === 'close' ? '确认关闭' : '重新打开' })),
+    ...(row.transitions ?? []).map(transition => ({ ...transition, revision: undefined, label: feedbackActionLabels[transition.action] })),
   ].sort((first, second) => first.at.localeCompare(second.at));
-  const hidden = earlier ? 0 : Math.max(0, history.length - 2);
-  const figures = figuresOf(row);
+  /* V26：往来按版本分段，最近 4 条直接显示，前面的收成「此前 N 条（V2–V3）」 */
+  const versionAt = (at: string) => entry.versions.filter(item => item.createdAt <= at).reduce((max, item) => Math.max(max, item.version), 0) || row.version;
+  const hidden = earlier ? 0 : Math.max(0, history.length - 4);
+  const hiddenRange = hidden ? [versionAt(history[0].at), versionAt(history[hidden - 1].at)] : [];
+  const people = [...new Map([row.author, ...history.map(item => item.author)].map(author => [author.id, author])).values()];
+  const figures = figuresOf(row, entry);
+  const hand = handoverOf(row);
+  const proofs = row.stage ? entry.runs.slice().reverse().flatMap(run =>
+    Object.keys(run.programEvidence ?? {}).flatMap(key => {
+      const [screenId, value] = key.split('/');
+      const slot = designSlots.find(item => item === value);
+      const proof = slot && feedbackProgramProof(entry, row, run, screenId, slot);
+      return proof ? [proof] : [];
+    })) : [];
   const { parts, legacy, supplemented } = feedbackSummary(row);
   const hasBasis = Boolean(row.evidence.length || figures.length || parts.basis);
   const leadCount = supplemented ? 2 : 0;
@@ -227,12 +319,21 @@ function FeedbackDetail({ row, entry, version, permissions, busy, command, openS
     <button type="button" className="ep-link dw-dl-back" onClick={onBack}><ArrowLeft />全部反馈</button>
     <header className="dw-dl-detail-head">
       <h3 id={`fb-title-${row.id}`} tabIndex={-1}>{row.title}</h3>
-      <p><span className={`dw-dl-state dw-dl-state--${row.status}`}>{feedbackStates[row.status]}</span>
-        <span>{feedbackNames[row.category]}</span><span>{designPublisherLabel(row.author.label)} · {designDate(row.createdAt)}</span>
+      <HandoverBar key={hand.stage} hand={hand} canAct={Boolean(row.stage && permissions.feedback)} human={permissions.human ?? permissions.review}
+        actorId={permissions.actorId} busy={busy} proofs={proofs} figures={figures.length}
+        onStage={(action, body, proof) => command('feedback.stage', { designId: entry.id, feedbackId: row.id, body, action,
+          expectedStage: hand.stage, ...(proof ? { proof: { runId: proof.runId, screenId: proof.screenId, slot: proof.slot } } : {}) })} />
+      <p><span className="dw-fl-stage" data-stage={hand.stage}>{stageNames[hand.stage]}</span>
+        <span>{feedbackNames[row.category]}</span><span className="dw-fl-by"><ActorTag author={row.author} /> · {designDate(row.createdAt)} 提出</span>
+        <span>{history.length} 条往来 · {people.length} 方参与{figures.length ? ` · ${figures.length} 张图` : ''}</span>
         <button className="ep-link" type="button" onClick={() => openVersion(row.version)}>V{row.version} 资料</button>
         {row.screenId && <button id={`delivery-feedback-${row.id}`} className="ep-link" type="button"
           onClick={() => openScreen(row.version, row.screenId!, `delivery-feedback-${row.id}`)}>定位画面{screens.get(row.screenId) ? `「${screens.get(row.screenId)}」` : ''}</button>}</p>
     </header>
+    {row.stage === 'done' ? <div className="dw-delivery-shots">{figures.map(shot => <figure key={shot.id}>
+      <a href={designArtifact(entry.projectId, shot.id)} target="_blank" rel="noreferrer">
+        <img src={designArtifact(entry.projectId, shot.id)} alt={shot.title} /></a>
+      <figcaption>{attachmentCaption(entry, row, shot)}</figcaption></figure>)}</div> : <>
     {row.filePath && <p className="dw-feedback-path">交付文件 <code>{row.filePath}</code></p>}
     {legacy && !supplemented && <div className="dw-dl-legacy">
       <p>这条反馈登记于诉求格式之前</p>
@@ -263,29 +364,39 @@ function FeedbackDetail({ row, entry, version, permissions, busy, command, openS
             <img loading="lazy" src={designArtifact(entry.projectId, shot.id)} alt={shot.title} /></a>
             <figcaption>{attachmentCaption(entry, row, shot)}</figcaption></figure>)}
         </div>}</li>}
-      {history.length > 0 && <li data-item="history"><h4><b>{leadCount + Number(Boolean(parts.problem)) + Number(hasBasis) + 1}</b>往来<small>{history.length} 条</small></h4>
-        {hidden > 0 && <button type="button" className="ep-link" data-action="earlier" onClick={() => setEarlier(true)}>显示前面 {hidden} 条</button>}
-        <ol className="dw-dl-replies">
-          {history.slice(hidden).map((item, index) => <li key={index} className={item.label === '确认关闭' || item.label === '重新打开' ? 'dw-dl-decision' : undefined}>
-            <small>{item.label} · {designPublisherLabel(item.author.label)} · {designDate(item.at)}</small>
-            <ReadableNotes source={item.body} />
-            {item.revision && <button type="button" className="ep-link" onClick={() => openVersion(item.revision!)}>查看 V{item.revision} 修订</button>}
-          </li>)}
+      {history.length > 0 && <li data-item="history"><h4><b>{leadCount + Number(Boolean(parts.problem)) + Number(hasBasis) + 1}</b>往来<small>{history.length} 条 · 按时间从早到晚</small></h4>
+        <p className="dw-fl-people">{people.map(author => <ActorTag key={author.id} author={author} />)}</p>
+        {hidden > 0 && <button type="button" className="ep-link dw-fl-earlier" data-action="earlier" onClick={() => setEarlier(true)}>
+          此前 {hidden} 条（{hiddenRange[0] === hiddenRange[1] ? `V${hiddenRange[0]}` : `V${hiddenRange[0]}–V${hiddenRange[1]}`}）</button>}
+        <ol className="dw-dl-replies dw-fl-talk">
+          {history.slice(hidden).map((item, index, shown) => {
+            const v = versionAt(item.at), before = index ? versionAt(shown[index - 1].at) : hidden ? versionAt(history[hidden - 1].at) : row.version;
+            const kind = actorOf(item.author);
+            const agree = item.label === '确认关闭';
+            /* V26：写给人看的检查也用在已有的消息上——第一句当「一句话」，其余当正文；不过关的标「不好读」和原因 */
+            const lines = item.body.split('\n').map(line => line.trim()).filter(Boolean);
+            const firstPlain = lines.find(line => !/^#+\s/.test(line)) ?? '';
+            const message = 'message' in item ? item.message : undefined;
+            const readable = message ? { problems: [] } : plainCheck(firstPlain, item.body.replace(firstPlain, ''), false);
+            return [v !== before && <li key={'v' + index} className="dw-fl-ver" role="separator"><span>V{v} 发布之后</span></li>,
+              <li key={index} className={item.label === '确认关闭' || item.label === '重新打开' ? 'dw-dl-decision dw-fl-msg' : 'dw-fl-msg'} data-kind={kind} data-agree={agree || undefined} data-at={item.at} data-hard={readable.problems.length > 0 || undefined}>
+                <span className="dw-fl-av" data-kind={kind} aria-hidden>{kind === 'person' ? designPublisherLabel(item.author.label).slice(0, 1) : <Bot />}</span>
+                <div className="dw-fl-msg-main">
+                  <p className="dw-fl-head"><ActorTag author={item.author} /><span className="dw-fl-type" data-type={item.label}>{agree ? '完结' : item.label}</span>
+                    {readable.problems.length > 0 && <span className="dw-fl-hard" title={readable.problems.join('；')}>不好读 · {readable.problems[0]}</span>}
+                    <time>{designDate(item.at)} {new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(item.at))}</time></p>
+                  <LongNotes source={feedbackMessageText(item.body, message)} />
+                  {item.revision && <button type="button" className="ep-link" onClick={() => openVersion(item.revision!)}>查看 V{item.revision} 修订</button>}
+                </div>
+              </li>];
+          })}
         </ol></li>}
     </ol>
     {permissions.feedback && <div className="dw-dl-compose">
-      {row.status !== 'closed' && !resolving && !supplementing && <form className="dw-delivery-form" onSubmit={event => void submit(event, 'feedback.reply')}>
-        <label>回复<textarea name="body" rows={3} required maxLength={4000} placeholder="说明怎么处理；改了稿件就关联版本" /></label>
-        <div className="dw-dl-compose-row">
-          {revisions.length > 0 && <label>关联本稿版本<select name="revision" defaultValue="">
-            <option value="">仅回复说明</option>{revisions.map(item => <option key={item.version} value={item.version}>V{item.version}</option>)}
-          </select></label>}
-          <span className="dw-dl-compose-actions">
-            {canResolve && <button className="ep-button" type="button" data-action="feedback-resolve" onClick={() => setResolving(true)}>确认处理…</button>}
-            <button className="ep-button ep-button--primary" type="submit" disabled={busy}>发送回复</button>
-          </span>
-        </div>
-      </form>}
+      {row.status !== 'closed' && !resolving && !supplementing && <DesignMessageForm revisions={revisions} busy={busy}
+        onConfirm={canResolve ? () => setResolving(true) : undefined}
+        onSend={(body, message, revision) => command('feedback.reply', { designId: entry.id, feedbackId: row.id, body, message,
+          ...(revision ? { revision } : {}) })} />}
       {canResolve && !supplementing && (resolving || row.status === 'closed') && <form className="dw-delivery-form dw-dl-resolve" onSubmit={event => void submit(event, 'feedback.resolve')}>
         {row.status !== 'closed' && <div className="dw-dl-criterion"><small>对照「怎么算解决」</small>{supplemented ? <ReadableNotes source={parts.done} /> : <p className="dw-dl-missing">没写完成标准，请在复核说明里写明按什么判断。</p>}</div>}
         <label>{row.status === 'closed' ? '重开原因' : '复核说明'}<textarea name="body" rows={2} required maxLength={4000}
@@ -298,6 +409,7 @@ function FeedbackDetail({ row, entry, version, permissions, busy, command, openS
       <FeedbackAttachmentForm entry={entry} row={row} viewedVersion={version.version} busy={busy}
         submit={fields => command('feedback.attach', { designId: entry.id, feedbackId: row.id, ...fields })} />
     </div>}
+    </>}
   </article>;
 }
 
@@ -305,11 +417,15 @@ function FeedbackForm({ entry, version, busy, command, draftPath, screenId, onCa
   entry: DesignEntry; version: DesignVersion; busy: boolean; command: DesignCommand; draftPath?: string; screenId?: string; onCancel: () => void;
 }) {
   const [error, setError] = useState('');
+  const assignees = usePlanningRead<{ projectId: string; items: DesignAuthor[] }>(designPath(entry.projectId) + '?view=assignees', 0);
+  const people = assignees.data?.projectId === entry.projectId && Array.isArray(assignees.data.items) ? assignees.data.items : [];
   async function create(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = event.currentTarget;
     const data = new FormData(form);
     const screenId = data.get('screenId');
+    const handlerId = String(data.get('handlerId') ?? '');
+    if (!people.some(person => person.id === handlerId)) { setError('请选择有权处理此反馈的交接方。'); return; }
     if (!String(data.get('ask') ?? '').trim() || !String(data.get('done') ?? '').trim()) {
       setError('写明诉求和判断完成的标准后再提交。');
       return;
@@ -323,7 +439,7 @@ function FeedbackForm({ entry, version, busy, command, draftPath, screenId, onCa
       .filter(([, value]) => String(value ?? '').trim()).map(([name, value]) => `## ${name}\n\n${String(value).trim()}`).join('\n\n');
     setError('');
     if (await command('feedback.create', { designId: entry.id, version: version.version, category: data.get('category'), ...(draftPath ? { filePath: draftPath } : {}),
-      title: data.get('title'), body, ...(screenId ? { screenId } : {}),
+      title: data.get('title'), body, handlerId, ...(screenId ? { screenId } : {}),
       evidence })) { form.reset(); onCancel(); }
   }
   return <article className="dw-dl-detail" aria-labelledby="dw-dl-new">
@@ -337,6 +453,12 @@ function FeedbackForm({ entry, version, busy, command, draftPath, screenId, onCa
         <label>相关画面<select name="screenId" defaultValue={screenId ?? ''}><option value="">整份 V{version.version} 稿件</option>
           {version.screens.map(screen => <option key={screen.id} value={screen.id}>{screen.name}</option>)}</select></label>
       </div>
+      <label>交接方 <select name="handlerId" required defaultValue=""><option value="" disabled>选择交接方</option>
+        {people.map(person => <option key={person.id} value={person.id}>{designPublisherLabel(person.label)} · {actorNames[actorOf(person)]}</option>)}
+      </select></label>
+      {assignees.loading ? <p role="status">正在读取可接手的项目成员和智能体。</p>
+        : assignees.error ? <p className="ep-error" role="alert">{assignees.error}</p>
+          : !people.length && <p role="status">当前项目没有其他可接手的成员或智能体。</p>}
       {draftPath && <p className="dw-feedback-path">关联交付文件 <code>{draftPath}</code></p>}
       <label>标题 <small>一句话说清是什么问题</small><input name="title" required maxLength={180} defaultValue={draftPath ? `关于 ${draftPath}`.slice(0, 180) : undefined} /></label>
       <label className="dw-dl-field-key"><span><b>1</b>诉求 <small>必填 · 希望设计方做什么，一两句</small></span><textarea name="ask" required rows={2} maxLength={1100} /></label>
@@ -346,7 +468,7 @@ function FeedbackForm({ entry, version, busy, command, draftPath, screenId, onCa
         defaultValue={draftPath ? `V${version.version} · ${draftPath}` : undefined} /></label>
       {error && <p className="ep-error" role="alert">{error}</p>}
       <span className="dw-dl-compose-actions"><button className="ep-button" type="button" onClick={onCancel}>取消</button>
-        <button className="ep-button ep-button--primary" type="submit" disabled={busy}>提交反馈</button></span>
+        <button className="ep-button ep-button--primary" type="submit" disabled={busy || !people.length}>提交反馈</button></span>
     </form>
   </article>;
 }
