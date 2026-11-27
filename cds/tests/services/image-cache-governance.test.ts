@@ -311,6 +311,78 @@ with socketserver.UnixStreamServer(${JSON.stringify(socket)},Handler) as server:
     const ledger=JSON.parse(fs.readFileSync(path.join(f.root,'catalog','images.json'),'utf8'));
     expect(ledger.pulls[pin.token].startedAt).toBeUndefined();
   });
+  it('reuses a settled exact commit after its temporary pin has expired', () => {
+    const f = fixture();
+    const commit = 'c'.repeat(40);
+    const image = `registry.example/test:sha-${commit}`;
+    const repoDigest = `registry.example/test@${id}`;
+    const request = { action: 'prepare', image, forceNew: true, nativePull: true, peakBytes: 1024 };
+    const pin = f.request(request);
+    f.values.pullImage = {
+      ...f.image([image]), RepoDigests: [repoDigest], Config: { Labels: { 'org.opencontainers.image.revision': commit } },
+    };
+    f.save();
+    f.request({ action: 'execute-pull', token: pin.token, image, pullTimeoutMs: 1_000 });
+    f.request({ action: 'settle-pulls', token: pin.token });
+    const later = now + 600_001;
+    f.request({ action: 'publish', references: [], nowMs: later });
+    expect(f.request({}).pullReservations).toEqual([]);
+    const reuse = { ...request, budgetBytes: 1, reuseVerifiedRevision: commit, nowMs: later };
+    f.values.images = [{ ...f.values.pullImage, RepoDigests: [digest] }];
+    f.save();
+    expect(() => f.request(reuse)).toThrow(/host-image-cache-budget-exceeded/);
+    f.values.images = [f.values.pullImage];
+    f.save();
+    expect(f.request(reuse)).toMatchObject({ confirmedImage: { Id: id, RepoDigests: [repoDigest] } });
+    expect(f.request({}).pullReservations).toMatchObject([{ confirmed: true, reservedBytesEstimate: 0 }]);
+  });
+  it('keeps the old reservations charged and permits only one budgeted exact-commit recovery pull', () => {
+    const f = fixture();
+    f.request({ action: 'publish', references: [] });
+    const ledgerPath = path.join(f.root, 'catalog', 'images.json');
+    const ledger = JSON.parse(fs.readFileSync(ledgerPath, 'utf8'));
+    const older = now - 600_001;
+    const old = Object.fromEntries(Array.from({ length: 32 }, (_, index) => [index.toString(16).padStart(32, '0'), {
+      image: `registry.example/test:old-${index}`, instanceId: 'master-a', createdAt: older, startedAt: older,
+      nativePull: true, beforeId: null, reserveBytes: 1024,
+    }]));
+    const commit = 'c'.repeat(40);
+    const request = { action: 'prepare', image: `registry.example/test:sha-${commit}`, forceNew: true,
+      nativePull: true, peakBytes: 1024, budgetBytes: 33 * 1024, reuseVerifiedRevision: commit };
+    const writeLedger = (pulls: typeof old) => fs.writeFileSync(ledgerPath, JSON.stringify({ ...ledger, pulls }));
+    writeLedger({ ...old, ['0'.repeat(32)]: { ...old['0'.repeat(32)], startedAt: now } });
+    const callsBeforeBlock = fs.readFileSync(f.calls, 'utf8').length;
+    expect(() => f.request(request)).toThrow(/unsettled-image-pull-budget-reached/);
+    expect(fs.readFileSync(f.calls, 'utf8').slice(callsBeforeBlock)).not.toContain('["image", "ls"');
+    writeLedger(old);
+    expect(() => f.request({ ...request, budgetBytes: 33 * 1024 - 1 })).toThrow(/host-image-cache-budget-exceeded/);
+    expect(() => f.request({ ...request, reuseVerifiedRevision: undefined })).toThrow(/unsettled-image-pull-budget-reached/);
+    expect(f.request(request)).toMatchObject({ recovery: true });
+    expect(() => f.request(request)).toThrow(/unsettled-image-pull-budget-reached/);
+    const report = f.request({ budgetBytes: 33 * 1024 });
+    expect(report.pullBudget).toMatchObject({ reservedBytes: 33 * 1024, overdueCount: 32 });
+    expect(report.pullReservations.filter((row: { recovery?: boolean }) => row.recovery)).toHaveLength(1);
+    const after = JSON.parse(fs.readFileSync(ledgerPath, 'utf8')).pulls;
+    for (const [token, row] of Object.entries(old)) expect(after[token]).toEqual(row);
+  });
+  it('settles a successful pull after a failed post-pull Docker read using its exact repository digest', () => {
+    const f = fixture();
+    const image = 'registry.example/test:old';
+    const pin = f.request({ action: 'prepare', image, nativePull: true, peakBytes: 1024 });
+    f.values.pullImage = { ...f.image(), RepoDigests: [`registry.example/test@${id}`] };
+    f.save();
+    expect(f.request({ action: 'execute-pull', token: pin.token, image, pullTimeoutMs: 1_000 }).recorded).toBe(true);
+    const receiptPath = path.join(f.root, 'catalog', `pull-receipt-${pin.token}`);
+    const proof = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
+    fs.writeFileSync(receiptPath, JSON.stringify({ ...proof, observation: 'unconfirmed', observedId: null }));
+    f.values.images = [f.image()];
+    f.save();
+    expect(f.request({ action: 'settle-pulls' }).settled).toEqual([]);
+    f.values.images = [f.values.pullImage];
+    f.save();
+    expect(f.request({ action: 'settle-pulls' }).settled).toMatchObject([{ outcome: 'success', observation: 'present', observedId: id }]);
+    expect(f.request({}).pullBudget.reservedBytes).toBe(0);
+  });
   it('settles completed failed refreshes of unchanged cached IDs across independent worker invocations', () => {
     const f=fixture();f.values.images=[f.image()];f.save();f.request({action:'publish',references:[]});
     for(let retry=0;retry<2;retry++){
