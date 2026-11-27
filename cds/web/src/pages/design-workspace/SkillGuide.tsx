@@ -24,37 +24,42 @@ export function designBuildPrompt(entry: Pick<DesignEntry, 'id' | 'projectId' | 
   return { version, command: `/cds-build 帮我实现 ${entry.id} V${version}`, path: `/design?${query}` };
 }
 
-export function CopyDesignBuildPrompt({ prompt, compact = false, onCopied }: {
-  prompt: DesignBuildPrompt | null; compact?: boolean; onCopied?: (version: number) => void;
+export function CopyDesignBuildPrompt({ prompt, compact = false }: {
+  prompt: DesignBuildPrompt | null; compact?: boolean;
 }) {
   const [manual, setManual] = useState('');
-  const [copied, setCopied] = useState(false);
+  const [copiedAt, setCopiedAt] = useState(0);
+  const copied = copiedAt > 0;
+  useEffect(() => {
+    if (!copiedAt) return;
+    const timer = window.setTimeout(() => setCopiedAt(0), 1600);
+    return () => window.clearTimeout(timer);
+  }, [copiedAt]);
 
   async function copy() {
     if (!prompt) return;
-    setCopied(false);
+    setCopiedAt(0);
     const link = new URL(prompt.path, window.location.origin);
     const text = `${prompt.command}\n${link.href}`;
     try {
       await copyTextToClipboard(text);
-      setCopied(true);
-      onCopied?.(prompt.version);
+      setCopiedAt(Date.now());
     } catch {
       setManual(text);
     }
   }
 
-  const Icon = compact && copied ? Check : Copy;
+  const Icon = copied ? Check : Copy;
   return <>
     <button type="button" className={compact ? 'ep-button ep-icon-button' : 'ep-button dw-copy-build'}
-      data-action={compact ? 'copy-skill' : 'copy-build-prompt'}
+      data-action={compact ? 'copy-skill' : 'copy-build-prompt'} data-copied={copied || undefined}
       aria-label={compact && prompt ? `复制「${prompt.command}」` : '复制实现提示词'}
-      title={prompt ? `复制 V${prompt.version} 实现提示词` : pendingBuildHint}
+      title={prompt ? `${copied ? '已复制' : '复制'} V${prompt.version} 实现提示词` : pendingBuildHint}
       disabled={prompt === null} onClick={() => void copy()}>
       <Icon aria-hidden="true" />
       {!compact && <><span className="dw-copy-build-label">复制实现提示词</span><small>{prompt ? `V${prompt.version}` : '待定稿'}</small></>}
     </button>
-    {compact && <span role="status" className="sr-only">{copied ? '已复制' : ''}</span>}
+    <span role="status" className="sr-only">{prompt && copied ? `已复制 V${prompt.version} 实现提示词` : ''}</span>
     {manual && <Dialog open onOpenChange={open => { if (!open) setManual(''); }}>
       <DialogContent>
         <DialogTitle>实现提示词</DialogTitle>

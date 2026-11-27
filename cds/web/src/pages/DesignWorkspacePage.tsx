@@ -360,7 +360,7 @@ export function DesignWorkspacePage() {
   const canvasCommon = {
     command, canComment: Boolean(permissions?.review), canWrite: Boolean(permissions?.write),
     actorId: permissions?.actorId ?? '', steward: Boolean(permissions?.steward), commandBusy: busy,
-    selectedTheme: canvasTheme, onThemeChange: setCanvasTheme, onThumbnailsUpdated: refreshWorkspace,
+    selectedTheme: canvasTheme, onThemeChange: setCanvasTheme, onThumbnailsUpdated: refreshWorkspace, revision: reload,
   };
   const draftActions = entry && version && <div className="dw-tools dw-draft-actions">
     <select className="dw-version-select" value={version.version} aria-label="稿件版本" disabled={comparing}
@@ -373,10 +373,7 @@ export function DesignWorkspacePage() {
         return <option key={row.version} value={row.version}>{label}</option>;
       })}
     </select>
-    {tab === 'delivery' && <CopyDesignBuildPrompt key={buildPrompt?.path ?? entry.id} prompt={buildPrompt} onCopied={target => {
-      setIssue('');
-      setNotice(`已复制 V${target} 实现提示词。`);
-    }} />}
+    {tab === 'delivery' && <CopyDesignBuildPrompt key={buildPrompt?.path ?? entry.id} prompt={buildPrompt} />}
     <button className="ep-button ep-icon-button" type="button" aria-label="大屏" title="大屏" onClick={() => openLarge(entry, version)}><Maximize /></button>
     <details className="ep-new dw-info" data-design-panel="design-info" open={panel === 'design-info' || undefined}
       onToggle={event => { if (!event.currentTarget.open) dismissPanel('design-info'); }}>
@@ -472,7 +469,7 @@ export function DesignWorkspacePage() {
           <div className="dw-canvas-slot" aria-hidden={Boolean(fullView) || undefined}>
             <DesignCanvas key={`${entry.id}/${version.version}/${commentParam ?? ''}/${compareFrom ?? ''}`} {...canvasCommon}
               entry={entry} version={version} active={!large && !review && !fullView}
-              comparing={comparing} initialScreenId={defaultScene?.id} initialCommentId={commentParam} initialComparisonVersion={compareFrom}
+              comparing={comparing} initialScreenId={comparing ? screenParam : defaultScene?.id} initialCommentId={commentParam} initialComparisonVersion={compareFrom}
               cornerTools onSceneChange={rememberScene} galleryOpen={openGallery === `${entry.id}/${version.version}`}
               onGalleryChange={open => setOpenGallery(open ? `${entry.id}/${version.version}` : undefined)}
               onSelectScreen={id => onChange({ screen: id, comment: '' }, true)}
