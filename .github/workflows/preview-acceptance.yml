@@ -45,6 +45,9 @@ on:
         description: '可选的本账号已发布网页任务编号，复验托管结果而不重复生成'
         required: false
         default: ''
+      quick_creation_film_audit_id:
+        description: '可选的已发布视频任务编号，只检查既有成片和配音字幕'
+        default: ''
       perf_ref:
         description: '隔离性能回归的候选提交或 ref；留空跳过，不接受 URL'
         required: false
@@ -278,9 +281,36 @@ jobs:
           E2E_QC_GENERATE: ${{ inputs.quick_creation_generate }}
           E2E_QC_RETRY_FILM: ${{ inputs.quick_creation_retry_film_id }}
           E2E_QC_EXISTING_WEB: ${{ inputs.quick_creation_existing_web_id }}
+          E2E_QC_AUDIT_FILM: ${{ inputs.quick_creation_film_audit_id }}
           E2E_USER: ${{ secrets.E2E_USER }}
           E2E_PASSWORD: ${{ secrets.E2E_PASSWORD }}
         run: node e2e/quick-creation-v6-acceptance.mjs
+      - name: Independently measure the finished film narration
+        if: inputs.quick_creation_film_audit_id != ''
+        timeout-minutes: 10
+        run: |
+          python3 -m venv "$RUNNER_TEMP/qc-speech-audit"
+          "$RUNNER_TEMP/qc-speech-audit/bin/pip" install --disable-pip-version-check faster-whisper==1.1.0
+          "$RUNNER_TEMP/qc-speech-audit/bin/python" - <<'PY'
+          import json, os
+          from pathlib import Path
+          from faster_whisper import WhisperModel
+
+          runner = Path(os.environ["RUNNER_TEMP"])
+          model = WhisperModel("small", device="cpu", compute_type="int8", cpu_threads=2)
+          segments, info = model.transcribe(str(runner / "existing-v6-film.mp4"), language="zh", word_timestamps=True)
+          result = [{"fromSec": segment.start, "toSec": segment.end, "text": segment.text.strip(),
+                     "words": [{"fromSec": word.start, "toSec": word.end, "text": word.word} for word in segment.words or []]}
+                    for segment in segments if segment.text.strip()]
+          if not result:
+              raise SystemExit("No intelligible narration was detected")
+          (runner / "dsn-1400e277-evidence" / "speech-audit.json").write_text(
+              json.dumps({"language": info.language, "durationSec": info.duration, "segments": result}, ensure_ascii=False, indent=2),
+              encoding="utf-8",
+          )
+          (runner / "existing-v6-film.mp4").unlink()
+          print(f"Measured {len(result)} narration segments in existing film audio")
+          PY
       - name: Retain cloud browser evidence
         if: always()
         uses: actions/upload-artifact@v4

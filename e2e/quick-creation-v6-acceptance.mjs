@@ -10,12 +10,17 @@ const commit = process.env.E2E_EXPECTED_COMMIT;
 const generate = process.env.E2E_QC_GENERATE === 'true';
 const retryFilmId = process.env.E2E_QC_RETRY_FILM || '';
 const existingWebId = process.env.E2E_QC_EXISTING_WEB || '';
+const auditFilmId = process.env.E2E_QC_AUDIT_FILM || '';
 assert.equal(origin.origin, 'https://dsn-1400e277-v6-codex-prd-agent.miduo.org');
 assert.match(commit, /^[a-f0-9]{40}$/);
 assert.ok(process.env.E2E_USER && process.env.E2E_PASSWORD && process.env.RUNNER_TEMP);
 if (generate) assert.equal(process.env.GITHUB_RUN_ATTEMPT, '1', 'Review original tasks before repeating paid jobs');
 if (retryFilmId) assert.match(retryFilmId, /^[a-f0-9]{32}$/);
 if (existingWebId) assert.match(existingWebId, /^[a-f0-9]{32}$/);
+if (auditFilmId) {
+  assert.match(auditFilmId, /^[a-f0-9]{32}$/);
+  assert.equal(generate, false, 'Evidence mode must read a finished film without starting a task');
+}
 const out = join(process.env.RUNNER_TEMP, 'dsn-1400e277-evidence');
 await mkdir(out, { recursive: true });
 const receipt = { design: 'DSN-1400E277', version: 6, commit, origin: origin.origin, cases: [], runs: [], failures: [] };
@@ -148,6 +153,33 @@ try {
     receipt.failures.push({ kind: 'mobile', code: 'navigation', details: String(error.message).slice(0, 250) });
   } finally {
     await phone.close();
+  }
+  if (auditFilmId) {
+    const film = await data(await api(`${base}/runs/${auditFilmId}`), 'read completed film');
+    assert.equal(film.kind, 'video');
+    assert.equal(film.status, 'done');
+    assert.equal(film.publish.status, 'done');
+    assert.ok(film.publish.siteId);
+    const row = { id: film.id, kind: 'video', currentStatus: film.status, durationSec: film.durationSec,
+      siteId: film.publish.siteId, captionCount: film.captions?.length ?? 0 };
+    receipt.runs.push(row);
+    await verifyPreview(page, film, row);
+    const media = await api(film.media.url, { timeout: 60_000 });
+    assert.equal(media.status(), 200);
+    assert.equal(media.headers()['content-type'].split(';')[0], 'video/mp4');
+    const bytes = await media.body();
+    assert.equal(bytes.toString('ascii', 4, 8), 'ftyp');
+    assert.ok(bytes.length < 128 * 1024 * 1024);
+    await writeFile(join(process.env.RUNNER_TEMP, 'existing-v6-film.mp4'), bytes);
+    const video = page.locator('[data-qc=film]');
+    for (const second of [4, 10, 18, 25, 33, 40, 44, 49].filter(value => value < film.durationSec)) {
+      await video.evaluate((element, seconds) => new Promise(resolve => {
+        element.addEventListener('seeked', resolve, { once: true });
+        element.currentTime = seconds;
+      }), second);
+      await video.screenshot({ path: join(out, `film-${String(second).padStart(2, '0')}s.png`) });
+    }
+    receipt.cases.push('existing published film decoded and rendered in the cloud player at eight points');
   }
   if (generate) {
     const filmInput = { kind: 'video', templateId: 'sketchnote', ask: '', attachmentIds: [original.id], title: '需求评审的三个习惯' };
