@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -7,13 +8,15 @@ import { chromium } from '@playwright/test';
 const origin = new URL(process.env.E2E_BASE_URL);
 const commit = process.env.E2E_EXPECTED_COMMIT;
 const generate = process.env.E2E_QC_GENERATE === 'true';
+const retryFilmId = process.env.E2E_QC_RETRY_FILM || '';
 assert.equal(origin.origin, 'https://dsn-1400e277-v6-codex-prd-agent.miduo.org');
 assert.match(commit, /^[a-f0-9]{40}$/);
 assert.ok(process.env.E2E_USER && process.env.E2E_PASSWORD && process.env.RUNNER_TEMP);
 if (generate) assert.equal(process.env.GITHUB_RUN_ATTEMPT, '1', 'Review original tasks before repeating paid jobs');
+if (retryFilmId) assert.match(retryFilmId, /^[a-f0-9]{32}$/);
 const out = join(process.env.RUNNER_TEMP, 'dsn-1400e277-evidence');
 await mkdir(out, { recursive: true });
-const receipt = { design: 'DSN-1400E277', version: 6, commit, origin: origin.origin, cases: [], runs: [] };
+const receipt = { design: 'DSN-1400E277', version: 6, commit, origin: origin.origin, cases: [], runs: [], failures: [] };
 const base = '/api/quick-creation';
 
 const match = (path, method = 'GET') => response => new URL(response.url()).origin === origin.origin
@@ -43,8 +46,11 @@ async function openWorkbench(page, { mobile = false } = {}) {
   const toolbox = page.locator('nav button[title^="百宝箱"]:visible')
     .or(page.getByRole('button', { name: /^(?:AI\s*)?百宝箱$/ }).filter({ visible: true })).first();
   await toolbox.click();
-  const card = page.locator('.toolbox-tool-card').filter({ has: page.getByText('快速创作', { exact: true }) });
+  if (mobile) await page.getByPlaceholder('搜索智能体、工具').fill('快速创作');
+  const card = mobile ? page.getByRole('button', { name: /^快速创作/ })
+    : page.locator('.toolbox-tool-card').filter({ has: page.getByText('快速创作', { exact: true }) });
   await card.getByText('开发中', { exact: true }).waitFor();
+  receipt.cases.push(`${mobile ? 'mobile' : 'desktop'} toolbox quick creation card has the in-development badge`);
   const [templates] = await Promise.all([
     page.waitForResponse(match(base + '/templates')),
     card.getByText('快速创作', { exact: true }).click(),
@@ -60,6 +66,33 @@ async function openWorkbench(page, { mobile = false } = {}) {
   return accessToken;
 }
 
+async function verifyPreview(page, view, row) {
+  await page.goto(new URL(`/quick-creation-agent?run=${encodeURIComponent(view.id)}`, origin).href);
+  await page.locator(`[data-run-id="${view.id}"] [data-qc=done-card]`).waitFor();
+  if (view.kind === 'video') {
+    const video = page.locator('[data-qc=film]');
+    await video.waitFor();
+    await page.waitForFunction(() => document.querySelector('[data-qc=film]')?.readyState >= 2);
+    await page.locator('[data-qc=play-toggle]').click();
+    await page.waitForFunction(() => document.querySelector('[data-qc=film]')?.currentTime > 0);
+    await page.locator('[data-qc=play-toggle]').click();
+    const caption = view.captions?.find(cue => cue.toSec - cue.fromSec >= 0.25 && cue.toSec <= view.durationSec + 0.1);
+    if (caption) {
+      await video.evaluate((element, second) => { element.currentTime = second; }, (caption.fromSec + caption.toSec) / 2);
+      await page.waitForFunction(expected => document.querySelector('[data-qc=caption]')?.textContent === expected, caption.text);
+      row.captionSeek = 'pass';
+    }
+  } else {
+    const frame = page.frameLocator('[data-qc=web-preview] iframe');
+    await frame.locator('body').waitFor();
+    row.visibleText = (await frame.locator('body').innerText()).trim().slice(0, 5000);
+    assert.ok(row.visibleText.length > 100, 'Real webpage preview has visible content');
+    row.headings = await frame.locator('h1, h2, h3').allTextContents();
+  }
+  await page.screenshot({ path: join(out, `07-${view.kind}-preview.png`) });
+  row.preview = 'pass';
+}
+
 const browser = await chromium.launch();
 try {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
@@ -67,8 +100,8 @@ try {
   const version = await data(await page.request.get(new URL('/api/version', origin).href), 'MAP version');
   assert.equal(version.actualCommit, commit);
   const token = await openWorkbench(page);
-  const api = (path, options = {}) => page.request.fetch(new URL(path, origin).href, {
-    headers: { Authorization: `Bearer ${token}`, 'X-Client': 'admin' },
+  const api = (path, { headers, ...options } = {}) => page.request.fetch(new URL(path, origin).href, {
+    headers: { Authorization: `Bearer ${token}`, 'X-Client': 'admin', ...headers },
     timeout: 20_000,
     ...options,
   });
@@ -107,73 +140,145 @@ try {
     assert.equal(phoneWidth.viewport, 375);
     assert.equal(phoneWidth.scroll, phoneWidth.viewport);
     await phone.screenshot({ path: join(out, '04-phone-compose.png') });
+    receipt.cases.push('distinct touch context and no 375px page overflow');
   } catch (error) {
     await phone.screenshot({ path: join(out, '04-phone-failure.png') }).catch(() => {});
-    throw error;
+    receipt.failures.push({ kind: 'mobile', code: 'navigation', details: String(error.message).slice(0, 250) });
   } finally {
     await phone.close();
   }
-  receipt.cases.push('distinct touch context and no 375px page overflow');
-
   if (generate) {
-    const [created] = await Promise.all([
-      page.waitForResponse(match(base + '/runs', 'POST')),
-      page.locator('[data-qc=submit]').click(),
-    ]);
-    const web = await data(created, 'queue real webpage');
-    assert.equal(web.kind, 'web');
-    assert.equal(web.attachments[0].id, original.id);
-    assert.equal(web.templateId, 'ink-wash');
-    receipt.runs.push({ id: web.id, kind: web.kind, admitted: web.status });
-    const film = await data(await api(base + '/runs', {
-      method: 'POST',
-      data: { kind: 'video', templateId: 'sketchnote', ask: '', attachmentIds: [original.id], title: '需求评审的三个习惯' },
-    }), 'queue real code video');
-    assert.equal(film.kind, 'video');
-    assert.equal(film.attachments[0].id, original.id);
-    receipt.runs.push({ id: film.id, kind: film.kind, admitted: film.status });
-    await page.locator('[data-qc=saved-notice]').waitFor();
-    await page.reload();
-    await page.locator(`[data-run-id="${web.id}"]`).waitFor();
-    await page.screenshot({ path: join(out, '05-recovered-run.png') });
-    const runUrl = new URL(`${base}/runs/${web.id}`, origin).href;
-    await page.route(runUrl, route => route.abort('internetdisconnected'), { times: 1 });
-    await page.locator('[data-qc=reconnecting]').waitFor();
-    await page.screenshot({ path: join(out, '06-disconnected-run.png') });
-    await page.locator('[data-qc=reconnecting]').waitFor({ state: 'hidden' });
-    assert.equal(await page.locator('[data-run-id]').getAttribute('data-run-id'), web.id);
-    receipt.cases.push('transient browser disconnect, same persisted task resumed automatically');
-    const expected = new Map([[web.id, 22 * 60_000], [film.id, 135 * 60_000]]);
+    const filmInput = { kind: 'video', templateId: 'sketchnote', ask: '', attachmentIds: [original.id], title: '需求评审的三个习惯' };
+    const unverified = await api(base + '/runs', { method: 'POST', data: filmInput });
+    assert.equal(unverified.status(), 400, 'A request without explicit intent must not create a task');
+    assert.equal((await unverified.json()).error?.code, 'TASK_INTENT_REQUIRED');
+    receipt.cases.push('generation is rejected unless the authenticated request supplies explicit intent');
+    let web;
+    try {
+      const [created] = await Promise.all([
+        page.waitForResponse(match(base + '/runs', 'POST')),
+        page.locator('[data-qc=submit]').click(),
+      ]);
+      web = await data(created, 'queue real webpage');
+      receipt.runs.push({ id: web.id, kind: 'web', admitted: web.status });
+      console.log(`Quick creation web ${web.id}: ${web.status}`);
+      assert.equal(web.kind, 'web');
+      assert.equal(web.attachments[0].id, original.id);
+      assert.equal(web.templateId, 'ink-wash');
+    } catch (error) {
+      receipt.failures.push({ kind: 'web', code: 'admission', details: String(error.message).slice(0, 250) });
+    }
+    try {
+      const prior = retryFilmId ? await data(await api(`${base}/runs/${retryFilmId}`), 'read the original failed video') : null;
+      if (prior) {
+        assert.equal(prior.status, 'failed');
+        assert.equal(prior.kind, 'video');
+        assert.equal(prior.templateId, 'sketchnote');
+        assert.equal(prior.attachments[0]?.excerpt, original.excerpt);
+      }
+      const filmPath = prior ? `${base}/runs/${prior.id}/retry` : base + '/runs';
+      const filmRequest = {
+        method: 'POST',
+        headers: { 'Idempotency-Key': randomUUID() },
+        data: prior ? { action: 'requeue' } : filmInput,
+      };
+      const film = await data(await api(filmPath, filmRequest), 'queue real code video');
+      receipt.runs.push({ id: film.id, kind: 'video', admitted: film.status, retryOf: prior?.id });
+      console.log(`Quick creation video ${film.id}: ${film.status}`);
+      assert.equal(film.kind, 'video');
+      assert.equal(film.attachments[0].id, prior?.attachments[0]?.id ?? original.id);
+      assert.equal(film.templateId, 'sketchnote');
+      if (prior) {
+        assert.notEqual(film.id, prior.id);
+        const replay = await api(filmPath, filmRequest);
+        assert.equal(replay.headers()['idempotency-replayed'], 'true');
+        assert.equal((await data(replay, 'replay the same video retry')).id, film.id);
+        receipt.cases.push('retry reused the original video inputs and replay returned the same task ID');
+      }
+    } catch (error) {
+      receipt.failures.push({ kind: 'video', code: 'admission', details: String(error.message).slice(0, 250) });
+    }
+    if (web) {
+      try {
+        await page.locator('[data-qc=saved-notice]').waitFor();
+        await page.reload();
+        await page.locator(`[data-run-id="${web.id}"]`).waitFor();
+        await page.screenshot({ path: join(out, '05-recovered-run.png') });
+        const runUrl = new URL(`${base}/runs/${web.id}`, origin).href;
+        await page.route(runUrl, route => route.abort('internetdisconnected'), { times: 1 });
+        await page.locator('[data-qc=reconnecting]').waitFor();
+        await page.screenshot({ path: join(out, '06-disconnected-run.png') });
+        await page.locator('[data-qc=reconnecting]').waitFor({ state: 'hidden' });
+        assert.equal(await page.locator('[data-run-id]').getAttribute('data-run-id'), web.id);
+        receipt.cases.push('transient browser disconnect, same persisted task resumed automatically');
+      } catch (error) {
+        receipt.failures.push({ id: web.id, kind: 'web', code: 'recovery', details: String(error.message).slice(0, 250) });
+      }
+    }
+    const expected = new Map(receipt.runs.map(row => [row.id, (row.kind === 'web' ? 22 : 135) * 60_000]));
     const started = Date.now();
     while (expected.size) {
       for (const [id, budget] of expected) {
         const view = await data(await api(`${base}/runs/${id}`), 'read durable run');
         const row = receipt.runs.find(item => item.id === id);
+        if (row.currentStatus !== view.status) {
+          console.log(`Quick creation ${view.kind} ${id}: ${view.status}`);
+        }
         row.currentStatus = view.status;
         row.elapsedSec = view.elapsedSec;
-        assert.ok(view.status !== 'failed', `The real ${view.kind} task ended in failure`);
-        assert.ok(Date.now() - started <= budget, `The real ${view.kind} task exceeded the acceptance deadline`);
-        if (view.status !== 'done') continue;
-        if (view.kind === 'video') {
-          const response = await api(view.media.url, { headers: { Authorization: `Bearer ${token}`, Range: 'bytes=0-31' } });
-          assert.equal(response.status(), 206);
-          assert.equal((await response.body()).toString('ascii', 4, 8), 'ftyp');
-          assert.ok(view.durationSec > 0);
-          row.durationSec = view.durationSec;
-          row.captionCount = view.captions?.length ?? 0;
-        } else {
-          assert.ok(view.previewSiteId);
+        const stage = view.stages?.find(item => item.status === 'running') ?? view.stages?.at(-1);
+        if (stage) {
+          row.stages ??= [];
+          if (row.stages.at(-1)?.key !== stage.key || row.stages.at(-1)?.status !== stage.status) {
+            row.stages.push({ key: stage.key, label: stage.label, status: stage.status, elapsedSec: view.elapsedSec });
+          }
         }
-        const publish = `${base}/runs/${id}/publish`;
-        const a = await data(await api(publish, { method: 'POST', data: {} }), 'publish completed output');
-        const b = await data(await api(publish, { method: 'POST', data: {} }), 'repeat same publication');
-        assert.ok(a.publish.siteId && a.publish.siteId === b.publish.siteId);
-        row.siteId = a.publish.siteId;
+        if (view.status === 'failed' || Date.now() - started > budget) {
+          const failure = { id, kind: view.kind,
+            code: view.status === 'failed' ? 'task_failed' : 'acceptance_deadline',
+            stage: view.failure?.stageKey ?? stage?.key, message: view.failure?.message };
+          receipt.failures.push(failure);
+          console.log(JSON.stringify(failure));
+          expected.delete(id);
+          continue;
+        }
+        if (view.status !== 'done') continue;
+        try {
+          if (view.kind === 'video') {
+            const response = await api(view.media.url, { headers: { Range: 'bytes=0-31' } });
+            assert.equal(response.status(), 206);
+            assert.equal((await response.body()).toString('ascii', 4, 8), 'ftyp');
+            assert.ok(view.durationSec > 0);
+            row.durationSec = view.durationSec;
+            row.captionCount = view.captions?.length ?? 0;
+          } else {
+            assert.ok(view.previewSiteId);
+          }
+          await verifyPreview(page, view, row);
+          const publish = `${base}/runs/${id}/publish`;
+          const [published] = await Promise.all([
+            page.waitForResponse(match(publish, 'POST')),
+            page.locator('[data-qc=publish]').click(),
+          ]);
+          const a = await data(published, 'publish completed output through the UI');
+          const b = await data(await api(publish, { method: 'POST', data: {} }), 'repeat same publication');
+          assert.ok(a.publish.siteId && a.publish.siteId === b.publish.siteId);
+          await page.locator('[data-qc=published]').waitFor();
+          row.siteId = a.publish.siteId;
+          await page.screenshot({ path: join(out, `08-${view.kind}-published.png`) });
+          if (view.kind === 'video' && !row.captionSeek) {
+            receipt.failures.push({ id, kind: view.kind, code: 'no_timed_caption_verified' });
+          }
+        } catch (error) {
+          receipt.failures.push({ id, kind: view.kind, code: 'preview_or_publication', details: String(error.message).slice(0, 250) });
+          await page.screenshot({ path: join(out, `07-${view.kind}-failure.png`) }).catch(() => {});
+        }
         expected.delete(id);
       }
       if (expected.size) await delay(20_000);
     }
   }
+  assert.equal(receipt.failures.length, 0, JSON.stringify(receipt.failures));
 } finally {
   await writeFile(join(out, 'result.json'), JSON.stringify(receipt, null, 2));
   await browser.close();

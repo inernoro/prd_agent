@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc.Routing;
 using PrdAgent.Api.Services.BackgroundTasks;
 using PrdAgent.Core.LlmGateway;
 using PrdAgent.Core.Interfaces;
+using PrdAgent.Core.Models;
 using PrdAgent.Core.Services;
 using Xunit;
 
@@ -11,6 +12,20 @@ namespace PrdAgent.Api.Tests.Services;
 
 public sealed class TaskAdmissionPolicyTests
 {
+    [Theory]
+    [InlineData("CreateQuickCreationRun")]
+    [InlineData("RetryQuickCreationRun")]
+    public void QuickCreation_RequiresTheExistingDesignGenerationPermit(string action)
+    {
+        const string controller = "PrdAgent.Api.Controllers.Api.DesignArtifactsController";
+        var policy = TaskAdmissionPolicies.Find(controller, action);
+        Assert.NotNull(policy);
+        Assert.Equal(new[] { AppCallerRegistry.Admin.WebHosting.GenerateHtml }, policy.AppCallers);
+        Assert.Equal(TaskAdmissionTiming.Middleware, policy.Timing);
+        Assert.Null(TaskAdmissionPolicies.Find(controller, "GetQuickCreationRun"));
+        Assert.Null(TaskAdmissionPolicies.Find(controller, "PublishQuickCreationRun"));
+    }
+
     [Theory]
     [InlineData("McpSpeechController")]
     [InlineData("SpeechOpenApiController")]

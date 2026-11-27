@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Captions, Check, Maximize, Monitor, Pause, Play, SkipBack, SkipForward, Smartphone, Volume2, VolumeX } from 'lucide-react';
+import { Captions, Maximize, Monitor, Pause, Play, SkipBack, SkipForward, Smartphone, Volume2, VolumeX } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { readQuickCreationFilm, readQuickCreationPage } from '@/services/real/quickCreation';
 import { StyleFrame, TemplatePageBody } from './TemplateFrames';
@@ -27,10 +27,12 @@ function FrameSkeleton({ big }: { big?: boolean }) {
 
 /** 生成中：视频是「当前这一幕的大画面 + 分镜胶片」，网页是「正在写的页面 + 大纲」 */
 export function ProgressPreview({ run, template }: { run: QcRun; template: QcTemplate }) {
+  const stage = run.stages.find(item => item.status === 'running');
+  const statusText = run.status === 'queued' ? '排队中'
+    : run.status === 'failed' ? run.failure?.message ?? '这次没有完成'
+      : stage?.label || '正在生成';
   if (run.kind === 'web') {
     const sections = run.sections ?? [];
-    const live = run.stages.find(s => s.status === 'running');
-    const doneCount = run.status === 'queued' || !sections.length ? 0 : Math.max(1, Math.floor(sections.length * ((live?.progress ?? 50) / 100)));
     return (
       <div className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto p-4 lg:flex-row lg:p-5" data-qc="outline-preview">
         <div className="min-w-0 flex-1 overflow-hidden rounded-[12px] border border-token-subtle bg-[var(--bg-elevated)]">
@@ -39,32 +41,27 @@ export function ProgressPreview({ run, template }: { run: QcRun; template: QcTem
             <span className="ml-2 truncate text-[11.5px] text-token-muted">{run.title}</span>
           </div>
           {sections.length ? (
-            <div className="bg-white"><StyleFrame template={template} /><TemplatePageBody sections={sections} pendingFrom={doneCount} maxHeight="none" /></div>
-          ) : <div className="p-4"><FrameSkeleton big /></div>}
+            <div className="bg-white"><StyleFrame template={template} /><TemplatePageBody sections={sections} maxHeight="none" /></div>
+          ) : <div className="p-4"><FrameSkeleton big /><p className="mb-0 mt-3 text-sm text-token-secondary" role="status">{statusText}</p></div>}
         </div>
-        <div className="shrink-0 lg:w-[220px]">
-          <div className="mb-2 text-[12px] font-medium text-token-secondary">页面大纲 · {doneCount} / {sections.length || '-'} 节</div>
+        {sections.length > 0 && <div className="shrink-0 lg:w-[220px]">
+          <div className="mb-2 text-[12px] font-medium text-token-secondary">页面大纲 · {sections.length} 节</div>
           <ol className="space-y-1.5">
-            {sections.map((s, i) => {
-              const st = i < doneCount ? 'done' : i === doneCount ? 'live' : 'wait';
-              return (
-                <li key={s.anchor} className={cn('flex items-center gap-2 rounded-[10px] border px-2.5 py-2 text-[12.5px]', st === 'live' ? 'qc-shimmer border-[color:var(--accent-primary)] bg-[var(--selection-bg)]' : 'border-token-subtle bg-[var(--bg-input)]')}>
-                  <span className="w-4 tabular-nums text-token-muted">{i + 1}</span>
-                  <span className={cn('min-w-0 flex-1 truncate', st === 'wait' ? 'text-token-muted' : 'text-token-primary')}>{s.title}</span>
-                  {st === 'done' && <Check size={13} className="text-[color:var(--accent-fg-success)]" aria-label="已写好" />}
-                  {st === 'live' && <span className="text-[11px] font-medium text-[color:var(--accent-primary)]">在写</span>}
-                </li>
-              );
-            })}
+            {sections.map((section, index) => (
+              <li key={section.anchor} className="flex items-center gap-2 rounded-[10px] border border-token-subtle bg-[var(--bg-input)] px-2.5 py-2 text-[12.5px]">
+                <span className="w-4 tabular-nums text-token-muted">{index + 1}</span>
+                <span className="min-w-0 flex-1 truncate text-token-primary">{section.title}</span>
+              </li>
+            ))}
           </ol>
-        </div>
+        </div>}
       </div>
     );
   }
   const scenes = run.scenes ?? [];
   const focus = scenes.find(s => s.status === 'failed') ?? scenes.find(s => s.status === 'voicing') ?? scenes.find(s => s.status === 'drawing')
     ?? [...scenes].reverse().find(s => s.status !== 'waiting');
-  const started = scenes.filter(s => s.status !== 'waiting').length;
+  const ready = scenes.filter(s => s.status === 'ready').length;
   return (
     <div className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto p-2.5 sm:p-4 lg:p-5" style={{ overscrollBehavior: 'contain' }} data-qc="storyboard-preview">
       <div className="mx-auto w-full" style={{ maxWidth: 'min(100%, calc((100dvh - 430px) * 16 / 9))' }}>
@@ -78,7 +75,7 @@ export function ProgressPreview({ run, template }: { run: QcRun; template: QcTem
                 {focus.status === 'voicing' && <Wave />}{SCENE_STATUS[focus.status]}
               </span>
             </>
-          ) : <span className="text-token-muted">排队中 · 轮到后从第 1 幕开始画</span>}
+          ) : <span className="text-token-muted" role="status">{statusText}</span>}
         </div>
         <div className={cn('relative overflow-hidden rounded-[12px] border shadow-[var(--shadow-card-sm)]',
           focus?.status === 'failed' ? 'border-[color:var(--accent-fg-error)]' : 'border-token-subtle')}>
@@ -94,13 +91,11 @@ export function ProgressPreview({ run, template }: { run: QcRun; template: QcTem
               )}
             </>
           )}
-          {!focus && <div className="absolute inset-x-0 bottom-4 text-center text-[12.5px] text-token-secondary">排到后先出分镜，{scenes.length || 6} 幕会逐个出现在这里</div>}
         </div>
       </div>
-      <div>
+      {scenes.length > 0 && <div>
         <div className="mb-2 flex items-center justify-between text-[12px]">
-          <span className="font-medium text-token-secondary">分镜 · {started} / {scenes.length} 幕已出</span>
-          <span className="text-token-muted">配音完成的幕标为已完成，全部完成后合成成片</span>
+          <span className="font-medium text-token-secondary">分镜 · {ready} / {scenes.length} 幕已完成</span>
         </div>
         <div className="grid grid-cols-3 gap-2.5 xl:grid-cols-6">
           {scenes.map(s => {
@@ -122,7 +117,7 @@ export function ProgressPreview({ run, template }: { run: QcRun; template: QcTem
             );
           })}
         </div>
-      </div>
+      </div>}
     </div>
   );
 }

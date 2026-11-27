@@ -195,6 +195,10 @@ public sealed partial class DesignArtifactsController : ControllerBase
         string? retryOfRunId = null)
     {
         var userId = this.GetRequiredUserId();
+        var taskPermitId = TaskExecutionContext.Current?.PermitId;
+        if (quickCreation != null && string.IsNullOrWhiteSpace(taskPermitId))
+            throw new TaskExecutionAdmissionException("TASK_EXECUTION_NOT_ADMITTED",
+                "任务未能取得执行许可，稿件仍保留，请重新提交。");
         var protectedOverrides = DesignArtifactRequestAuthorityGuard.FindProtectedOverrides(
             request.AdditionalProperties?.Keys);
         if (protectedOverrides.Count > 0)
@@ -353,7 +357,7 @@ public sealed partial class DesignArtifactsController : ControllerBase
         }
         var run = new DesignArtifactRun
         {
-            TaskPermitId = TaskExecutionContext.Current?.PermitId,
+            TaskPermitId = taskPermitId,
             Id = runId,
             DeploymentSlug = DeploymentScope.Current,
             UserId = userId,

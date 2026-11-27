@@ -37,6 +37,10 @@ on:
         description: '在隔离预览提交一份示例稿件，等待真实网页与代码视频生成'
         type: boolean
         default: false
+      quick_creation_retry_film_id:
+        description: '可选的本账号旧视频任务编号，复用该任务稿件和风格完成重试验收'
+        required: false
+        default: ''
       perf_ref:
         description: '隔离性能回归的候选提交或 ref；留空跳过，不接受 URL'
         required: false
@@ -268,6 +272,7 @@ jobs:
           E2E_BASE_URL: ${{ inputs.e2e_base_url }}
           E2E_EXPECTED_COMMIT: ${{ inputs.quick_creation_commit }}
           E2E_QC_GENERATE: ${{ inputs.quick_creation_generate }}
+          E2E_QC_RETRY_FILM: ${{ inputs.quick_creation_retry_film_id }}
           E2E_USER: ${{ secrets.E2E_USER }}
           E2E_PASSWORD: ${{ secrets.E2E_PASSWORD }}
         run: node e2e/quick-creation-v6-acceptance.mjs

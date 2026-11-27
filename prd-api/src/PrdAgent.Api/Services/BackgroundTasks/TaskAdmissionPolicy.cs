@@ -71,6 +71,8 @@ public static class TaskAdmissionPolicies
         Add("DocumentStoreController", "CreativePublishEntry SelectionRewrite GenerateSubtitle TranscribeEntry RestyleTranscribeRun Reprocess SendReprocessChat GenerateWritingDraft StartRecordingUpload CompleteRecordingUpload RetryRecordingArchive LiveTranscription StartAutoLink", new[] { "document-store.", "transcript-agent.", "prd-agent-web.web-hosting.", "md-to-ppt-agent." });
         Add("ShortVideoMaterialController", "CreateRun", new[] { "video-agent.", "workflow-agent.", "transcript-agent.", "document-store." });
         Add("DesignArtifactsController", "CreateRun", new[] { "prd-agent-web.web-hosting.", "md-to-ppt-agent." }, maxCalls: 256);
+        Register("DesignArtifactsController", "CreateQuickCreationRun RetryQuickCreationRun",
+            new[] { AppCallerRegistry.Admin.WebHosting.GenerateHtml }, false, 256);
         Register("DesignArtifactsController", "RestartRun",
             new[]
             {
