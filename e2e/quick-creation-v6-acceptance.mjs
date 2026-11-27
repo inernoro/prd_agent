@@ -60,6 +60,7 @@ async function openWorkbench(page, { mobile = false } = {}) {
   ]);
   assert.equal(new URL(page.url()).pathname, '/quick-creation-agent');
   const catalog = await data(templates, 'style catalog');
+  if (catalog.browserFilm) receipt.version = 9;
   assert.equal(catalog.categories.length, 15);
   assert.equal(catalog.items.length, 99);
   assert.equal(new Set(catalog.items.map(style => style.id)).size, 99);
@@ -196,7 +197,7 @@ async function verifyMaterialsBeforeGeneration(page, api, original) {
     assert.equal(await page.locator('#qc-ask').inputValue(), requirement);
     await page.getByRole('radiogroup', { name: '选择产出' }).getByRole('radio', { name: '视频', exact: true }).click();
     const film = await stopAtSubmission(page, () => submit.click());
-    assert.deepEqual(film, { ...payload, kind: 'video' });
+    assert.deepEqual(film, { ...payload, kind: 'video', ...(receipt.version === 9 ? { duration: 'auto' } : {}) });
     receipt.preSubmission = { generatedJobs: 0, sourceSha256: digest(longSource), referenceSha256: digest(imageBytes),
       readable: expectedIds.length, rejected: 2, sourceCharacters: longSource.length, referenceBytes: imageBytes.length,
       referenceCount: [reference, ...extras.filter(item => item.kind === 'image')].length, requestCharacters: requirement.length,
@@ -267,9 +268,18 @@ async function verifyBriefJourney(page, api) {
       selectedName, { timeout: 105_000 });
     await page.locator('[data-qc=brief-start]:enabled').click();
     await page.locator('[data-qc=script-draft] [data-qc=script-confirm]').waitFor({ timeout: 105_000 });
-    const planned = await data(await api(`${base}/brief/${briefId}`), 'read rendered script');
+    let planned = await data(await api(`${base}/brief/${briefId}`), 'read rendered script');
     assert.ok(planned.script.length > 0 && planned.script.every(scene => scene.visual && scene.narration));
     assert.equal(createdRuns.length, 0, 'A storyboard draft must not enter the generation queue');
+    if (receipt.version === 9) {
+      const initialSeconds = planned.script.reduce((sum, scene) => sum + scene.durationSec, 0);
+      assert.ok(initialSeconds >= 51 && initialSeconds <= 69);
+      planned = await send('长一点');
+      assert.equal(planned.durationChoice, 180);
+      const adjustedSeconds = planned.script.reduce((sum, scene) => sum + scene.durationSec, 0);
+      assert.ok(adjustedSeconds >= 153 && adjustedSeconds <= 207);
+      receipt.storyboard = { initialSeconds, adjustedSeconds };
+    }
     await page.reload();
     await page.locator('[data-qc=script-draft] [data-qc=script-confirm]').waitFor();
     assert.equal(new URL(page.url()).searchParams.get('brief'), briefId);
@@ -292,6 +302,58 @@ async function verifyBriefJourney(page, api) {
   } finally {
     page.off('request', observe);
   }
+}
+
+async function verifyV9Duration(page) {
+  const output = page.getByRole('radiogroup', { name: '选择产出' });
+  await output.getByRole('radio', { name: '视频', exact: true }).click();
+  const chip = page.locator('[data-qc=style-chip]');
+  await chip.getByText(/约 3 分钟/).waitFor();
+  await chip.click();
+  await page.locator('[data-qc=duration-basis]').getByText(/约 13 幕/).waitFor();
+  assert.equal(await page.locator('[data-qc=trial-toggle]').getAttribute('aria-checked'), 'true');
+  await page.locator('[data-qc=duration-option][data-value="60"]').click();
+  await page.locator('[data-qc=trial-toggle][aria-checked="false"]').waitFor();
+  await page.locator('[data-qc=duration-option][data-value="600"]').click();
+  await page.screenshot({ path: join(out, '16-v9-duration.png') });
+  await page.keyboard.press('Escape');
+  const payload = await stopAtSubmission(page, () => page.locator('[data-qc=submit]').click());
+  assert.equal(payload.duration, 600);
+  await chip.click();
+  await page.locator('[data-qc=duration-option][data-value="auto"]').click();
+  await page.keyboard.press('Escape');
+  await output.getByRole('radio', { name: '网页', exact: true }).click();
+  receipt.cases.push('V9 duration uses server estimates, persistence payload and trial defaults');
+}
+
+async function openV9Run(page, view) {
+  await page.getByRole('button', { name: /^我的作品，共/ }).click();
+  await page.locator(`[data-qc=works] button[data-run-id="${view.id}"]`).click();
+  await page.locator(`[data-run-id="${view.id}"]`).waitFor();
+}
+
+async function verifyV9Player(page, view, row) {
+  await page.locator('[data-qc=browser-player] iframe').waitFor();
+  const frame = page.frameLocator('[data-qc=browser-player] iframe');
+  const timeline = frame.locator('audio');
+  await timeline.waitFor();
+  const cue = view.captions?.find(item => item.toSec - item.fromSec > 0.2);
+  assert.ok(cue, 'The delivered bundle has an aligned caption track');
+  await timeline.evaluate(element => new Promise((resolve, reject) => {
+    if (element.readyState >= 1) { resolve(); return; }
+    element.addEventListener('loadedmetadata', resolve, { once: true });
+    element.addEventListener('error', reject, { once: true });
+  }));
+  await timeline.evaluate((element, time) => { element.currentTime = time; }, (cue.fromSec + cue.toSec) / 2);
+  await frame.locator('figcaption span:visible').filter({ hasText: cue.text.replace(/\s+/g, ' ') }).waitFor();
+  await frame.getByRole('button', { name: '字幕' }).click();
+  await frame.locator('figcaption span').waitFor({ state: 'hidden' });
+  await frame.getByRole('button', { name: '字幕' }).click();
+  await frame.locator('figcaption span').waitFor({ state: 'visible' });
+  assert.ok(await frame.locator('canvas').evaluate(canvas => canvas.width === 1920 && canvas.height === 1080));
+  row.captionSeek = 'pass';
+  row.preview = 'pass';
+  await page.screenshot({ path: join(out, `07-v9-${view.status}.png`) });
 }
 
 async function verifyPreview(page, view, row) {
@@ -374,6 +436,7 @@ try {
   assert.equal(original.name, '需求评审的三个习惯.md');
   assert.equal(original.status, 'ready');
   assert.ok(original.excerpt.includes('习惯三：最后对验收'));
+  if (receipt.version === 9) await verifyV9Duration(page);
   await page.locator('[data-qc=submit]:enabled').waitFor();
   await page.screenshot({ path: join(out, '03-desktop-source.png') });
   receipt.cases.push('fixed V6 sample loaded and eligible');
@@ -402,7 +465,8 @@ try {
     }
   }
   if (generate) {
-    const filmInput = { kind: 'video', templateId: 'sketchnote', ask: '', attachmentIds: [original.id], title: '需求评审的三个习惯' };
+    const filmInput = { kind: 'video', templateId: 'sketchnote', ask: '', attachmentIds: [original.id], title: '需求评审的三个习惯',
+      ...(receipt.version === 9 ? { duration: 180, trial: true } : {}) };
     const unverified = await api(base + '/runs', { method: 'POST', data: filmInput });
     assert.equal(unverified.status(), 400, 'A request without explicit intent must not create a task');
     assert.equal((await unverified.json()).error?.code, 'TASK_INTENT_REQUIRED');
@@ -510,9 +574,36 @@ try {
           expected.delete(id);
           continue;
         }
+        if (view.status === 'trial-ready') {
+          try {
+            await openV9Run(page, view);
+            await verifyV9Player(page, view, row);
+            assert.equal(view.trial.scenes, 2);
+            assert.ok(view.trial.seconds >= 12 && view.trial.seconds <= 45);
+            const [approved] = await Promise.all([
+              page.waitForResponse(match(`${base}/runs/${id}/trial/approve`, 'POST')),
+              page.locator('[data-qc=trial-approve]').click(),
+            ]);
+            const next = await data(approved, 'approve trial and resume');
+            assert.equal(next.trial.status, 'approved');
+            assert.equal(next.targetDurationSec, view.targetDurationSec);
+            receipt.runs.push({ id: next.id, kind: 'video', admitted: next.status, resumedTrial: id });
+            expected.set(next.id, budget);
+          } catch (error) { receipt.failures.push({ id, code: 'trial_resume', details: String(error.message).slice(0, 250) }); }
+          expected.delete(id);
+          continue;
+        }
         if (view.status !== 'done') continue;
         try {
-          if (view.kind === 'video') {
+          if (view.bundleUrl) {
+            const bundle = await data(await api(view.bundleUrl), 'committed browser film');
+            assert.equal(bundle.version, 1);
+            assert.ok(bundle.aac && bundle.opus);
+            assert.ok(Math.abs(bundle.durationSec - view.targetDurationSec) <= view.targetDurationSec * .15);
+            assert.equal(view.media, null);
+            row.durationSec = bundle.durationSec;
+            row.captionCount = bundle.captions.length;
+          } else if (view.kind === 'video') {
             const response = await api(view.media.url, { headers: { Range: 'bytes=0-31' } });
             assert.equal(response.status(), 206);
             assert.equal((await response.body()).toString('ascii', 4, 8), 'ftyp');
@@ -522,7 +613,32 @@ try {
           } else {
             assert.ok(view.previewSiteId);
           }
-          await verifyPreview(page, view, row);
+          if (view.bundleUrl) {
+            await openV9Run(page, view);
+            await verifyV9Player(page, view, row);
+            const exportButton = page.locator('[data-qc=export-start]:enabled');
+            const unsupported = page.locator('[data-qc=export-unsupported]');
+            await exportButton.or(unsupported).waitFor();
+            if (await exportButton.count()) {
+              await exportButton.click();
+              const status = page.locator('[data-qc=export-card][data-state=exporting]');
+              await status.waitFor();
+              await status.getByRole('button', { name: '取消导出' }).click();
+              await exportButton.waitFor();
+              await exportButton.click();
+              const link = page.getByRole('link', { name: '下载文件' });
+              await link.waitFor({ timeout: 25 * 60_000 });
+              const [download] = await Promise.all([page.waitForEvent('download'), link.click()]);
+              assert.match(download.suggestedFilename(), /\.(mp4|webm)$/);
+              row.browserExport = 'pass';
+            } else {
+              await page.locator('[data-qc=export-unsupported]').waitFor();
+              await page.getByRole('button', { name: '请服务器导出' }).click();
+              const cloud = page.getByRole('button', { name: '下载云端导出的 MP4' });
+              await cloud.waitFor({ timeout: 50 * 60_000 });
+              row.cloudExport = 'pass';
+            }
+          } else await verifyPreview(page, view, row);
           const publish = `${base}/runs/${id}/publish`;
           const [published] = await Promise.all([
             page.waitForResponse(match(publish, 'POST')),

@@ -122,7 +122,7 @@ export function BrowserExport({ run }: { run: QcRun }) {
         controller.signal.addEventListener('abort', aborted, { once: true });
         setFrameHtml(html);
       });
-      const blob = await exportFilmInBrowser(bundle, frame, setProgress, controller.signal);
+      const blob = await exportFilmInBrowser(bundle, frame, container, setProgress, controller.signal);
       controller.signal.throwIfAborted();
       const url = URL.createObjectURL(blob);
       lastUrl.current = url;
