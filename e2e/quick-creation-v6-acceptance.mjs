@@ -375,14 +375,6 @@ async function verifyExistingVideo(page, api) {
   assert.equal(repeated.publish.siteId, published.publish.siteId);
   row.siteId = repeated.publish.siteId;
   await page.screenshot({ path: join(out, '21-watercolor-published.png') });
-  await page.locator('[data-qc=open-hosting]').click();
-  const hosted = page.locator(`[data-hosted-site-id="${row.siteId}"]`);
-  await hosted.waitFor();
-  await page.waitForFunction(siteId => [...document.querySelectorAll('[data-hosted-site-id]')]
-    .some(element => element.dataset.hostedSiteId === siteId && element.style.outlineWidth === '2px'), row.siteId);
-  assert.equal(new URL(page.url()).pathname, '/web-pages');
-  await page.screenshot({ path: join(out, '22-watercolor-hosted.png') });
-  row.locatedHostedSite = true;
 
   const response = await api(film.media.url, { timeout: 90_000 });
   assert.equal(response.status(), 200);
@@ -402,6 +394,29 @@ async function verifyExistingVideo(page, api) {
   } else {
     assert.ok(film.captions.every(cue => cue.fromSec >= 0 && cue.toSec > cue.fromSec && cue.toSec <= row.media.duration + 0.5));
   }
+  if (film.hasSubtitleFreePreview) {
+    const alternative = await api(`${film.media.url}?preview=true`, { timeout: 90_000 });
+    assert.equal(alternative.status(), 200);
+    const alternateBytes = await alternative.body();
+    const alternatePath = join(process.env.RUNNER_TEMP, 'watercolor-preview.mp4');
+    await writeFile(alternatePath, alternateBytes);
+    const packetDigest = async (file, stream) => (await runProcess('ffmpeg', ['-v', 'error', '-i', file, '-map', `0:${stream}:0`,
+      '-c', 'copy', '-f', 'hash', '-hash', 'sha256', '-'])).stdout.trim();
+    row.alternate = {
+      sha256: digest(alternateBytes), identicalFile: bytes.equals(alternateBytes),
+      sameAudioPackets: await packetDigest(media, 'a') === await packetDigest(alternatePath, 'a'),
+      sameVideoPackets: await packetDigest(media, 'v') === await packetDigest(alternatePath, 'v'),
+    };
+    if (row.alternate.sameVideoPackets) receipt.failures.push({ id: film.id, kind: 'video', code: 'stamped_captions_in_alternate' });
+  }
+  await Promise.all([
+    page.waitForFunction(siteId => [...document.querySelectorAll('[data-hosted-site-id]')]
+      .some(element => element.dataset.hostedSiteId === siteId && element.style.outline.includes('2px')), row.siteId),
+    page.locator('[data-qc=open-hosting]').click(),
+  ]);
+  assert.equal(new URL(page.url()).pathname, '/web-pages');
+  await page.screenshot({ path: join(out, '22-watercolor-hosted.png') });
+  row.locatedHostedSite = true;
 }
 
 const browser = await chromium.launch();
