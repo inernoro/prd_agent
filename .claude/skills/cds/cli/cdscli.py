@@ -4421,7 +4421,9 @@ def _design_git_package(directory: Path, *, allow_root: bool = True) -> tuple[st
         if not prefix and not allow_root:
             die("私有归档须指定稿件子目录")
         tree = f"{commit}:{prefix}" if prefix else commit
-        archive = subprocess.run(["git", "-C", root, "archive", "--format=zip", tree],
+        # 按提交里的原始字节打包：Windows 上 core.autocrlf=true 时 git archive 会把文本转成 CRLF，
+        # 包里 source.diff 的字节数就和差异摘要对不上（CDS G-07，2026-11-27 DSN-2A3B7293 V2 被拒）
+        archive = subprocess.run(["git", "-c", "core.autocrlf=false", "-c", "core.eol=lf", "-C", root, "archive", "--format=zip", tree],
                                  check=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=20).stdout
         limit = 4 * 1024 * 1024
         if len(archive) > limit:
