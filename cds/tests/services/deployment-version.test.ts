@@ -56,6 +56,38 @@ describe('DeploymentVersionService', () => {
     expect(a).toMatch(/^[0-9a-f]{64}$/);
   });
 
+  it('keeps the just-created deployment version while all prior versions have active references', () => {
+    const historyLimit = 100;
+    let time = Date.parse(branch.createdAt);
+    const service = new DeploymentVersionService(stateService, () => new Date(time += 1000));
+    const create = (target: BranchEntry, revision: string) => service.create({
+      projectId: 'p1', branchId: target.id, commitSha: revision, configHash: 'config',
+      profiles: [profile()], branch: target, createdByRunId: `${target.id}-run`,
+    });
+
+    const previous = Array.from({ length: historyLimit }, (_, index) => {
+      const running: BranchEntry = { ...branch, id: `historical-${index}`, branch: `feat/historical-${index}`,
+        worktreePath: path.join(tmpDir, `historical-${index}`) };
+      stateService.addBranch(running);
+      const version = create(running, 'a'.repeat(40));
+      running.currentVersionId = version.id;
+      return running;
+    });
+
+    const newVersion = create(branch, 'b'.repeat(40));
+    expect(service.get(newVersion.id)).toEqual(newVersion);
+    expect(service.list({ projectId: 'p1' })).toHaveLength(historyLimit + 1);
+
+    branch.currentVersionId = newVersion.id;
+    const dropped = previous[0].currentVersionId!;
+    delete previous[0].currentVersionId;
+    const nextVersion = create(branch, 'c'.repeat(40));
+    expect(service.get(dropped)).toBeUndefined();
+    expect(service.get(newVersion.id)).toEqual(newVersion);
+    expect(service.get(nextVersion.id)).toEqual(nextVersion);
+    expect(previous.slice(1).every(running => service.get(running.currentVersionId!) !== undefined)).toBe(true);
+  });
+
   it('同提交产物复用保留分支独立库和运行配置，版本仍只保存固定产物', () => {
     const service = new DeploymentVersionService(stateService);
     const baseline = profile({ env: { DATABASE_NAME: 'shared', TOKEN: '${TOKEN}' },

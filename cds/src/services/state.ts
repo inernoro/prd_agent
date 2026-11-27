@@ -2179,7 +2179,7 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
       throw new Error(`DeploymentVersion project mismatch: ${version.projectId} != ${branch.projectId}`);
     }
     this.state.deploymentVersions[version.id] = version;
-    this.pruneDeploymentVersions(version.projectId);
+    this.pruneDeploymentVersions(version.projectId, version.id);
     // prune 的删除靠 id 集检测，单实体 hint 足够覆盖。
     this.save([{ kind: 'deploymentVersions', id: version.id }]);
     return version;
@@ -2197,13 +2197,15 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
 
-  private pruneDeploymentVersions(projectId: string): void {
+  private pruneDeploymentVersions(projectId: string, newVersionId: string): void {
     const versions = Object.values(this.state.deploymentVersions || {})
       .filter((version) => version.projectId === projectId)
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
     let overflow = versions.length - MAX_DEPLOYMENT_VERSIONS_PER_PROJECT;
     if (overflow <= 0) return;
     const protectedIds = new Set([
+      // The deployment's branch and run attach this version after create returns.
+      newVersionId,
       ...Object.values(this.state.branches).map((branch) => branch.currentVersionId).filter(Boolean),
       ...Object.values(this.state.deploymentRuns || {}).map((run) => run.versionId).filter(Boolean),
       ...this.getReleaseBatches(projectId).map(batch => batch.versionId),
