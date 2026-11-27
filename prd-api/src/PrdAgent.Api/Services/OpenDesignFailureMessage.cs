@@ -81,8 +81,7 @@ internal sealed class OpenDesignRemoteDiagnosticException : Exception
     internal OpenDesignRemoteDiagnosticException(
         string? code,
         string diagnostic,
-        OpenDesignRemoteFailureDetails? details = null,
-        bool codeFilm = false)
+        OpenDesignRemoteFailureDetails? details = null)
         : base(string.IsNullOrWhiteSpace(code) ? diagnostic : $"[{code}] {diagnostic}")
     {
         RemoteCode = code;
@@ -166,7 +165,8 @@ internal static class OpenDesignFailureMessage
         OpenDesignFailureStage stage,
         string? remoteReason,
         string? remoteCode = null,
-        OpenDesignRemoteFailureDetails? details = null)
+        OpenDesignRemoteFailureDetails? details = null,
+        bool codeFilm = false)
     {
         var diagnostic = string.IsNullOrWhiteSpace(remoteReason) ? null : remoteReason.Trim();
         var structuredDiagnostic = diagnostic != null
