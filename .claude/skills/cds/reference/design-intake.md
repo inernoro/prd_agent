@@ -386,6 +386,7 @@ CDS 按以下规则校验稿件。驳回回执返回规则编号。用 `intake` 
 
 采用 `evidenceProtocol: "program-v1"` 的稿件，先锁定主用 CDS 的实现提交与实施基线。画面声明实现地址，稿件随包提交 `src/fixtures.ts` 和 `src/data-design.ts`。程序在隔离浏览器中读稿件演示数据，用同一数据运行原型和该提交的真实页面。
 
+- `design.json` 有 `src/` 时要写 `"source": "src"`：CDS 按声明的目录算源码差异，不写时本地和服务端算出的差异摘要对不上（G-07 拒绝）。`demoData` 写成 `{ files, sha256, note }`。
 - 当前版本带 `demoData` 时，CDS 按声明顺序读取两份源码，将 CRLF 规范为 LF 后拼接验证 SHA-256。逐画面的图证与规则格由服务写入实际数据集、提交和取证来源。更高版本继承数据集校验要求。
 - `goals` 可关联本版验收项，也可引用另一个交付入口。总览对每个目标计算结论。实现者从本版交付资料中的「交接清单」进入，按稿件的验收项编号回写反馈。
 - 实现方运行 `cdscli design capture <稿件> --run <运行> --screen <画面> --slot <视口-主题>`。MCP 对应 `cds_design_acceptance` 的 `acceptance.capture`。

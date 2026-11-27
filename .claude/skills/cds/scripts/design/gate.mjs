@@ -44,6 +44,20 @@ if (d) {
   for (const [key, type] of Object.entries(optional)) if (d[key] !== undefined && typeOf(d[key]) !== type) reject('G-01', `design.json 类型不对：${key}（应为 ${type}）`);
   if (typeof d.date === 'string' && !/^\d{4}-\d{2}-\d{2}$/.test(d.date)) reject('G-01', 'date 要用 YYYY-MM-DD');
   if (typeof d.prototypeVersion === 'number' && !(Number.isInteger(d.prototypeVersion) && d.prototypeVersion > 0)) reject('G-01', 'prototypeVersion 要是正整数');
+  /* 有源码目录就要声明 source：CDS 按声明的目录算源码差异，没声明时本地按 src/ 算、服务端按无源码算，两边的差异摘要就对不上
+   * （2026-11-27 DSN-2A3B7293 V2 被 G-07「差异摘要与实际稿件变化不符」拒绝） */
+  if (d.source === undefined && files.some(f => f.startsWith('src/'))) reject('G-01', 'design.json 要写 source（源码目录，例如 "src"）：CDS 按它计算源码差异');
+  if (typeof d.source === 'string' && !files.some(f => f.startsWith(d.source.replace(/\/+$/, '') + '/'))) reject('G-01', `source 指向的目录不存在：${d.source}`);
+  /* 演示数据和 CDS 服务端的格式一致：{ files, sha256, note }，sha256 是各文件按 LF 规范化后依次拼接的摘要 */
+  if (d.demoData !== undefined) {
+    const demo = d.demoData;
+    if (!Array.isArray(demo?.files) || !demo.files.length || typeof demo.sha256 !== 'string') reject('G-01', 'demoData 要写成 { files: [...], sha256, note }');
+    else if (demo.files.some(f => !files.includes(f))) reject('G-01', `demoData 列的文件不存在：${demo.files.filter(f => !files.includes(f)).join('、')}`);
+    else {
+      const digest = createHash('sha256').update(Buffer.concat(demo.files.map(f => Buffer.from(read(f).replace(/\r\n/g, '\n'))))).digest('hex');
+      if (digest !== demo.sha256) reject('G-01', `demoData.sha256 和文件内容对不上（应为 ${digest}）`);
+    }
+  }
 }
 const rationale = d?.rationale ?? '思路.md';
 const prototype = d?.prototype ?? 'dist/index.html';

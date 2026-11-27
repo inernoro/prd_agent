@@ -5013,6 +5013,8 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
             (directory / "changes").mkdir()
             (directory / "交付说明.md").write_text(guide, encoding="utf-8", newline="\n")
             (directory / "src" / "overrides").mkdir(parents=True)
+            # 有源码目录就要声明：CDS 按 source 算源码差异，不写时本地和服务端的差异摘要对不上（G-07 拒绝）
+            scaffold_manifest["source"] = "src"
             try:
                 baseline = subprocess.run(["git", "-C", str(directory), "rev-parse", "HEAD"],
                                           capture_output=True, text=True, check=True).stdout.strip()
