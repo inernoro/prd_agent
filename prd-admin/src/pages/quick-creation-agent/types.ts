@@ -279,7 +279,7 @@ export interface QcBriefSession {
 }
 
 export type QcBriefEvent =
-  | { name: 'phase'; message: string }
+  | { name: 'phase'; message: string; resetReply?: boolean }
   | { name: 'model'; model: string; platform?: string }
   | { name: 'text'; text: string }
   | { name: 'session'; session: QcBriefSession; start: boolean }

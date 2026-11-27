@@ -228,6 +228,8 @@ async function verifyBriefJourney(page, api) {
     ]);
     assert.ok(response.ok(), `Brief message HTTP ${response.status()}`);
     assert.equal(await response.finished(), null, 'The current brief reply must finish streaming');
+    const events = (await response.text()).split(/\r?\n/).filter(line => line.startsWith('event:'));
+    assert.ok(events.includes('event: session'), `Brief turn did not save a session. Stream events: ${events.filter((event, i) => i === 0 || events[i - 1] !== event).join(', ')}`);
     const briefId = new URL(page.url()).searchParams.get('brief');
     assert.match(briefId, /^[a-f0-9]{32}$/);
     const saved = await data(await api(`${base}/brief/${briefId}`), 'read completed brief turn');
@@ -241,6 +243,7 @@ async function verifyBriefJourney(page, api) {
     assert.equal(createdRuns.length, 0, 'An incomplete brief must never start a generation job');
     assert.equal(await page.locator('[data-qc=submit]').isEnabled(), false);
     await page.screenshot({ path: join(out, '11-brief-missing.png') });
+    await page.getByRole('radiogroup', { name: '选择产出' }).getByRole('radio', { name: '视频', exact: true }).click();
 
     const beforePick = await send('我要做一个 1 分钟的手绘培训视频，给刚加入产品团队的新同事。主题是需求评审的三个习惯：先读目标确认解决谁的什么问题，再明确哪些事这次不做，最后核对能操作的验收条件。请推荐三种适合这份内容的风格。');
     assert.equal(beforePick.brief.ready, true, 'The model must complete the brief for the supplied topic');

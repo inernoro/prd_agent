@@ -70,7 +70,9 @@ export function useQuickCreationBrief(briefId: string | null, onRestore: (sessio
     try {
       const result = await streamQuickCreationBrief(turn.id, turn, controller.signal, event => {
         switch (event.name) {
-          case 'phase': setPending(value => value && { ...value, phase: event.message }); break;
+          case 'phase':
+            setPending(value => value && { ...value, phase: event.message, reply: event.resetReply ? '' : value.reply });
+            break;
           case 'model': setPending(value => value && { ...value, model: event.model, platform: event.platform }); break;
           case 'text': setPending(value => value && { ...value, reply: value.reply + event.text }); break;
           case 'session': completed = { session: event.session, start: event.start }; break;

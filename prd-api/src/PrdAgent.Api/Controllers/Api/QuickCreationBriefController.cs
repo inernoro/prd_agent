@@ -109,40 +109,24 @@ public sealed partial class DesignArtifactsController
                 brief.SourceTitle == null ? [] : await _db.Attachments.Find(row => brief.AttachmentIds.Contains(row.AttachmentId)
                     && row.UploaderId == brief.UserId && row.QuickCreationKind != "image").Project(row => row.AttachmentId)
                     .ToListAsync(deadline.Token), deadline.Token, quickCreation: true);
-            var gatewayRequest = BuildBriefRequest(brief, sources, request.Mode, text, request.TurnId!);
-            var buffer = new StringBuilder();
-            var shown = 0;
-            GatewayModelResolution? resolution = null;
-            await foreach (var chunk in gateway.StreamAsync(gatewayRequest, deadline.Token))
+            (string Reply, BriefModelUpdate Update, GatewayModelResolution? Resolution)? result;
+            for (var attempt = 0; ; attempt++)
             {
-                if (chunk.Type == GatewayChunkType.Start && chunk.Resolution != null)
+                try
                 {
-                    resolution = chunk.Resolution;
-                    await WriteBriefEventAsync("model", new { model = resolution.ActualModel, platform = resolution.ActualPlatformName });
+                    var gatewayRequest = BuildBriefRequest(brief, sources, request.Mode, text, request.TurnId!);
+                    result = await ReadBriefReplyAsync(gateway, gatewayRequest, briefId, request.TurnId!, deadline.Token);
+                    break;
                 }
-                else if (chunk.Type == GatewayChunkType.Error)
+                catch (JsonException error) when (attempt == 0 && !deadline.IsCancellationRequested)
                 {
-                    _logger?.LogWarning("Quick creation brief gateway error briefId={BriefId} turnId={TurnId} code={ErrorCode}",
-                        briefId, request.TurnId, chunk.ErrorCode);
-                    await WriteBriefEventAsync("error", new { message = "这次没有收到回复，已保留简报，请重试这句话" });
-                    return new EmptyResult();
-                }
-                else if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
-                {
-                    buffer.Append(chunk.Content);
-                    if (buffer.Length > 30000) throw new JsonException("Brief result exceeds limit");
-                    var current = buffer.ToString();
-                    var boundary = current.IndexOf(BriefDelimiter, StringComparison.Ordinal);
-                    var visible = boundary >= 0 ? boundary : Math.Max(0, current.Length - BriefDelimiter.Length + 1);
-                    if (visible > shown)
-                    {
-                        await WriteBriefEventAsync("text", new { text = current[shown..visible] });
-                        shown = visible;
-                    }
+                    _logger?.LogWarning("Retrying quick creation brief format briefId={BriefId} turnId={TurnId} position={Position}",
+                        briefId, request.TurnId, error.BytePositionInLine);
+                    await WriteBriefEventAsync("phase", new { message = "正在重新整理简报", resetReply = true });
                 }
             }
-
-            var (reply, update) = ParseBriefReply(buffer.ToString());
+            if (result is not { } completed) return new EmptyResult();
+            var (reply, update, resolution) = completed;
             if (request.Mode == "message" && !wasReady && AllowsBriefStart(text, true))
                 reply = "还不能开始，请先说说这次想讲什么。";
             else
@@ -194,6 +178,45 @@ public sealed partial class DesignArtifactsController
             }
         }
         return new EmptyResult();
+    }
+
+    private async Task<(string Reply, BriefModelUpdate Update, GatewayModelResolution? Resolution)?> ReadBriefReplyAsync(
+        ILlmGateway gateway, GatewayRequest gatewayRequest, string briefId, string turnId, CancellationToken ct)
+    {
+        var buffer = new StringBuilder();
+        var shown = 0;
+        GatewayModelResolution? resolution = null;
+        await foreach (var chunk in gateway.StreamAsync(gatewayRequest, ct))
+        {
+            if (chunk.Type == GatewayChunkType.Start && chunk.Resolution != null)
+            {
+                resolution = chunk.Resolution;
+                await WriteBriefEventAsync("model", new { model = resolution.ActualModel, platform = resolution.ActualPlatformName });
+            }
+            else if (chunk.Type == GatewayChunkType.Error)
+            {
+                _logger?.LogWarning("Quick creation brief gateway error briefId={BriefId} turnId={TurnId} code={ErrorCode}",
+                    briefId, turnId, chunk.ErrorCode);
+                await WriteBriefEventAsync("error", new { message = "这次没有收到回复，已保留简报，请重试这句话" });
+                return null;
+            }
+            else if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
+            {
+                buffer.Append(chunk.Content);
+                if (buffer.Length > 30000) throw new JsonException("Brief result exceeds limit");
+                var current = buffer.ToString();
+                var boundary = current.IndexOf(BriefDelimiter, StringComparison.Ordinal);
+                var visible = boundary >= 0 ? boundary : Math.Max(0, current.Length - BriefDelimiter.Length + 1);
+                if (visible > shown)
+                {
+                    await WriteBriefEventAsync("text", new { text = current[shown..visible] });
+                    shown = visible;
+                }
+            }
+        }
+
+        var (reply, update) = ParseBriefReply(buffer.ToString());
+        return (reply, update, resolution);
     }
 
     private FilterDefinition<QuickCreationBrief> OwnedBrief(string id)

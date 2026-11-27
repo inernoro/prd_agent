@@ -40,5 +40,3 @@ export function summarizeAttachments(items: QcAttachment[]) {
   const images = items.filter(a => a.kind === 'image').length;
   return { total: items.length, failed, reading, chars, images };
 }
-
-/** 一次创作的附件上限与文字预算 */
