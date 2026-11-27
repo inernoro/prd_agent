@@ -90,6 +90,7 @@ export function QuickCreationAgentPage() {
     setTemplateId(value.styleId);
     setStylePicked(value.brief.fields.find(field => field.key === 'style')?.source === 'pick');
     setAttachments(value.attachments);
+    if (value.draft && !value.busy) setAsk(current => current || value.draft || '');
   }, []);
   const briefFlow = useQuickCreationBrief(briefId, restoreBrief);
   const { session: brief, pending: pendingBrief, restoring: restoringBrief, syncing: syncingBrief, sync: syncBrief, error: briefError } = briefFlow;
@@ -392,6 +393,9 @@ export function QuickCreationAgentPage() {
         </div>
       )}
     </AgentTurn>
+    {restoringBrief && <AgentTurn><span className="inline-flex items-center gap-2 text-[13px] text-token-secondary" role="status">
+      <MapSpinner size={14} />正在接回创作简报
+    </span></AgentTurn>}
     <BriefConversation session={brief} pending={pendingBrief} error={briefError} templates={templates} disabled={briefDisabled}
       onRetry={() => void briefFlow.recover().then(result => { if (result) acceptBrief(result.session); })}
       onSend={text => void sendToBrief(text)} onPick={selectStyle}
@@ -446,7 +450,7 @@ export function QuickCreationAgentPage() {
           <button className="qc-icon-btn ml-auto" type="button" aria-label="发给快速创作" title="发给快速创作" data-qc="brief-send"
             disabled={!ask.trim() || !!pendingBrief || restoringBrief || syncingBrief || adding || submitting}
             onClick={() => void sendToBrief(ask)}><Send size={15} /></button>
-          <Button variant="primary" size="sm" className="shrink-0 max-md:min-h-11" disabled={!!blockReason || submitting || !!pendingBrief} onClick={() => void submit()} data-qc="submit">
+          <Button variant={brief?.brief.ready ? 'secondary' : 'primary'} size="sm" className="shrink-0 max-md:min-h-11" disabled={!!blockReason || submitting || !!pendingBrief} onClick={() => void submit()} data-qc="submit">
             {submitting ? <MapSpinner size={13} /> : <Send size={13} />}快捷生成
           </Button>
         </div>

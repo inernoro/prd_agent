@@ -17,6 +17,9 @@ public sealed class QuickCreationBrief
     public string? Duration { get; set; }
     public List<QuickCreationBriefMessage> Messages { get; set; } = [];
     public List<QuickCreationScriptScene> Script { get; set; } = [];
+    public string? PendingTurnId { get; set; }
+    public DateTime? PendingUntil { get; set; }
+    public string? UnsentText { get; set; }
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }
 

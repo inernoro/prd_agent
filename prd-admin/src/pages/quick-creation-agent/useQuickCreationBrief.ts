@@ -35,15 +35,22 @@ export function useQuickCreationBrief(briefId: string | null, onRestore: (sessio
     }
     const controller = new AbortController();
     setRestoring(true);
-    void getQuickCreationBrief(briefId, controller.signal).then(result => {
+    let timer: number | undefined;
+    const load = async () => {
+      const result = await getQuickCreationBrief(briefId, controller.signal);
       if (controller.signal.aborted) return;
-      setRestoring(false);
       if (result.success) {
         setSession(result.data);
         onRestore(result.data);
+        if (result.data.busy) {
+          timer = window.setTimeout(() => void load(), 2000);
+          return;
+        }
       } else setError(result.error.message || '简报暂时没有读到，请重试');
-    });
-    return () => controller.abort();
+      setRestoring(false);
+    };
+    void load();
+    return () => { controller.abort(); window.clearTimeout(timer); };
   }, [briefId, onRestore, restoreCount]);
 
   useEffect(() => () => request.current?.controller.abort(), []);

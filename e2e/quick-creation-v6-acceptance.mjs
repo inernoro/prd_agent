@@ -8,6 +8,7 @@ import { chromium } from '@playwright/test';
 const origin = new URL(process.env.E2E_BASE_URL);
 const commit = process.env.E2E_EXPECTED_COMMIT;
 const generate = process.env.E2E_QC_GENERATE === 'true';
+const verifyBrief = process.env.E2E_QC_BRIEF === 'true';
 const retryFilmId = process.env.E2E_QC_RETRY_FILM || '';
 const existingWebId = process.env.E2E_QC_EXISTING_WEB || '';
 assert.equal(origin.origin, 'https://dsn-1400e277-v6-codex-prd-agent.miduo.org');
@@ -18,7 +19,7 @@ if (retryFilmId) assert.match(retryFilmId, /^[a-f0-9]{32}$/);
 if (existingWebId) assert.match(existingWebId, /^[a-f0-9]{32}$/);
 const out = join(process.env.RUNNER_TEMP, 'dsn-1400e277-evidence');
 await mkdir(out, { recursive: true });
-const receipt = { design: 'DSN-1400E277', version: 6, commit, origin: origin.origin, cases: [], runs: [], failures: [] };
+const receipt = { design: 'DSN-1400E277', version: 7, commit, origin: origin.origin, cases: [], runs: [], failures: [] };
 const base = '/api/quick-creation';
 
 const match = (path, method = 'GET') => response => new URL(response.url()).origin === origin.origin
@@ -82,6 +83,68 @@ async function verifyHostingEntry(page, mobile = false) {
   await page.getByRole('button', { name: '返回网页托管', exact: true }).waitFor();
   await page.screenshot({ path: join(out, `10-${mobile ? 'phone' : 'desktop'}-hosting-entry.png`) });
   receipt.cases.push(`${mobile ? 'mobile' : 'desktop'} hosting generate button opens quick creation with webpage selected`);
+}
+
+async function verifyBriefJourney(page, api) {
+  const createdRuns = [];
+  const observe = request => {
+    if (request.method() === 'POST' && new URL(request.url()).pathname === base + '/runs') createdRuns.push(request);
+  };
+  page.on('request', observe);
+  const sendButton = page.getByRole('button', { name: '发给快速创作', exact: true });
+  async function send(text) {
+    await page.getByRole('textbox', { name: '发给快速创作', exact: true }).fill(text);
+    await sendButton.click();
+    await sendButton.waitFor();
+  }
+  try {
+    await send('可以开始了');
+    await page.locator('[data-qc=brief][data-ready=false]').waitFor();
+    assert.equal(createdRuns.length, 0, 'An incomplete brief must never start a generation job');
+    assert.equal(await page.locator('[data-qc=submit]').isEnabled(), false);
+    await page.screenshot({ path: join(out, '11-brief-missing.png') });
+
+    await send('我要做一个 1 分钟的手绘培训视频，给刚加入产品团队的新同事。主题是需求评审的三个习惯：先读目标确认解决谁的什么问题，再明确哪些事这次不做，最后核对能操作的验收条件。请推荐三种适合这份内容的风格。');
+    await page.locator('[data-qc=rec-style]').nth(2).waitFor();
+    const secondStyle = await page.locator('[data-qc=rec-style]').nth(1).getAttribute('data-style');
+    assert.ok(secondStyle);
+    const briefId = new URL(page.url()).searchParams.get('brief');
+    assert.match(briefId, /^[a-f0-9]{32}$/);
+    const beforePick = await data(await api(`${base}/brief/${briefId}`), 'read ready brief');
+    assert.equal(beforePick.brief.ready, true);
+    assert.equal(beforePick.kind, 'video');
+    assert.ok(beforePick.messages.some(message => message.role === 'agent' && message.model && message.platform));
+    await page.screenshot({ path: join(out, '12-brief-recommendations.png') });
+
+    const catalog = await data(await api(base + '/templates'), 'read catalog for the selected style');
+    const selectedName = catalog.items.find(item => item.id === secondStyle)?.name;
+    assert.ok(selectedName);
+    await send('第二个');
+    await page.waitForFunction(name => document.querySelector('[data-qc=style-chip]')?.getAttribute('aria-label')?.includes(name),
+      selectedName, { timeout: 105_000 });
+    const startedAt = Date.now();
+    let picked;
+    while (Date.now() - startedAt < 105_000) {
+      picked = await data(await api(`${base}/brief/${briefId}`), 'read selected style');
+      if (picked.revision > beforePick.revision) break;
+      await delay(1000);
+    }
+    assert.equal(picked?.styleId, secondStyle);
+    await page.locator('[data-qc=brief-start]:enabled').click();
+    await page.locator('[data-qc=script-draft] [data-qc=script-confirm]').waitFor({ timeout: 105_000 });
+    const planned = await data(await api(`${base}/brief/${briefId}`), 'read rendered script');
+    assert.ok(planned.script.length > 0 && planned.script.every(scene => scene.visual && scene.narration));
+    assert.equal(createdRuns.length, 0, 'A storyboard draft must not enter the generation queue');
+    await page.reload();
+    await page.locator('[data-qc=script-draft] [data-qc=script-confirm]').waitFor();
+    assert.equal(new URL(page.url()).searchParams.get('brief'), briefId);
+    await page.screenshot({ path: join(out, '13-brief-script-restored.png') });
+    receipt.brief = { id: briefId, model: planned.messages.at(-1)?.model, selectedStyle: planned.styleId,
+      revision: planned.revision, scenes: planned.script.length, admittedBeforeConfirm: createdRuns.length };
+    receipt.cases.push('real model, 3 style recommendations, current recommendation selection, storyboard no-queue and restored brief');
+  } finally {
+    page.off('request', observe);
+  }
 }
 
 async function verifyPreview(page, view, row) {
@@ -311,6 +374,15 @@ try {
         expected.delete(id);
       }
       if (expected.size) await delay(20_000);
+    }
+  }
+  if (verifyBrief) {
+    try {
+      await verifyHostingEntry(page);
+      await verifyBriefJourney(page, api);
+    } catch (error) {
+      await page.screenshot({ path: join(out, '13-brief-failure.png') }).catch(() => {});
+      receipt.failures.push({ kind: 'brief', code: 'journey', details: String(error.message).slice(0, 280) });
     }
   }
   assert.equal(receipt.failures.length, 0, JSON.stringify(receipt.failures));

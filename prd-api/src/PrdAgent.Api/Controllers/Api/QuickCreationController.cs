@@ -177,7 +177,7 @@ public sealed partial class DesignArtifactsController
             || request.BriefRevision is null or < 1 || request.BriefMode is not ("confirm" or "skip")))
             return QuickCreationError("请确认当前创作简报");
         await using var briefLease = request.BriefId == null ? null
-            : await VideoAssetMutationLease.AcquireAsync(_db, $"quick-creation-brief:{request.BriefId}:{request.BriefRevision}", ct);
+            : await VideoAssetMutationLease.AcquireAsync(_db, $"quick-creation-brief:{userId}:{request.BriefId}", ct);
         QuickCreationBrief? brief = null;
         if (request.BriefId != null)
         {
@@ -185,10 +185,10 @@ public sealed partial class DesignArtifactsController
             if (brief == null) return NotFound();
             var existing = await _db.DesignArtifactRuns.Find(QuickCreationScope()
                 & Builders<DesignArtifactRun>.Filter.Where(row => row.UserId == userId && row.QuickCreation != null
-                    && row.RetryOfRunId == null && row.QuickCreation.BriefId == request.BriefId
-                    && row.QuickCreation.BriefRevision == request.BriefRevision)).FirstOrDefaultAsync(ct);
+                    && row.RetryOfRunId == null && row.QuickCreation.BriefId == request.BriefId)).FirstOrDefaultAsync(ct);
             if (existing != null) return Accepted(ApiResponse<object>.Ok(await ToQuickRunAsync(existing, ct)));
             if (brief.Revision != request.BriefRevision || !BriefReady(brief) || brief.Kind != request.Kind
+                || (brief.PendingTurnId != null && brief.PendingUntil > DateTime.UtcNow)
                 || brief.StyleId != template.Id || !brief.AttachmentIds.SequenceEqual(ids)
                 || (request.BriefMode == "confirm" && (brief.Kind != "video" || brief.Script.Count == 0)))
                 return BriefConflict();

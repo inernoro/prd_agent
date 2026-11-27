@@ -30,11 +30,15 @@ on:
         required: false
         default: ''
       quick_creation_commit:
-        description: 'DSN-1400E277 V6 核对的隔离预览完整提交'
+        description: 'DSN-1400E277 快速创作核对的隔离预览完整提交'
         required: false
         default: ''
       quick_creation_generate:
         description: '在隔离预览提交一份示例稿件，等待真实网页与代码视频生成'
+        type: boolean
+        default: false
+      quick_creation_brief:
+        description: '使用真实模型验证无稿对话、推荐风格、分镜和恢复'
         type: boolean
         default: false
       quick_creation_retry_film_id:
@@ -252,7 +256,7 @@ jobs:
           retention-days: 14
 
   quick-creation-v6:
-    name: DSN-1400E277 V6 (CDS preview)
+    name: DSN-1400E277 快速创作 (CDS preview)
     if: github.event_name == 'workflow_dispatch' && inputs.quick_creation_commit != '' && inputs.e2e_base_url != ''
     runs-on: ubuntu-24.04
     timeout-minutes: 160
@@ -276,6 +280,7 @@ jobs:
           E2E_BASE_URL: ${{ inputs.e2e_base_url }}
           E2E_EXPECTED_COMMIT: ${{ inputs.quick_creation_commit }}
           E2E_QC_GENERATE: ${{ inputs.quick_creation_generate }}
+          E2E_QC_BRIEF: ${{ inputs.quick_creation_brief }}
           E2E_QC_RETRY_FILM: ${{ inputs.quick_creation_retry_film_id }}
           E2E_QC_EXISTING_WEB: ${{ inputs.quick_creation_existing_web_id }}
           E2E_USER: ${{ secrets.E2E_USER }}

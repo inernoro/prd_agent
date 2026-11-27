@@ -262,6 +262,8 @@ export interface QcBriefSession {
   attachments: QcAttachment[];
   messages: QcBriefMessage[];
   script: Array<{ index: number; visual: string; narration: string }>;
+  busy?: boolean;
+  draft?: string;
   brief: {
     fields: Array<{ key: string; label: string; required: boolean; value?: string; source?: string }>;
     ready: boolean;
