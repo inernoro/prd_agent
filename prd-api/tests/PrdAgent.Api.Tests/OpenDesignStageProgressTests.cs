@@ -203,6 +203,19 @@ public sealed class OpenDesignStageProgressTests
     }
 
     [Fact]
+    public void 代码视频显示视频创作阶段和视频失败消息()
+    {
+        var tracker = new OpenDesignStageProgress(editing: false, startProgress: 18, codeFilm: true);
+        Assert.Equal("OpenDesign 正在读取原稿和风格", tracker.Observe("open_design_importing", null, null)?.Phase);
+        Assert.Equal("OpenDesign 开始创作视频", tracker.Observe("open_design_run_starting", null, null)?.Phase);
+        Assert.StartsWith("OpenDesign 正在创作视频", tracker.Observe("open_design_running", 30, null)!.Phase);
+
+        var error = OpenDesignEventTranslator.RemoteFailure(
+            """{"code":"workspace_package_invalid","message":"invalid workspace"}""", codeFilm: true);
+        Assert.StartsWith("视频生成失败", error.Message);
+    }
+
+    [Fact]
     public void 起始进度高于阶段目标时沿用起始进度()
     {
         var tracker = new OpenDesignStageProgress(editing: false, startProgress: 40);

@@ -281,12 +281,13 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
         var workspace = await _workspaceBroker.PrepareForDirectGatewayAsync(run, currentHtml, CancellationToken.None);
         var ticketExpiresAt = run.RuntimeTicketExpiresAt ?? UtcNow().Add(FallbackTicketTtl);
         // 排队不能把票据耗光：任务真正开跑时，票据至少还要够它跑满上限。
-        var timeoutSeconds = run.ArtifactType == DesignArtifactTypes.CodeFilm
+        var codeFilm = run.ArtifactType == DesignArtifactTypes.CodeFilm;
+        var timeoutSeconds = codeFilm
             ? run.QuickCreation?.FilmTimeoutSeconds ?? 3300 : TaskTimeoutSeconds;
         var queueDeadline = ticketExpiresAt - TimeSpan.FromSeconds(timeoutSeconds) - TicketSafetyMargin;
         const int attempt = 1;
         var requestBody = BuildTaskRequest(run, workspace, attempt, timeoutSeconds);
-        var translator = new OpenDesignEventTranslator(run.Operation == DesignArtifactOperations.Edit, run.Progress);
+        var translator = new OpenDesignEventTranslator(run.Operation == DesignArtifactOperations.Edit, run.Progress, codeFilm);
         var accepted = false;
         // 提交请求一旦发出，服务就可能已经接下任务——哪怕 MAP 没等到 202（调用方取消、响应丢失、超时）。
         // 收尾时按「可能已接单」处理，否则服务唯一的执行位会被一个已被放弃的任务白占到超时。
@@ -443,7 +444,7 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
                                 OpenDesignEventTranslator.ReadPayloadString(evt.PayloadJson, "message") ?? "unknown");
                             if (code == "task_cancelled")
                                 throw new DesignArtifactExecutionCancelledException("设计执行服务报告本次任务已被取消，没有提交结果");
-                            throw OpenDesignEventTranslator.RemoteFailure(evt.PayloadJson);
+                            throw OpenDesignEventTranslator.RemoteFailure(evt.PayloadJson, codeFilm);
                         default:
                             var chunk = translator.ToChunk(evt.Type, evt.PayloadJson);
                             if (chunk != null) yield return chunk;

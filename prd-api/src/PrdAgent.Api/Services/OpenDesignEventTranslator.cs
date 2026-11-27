@@ -47,9 +47,9 @@ internal sealed class OpenDesignEventTranslator
 
     private readonly OpenDesignStageProgress _stageProgress;
 
-    internal OpenDesignEventTranslator(bool editing, int startProgress)
+    internal OpenDesignEventTranslator(bool editing, int startProgress, bool codeFilm = false)
     {
-        _stageProgress = new OpenDesignStageProgress(editing, startProgress);
+        _stageProgress = new OpenDesignStageProgress(editing, startProgress, codeFilm);
     }
 
     /// <summary>当前已写出的进度（只增不减），排队提示等非阶段事件沿用它。</summary>
@@ -86,12 +86,13 @@ internal sealed class OpenDesignEventTranslator
     }
 
     /// <summary>远端 error 事件 → 交给用户的那条异常（文案由 <see cref="OpenDesignFailureMessage"/> 唯一渲染）。</summary>
-    internal static InvalidOperationException RemoteFailure(string payloadJson) =>
+    internal static InvalidOperationException RemoteFailure(string payloadJson, bool codeFilm = false) =>
         OpenDesignFailureMessage.Failure(
             OpenDesignFailureStage.RemoteRun,
             ReadPayloadString(payloadJson, "message"),
             ReadPayloadStableToken(payloadJson, "code"),
-            ReadFailureDetails(payloadJson));
+            ReadFailureDetails(payloadJson),
+            codeFilm);
 
     internal static OpenDesignRemoteFailureDetails? ReadFailureDetails(string payloadJson)
     {

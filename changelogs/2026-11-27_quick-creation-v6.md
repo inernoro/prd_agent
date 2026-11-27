@@ -4,3 +4,4 @@
 | fix | quick-creation | 快捷生成和重新排队接入统一执行许可，避免无权限任务写入队列 |
 | fix | quick-creation | 按新版代码视频协议接收原稿、原版风格和参考图片，回传成片及字幕元数据 |
 | fix | quick-creation | 成品状态展示实际时长与分镜，网页和视频可独立复验 |
+| fix | quick-creation | 视频生成显示对应的执行阶段和失败文案 |
