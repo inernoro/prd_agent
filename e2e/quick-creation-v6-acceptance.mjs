@@ -105,11 +105,21 @@ async function verifyPreview(page, view, row) {
 async function verifyHosting(page, row) {
   assert.match(row.siteId, /^[a-f0-9]{32}$/);
   const target = `[data-hosted-site-id="${row.siteId}"]`;
-  await page.locator('[data-qc=open-hosting]').click();
-  await page.waitForFunction(selector => location.pathname === '/web-pages'
-    && document.querySelector(selector)?.style.outlineWidth === '2px', target);
-  await page.screenshot({ path: join(out, `09-${row.kind}-hosting-focus.png`) });
-  row.hostingHighlighted = true;
+  try {
+    await page.locator('[data-qc=open-hosting]').click();
+    await page.waitForFunction(selector => location.pathname === '/web-pages'
+      && document.querySelector(selector)?.style.outline === '2px solid var(--accent-primary)', target, { timeout: 12_000 });
+    await page.screenshot({ path: join(out, `09-${row.kind}-hosting-focus.png`) });
+    row.hostingHighlighted = true;
+  } catch (error) {
+    row.hosting = await page.evaluate(selector => ({
+      pathname: location.pathname,
+      focusRequested: new URLSearchParams(location.search).has('focusSite'),
+      matchingCards: document.querySelectorAll(selector).length,
+    }), target);
+    receipt.failures.push({ id: row.id, kind: row.kind, code: 'hosting_focus', details: String(error.message).slice(0, 250) });
+    await page.screenshot({ path: join(out, `09-${row.kind}-hosting-failure.png`) }).catch(() => {});
+  }
 }
 
 const browser = await chromium.launch();
@@ -200,7 +210,9 @@ try {
       receipt.runs.push(webRow);
       await verifyPreview(page, web, webRow);
       await verifyHosting(page, webRow);
-      receipt.cases.push('both existing publications opened in hosting and highlighted the exact record');
+      if (row.hostingHighlighted && webRow.hostingHighlighted) {
+        receipt.cases.push('both existing publications opened in hosting and highlighted the exact record');
+      }
     } else {
       const media = await api(film.media.url, { timeout: 60_000 });
       assert.equal(media.status(), 200);
