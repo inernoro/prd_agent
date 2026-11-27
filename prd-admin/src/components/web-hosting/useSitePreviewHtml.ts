@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { getSiteContent, getShareSiteContent } from '@/services/real/webPages';
-import { canUseSrcDocPreview, shouldFetchPreviewHtml, shouldFetchReviewHtml, withPreviewBase } from './previewHtml';
+import { canUseSrcDocPreview, shouldFetchPreviewHtml, shouldFetchReviewHtml, stripInjectedTelemetry, withPreviewBase } from './previewHtml';
 
 /**
  * 取回托管站点入口 HTML，备好可以直接塞进 iframe `srcDoc` 的字符串。
@@ -62,7 +62,8 @@ async function loadSrcDoc(site: SitePreviewHtmlSite, generatedReview: boolean): 
         // 打包型 SPA（入口是外链 module 脚本）必须留在直链：srcDoc 的不透明源会让模块脚本
         // 因缺 CORS 被拦，整页白屏。判据见 canUseSrcDocPreview。
         if (!canUseSrcDocPreview(html)) return { srcDoc: null, error: null };
-        return { srcDoc: withPreviewBase(html, site.siteUrl), error: null };
+        // 生成包的阅读副本由服务端设置 base，保留原始页内锚点供网页脚本使用。
+        return { srcDoc: generatedReview ? stripInjectedTelemetry(html) : withPreviewBase(html, site.siteUrl), error: null };
       }
       return { srcDoc: null, error: res.error?.message || '未能取回网页原文' };
     } catch {

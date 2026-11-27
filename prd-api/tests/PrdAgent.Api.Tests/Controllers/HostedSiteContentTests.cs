@@ -98,7 +98,7 @@ public sealed class HostedSiteContentTests
         var data = JsonSerializer.SerializeToElement(result.Value, WebJson).GetProperty("data");
         Assert.True(data.GetProperty("preparedGeneratedReview").GetBoolean());
         var review = data.GetProperty("html").GetString()!;
-        Assert.Contains($"<base href=\"{address}\">", review);
+        Assert.Contains($"<base href=\"{address}\" data-map-generated-review>", review);
         Assert.Contains($"img-src {address} data: blob:", review);
         Assert.Contains("connect-src 'none'; form-action 'none'", review);
         Assert.Contains("script-src 'unsafe-inline';", review);

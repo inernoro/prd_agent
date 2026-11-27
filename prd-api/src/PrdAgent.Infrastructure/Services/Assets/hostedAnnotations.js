@@ -707,6 +707,18 @@
   document.addEventListener('toggle', function (event) {
     if (context && event.target instanceof HTMLDetailsElement) schedule();
   }, true);
+  if (location.protocol === 'about:' && document.querySelector('base[data-map-generated-review]')) {
+    // 原网页脚本会把 href 原样作为选择器使用；保留片段，等网页自己的点击处理结束再兜底跳转。
+    window.addEventListener('click', function (event) {
+      if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      var link = event.target instanceof Element && event.target.closest('a[href^="#"]:not([download])');
+      if (!link || (link.target && link.target !== '_self')) return;
+      event.preventDefault();
+      var fragment = link.getAttribute('href');
+      if (fragment === '#') window.scrollTo(0, 0);
+      location.hash = fragment.slice(1);
+    });
+  }
   window.addEventListener('hashchange', invalidate);
   var observer = new MutationObserver(function (changes) {
     var relevant = changes.filter(function (record) {

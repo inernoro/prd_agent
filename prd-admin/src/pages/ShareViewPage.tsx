@@ -52,6 +52,7 @@ import {
   shouldFetchPreviewHtml,
   shouldFetchReviewHtml,
   resolvePreviewSource,
+  stripInjectedTelemetry,
   withPreviewBase,
 } from '@/components/web-hosting/previewHtml';
 import type { PreviewSource } from '@/components/web-hosting/previewHtml';
@@ -558,7 +559,8 @@ function ShareViewContent({ tokenOverride, siteIdOverride, passwordOverride, emb
           // 没有任何现场可保。露出之后才按「露出至今多久」判。
           const exposedAt = directExposedAtRef.current;
           const shownFor = exposedAt > 0 ? Date.now() - exposedAt : 0;
-          const ready = { siteUrl: site.siteUrl, html: withPreviewBase(res.data.html, site.siteUrl) };
+          const html = generatedReview ? stripInjectedTelemetry(res.data.html) : withPreviewBase(res.data.html, site.siteUrl);
+          const ready = { siteUrl: site.siteUrl, html };
           if (exposedAt > 0 && shownFor > LATE_SWAP_GUARD_MS) {
             // 迟到了：不自动换（他可能已经滚到一半），但留着并给出口。
             // 直接 return 会让「直链白屏 + 原文迟到」变成一片永远的白。

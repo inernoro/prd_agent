@@ -218,19 +218,35 @@ async function serve(page: Page, options: { shape?: string; wrapper?: string; ht
 }
 
 for (const modal of [true, false]) {
-  test(`${modal ? '站内' : '分享'}生成网页加载批注脚本并保留同包图片`, async ({ page }) => {
+  test(`${modal ? '站内' : '分享'}生成网页加载批注脚本并保留同包图片和目录`, async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
     const runtime = await readFile(new URL('../../prd-api/src/PrdAgent.Infrastructure/Services/Assets/hostedAnnotations.js', import.meta.url), 'utf8');
     const base = new URL('.', entry).href;
     const { preview, frame, contentRequests } = await serve(page, { modal, inlineHistory: true, generatedReview: true, shape: 'multi-file',
       html: `<!doctype html><html><head><meta http-equiv="Content-Security-Policy"
         content="default-src 'none'; base-uri ${base}; img-src ${base}; script-src 'unsafe-inline'; style-src 'unsafe-inline'">
-        <base href="${base}"></head><body style="padding: 50px"><p><span id="quote">这段文字可以选中批注</span></p>
-        <img src="./图片 空格.svg" alt="同包图片"><script data-map-annotations="v1">${runtime}</script></body></html>` });
+        <base href="${base}" data-map-generated-review></head><body style="padding: 50px">
+        <a href="#quote">正文目录</a><a href="#native">原生跳转</a>
+        <p><span id="quote">这段文字可以选中批注</span></p>
+        <img src="./图片 空格.svg" alt="同包图片"><div style="height: 1200px"></div><h2 id="native">文末章节</h2>
+        <script>
+          const link = document.querySelector('a');
+          const heading = document.querySelector(link.getAttribute('href'));
+          link.addEventListener('click', event => {
+            event.preventDefault();
+            heading.dataset.tocReached = 'true';
+          });
+        </script><script data-map-annotations="v1">${runtime}</script></body></html>` });
     await expect(preview).toHaveAttribute('srcdoc', /data-map-annotations/);
     expect(await frame.locator('body').evaluate(() => window.origin)).toBe('null');
     await expect.poll(() => frame.getByRole('img', { name: '同包图片' }).evaluate((image: HTMLImageElement) => image.naturalWidth)).toBeGreaterThan(0);
     expect(contentRequests()).toBe(1);
+    await frame.getByRole('link', { name: '正文目录' }).click();
+    await expect(frame.locator('#quote')).toHaveAttribute('data-toc-reached', 'true');
+    await frame.getByRole('link', { name: '原生跳转' }).click();
+    await expect(frame.locator('#native')).toBeInViewport();
+    await expect.poll(() => frame.locator('body').evaluate(() => location.hash)).toBe('#native');
+    await frame.locator('#quote').scrollIntoViewIfNeeded();
     const discussion = page.getByRole('button', { name: '批注与讨论' });
     if (!modal) await discussion.click();
     await expect(page.getByText(/选中正文中的文字可添加批注/)).toBeVisible();

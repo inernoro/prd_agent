@@ -212,7 +212,7 @@ public static class HostedSiteRevisionRules
             .Replace("script-src 'self' 'unsafe-inline'", "script-src 'unsafe-inline'", StringComparison.Ordinal)
             .Replace("worker-src 'self' blob:", "worker-src 'none'", StringComparison.Ordinal)
             .Replace("'self'", directory, StringComparison.Ordinal);
-        var head = $"<meta http-equiv=\"Content-Security-Policy\" content=\"{policy}\"><base href=\"{directory}\">";
+        var head = $"<meta http-equiv=\"Content-Security-Policy\" content=\"{policy}\"><base href=\"{directory}\" data-map-generated-review>";
         return html[..policyStart] + head + html[(policyStart + TrustedVerifiedPackageCspMeta.Length)..];
     }
 
