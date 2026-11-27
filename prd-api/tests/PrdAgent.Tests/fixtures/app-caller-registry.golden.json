@@ -630,6 +630,12 @@
     ]
   },
   {
+    "code": "prd-agent-web.web-hosting.quick-creation-brief::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
     "code": "prd-agent.arena.battle::chat",
     "modelTypes": [
       "chat"
