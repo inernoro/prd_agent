@@ -23,7 +23,8 @@ describe('isolated design reference capture', () => {
       const batch = request.references.map(target => target.screen.id);
       attempts.push(batch);
       if (batch.length > 1) return { stdout: '', stderr: 'synthetic private renderer details', exitCode: 137 };
-      return { stdout: JSON.stringify([batch[0] === 'second' ? null : thumbnail.toString('base64')]), stderr: '', exitCode: 0 };
+      if (batch[0] === 'second') return { stdout: '', stderr: 'synthetic single screen failure', exitCode: 137 };
+      return { stdout: JSON.stringify([thumbnail.toString('base64')]), stderr: '', exitCode: 0 };
     });
     const diagnostic = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const capture = createDesignReferenceContainer(shell, async () => image);
@@ -41,15 +42,48 @@ describe('isolated design reference capture', () => {
   it('bounds retries when the renderer cannot start even with one screen', async () => {
     const shell = new MockShellExecutor();
     shell.addResponsePattern(/^docker create /, () => ({ stdout: id, stderr: '', exitCode: 0 }));
-    shell.addResponsePattern(/^docker start /, () => { throw Object.assign(new Error('fixture'), { code: 'deadline' }); });
+    shell.addResponsePattern(/^docker start /, () => { throw Object.assign(new Error('fixture'), { code: 'capacity' }); });
     shell.addResponse('docker rm -f ' + id, { stdout: '', stderr: '', exitCode: 0 });
     const diagnostic = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const capture = createDesignReferenceContainer(shell, async () => image);
     const result = [];
     for await (const item of capture(Buffer.from('fixture prototype'), targets)) result.push(item);
     expect(result).toEqual([]);
-    expect(shell.commands.filter(command => command.startsWith('docker start '))).toHaveLength(2);
-    expect(shell.commands.filter(command => command === 'docker rm -f ' + id)).toHaveLength(2);
-    expect(diagnostic).toHaveBeenCalledWith('[design-browser] request failed', expect.objectContaining({ stage: 'run', reason: 'deadline' }));
+    expect(shell.commands.filter(command => command.startsWith('docker start '))).toHaveLength(1);
+    expect(shell.commands.filter(command => command === 'docker rm -f ' + id)).toHaveLength(1);
+    expect(diagnostic).toHaveBeenCalledWith('[design-browser] request failed', expect.objectContaining({ stage: 'run', reason: 'capacity' }));
+  });
+
+  it('bounds a renderer outage even when every individual capture times out', async () => {
+    const shell = new MockShellExecutor();
+    shell.addResponsePattern(/^docker create /, () => ({ stdout: id, stderr: '', exitCode: 0 }));
+    shell.addResponsePattern(/^docker start /, () => { throw Object.assign(new Error('fixture'), { code: 'deadline' }); });
+    shell.addResponse('docker rm -f ' + id, { stdout: '', stderr: '', exitCode: 0 });
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const capture = createDesignReferenceContainer(shell, async () => image);
+    const result = [];
+    for await (const item of capture(Buffer.from('fixture prototype'), targets)) result.push(item);
+    expect(result).toEqual([]);
+    expect(shell.commands.filter(command => command.startsWith('docker start '))).toHaveLength(3);
+    expect(shell.commands.filter(command => command === 'docker rm -f ' + id)).toHaveLength(3);
+  });
+
+  it('gives the remaining screenshots separate browser sessions when retrying a partial batch', async () => {
+    const shell = new MockShellExecutor();
+    const attempts: Array<{ ids: string[]; retry?: boolean; timeout?: number }> = [];
+    shell.addResponsePattern(/^docker create /, () => ({ stdout: id, stderr: '', exitCode: 0 }));
+    shell.addResponsePattern(/^docker start /, (_match, options) => {
+      const request = JSON.parse(options!.stdin!) as { references: DesignReferenceTarget[]; retry?: boolean };
+      attempts.push({ ids: request.references.map(target => target.screen.id), retry: request.retry, timeout: options?.timeout });
+      const result = request.references.map(() => request.retry && request.references.length === 1 ? thumbnail.toString('base64') : null);
+      return { stdout: JSON.stringify(result), stderr: '', exitCode: 0 };
+    });
+    shell.addResponse('docker rm -f ' + id, { stdout: '', stderr: '', exitCode: 0 });
+    const capture = createDesignReferenceContainer(shell, async () => image);
+    const result = [];
+    for await (const item of capture(Buffer.from('fixture prototype'), targets.slice(1, 3), true)) result.push(item);
+    expect(attempts.map(attempt => attempt.ids)).toEqual([['second'], ['third']]);
+    expect(attempts.every(({ retry, timeout }) => retry === true && (timeout ?? 0) > 40_000)).toBe(true);
+    expect(result.map(item => [item.screen.id, item.bytes])).toEqual([['second', thumbnail], ['third', thumbnail]]);
   });
 });

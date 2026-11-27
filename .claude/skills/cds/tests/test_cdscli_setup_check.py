@@ -403,6 +403,22 @@ class SetupCheckTests(unittest.TestCase):
         self.assertEqual(failure["credential"], {"source": "workspace", "kind": "project", "projectId": "proj-a",
                                                 "keyId": "a1b2c3d4", "designAccess": "read"})
 
+    def test_setup_reports_the_instance_key_received_by_cds_and_preserves_workspace_binding(self):
+        before = self.credentials.read_bytes()
+        self.identity_metadata.update(kind="static", projectId=None)
+        self.design_intake_status = 403
+        self.request_ids[DESIGN_INTAKE] = "eeb3d12e"
+        self.design_result = {"error": "design_project_credential_required", "message": SECRET}
+        result = self.run_design_check()
+        self.assertEqual(result.returncode, 2)
+        failure = json.loads(result.stdout)["data"]["checks"][-1]
+        self.assertEqual(failure["reason"], "design_project_credential_required")
+        self.assertEqual(failure["requestId"], "eeb3d12e")
+        self.assertEqual(failure["credential"]["kind"], "static")
+        self.assertNotIn("keyId", failure["credential"])
+        self.assertNotIn(SECRET, result.stdout)
+        self.assertEqual(self.credentials.read_bytes(), before)
+
     def test_workspace_design_connect_preserves_existing_ordinary_binding_for_publish(self):
         self.design_intake_status = 403
         before = self.credentials.read_bytes()

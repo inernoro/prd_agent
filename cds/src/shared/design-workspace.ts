@@ -303,7 +303,7 @@ export type DesignIntake = {
   handoffPolicy?: typeof designHandoffPolicy;
   protocolVersion: 1;
   projectId: string;
-  permissions: { write: boolean; feedback?: boolean; frameworkPublish?: boolean };
+  permissions: { write: boolean; feedback?: boolean; frameworkPublish?: boolean; implementation?: boolean };
   systems?: DesignSystem[];
   keyFormat: 'module/draft';
   intents: readonly ['create', 'revise'];
@@ -348,5 +348,5 @@ export type DesignWorkspace = {
   systems?: DesignSystem[];
   viewer?: DesignViewerState;
   permissions: { write: boolean; feedback?: boolean; feedbackSupplement?: boolean; frameworkPublish?: boolean; handoffCheck?: boolean; visual?: boolean; review: boolean; sign?: boolean;
-    installedAcceptance?: boolean; programRecheck?: boolean; steward: boolean; actorId: string };
+    installedAcceptance?: boolean; programRecheck?: boolean; implementation?: boolean; steward: boolean; actorId: string };
 };

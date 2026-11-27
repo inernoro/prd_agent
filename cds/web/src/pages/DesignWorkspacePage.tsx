@@ -81,8 +81,12 @@ export function DesignWorkspacePage() {
 
   const projects = usePlanningRead<{ projects: PlanningProject[] }>('/api/projects', 0);
   const options = (projects.data?.projects ?? []).filter(row => !row.mirror);
-  const project = params.get('project') ?? options[0]?.id ?? '';
-  const authorized = options.some(option => option.id === project);
+  const selector = params.get('project') ?? options[0]?.id ?? '';
+  const option = options.find(row => row.id === selector);
+  const alias = usePlanningRead<PlanningProject>(!option && options.length && selector
+    ? `/api/projects/${encodeURIComponent(selector)}` : null, reload);
+  const project = option?.id ?? options.find(row => row.id === alias.data?.id)?.id ?? '';
+  const authorized = Boolean(project);
   const draftId = params.get('design');
   const versionParam = params.get('version');
   const selectedVersion = Number(versionParam);
@@ -453,7 +457,7 @@ export function DesignWorkspacePage() {
       {!draftVisible && messages}
       {!workspace ? (projects.error || source.error)
         ? <p role="alert" className="dw-placeholder">{projects.error ?? source.error} <button type="button" className="ep-button" onClick={() => refresh(value => value + 1)}>重试</button></p>
-        : projects.loading || source.loading ? <ContentLoading variant="table" label="正在读取设计工作区" />
+        : projects.loading || alias.loading || source.loading ? <ContentLoading variant="table" label="正在读取设计工作区" />
         : <p className="dw-placeholder">{options.length ? '请先在页头选择设计项目，再打开「用技能」接入实施智能体。'
           : '当前没有可查看的设计项目。请项目负责人授予访问权限后，再接入实施智能体。'}</p>
       : requirementKey ? <DesignRequirementView key={`${project}/${requirementKey}`} project={project} requirement={requirement} workspace={workspace} command={command} busy={busy} startOpen={panel === 'brief-start'} />
