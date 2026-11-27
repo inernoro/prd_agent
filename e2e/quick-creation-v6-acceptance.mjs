@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -9,18 +9,22 @@ const origin = new URL(process.env.E2E_BASE_URL);
 const commit = process.env.E2E_EXPECTED_COMMIT;
 const generate = process.env.E2E_QC_GENERATE === 'true';
 const verifyBrief = process.env.E2E_QC_BRIEF === 'true';
+const briefAdmission = process.env.E2E_QC_BRIEF_ADMISSION || 'none';
 const retryFilmId = process.env.E2E_QC_RETRY_FILM || '';
 const existingWebId = process.env.E2E_QC_EXISTING_WEB || '';
 assert.equal(origin.origin, 'https://dsn-1400e277-v6-codex-prd-agent.miduo.org');
 assert.match(commit, /^[a-f0-9]{40}$/);
 assert.ok(process.env.E2E_USER && process.env.E2E_PASSWORD && process.env.RUNNER_TEMP);
-if (generate) assert.equal(process.env.GITHUB_RUN_ATTEMPT, '1', 'Review original tasks before repeating paid jobs');
+assert.ok(['none', 'confirm', 'skip'].includes(briefAdmission));
+if (briefAdmission !== 'none') assert.ok(verifyBrief && !generate, 'Run one explicit fileless production path separately from fixed manuscript generation');
+if (generate || briefAdmission !== 'none') assert.equal(process.env.GITHUB_RUN_ATTEMPT, '1', 'Review original tasks before repeating paid jobs');
 if (retryFilmId) assert.match(retryFilmId, /^[a-f0-9]{32}$/);
 if (existingWebId) assert.match(existingWebId, /^[a-f0-9]{32}$/);
 const out = join(process.env.RUNNER_TEMP, 'dsn-1400e277-evidence');
 await mkdir(out, { recursive: true });
 const receipt = { design: 'DSN-1400E277', version: 7, commit, origin: origin.origin, cases: [], runs: [], failures: [] };
 const base = '/api/quick-creation';
+const sha256 = text => createHash('sha256').update(text).digest('hex');
 
 const match = (path, method = 'GET') => response => new URL(response.url()).origin === origin.origin
   && new URL(response.url()).pathname === path && response.request().method() === method;
@@ -92,27 +96,56 @@ async function verifyBriefJourney(page, api) {
   };
   page.on('request', observe);
   const sendButton = page.getByRole('button', { name: '发给快速创作', exact: true });
+  const input = page.getByRole('textbox', { name: '发给快速创作', exact: true });
+  const persistedBrief = async (id, afterRevision = 0) => {
+    const deadline = Date.now() + 110_000;
+    do {
+      const brief = await data(await api(`${base}/brief/${id}`), 'read durable brief');
+      if (brief.revision > afterRevision && !brief.busy) return brief;
+      await delay(1000);
+    } while (Date.now() < deadline);
+    assert.fail('The conversation revision did not persist before the deadline');
+  };
   async function send(text) {
-    await page.getByRole('textbox', { name: '发给快速创作', exact: true }).fill(text);
-    await sendButton.click();
-    await sendButton.waitFor();
+    await input.fill(text);
+    const [response] = await Promise.all([
+      page.waitForResponse(item => new URL(item.url()).pathname.endsWith('/messages') && item.request().method() === 'POST'),
+      sendButton.click(),
+    ]);
+    assert.equal(response.status(), 200);
+    assert.match(response.headers()['content-type'], /text\/event-stream/);
   }
   try {
-    await send('可以开始了');
+    await page.getByRole('button', { name: '我想做一个宣传片', exact: true }).click();
     await page.locator('[data-qc=brief][data-ready=false]').waitFor();
+    const briefId = new URL(page.url()).searchParams.get('brief');
+    assert.match(briefId, /^[a-f0-9]{32}$/);
+    const incomplete = await persistedBrief(briefId);
+    const clarification = incomplete.messages.at(-1);
+    assert.equal(clarification?.role, 'agent');
+    assert.ok(clarification.model && clarification.platform);
+    assert.equal((clarification.text.match(/[？?]/g) ?? []).length, 1);
+    assert.ok(clarification.quickReplies?.length >= 2 && clarification.quickReplies.length <= 4);
+    await page.locator('[data-qc=quick-reply]').first().waitFor();
+    await page.screenshot({ path: join(out, '11-brief-clarification.png') });
+    await send('可以开始了');
+    const missing = await persistedBrief(briefId, incomplete.revision);
+    assert.equal(missing.brief.ready, false);
+    assert.ok(missing.brief.missing.includes('讲什么'));
+    assert.ok(missing.messages.some(message => message.role === 'agent' && message.model && message.platform));
     assert.equal(createdRuns.length, 0, 'An incomplete brief must never start a generation job');
     assert.equal(await page.locator('[data-qc=submit]').isEnabled(), false);
     await page.screenshot({ path: join(out, '11-brief-missing.png') });
 
     await send('我要做一个 1 分钟的手绘培训视频，给刚加入产品团队的新同事。主题是需求评审的三个习惯：先读目标确认解决谁的什么问题，再明确哪些事这次不做，最后核对能操作的验收条件。请推荐三种适合这份内容的风格。');
-    await page.locator('[data-qc=rec-style]').nth(2).waitFor();
-    const secondStyle = await page.locator('[data-qc=rec-style]').nth(1).getAttribute('data-style');
-    assert.ok(secondStyle);
-    const briefId = new URL(page.url()).searchParams.get('brief');
-    assert.match(briefId, /^[a-f0-9]{32}$/);
-    const beforePick = await data(await api(`${base}/brief/${briefId}`), 'read ready brief');
+    const beforePick = await persistedBrief(briefId, missing.revision);
+    const recommended = beforePick.messages.at(-1)?.recommendations;
+    assert.equal(recommended?.length, 3);
+    assert.equal(new Set(recommended.map(style => style.templateId)).size, 3);
+    const secondStyle = recommended[1].templateId;
     assert.equal(beforePick.brief.ready, true);
     assert.equal(beforePick.kind, 'video');
+    assert.equal(beforePick.attachments.length, 0);
     assert.ok(beforePick.messages.some(message => message.role === 'agent' && message.model && message.platform));
     await page.screenshot({ path: join(out, '12-brief-recommendations.png') });
 
@@ -122,17 +155,20 @@ async function verifyBriefJourney(page, api) {
     await send('第二个');
     await page.waitForFunction(name => document.querySelector('[data-qc=style-chip]')?.getAttribute('aria-label')?.includes(name),
       selectedName, { timeout: 105_000 });
-    const startedAt = Date.now();
-    let picked;
-    while (Date.now() - startedAt < 105_000) {
-      picked = await data(await api(`${base}/brief/${briefId}`), 'read selected style');
-      if (picked.revision > beforePick.revision) break;
-      await delay(1000);
+    const picked = await persistedBrief(briefId, beforePick.revision);
+    assert.equal(picked.styleId, secondStyle);
+    await send('可以开始了吗？请先告诉我现在有没有准备好');
+    const question = await persistedBrief(briefId, picked.revision);
+    assert.equal(question.script.length, 0);
+    assert.equal(createdRuns.length, 0, 'Asking about readiness must not start generation');
+    if (briefAdmission === 'skip') {
+      await verifyBriefOutput(page, api, page.locator('[data-qc=brief-skip-script]'), briefId, question);
+      return;
     }
-    assert.equal(picked?.styleId, secondStyle);
-    await page.locator('[data-qc=brief-start]:enabled').click();
+    if (briefAdmission === 'confirm') await send('可以开始了');
+    else await page.locator('[data-qc=brief-start]:enabled').click();
     await page.locator('[data-qc=script-draft] [data-qc=script-confirm]').waitFor({ timeout: 105_000 });
-    const planned = await data(await api(`${base}/brief/${briefId}`), 'read rendered script');
+    const planned = await persistedBrief(briefId, question.revision);
     assert.ok(planned.script.length > 0 && planned.script.every(scene => scene.visual && scene.narration));
     assert.equal(createdRuns.length, 0, 'A storyboard draft must not enter the generation queue');
     await page.reload();
@@ -141,10 +177,102 @@ async function verifyBriefJourney(page, api) {
     await page.screenshot({ path: join(out, '13-brief-script-restored.png') });
     receipt.brief = { id: briefId, model: planned.messages.at(-1)?.model, selectedStyle: planned.styleId,
       revision: planned.revision, scenes: planned.script.length, admittedBeforeConfirm: createdRuns.length };
+    receipt.brief.clarificationOptions = clarification.quickReplies.length;
     receipt.cases.push('real model, 3 style recommendations, current recommendation selection, storyboard no-queue and restored brief');
+    if (briefAdmission === 'confirm') {
+      await send('请调整第一幕。在第一幕画面上使用「先找真实问题」作为标题，保持其他分镜。');
+      await page.reload();
+      const revised = await persistedBrief(briefId, planned.revision);
+      assert.match(revised.script[0]?.visual ?? '', /先找真实问题/);
+      assert.equal(createdRuns.length, 0, 'A revised script stays a draft until confirmation');
+      await page.locator('[data-qc=script-confirm]:enabled').waitFor({ timeout: 110_000 });
+      await page.screenshot({ path: join(out, '14-brief-revision-restored.png') });
+      receipt.brief.revised = revised.revision;
+      await verifyBriefOutput(page, api, page.locator('[data-qc=script-confirm]'), briefId, revised);
+    }
   } finally {
     page.off('request', observe);
   }
+}
+
+async function verifyBriefOutput(page, api, action, briefId, brief) {
+  const [response] = await Promise.all([
+    page.waitForResponse(match(base + '/runs', 'POST')),
+    action.click(),
+  ]);
+  const view = await data(response, 'queue video made from the conversation');
+  assert.match(view.id, /^[a-f0-9]{32}$/);
+  const row = { kind: 'video', id: view.id, briefId, revision: brief.revision, mode: briefAdmission, admitted: view.status };
+  receipt.runs.push(row);
+  // Persist the ID immediately so investigating a timeout never requires starting a second render.
+  console.log(`Fileless code video ${view.id}: ${view.status} (${briefAdmission})`);
+  await writeFile(join(out, 'result.json'), JSON.stringify(receipt, null, 2));
+  const request = response.request();
+  const payload = request.postDataJSON();
+  assert.equal(payload.briefMode, briefAdmission);
+  assert.equal(payload.briefId, briefId);
+  assert.equal(payload.briefRevision, brief.revision);
+  assert.deepEqual(payload.attachmentIds, []);
+  assert.equal(view.contentSource, 'chat');
+  assert.equal(view.templateId, brief.styleId);
+  assert.equal(view.attachments.length, 1);
+  const source = view.attachments[0];
+  assert.equal(source.name, '对话创作稿件.md');
+  assert.ok(source.excerpt?.trim());
+  assert.equal(source.excerpt.length, source.chars);
+  row.manuscriptSha256 = sha256(source.excerpt);
+  if (briefAdmission === 'confirm') assert.match(view.ask, /先找真实问题/);
+  else assert.doesNotMatch(view.ask, /用户确认的分镜/);
+  const intent = (await request.allHeaders())['idempotency-key'];
+  assert.ok(intent);
+  const retried = await data(await api(base + '/runs', {
+    method: 'POST', headers: { 'Idempotency-Key': intent }, data: payload,
+  }), 'replay the same creation intent');
+  assert.equal(retried.id, view.id);
+  await page.getByText(/没有稿件.*内容来自和快速创作的对话/).waitFor();
+  await page.screenshot({ path: join(out, '15-conversation-video-queued.png') });
+
+  const statusUrl = `${base}/runs/${view.id}`;
+  const deadline = Date.now() + 135 * 60_000;
+  let finished;
+  do {
+    finished = await data(await api(statusUrl), 'read persisted video task');
+    row.currentStatus = finished.status;
+    if (finished.status === 'done') break;
+    assert.notEqual(finished.status, 'failed', 'Fileless code video failed');
+    await delay(20_000);
+  } while (Date.now() < deadline);
+  assert.equal(finished.status, 'done', 'Fileless video did not finish within the acceptance window');
+  assert.equal(finished.contentSource, 'chat');
+  assert.equal(sha256(finished.attachments[0].excerpt), row.manuscriptSha256);
+  assert.ok(finished.durationSec > 0);
+  row.durationSec = finished.durationSec;
+  const evidence = await data(await api(`/api/design-artifacts/runs/${view.id}/evidence`), 'read cloud provenance');
+  assert.equal(evidence.runId, view.id);
+  row.runtimeEvidence = {
+    workspaceManifestSha256: evidence.manifestSha256,
+    providerAuditId: evidence.llmgwAuditId,
+    successfulProviderCalls: evidence.llmgwAudits?.filter(audit => audit.statusCode >= 200 && audit.statusCode < 300).length ?? 0,
+  };
+  await verifyPreview(page, finished, row);
+  const publish = statusUrl + '/publish';
+  const [published] = await Promise.all([
+    page.waitForResponse(match(publish, 'POST')),
+    page.locator('[data-qc=publish]').click(),
+  ]);
+  const saved = await data(published, 'publish fileless video');
+  assert.match(saved.publish.siteId, /^[a-f0-9]{32}$/);
+  row.siteId = saved.publish.siteId;
+  const republished = await data(await api(publish, { method: 'POST', data: {} }), 'repeat publishing');
+  assert.equal(republished.publish.siteId, row.siteId);
+  await page.locator('[data-qc=open-hosting]').click();
+  await page.locator(`[data-hosted-site-id="${row.siteId}"]`).waitFor();
+  await page.screenshot({ path: join(out, '16-conversation-video-hosting.png') });
+  receipt.cases.push(`fileless video ${briefAdmission}, manuscript matched after generation, publication replay and hosting record`);
+  assert.match(row.runtimeEvidence.workspaceManifestSha256 ?? '', /^[a-f0-9]{64}$/);
+  assert.ok(row.runtimeEvidence.providerAuditId && row.runtimeEvidence.successfulProviderCalls > 0,
+    'The cloud provider audit did not correlate with this task');
+  assert.ok(row.captionSeek, 'Timed captions could not be verified against the returned video');
 }
 
 async function verifyPreview(page, view, row) {
