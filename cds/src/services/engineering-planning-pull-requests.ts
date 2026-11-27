@@ -61,9 +61,7 @@ function prMetadata(body: string, branchName: string) {
   return { decisionRefs: [...new Set(decisionRefs)].slice(0, 32), debtRefs: [...new Set(debtRefs)].slice(0, 32), ...(target ? { target } : {}) };
 }
 
-function parsePullRequest(payload: Record<string, unknown>, repository: string, observation: Observation): PlanningGitHubObservation | undefined {
-  if (!prActions.has(observation.action)) return undefined;
-  const pr = object(payload.pull_request);
+function parsePullRequestSnapshot(pr: Record<string, unknown>, repository: string, observation: Observation): PlanningPullRequestSnapshot | undefined {
   const link = planningGitHubPullRequest(pr.html_url);
   const head = object(pr.head);
   const headSha = sha(head.sha);
@@ -80,10 +78,23 @@ function parsePullRequest(payload: Record<string, unknown>, repository: string, 
   const mergedAt = state === 'merged' ? date(pr.merged_at) : undefined;
   const mergeCommitSha = mergedAt && observation.action === 'closed' ? sha(pr.merge_commit_sha) : undefined;
   const baseRef = string(object(pr.base).ref);
-  return { type: 'pull_request', pullRequest: { number: link.number, repository, url: link.url, title, author, openedAt, updatedAt, state,
+  return { number: link.number, repository, url: link.url, title, author, openedAt, updatedAt, state,
     headSha, headBranch, ...(headRepository ? { headRepository } : {}), ...(closedAt ? { closedAt } : {}), ...(mergedAt ? { mergedAt } : {}),
     ...(mergeCommitSha && isSafeGitRef(baseRef) && observation.deliveryId ? { mergeCommitSha, baseRef, mergeDeliveryId: observation.deliveryId } : {}),
-    ...prMetadata(string(pr.body), headBranch), observation, checks: {} } };
+    ...prMetadata(string(pr.body), headBranch), observation, checks: {} };
+}
+
+function parsePullRequest(payload: Record<string, unknown>, repository: string, observation: Observation): PlanningGitHubObservation | undefined {
+  if (!prActions.has(observation.action)) return undefined;
+  const pullRequest = parsePullRequestSnapshot(object(payload.pull_request), repository, observation);
+  return pullRequest && { type: 'pull_request', pullRequest };
+}
+
+export function parseGitHubPreviewPullRequest(json: unknown, repository: string, number: number): PlanningPullRequestSnapshot | undefined {
+  const pr = object(json);
+  if (pr.number !== number || pr.state !== 'open' || repositoryKey(string(object(object(pr.base).repo).full_name)) !== repositoryKey(repository)) return undefined;
+  const snapshot = parsePullRequestSnapshot(pr, repository, { action: 'github-api-read' });
+  return snapshot?.headRepository && repositoryKey(snapshot.headRepository) === repositoryKey(repository) ? snapshot : undefined;
 }
 
 function parseCheckRun(payload: Record<string, unknown>, repository: string, observation: Observation): PlanningGitHubObservation | undefined {
