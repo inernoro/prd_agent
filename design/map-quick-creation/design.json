@@ -375,10 +375,40 @@
       "entryReadySelector": "[data-qc=attachment-tray]",
       "entryActions": [
         "[data-qc=sample-doc]",
-        "[data-qc=pick-knowledge]",
-        "[data-qc=pick-knowledge]",
-        "[data-qc=pick-knowledge]",
-        "[data-qc=pick-knowledge]"
+        "[data-qc=composer-plus]",
+        "[data-qc=plus-knowledge]",
+        "[data-qc=composer-plus]",
+        "[data-qc=plus-knowledge]"
+      ],
+      "impl": "/quick-creation-agent"
+    },
+    {
+      "id": "phone-plus",
+      "name": "手机 · 输入框左下的「+」：上传与知识库",
+      "route": "#/quick-creation-agent",
+      "viewport": "phone",
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "entryReadySelector": "[data-qc=plus-menu]",
+      "entryActions": [
+        "[data-qc=composer-plus]"
+      ],
+      "impl": "/quick-creation-agent"
+    },
+    {
+      "id": "phone-style",
+      "name": "手机 · 「视频 · 风格」按钮：产出切换在面板顶部",
+      "route": "#/quick-creation-agent",
+      "viewport": "phone",
+      "themes": [
+        "light",
+        "dark"
+      ],
+      "entryReadySelector": "[data-qc=style-popover]",
+      "entryActions": [
+        "[data-qc=style-chip]"
       ],
       "impl": "/quick-creation-agent"
     },
@@ -1022,8 +1052,8 @@
         "phone-light",
         "phone-dark"
       ],
-      "rule": "手机上「对话 / 预览」切换，输入框与「快捷生成」在底部可达；产出切换与风格按钮在输入框里单独一行",
-      "expected": "390×844 下底部可见输入框、资料托盘、「视频 / 网页」、风格按钮与「快捷生成」",
+      "rule": "手机上「对话 / 预览」切换；输入框做减法：左下「+」（上传、知识库）与「视频 · 风格」按钮（产出切换收在它的面板顶部），右下语音与一个动作（有字是发送，没字且稿件齐了是「生成」）；输入框下不放说明文字",
+      "expected": "390×844 下输入框工具行只有 +、「视频 · 风格」、语音、一个动作；点 + 出现「上传稿件或图片 / 从知识库选择」；输入框下没有文字",
       "dimension": "compatibility"
     },
     {

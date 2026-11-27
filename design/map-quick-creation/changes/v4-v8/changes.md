@@ -1,4 +1,4 @@
-# 版本差异：V3 → V7
+# 版本差异：V4 → V8
 
 > 程序生成（version-diff.mjs），不要手改。方向：升级。只列净变化：中间版本加了又删的不出现。
 
@@ -10,9 +10,9 @@
 
 ## 二、画面
 
-- 新增 9：`assets` 右栏产物：回看我生成过的视频与网页；`assets-team` 右栏产物 · 团队：同事用其他风格做的成品；`chat-ready` 对话起稿：条件齐了，准备好了；`chat-recommend` 对话起稿：按「科技感」推荐 3 个风格；`chat-script` 对话起稿：开工前确认分镜脚本；`chat-start` 对话起稿：不知道选什么，直接说想做宣传片；`phone-assets` 手机 · 预览页签里的产物；`phone-chat` 手机 · 对话起稿与推荐风格；`style-picker` 输入框里就地换风格（15 类 99 种）
+- 新增 11：`assets` 右栏产物：回看我生成过的视频与网页；`assets-team` 右栏产物 · 团队：同事用其他风格做的成品；`chat-ready` 对话起稿：条件齐了，准备好了；`chat-recommend` 对话起稿：按「科技感」推荐 3 个风格；`chat-script` 对话起稿：开工前确认分镜脚本；`chat-start` 对话起稿：不知道选什么，直接说想做宣传片；`phone-assets` 手机 · 预览页签里的产物；`phone-chat` 手机 · 对话起稿与推荐风格；`phone-plus` 手机 · 输入框左下的「+」：上传与知识库；`phone-style` 手机 · 「视频 · 风格」按钮：产出切换在面板顶部；`style-picker` 输入框里就地换风格（15 类 99 种）
 - 删除 0：无
-- 改动 1：`phone-preview`（entryActions）
+- 改动 2：`phone-compose`（entryActions）；`phone-preview`（entryActions）
 
 ## 三、文件
 
@@ -24,11 +24,11 @@
 
 ## 四、自检
 
-- V3：43/43
-- V7：55/55
+- V4：43/43
+- V8：55/55
 
 ## 五、稿件属性
 
-- prototypeVersion：3 → 7
+- prototypeVersion：4 → 7
 
-源码差异没有附在包里（116 个文件）。需要时运行 `node version-diff.mjs --dir <稿件目录> --from v3 --to v7`；没有 git 时，从 CDS 下载两版归档，用 --from-dir、--to-dir 比较。
+源码差异没有附在包里（116 个文件）。需要时运行 `node version-diff.mjs --dir <稿件目录> --from v4 --to v8`；没有 git 时，从 CDS 下载两版归档，用 --from-dir、--to-dir 比较。

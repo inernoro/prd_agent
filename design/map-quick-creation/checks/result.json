@@ -39,7 +39,7 @@
       "id": "A-06",
       "name": "A-06 R-06 手机两栏改成「创作 / 预览」切换，375 宽没有整页横向溢出，本页新增的可点元素触控高度不小于 44px",
       "pass": true,
-      "note": "测量：phone-compose/light：溢出 0px；phone-compose/dark：溢出 0px；phone-queued/light：溢出 0px；phone-queued/dark：溢出 0px；phone-preview/light：溢出 0px；phone-preview/dark：溢出 0px；phone-assets/light：溢出 0px；phone-assets/dark：溢出 0px；phone-chat/light：溢出 0px；phone-chat/dark：溢出 0px；phone-works/light：溢出 0px；phone-works/dark：溢出 0px"
+      "note": "测量：phone-compose/light：溢出 0px；phone-compose/dark：溢出 0px；phone-plus/light：溢出 0px；phone-plus/dark：溢出 0px；phone-style/light：溢出 0px；phone-style/dark：溢出 0px；phone-queued/light：溢出 0px；phone-queued/dark：溢出 0px；phone-preview/light：溢出 0px；phone-preview/dark：溢出 0px；phone-assets/light：溢出 0px；phone-assets/dark：溢出 0px；phone-chat/light：溢出 0px；phone-chat/dark：溢出 0px；phone-works/light：溢出 0px；phone-works/dark：溢出 0px"
     },
     {
       "id": "A-07",
@@ -211,9 +211,9 @@
     },
     {
       "id": "A-35",
-      "name": "A-35 手机上「对话 / 预览」切换，输入框与「快捷生成」在底部可达；产出切换与风格按钮在输入框里单独一行",
+      "name": "A-35 手机上「对话 / 预览」切换；输入框做减法：左下「+」（上传、知识库）与「视频 · 风格」按钮（产出切换收在它的面板顶部），右下语音与一个动作（有字是发送，没字且稿件齐了是「生成」）；输入框下不放说明文字",
       "pass": true,
-      "note": "phone-compose：底部输入框、资料托盘（两张资料卡 + 「+3」）；「视频 / 网页」与风格按钮单独一行，上传、知识库与「快捷生成」在下一行"
+      "note": "phone-compose：底部输入框与资料托盘（三份资料：两张资料卡 + 「+1」）；工具行只有「+」、「视频 · 视觉笔记」、语音、「生成」，一行排完，输入框下没有文字；phone-plus：点「+」弹出「上传稿件或图片 / 从知识库选择」两项，各 44px 高；phone-chat：输入有字时右下是发送，没字时是灰的发送"
     },
     {
       "id": "A-36",
@@ -333,7 +333,7 @@
       "id": "C-01",
       "name": "C-01 预览容器零报错（所有画面 × 主题）",
       "pass": true,
-      "note": "64 次打开，控制台与 CSP 报错 0 条"
+      "note": "68 次打开，控制台与 CSP 报错 0 条"
     }
   ]
 }

@@ -1,4 +1,4 @@
-# 版本差异：V5 → V7
+# 版本差异：V5 → V8
 
 > 程序生成（version-diff.mjs），不要手改。方向：升级。只列净变化：中间版本加了又删的不出现。
 
@@ -10,25 +10,25 @@
 
 ## 二、画面
 
-- 新增 9：`assets` 右栏产物：回看我生成过的视频与网页；`assets-team` 右栏产物 · 团队：同事用其他风格做的成品；`chat-ready` 对话起稿：条件齐了，准备好了；`chat-recommend` 对话起稿：按「科技感」推荐 3 个风格；`chat-script` 对话起稿：开工前确认分镜脚本；`chat-start` 对话起稿：不知道选什么，直接说想做宣传片；`phone-assets` 手机 · 预览页签里的产物；`phone-chat` 手机 · 对话起稿与推荐风格；`style-picker` 输入框里就地换风格（15 类 99 种）
+- 新增 11：`assets` 右栏产物：回看我生成过的视频与网页；`assets-team` 右栏产物 · 团队：同事用其他风格做的成品；`chat-ready` 对话起稿：条件齐了，准备好了；`chat-recommend` 对话起稿：按「科技感」推荐 3 个风格；`chat-script` 对话起稿：开工前确认分镜脚本；`chat-start` 对话起稿：不知道选什么，直接说想做宣传片；`phone-assets` 手机 · 预览页签里的产物；`phone-chat` 手机 · 对话起稿与推荐风格；`phone-plus` 手机 · 输入框左下的「+」：上传与知识库；`phone-style` 手机 · 「视频 · 风格」按钮：产出切换在面板顶部；`style-picker` 输入框里就地换风格（15 类 99 种）
 - 删除 0：无
-- 改动 0：无
+- 改动 1：`phone-compose`（entryActions）
 
 ## 三、文件
 
 - 新增 106：源码 104（src/added/pages/quick-creation-agent/AssetLibrary.tsx、src/added/pages/quick-creation-agent/BriefChat.tsx、src/added/pages/quick-creation-agent/StyleLibrary.tsx、src/briefEngine.ts、src/opuscar/catalog.json、src/opuscar/posters/archive-lighttable.webp…）；工具 1（tools/import-opuscar.py）；文档 1（设计文档/验收计划.md）
 - 删除 0：无
-- 改动 24：自检 2（checks/handoff-local.json、checks/result.json）；其他 3（design.json、prototype.json、versions.json）；原型 1（dist/index.html）；源码 9（src/added/pages/quick-creation-agent/QuickCreationAgentPage.tsx、src/added/pages/quick-creation-agent/ResultPanel.tsx、src/added/pages/quick-creation-agent/RunProgress.tsx、src/added/pages/quick-creation-agent/TemplateFrames.tsx、src/added/pages/quick-creation-agent/WorksList.tsx、src/added/pages/quick-creation-agent/types.ts…）；工具 4（tools/export-demo-data.mjs、tools/handoff-local.mjs、tools/manifest-src.mjs、tools/walkthrough.json）；文档 5（交付说明.md、交接清单.md、思路.md、设计文档/源码差异.diff、设计文档/演示数据.json）
+- 改动 25：自检 2（checks/handoff-local.json、checks/result.json）；其他 3（design.json、prototype.json、versions.json）；原型 1（dist/index.html）；源码 10（src/added/pages/quick-creation-agent/QuickCreationAgentPage.tsx、src/added/pages/quick-creation-agent/ResultPanel.tsx、src/added/pages/quick-creation-agent/RunProgress.tsx、src/added/pages/quick-creation-agent/TemplateFrames.tsx、src/added/pages/quick-creation-agent/WorksList.tsx、src/added/pages/quick-creation-agent/quickCreation.css…）；工具 4（tools/export-demo-data.mjs、tools/handoff-local.mjs、tools/manifest-src.mjs、tools/walkthrough.json）；文档 5（交付说明.md、交接清单.md、思路.md、设计文档/源码差异.diff、设计文档/演示数据.json）
 
-源码有 113 个文件变化，差异没有附在包里（见文末命令）。
+源码有 114 个文件变化，差异没有附在包里（见文末命令）。
 
 ## 四、自检
 
 - V5：43/43
-- V7：55/55
+- V8：55/55
 
 ## 五、稿件属性
 
 - prototypeVersion：5 → 7
 
-源码差异没有附在包里（113 个文件）。需要时运行 `node version-diff.mjs --dir <稿件目录> --from v5 --to v7`；没有 git 时，从 CDS 下载两版归档，用 --from-dir、--to-dir 比较。
+源码差异没有附在包里（114 个文件）。需要时运行 `node version-diff.mjs --dir <稿件目录> --from v5 --to v8`；没有 git 时，从 CDS 下载两版归档，用 --from-dir、--to-dir 比较。

@@ -6,7 +6,9 @@
  */
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowUp, BookOpen, Check, ChevronLeft, ChevronRight, CircleCheck, ExternalLink, FileText, Globe, LayoutList, Paperclip, Plus, Send, Upload, Video } from 'lucide-react';
+import { ArrowUp, BookOpen, Check, ChevronLeft, ChevronRight, CircleCheck, ExternalLink, FileText, Globe, LayoutList, Mic, Paperclip, Plus, Send, Upload, Video } from 'lucide-react';
+import * as Popover from '@radix-ui/react-popover';
+import { useSpeechInput } from '@/lib/useSpeechInput';
 import { toast } from '@/lib/toast';
 import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
@@ -57,6 +59,17 @@ export function QuickCreationAgentPage() {
   const [templateId, setTemplateId] = useState<string>('');
   const [attachments, setAttachments] = useState<QcAttachment[]>([]);
   const [ask, setAsk] = useState('');
+  const [plusOpen, setPlusOpen] = useState(false);
+  /* 语音输入复用正式实现的 useSpeechInput（浏览器语音识别）；不支持的浏览器不显示入口 */
+  const speechBase = useRef('');
+  const speech = useSpeechInput({
+    onResult: (finalText, interim) => setAsk(speechBase.current + finalText + interim),
+    onError: msg => toast.error('语音输入', msg),
+  });
+  const toggleVoice = () => {
+    if (!speech.listening) speechBase.current = ask;
+    speech.toggle();
+  };
   const [submitting, setSubmitting] = useState(false);
   /* 右栏此刻显示什么：资料面板（发送前管理 / 发送后回看）优先，否则按任务状态显示模板、过程或成品 */
   const [panel, setPanel] = useState<{ mode: 'manage' | 'review'; id?: string } | null>(null);
@@ -68,7 +81,13 @@ export function QuickCreationAgentPage() {
   const [assetsLoading, setAssetsLoading] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const askRef = useRef<HTMLTextAreaElement>(null);
-  useEffect(() => { if (askRef.current) fitComposerHeight(askRef.current); }, [ask]);
+  useEffect(() => {
+    const el = askRef.current;
+    if (!el) return;
+    /* 手机输入框空着时只占一行，打字后再长高；桌面沿用工作台的高度规则 */
+    if (window.matchMedia('(max-width: 767px)').matches) { el.style.height = 'auto'; el.style.height = `${Math.min(Math.max(el.scrollHeight, 44), 160)}px`; }
+    else fitComposerHeight(el);
+  }, [ask]);
 
   useEffect(() => {
     void listQuickCreationTemplates().then(res => { if (res.success) { setTemplates(res.data.items); setCategories(res.data.categories); setStyleSource(res.data.source); } });
@@ -157,7 +176,7 @@ export function QuickCreationAgentPage() {
   };
   const sum = summarizeAttachments(attachments);
   const hasText = attachments.some(a => a.status === 'ready' && a.kind !== 'image');
-  const blockReason = !hasText ? '放进一份稿件后可以快捷生成；没有稿件就直接告诉我想做什么' : sum.reading ? '还有附件在读取，读完即可生成' : null;
+  const blockReason = !hasText ? '放进稿件才能快捷生成，或者直接说想做什么' : sum.reading ? '还有附件在读取，读完即可生成' : null;
   const draftTitle = attachments.find(a => a.status === 'ready' && a.kind !== 'image')?.name.replace(/\.(md|markdown|txt)$/i, '') ?? (template ? `未命名 · ${template.name}` : '未命名');
 
   const submit = async () => {
@@ -194,6 +213,8 @@ export function QuickCreationAgentPage() {
   const sendChat = async (text: string, styleOverride?: string) => {
     const t = text.trim();
     if (!t || briefBusy) return;
+    if (speech.listening) speech.cancel();
+    speechBase.current = '';
     setPendingText(t); setBriefBusy(true); setAsk('');
     const res = await sendBriefMessage({ sessionId: briefId, text: t, context: { ...briefContext, templateId: styleOverride ?? briefContext.templateId } });
     setPendingText(null); setBriefBusy(false);
@@ -288,11 +309,12 @@ export function QuickCreationAgentPage() {
     <div className="overflow-hidden rounded-[12px] border border-token-subtle bg-[var(--bg-input)] shadow-[var(--shadow-site-card)]">
       {[
         { key: 'sample', icon: FileText, title: '用示例稿件试一下', sub: '需求评审的三个习惯 · Markdown', qc: 'sample-doc', on: () => void addKnowledge(SAMPLE_KB_ENTRY) },
-        { key: 'kb', icon: BookOpen, title: '从知识库选择', sub: '引用个人或团队知识库里的文档', on: () => void addKnowledge('kb-picker') },
-        { key: 'upload', icon: Upload, title: '上传稿件', sub: 'Markdown、TXT；图片作为画面参考', on: () => fileInput.current?.click() },
+        /* 手机上这两项已经在输入框左下的「+」里，开场不再重复 */
+        { key: 'kb', icon: BookOpen, title: '从知识库选择', sub: '引用个人或团队知识库里的文档', on: () => void addKnowledge('kb-picker'), desktopOnly: true },
+        { key: 'upload', icon: Upload, title: '上传稿件', sub: 'Markdown、TXT；图片作为画面参考', on: () => fileInput.current?.click(), desktopOnly: true },
       ].map((o, i) => (
         <button key={o.key} type="button" data-qc={o.qc} onClick={o.on}
-          className={`flex min-h-[52px] w-full items-center gap-3 px-3 py-2 text-left hover-bg-soft ${i ? 'border-t border-token-subtle' : ''}`}>
+          className={`flex min-h-[52px] w-full items-center gap-3 px-3 py-2 text-left hover-bg-soft ${i ? 'border-t border-token-subtle' : ''} ${o.desktopOnly ? 'max-md:hidden' : ''}`}>
           <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-[9px] bg-[var(--selection-bg)] text-[color:var(--accent-primary)]"><o.icon size={15} aria-hidden /></span>
           <span className="min-w-0 flex-1">
             <span className="block text-[13px] font-medium text-token-primary">{o.title}</span>
@@ -307,19 +329,19 @@ export function QuickCreationAgentPage() {
     <AgentTurn>
       <div>
         <p className="m-0 text-[15px] font-semibold leading-6 text-token-primary">把一份文档交给我</p>
-        <p className="m-0 mt-1 text-[13px] leading-6 text-token-secondary">在输入框下方选做视频还是网页、挑一个风格（{categories.length} 类 {templates.length} 种），我来排好配音、字幕或版式，完成后可以直接发布到网页托管。</p>
+        <p className="m-0 mt-1 text-[13px] leading-6 text-token-secondary">选视频或网页、挑一个风格（{templates.length} 种），我来出成片，做完可以直接发布。</p>
       </div>
       {!attachments.length ? (
         <>
           {startOptions}
-          <p className="m-0 text-[12px] leading-5 text-token-muted">也可以把正文直接粘贴进下面的输入框，超过 300 字会自动变成一份稿件。</p>
+          <p className="m-0 text-[12px] leading-5 text-token-muted max-md:hidden">长正文直接粘贴进来，会自动变成稿件。</p>
           {!briefSession?.messages.length && !pendingText && (
             <div>
-              <p className="m-0 text-[12.5px] text-token-secondary">还没想好？直接告诉我想做什么，我们聊清楚再开工：</p>
+              <p className="m-0 text-[12.5px] text-token-secondary">还没想好？直接说想做什么：</p>
               <div className="mt-1.5 flex flex-wrap gap-1.5" aria-label="从一句话开始">
                 {['我想做一个宣传片', '给新同事做个培训短片', '不知道选什么风格'].map(t => (
                   <button key={t} type="button" data-qc="starter" data-value={t} onClick={() => void sendChat(t)}
-                    className="inline-flex h-8 items-center rounded-full border border-[var(--border-default)] bg-[var(--bg-input)] px-3 text-[12.5px] text-token-primary hover-bg-soft max-md:h-11">
+                    className="qc-face qc-face-chip relative inline-flex items-center px-3 text-[12.5px] text-token-primary">
                     {t}
                   </button>
                 ))}
@@ -346,55 +368,81 @@ export function QuickCreationAgentPage() {
     </>
   );
 
+  /* 手机上：左下「+」（上传、知识库）与「视频 · 风格」，右下语音与一个动作。
+     这个动作随输入变化：有字时是发送；没字、稿件齐了时是「生成」；都不满足时是灰的发送 */
+  const mobileGenerate = !ask.trim() && !blockReason && !hasBriefCard;
+  const outputSwitch = (
+    /* 公共组件 Segmented 沿用正式实现（28px），触控高度差异记为框架债务，不在单页改 */
+    <span data-qc-touch-exempt className="shrink-0">
+      <Segmented<OutputKind> label="选择产出" value={kind} onChange={setKind}
+        options={[{ value: 'video', label: '视频', title: '能播放的成片：配音、字幕与画面' }, { value: 'web', label: '网页', title: '能浏览的网页：桌面与手机都能读' }]} />
+    </span>
+  );
   const composer = (
     <div>
       {briefSession && <BriefStrip brief={briefSession.brief} />}
-      <div className="flex flex-col rounded-2xl border border-[var(--border-default)] bg-[var(--bg-input)] shadow-[var(--shadow-input-inset)] transition-[border-color,box-shadow] has-[textarea:focus]:border-[color:var(--accent-primary)] has-[textarea:focus]:shadow-[0_0_0_3px_var(--selection-bg)]">
+      <div className="relative flex flex-col rounded-2xl border border-[var(--border-default)] bg-[var(--bg-input)] shadow-[var(--shadow-input-inset)] transition-[border-color,box-shadow] has-[textarea:focus]:border-[color:var(--accent-primary)] has-[textarea:focus]:shadow-[0_0_0_3px_var(--selection-bg)]"
+        data-listening={speech.listening ? 'true' : undefined}>
         <AttachmentTray items={attachments} managing={panel?.mode === 'manage'} onRemove={id => setAttachments(l => l.filter(a => a.id !== id))} onManage={openManage} />
         {attachments.length > 0 && <div className="mx-3 h-px bg-[var(--border-subtle)]" />}
-        <div className="relative">
-        <label htmlFor="qc-ask" className="sr-only">补充要求</label>
-        <textarea id="qc-ask" ref={askRef} rows={2} value={ask} onChange={e => void onAskChange(e.target.value)}
+        <label htmlFor="qc-ask" className="sr-only">说说想做什么</label>
+        <textarea id="qc-ask" ref={askRef} rows={1} value={ask} onChange={e => void onAskChange(e.target.value)}
           onKeyDown={e => {
             if (e.key !== 'Enter' || e.nativeEvent.isComposing) return;
             if (e.metaKey || e.ctrlKey) { e.preventDefault(); void submit(); return; }
             if (!e.shiftKey && ask.trim()) { e.preventDefault(); void sendChat(ask); }
           }}
-          placeholder="说说想做什么；不知道选什么风格也可以直接问"
-          className="block w-full resize-none overflow-y-auto bg-transparent pb-1 pl-3.5 pr-12 pt-3 text-base leading-relaxed text-token-primary outline-none placeholder:text-token-muted sm:text-[14px]" />
-            <button type="button" data-qc="send" aria-label="发给快速创作" title="发给快速创作（Enter）" disabled={!ask.trim() || briefBusy} onClick={() => void sendChat(ask)}
-              className="qc-face qc-face-send absolute bottom-1.5 right-2 inline-flex items-center justify-center max-md:bottom-0 max-md:right-1">
-              {briefBusy ? <MapSpinner size={13} /> : <ArrowUp size={16} strokeWidth={2.4} />}
-            </button>
-        </div>
-        <div className="flex flex-wrap items-center gap-1 px-2 pb-2 pt-1">
+          title="Enter 发给快速创作；Ctrl / ⌘ + Enter 快捷生成"
+          placeholder={speech.listening ? '正在听，直接说…' : '说说想做什么'}
+          className="block w-full resize-none overflow-y-auto bg-transparent pb-1 pl-3.5 pt-3 text-base leading-relaxed text-token-primary outline-none placeholder:text-token-muted sm:text-[14px] md:pr-12 max-md:pr-3.5" />
+        {/* 发送：桌面在文字区右下角；手机在工具行最右 */}
+        <button type="button" data-qc="send" aria-label="发给快速创作" title="发给快速创作（Enter）" disabled={!ask.trim() || briefBusy} onClick={() => void sendChat(ask)}
+          className={`qc-face qc-face-send absolute right-2 inline-flex items-center justify-center md:bottom-[50px] max-md:bottom-2 max-md:right-1.5 ${mobileGenerate ? 'max-md:hidden' : ''}`}>
+          {briefBusy ? <MapSpinner size={13} /> : <ArrowUp size={16} strokeWidth={2.4} />}
+        </button>
+        <div className={`flex items-center gap-1 px-2 pb-2 pt-1 ${mobileGenerate ? '' : 'max-md:pr-[52px]'}`}>
           <input ref={fileInput} type="file" accept=".md,.markdown,.txt,image/*" multiple hidden data-qc="file-input"
             onChange={e => { const files = Array.from(e.target.files ?? []); e.target.value = ''; files.forEach(f => void addFile(f)); }} />
-          <button type="button" aria-label="上传稿件或图片" title="上传稿件或图片" className="qc-icon-btn" onClick={() => fileInput.current?.click()}><Paperclip size={16} /></button>
-          <button type="button" aria-label="从知识库选择" title="从知识库选择" data-qc="pick-knowledge" className="qc-icon-btn" onClick={() => void addKnowledge('kb-picker')}><BookOpen size={16} /></button>
-          {/* 产出与风格在输入框里决定：将来和其他输入集成时，这一组跟着输入框走，不依赖右栏。
-              窄屏这一组单独占第一行，上传、知识库与快捷生成在第二行 */}
-          <div className="flex min-w-0 items-center gap-1.5 max-md:order-first max-md:basis-full max-md:pb-1 md:ml-1 md:border-l md:border-[var(--border-subtle)] md:pl-2">
-            {/* 公共组件 Segmented 沿用正式实现（28px），触控高度差异记为框架债务，不在单页改 */}
-            <span data-qc-touch-exempt className="shrink-0">
-              <Segmented<OutputKind> label="选择产出" value={kind} onChange={setKind}
-                options={[{ value: 'video', label: '视频', title: '能播放的成片：配音、字幕与画面' }, { value: 'web', label: '网页', title: '能浏览的网页：桌面与手机都能读' }]} />
-            </span>
+          {/* 手机：上传与知识库收进「+」 */}
+          <Popover.Root open={plusOpen} onOpenChange={setPlusOpen}>
+            <Popover.Trigger asChild>
+              <button type="button" aria-label="添加稿件" title="添加稿件" data-qc="composer-plus" className="qc-icon-btn md:hidden"><Plus size={20} /></button>
+            </Popover.Trigger>
+            <Popover.Portal>
+              <Popover.Content side="top" align="start" sideOffset={6} collisionPadding={12} data-qc="plus-menu"
+                className="qc-menu-surface z-[110] flex w-56 flex-col rounded-xl border border-[var(--border-default)] p-1 shadow-lg">
+                <button type="button" data-qc="plus-upload" className="flex h-11 items-center gap-2.5 rounded-lg px-2.5 text-left text-[14px] text-token-primary hover-bg-soft"
+                  onClick={() => { setPlusOpen(false); fileInput.current?.click(); }}><Paperclip size={16} className="text-token-secondary" />上传稿件或图片</button>
+                <button type="button" data-qc="plus-knowledge" className="flex h-11 items-center gap-2.5 rounded-lg px-2.5 text-left text-[14px] text-token-primary hover-bg-soft"
+                  onClick={() => { setPlusOpen(false); void addKnowledge('kb-picker'); }}><BookOpen size={16} className="text-token-secondary" />从知识库选择</button>
+              </Popover.Content>
+            </Popover.Portal>
+          </Popover.Root>
+          <button type="button" aria-label="上传稿件或图片" title="上传稿件或图片" className="qc-icon-btn max-md:hidden" onClick={() => fileInput.current?.click()}><Paperclip size={16} /></button>
+          <button type="button" aria-label="从知识库选择" title="从知识库选择" data-qc="pick-knowledge" className="qc-icon-btn max-md:hidden" onClick={() => void addKnowledge('kb-picker')}><BookOpen size={16} /></button>
+          {/* 产出与风格在输入框里决定：将来和其他输入集成时，这一组跟着输入框走，不依赖右栏 */}
+          <div className="flex min-w-0 items-center gap-1.5 md:ml-1 md:border-l md:border-[var(--border-subtle)] md:pl-2">
+            <span className="max-md:hidden">{outputSwitch}</span>
             <StylePickerChip templates={templates} categories={categories} selected={template} onSelect={id => { setTemplateId(id); setPanel(null); }}
-              onBrowse={() => { setPanel(null); setPane('preview'); }} />
+              onBrowse={() => { setPanel(null); setPane('preview'); }} outputLabel={OUTPUT_LABEL[kind]} header={outputSwitch} />
           </div>
-          <div className="ml-auto flex shrink-0 items-center gap-1.5">
-
+          <div className="ml-auto flex shrink-0 items-center gap-1">
+            {speech.supported && (
+              <button type="button" data-qc="voice" aria-label={speech.listening ? '停止语音输入' : '语音输入'} title={speech.listening ? '停止语音输入' : '语音输入'} aria-pressed={speech.listening}
+                className={`qc-icon-btn ${speech.listening ? 'text-[color:var(--accent-primary)]' : ''}`} onClick={toggleVoice}>
+                {speech.listening ? <span className="qc-wave" aria-hidden><i /><i /><i /><i /></span> : <Mic size={17} />}
+              </button>
+            )}
             {/* 对话里出现「准备好了」卡后，开工由卡片的主按钮负责，这里降为次要，保持一屏一个主动作 */}
-            <Button variant={hasBriefCard ? 'secondary' : 'primary'} size="sm" className={`qc-face relative shrink-0 ${hasBriefCard ? 'qc-face-secondary' : 'qc-face-primary'}`} disabled={!!blockReason || submitting} onClick={() => void submit()} data-qc="submit">
-              {submitting ? <MapSpinner size={13} /> : <Send size={13} />}快捷生成
+            <Button variant={hasBriefCard ? 'secondary' : 'primary'} size="sm" className={`qc-face relative shrink-0 ${hasBriefCard ? 'qc-face-secondary' : 'qc-face-primary'} ${mobileGenerate ? '' : 'max-md:hidden'}`}
+              disabled={!!blockReason || submitting} onClick={() => void submit()} data-qc="submit" title="快捷生成（Ctrl / ⌘ + Enter）">
+              {submitting ? <MapSpinner size={13} /> : <Send size={13} />}<span className="max-md:hidden">快捷生成</span><span className="md:hidden">生成</span>
             </Button>
           </div>
         </div>
       </div>
-      {blockReason
-        ? <p className="m-0 px-2 pt-1.5 text-[11.5px] text-token-muted" data-qc="block-reason">{blockReason}</p>
-        : <p className="m-0 hidden px-2 pt-1.5 text-[11.5px] text-token-muted lg:block">Enter 发给快速创作 · Ctrl / ⌘ + Enter 快捷生成 · 一支约 30–60 分钟</p>}
+      {/* 输入框下只在不能生成时说一句原因（手机不显示：按钮本身是灰的，开场已经说了怎么开始） */}
+      {blockReason && <p className="m-0 px-2 pt-1.5 text-[11.5px] text-token-muted max-md:hidden" data-qc="block-reason">{blockReason}</p>}
     </div>
   );
 

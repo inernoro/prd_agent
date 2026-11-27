@@ -1,43 +1,19 @@
 {
  "from": {
-  "label": "V1",
-  "version": 1,
-  "commit": "6eece65e23cb0379f6cfc391b3bd126e77a3f0a6",
-  "title": "快速创作 · 交付说明（V1）"
+  "label": "V5",
+  "version": 5,
+  "commit": "bde80f3964419d802b6250e146a32f952278a56c",
+  "title": "快速创作 · 交付说明（V5）"
  },
  "to": {
-  "label": "V7",
-  "version": 7,
+  "label": "V8",
+  "version": 8,
   "commit": null,
-  "title": "快速创作 · 交付说明（V7）"
+  "title": "快速创作 · 交付说明（V8）"
  },
  "direction": "upgrade",
  "acceptance": {
   "added": [
-   {
-    "id": "A-41",
-    "rule": "直接粘贴正文：一次粘贴 300 字以上的长文自动作为一份稿件附件，输入框只留给要求",
-    "expected": "粘贴后输入框清空，附件托盘多一份「粘贴的正文」，快捷生成可用",
-    "how": "human",
-    "screenId": "compose",
-    "slots": [
-     "desktop-light",
-     "desktop-dark"
-    ],
-    "interaction": true
-   },
-   {
-    "id": "A-42",
-    "rule": "上传 Markdown / TXT 稿件或图片：读出文字的可直接生成，空文件或不支持的格式显示原因",
-    "expected": "上传「评审要点.md」后附件托盘出现该文件且显示已读取，快捷生成可用",
-    "how": "human",
-    "screenId": "compose",
-    "slots": [
-     "desktop-light",
-     "desktop-dark"
-    ],
-    "interaction": true
-   },
    {
     "id": "A-43",
     "rule": "风格库按 Lemo-Opuscar 的分类：15 类 99 种，可按类别筛选、按名字或类别搜索；选中风格显示样片海报、样片名与时长、一句话说明和来源署名",
@@ -190,22 +166,12 @@
      "expected"
     ],
     "from": {
-     "rule": "首屏：产出（视频 / 网页）、模板卡与快捷生成在一屏内；模板缩略图是真实成品帧，选中态唯一",
-     "expected": "1440×900 首屏同时看到产出切换、模板卡、输入框与「快捷生成」；只有一张模板卡带选中边框"
+     "rule": "首屏：左栏是助手开场与输入框，右栏是产出切换、选中模板的大图和全部模板卡；模板缩略图是真实成品帧，选中态唯一",
+     "expected": "1440×900 首屏同时看到右栏的产出切换、模板大图与模板卡，左栏的开场、输入框与「快捷生成」"
     },
     "to": {
      "rule": "首屏：左栏是助手开场与输入框（含产出切换与风格按钮），右栏是风格库：选中风格的大图与说明在上，按类别浏览全部风格在下；选中态唯一",
      "expected": "1440×900 首屏同时看到左栏的开场、输入框里的「视频 / 网页」与风格按钮、「快捷生成」，右栏的风格大图、样片说明、类别行与风格卡"
-    }
-   },
-   {
-    "id": "A-12",
-    "fields": [
-     "interaction"
-    ],
-    "from": {},
-    "to": {
-     "interaction": true
     }
    },
    {
@@ -224,88 +190,10 @@
     }
    },
    {
-    "id": "A-14",
-    "fields": [
-     "rule",
-     "expected"
-    ],
-    "from": {
-     "rule": "附件再多，收起时托盘也只占一行胶囊：一行摘要（数量、字数、读取中、失败）+ 最多两个胶囊 + 「+N」",
-     "expected": "检查：6 个附件时托盘高度 ≤ 88px，摘要行不折行，胶囊不超过 2 个且有「+N」"
-    },
-    "to": {
-     "rule": "附件再多，输入框顶部也只占一块：一行摘要（份数、字数、读取中、失败）+ 最多两张资料卡 + 「+N」，管理在右栏",
-     "expected": "检查：6 个附件时托盘高度 ≤ 88px，摘要行不折行，资料卡不超过 2 张且有「+N」"
-    }
-   },
-   {
-    "id": "A-15",
-    "fields": [
-     "interaction"
-    ],
-    "from": {},
-    "to": {
-     "interaction": true
-    }
-   },
-   {
-    "id": "A-16",
-    "fields": [
-     "rule",
-     "expected"
-    ],
-    "from": {
-     "rule": "展开列表限高可滚动，按稿件 / 知识库文档 / 图片分组，底部显示文字预算与附件上限",
-     "expected": "检查：[data-qc=attachment-list] 最大高度 232px；分组标题含数量；底部写「文字 x / 20,000 · 附件 n / 10」"
-    },
-    "to": {
-     "rule": "资料管理在右栏面板：按读取失败 / 稿件 / 知识库文档 / 图片分组，列表区内部滚动，右侧看正文，底部显示文字预算与附件上限",
-     "expected": "检查：[data-qc=attachment-list] 在预览栏内且 overflow-y 为 auto；分组标题含数量；底部写「文字 x / 20,000 · 附件 n / 10」"
-    }
-   },
-   {
-    "id": "A-17",
-    "fields": [
-     "interaction"
-    ],
-    "from": {},
-    "to": {
-     "interaction": true
-    }
-   },
-   {
-    "id": "A-18",
-    "fields": [
-     "rule",
-     "expected",
-     "interaction"
-    ],
-    "from": {
-     "rule": "发送后附件收成一行（前两个 + 「全部 N 个附件」），点开在右栏按类型回看原文，可回到预览",
-     "expected": "右栏出现附件分组列表与原文，顶部有「回到预览」"
-    },
-    "to": {
-     "rule": "发送后资料收在你的消息气泡里（两张资料卡 + 「全部 N 份」），点开在右栏按类型回看原文，可回到预览",
-     "expected": "右栏出现资料分组列表与原文，顶部有「回到预览」",
-     "interaction": true
-    }
-   },
-   {
-    "id": "A-19",
-    "fields": [
-     "interaction"
-    ],
-    "from": {},
-    "to": {
-     "interaction": true
-    }
-   },
-   {
     "id": "A-20",
     "fields": [
      "rule",
-     "expected",
-     "interaction"
+     "expected"
     ],
     "from": {
      "rule": "排队显示位置、前面几个、预计开始时间，并明确排队不是失败",
@@ -313,8 +201,7 @@
     },
     "to": {
      "rule": "排队写清楚：第几位、前面几个人、预计多久开始；先说明为什么要等（团队同时生成的上限满了，与稿件和操作无关），再列出正在生成的是谁、各自还要多久，排在前面的是谁、各自预计何时开始，最后是你自己",
-     "expected": "排队卡写「排队中 · 第 4 位」「前面还有 3 人，预计 38 分钟后开始」；原因一句；正在生成 4 / 4 列出林夏、周远、陈一帆、宋知与各自还需；排在你前面列出何岚、林夏、周远与预计开始；最后一行「你」高亮",
-     "interaction": true
+     "expected": "排队卡写「排队中 · 第 4 位」「前面还有 3 人，预计 38 分钟后开始」；原因一句；正在生成 4 / 4 列出林夏、周远、陈一帆、宋知与各自还需；排在你前面列出何岚、林夏、周远与预计开始；最后一行「你」高亮"
     }
    },
    {
@@ -333,165 +220,25 @@
     }
    },
    {
-    "id": "A-22",
-    "fields": [
-     "rule",
-     "expected"
-    ],
-    "from": {
-     "rule": "分镜逐幕亮起，区分正在画、待配音、配音中、已完成、没有完成",
-     "expected": "右栏 6 幕各带状态标签，配音中的一幕描边强调"
-    },
-    "to": {
-     "rule": "生成中右栏是作品本身在生长：当前这一幕放大显示（配音中带声波与正在配的字幕），下方分镜胶片逐幕亮起，区分正在画、待配音、配音中、已完成、没有完成",
-     "expected": "右栏大画面为第 3 幕并标「配音中」，下方 6 幕各带状态，当前幕描边"
-    }
-   },
-   {
-    "id": "A-23",
-    "fields": [
-     "interaction"
-    ],
-    "from": {},
-    "to": {
-     "interaction": true
-    }
-   },
-   {
-    "id": "A-24",
-    "fields": [
-     "interaction"
-    ],
-    "from": {},
-    "to": {
-     "interaction": true
-    }
-   },
-   {
-    "id": "A-25",
-    "fields": [
-     "interaction"
-    ],
-    "from": {},
-    "to": {
-     "interaction": true
-    }
-   },
-   {
-    "id": "A-26",
-    "fields": [
-     "rule",
-     "expected",
-     "interaction"
-    ],
-    "from": {
-     "rule": "成片播放器：播放 / 暂停、上一幕 / 下一幕、拖动进度、字幕开关、全屏，进度条上有重点刻度",
-     "expected": "逐个控件点一遍，字幕随幕切换；关字幕后画面不再显示字幕"
-    },
-    "to": {
-     "rule": "成片播放器播放真实的视频文件和音轨：播放 / 暂停、上一幕 / 下一幕、拖动进度、静音、字幕开关、全屏，进度条上有重点刻度",
-     "expected": "点播放后画面与声音都在走；字幕随幕切换；关字幕后字幕按钮为未按下、画面不再显示字幕",
-     "interaction": true
-    }
-   },
-   {
-    "id": "A-27",
-    "fields": [
-     "interaction"
-    ],
-    "from": {},
-    "to": {
-     "interaction": true
-    }
-   },
-   {
-    "id": "A-28",
-    "fields": [
-     "expected"
-    ],
-    "from": {
-     "expected": "左栏显示「排队 → 分镜 → 配音 → 合成 全部完成 · 用时」一行，可展开；主按钮是「发布到网页托管」"
-    },
-    "to": {
-     "expected": "左栏助手一轮里显示「排队 · 分镜 · 配音 · 合成 全部完成，用时」一行，可展开；主按钮是「发布到网页托管」"
-    }
-   },
-   {
-    "id": "A-29",
-    "fields": [
-     "interaction"
-    ],
-    "from": {},
-    "to": {
-     "interaction": true
-    }
-   },
-   {
-    "id": "A-30",
-    "fields": [
-     "interaction"
-    ],
-    "from": {},
-    "to": {
-     "interaction": true
-    }
-   },
-   {
-    "id": "A-31",
-    "fields": [
-     "rule",
-     "expected"
-    ],
-    "from": {
-     "rule": "成品可追溯：原稿、模板、配音写在预览上方，原稿可点开回看",
-     "expected": "预览标题右侧有「原稿 · n 个附件」「模板 · 视觉笔记」「配音 · 女声 · 稍快」"
-    },
-    "to": {
-     "rule": "成品可追溯：模板、配音写在预览上方，原稿收在你的消息里可点开回看",
-     "expected": "预览标题下写时长、幕数与配音，右侧「模板 · 视觉笔记」；你的消息里有资料卡与「全部 n 份」"
-    }
-   },
-   {
-    "id": "A-32",
-    "fields": [
-     "interaction"
-    ],
-    "from": {},
-    "to": {
-     "interaction": true
-    }
-   },
-   {
-    "id": "A-33",
-    "fields": [
-     "interaction"
-    ],
-    "from": {},
-    "to": {
-     "interaction": true
-    }
-   },
-   {
     "id": "A-35",
     "fields": [
      "rule",
      "expected"
     ],
     "from": {
-     "rule": "手机上「创作 / 预览」切换，输入框与「快捷生成」在底部可达",
-     "expected": "390×844 下底部可见输入框、附件托盘与「快捷生成」"
+     "rule": "手机上「对话 / 预览」切换，输入框与「快捷生成」在底部可达；选模板在「预览」页签",
+     "expected": "390×844 下底部可见输入框、资料托盘与「快捷生成」"
     },
     "to": {
-     "rule": "手机上「对话 / 预览」切换，输入框与「快捷生成」在底部可达；产出切换与风格按钮在输入框里单独一行",
-     "expected": "390×844 下底部可见输入框、资料托盘、「视频 / 网页」、风格按钮与「快捷生成」"
+     "rule": "手机上「对话 / 预览」切换；输入框做减法：左下「+」（上传、知识库）与「视频 · 风格」按钮（产出切换收在它的面板顶部），右下语音与一个动作（有字是发送，没字且稿件齐了是「生成」）；输入框下不放说明文字",
+     "expected": "390×844 下输入框工具行只有 +、「视频 · 风格」、语音、一个动作；点 + 出现「上传稿件或图片 / 从知识库选择」；输入框下没有文字"
     }
    },
    {
     "id": "A-39",
     "fields": [
      "rule",
-     "expected",
-     "interaction"
+     "expected"
     ],
     "from": {
      "rule": "切到网页后只显示网页模板，产出标签与主按钮旁的标记同步",
@@ -499,18 +246,7 @@
     },
     "to": {
      "rule": "切到网页后风格保持不变，右栏说明换成「按这个风格的配色、字体与版式出页面」，标题与风格按钮同步",
-     "expected": "「网页」高亮；风格仍是「视觉笔记」；右栏说明写网页的生成方式",
-     "interaction": true
-    }
-   },
-   {
-    "id": "A-40",
-    "fields": [
-     "interaction"
-    ],
-    "from": {},
-    "to": {
-     "interaction": true
+     "expected": "「网页」高亮；风格仍是「视觉笔记」；右栏说明写网页的生成方式"
     }
    }
   ]
@@ -607,6 +343,24 @@
     ]
    },
    {
+    "id": "phone-plus",
+    "name": "手机 · 输入框左下的「+」：上传与知识库",
+    "route": "#/quick-creation-agent",
+    "viewport": "phone",
+    "entryActions": [
+     "[data-qc=composer-plus]"
+    ]
+   },
+   {
+    "id": "phone-style",
+    "name": "手机 · 「视频 · 风格」按钮：产出切换在面板顶部",
+    "route": "#/quick-creation-agent",
+    "viewport": "phone",
+    "entryActions": [
+     "[data-qc=style-chip]"
+    ]
+   },
+   {
     "id": "style-picker",
     "name": "输入框里就地换风格（15 类 99 种）",
     "route": "#/quick-creation-agent",
@@ -619,18 +373,26 @@
   "removed": [],
   "changed": [
    {
-    "id": "phone-preview",
+    "id": "phone-compose",
     "fields": [
      "entryActions"
     ],
     "from": {
      "entryActions": [
-      ".overflow-x-auto.border-b > button:nth-child(2)"
+      "[data-qc=sample-doc]",
+      "[data-qc=pick-knowledge]",
+      "[data-qc=pick-knowledge]",
+      "[data-qc=pick-knowledge]",
+      "[data-qc=pick-knowledge]"
      ]
     },
     "to": {
      "entryActions": [
-      "[aria-label=对话与预览] button:nth-child(2)"
+      "[data-qc=sample-doc]",
+      "[data-qc=composer-plus]",
+      "[data-qc=plus-knowledge]",
+      "[data-qc=composer-plus]",
+      "[data-qc=plus-knowledge]"
      ]
     }
    }
@@ -644,16 +406,12 @@
  },
  "meta": {
   "prototypeVersion": {
-   "from": 1,
+   "from": 5,
    "to": 7
   }
  },
  "files": {
   "added": [
-   {
-    "path": "checks/handoff-local.json",
-    "area": "自检"
-   },
    {
     "path": "src/added/pages/quick-creation-agent/AssetLibrary.tsx",
     "area": "源码"
@@ -663,15 +421,7 @@
     "area": "源码"
    },
    {
-    "path": "src/added/pages/quick-creation-agent/Conversation.tsx",
-    "area": "源码"
-   },
-   {
     "path": "src/added/pages/quick-creation-agent/StyleLibrary.tsx",
-    "area": "源码"
-   },
-   {
-    "path": "src/assets/demo-film.webm",
     "area": "源码"
    },
    {
@@ -1079,15 +829,7 @@
     "area": "源码"
    },
    {
-    "path": "tools/handoff-local.mjs",
-    "area": "工具"
-   },
-   {
     "path": "tools/import-opuscar.py",
-    "area": "工具"
-   },
-   {
-    "path": "tools/make-demo-film.mjs",
     "area": "工具"
    },
    {
@@ -1097,6 +839,10 @@
   ],
   "removed": [],
   "changed": [
+   {
+    "path": "checks/handoff-local.json",
+    "area": "自检"
+   },
    {
     "path": "checks/result.json",
     "area": "自检"
@@ -1112,10 +858,6 @@
    {
     "path": "prototype.json",
     "area": "其他"
-   },
-   {
-    "path": "src/added/pages/quick-creation-agent/AttachmentTray.tsx",
-    "area": "源码"
    },
    {
     "path": "src/added/pages/quick-creation-agent/QuickCreationAgentPage.tsx",
@@ -1158,27 +900,15 @@
     "area": "源码"
    },
    {
-    "path": "src/main.tsx",
-    "area": "源码"
-   },
-   {
     "path": "tools/export-demo-data.mjs",
     "area": "工具"
    },
    {
-    "path": "tools/interact-check.mjs",
+    "path": "tools/handoff-local.mjs",
     "area": "工具"
    },
    {
     "path": "tools/manifest-src.mjs",
-    "area": "工具"
-   },
-   {
-    "path": "tools/prototype-build.prd-admin.patch",
-    "area": "工具"
-   },
-   {
-    "path": "tools/self-check.mjs",
     "area": "工具"
    },
    {
@@ -1213,8 +943,8 @@
  },
  "checks": {
   "from": {
-   "passed": 41,
-   "total": 41,
+   "passed": 43,
+   "total": 43,
    "failed": []
   },
   "to": {
@@ -1224,7 +954,7 @@
   }
  },
  "source": {
-  "files": 118,
-  "bytes": 284874
+  "files": 114,
+  "bytes": 201471
  }
 }

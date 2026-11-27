@@ -126,3 +126,6 @@
   .qc-face-send { width: 44px; }
   .qc-face-send::before { left: 6px; right: 6px; }
 }
+
+/* 弹出菜单的底：浅色主题 --bg-input 是实色（白），深色主题它是半透明，叠在 --bg-elevated 上才不透出下面的字 */
+.qc-menu-surface { background: linear-gradient(var(--bg-input), var(--bg-input)), var(--bg-elevated); }

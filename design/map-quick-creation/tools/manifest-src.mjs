@@ -13,6 +13,8 @@ const ALL = [...D, ...P];
 const ready = s => `[data-qc-ready=${s}]`;
 const CHAT = ['[data-qc=starter][data-value="我想做一个宣传片"]', '[data-qc=quick-reply][data-value="新产品发布"]', '[data-qc=quick-reply][data-value="客户"]', '[data-qc=quick-reply][data-value="科技感"]'];
 const ADD6 = ['[data-qc=sample-doc]', '[data-qc=pick-knowledge]', '[data-qc=pick-knowledge]', '[data-qc=pick-knowledge]', '[data-qc=pick-knowledge]', '[data-qc=pick-knowledge]'];
+/* 手机上传与知识库收进输入框左下的「+」 */
+const PLUS_KB = ['[data-qc=composer-plus]', '[data-qc=plus-knowledge]'];
 
 const screens = [
   { id: 'compose', name: '空态与选中模板（视频）', route: `#${Q}`, viewport: 'desktop', themes: both, entryReadySelector: ready('compose') },
@@ -39,7 +41,9 @@ const screens = [
   { id: 'web-done', name: '网页 · 已生成（桌面 / 手机预览）', route: `#${Q}?run=run-web-done`, viewport: 'desktop', themes: both, entryReadySelector: '[data-qc=web-preview]' },
   { id: 'works', name: '我的作品（30 条）', route: `#${Q}?view=works`, viewport: 'desktop', themes: both, entryReadySelector: ready('works') },
   { id: 'toolbox', name: '百宝箱入口卡片', route: '#/ai-toolbox', viewport: 'desktop', themes: both, entryReadySelector: ready('toolbox') },
-  { id: 'phone-compose', name: '手机 · 创作（多附件）', route: `#${Q}`, viewport: 'phone', themes: both, entryReadySelector: '[data-qc=attachment-tray]', entryActions: ADD6.slice(0, 5) },
+  { id: 'phone-compose', name: '手机 · 创作（多附件）', route: `#${Q}`, viewport: 'phone', themes: both, entryReadySelector: '[data-qc=attachment-tray]', entryActions: ['[data-qc=sample-doc]', ...PLUS_KB, ...PLUS_KB] },
+  { id: 'phone-plus', name: '手机 · 输入框左下的「+」：上传与知识库', route: `#${Q}`, viewport: 'phone', themes: both, entryReadySelector: '[data-qc=plus-menu]', entryActions: ['[data-qc=composer-plus]'] },
+  { id: 'phone-style', name: '手机 · 「视频 · 风格」按钮：产出切换在面板顶部', route: `#${Q}`, viewport: 'phone', themes: both, entryReadySelector: '[data-qc=style-popover]', entryActions: ['[data-qc=style-chip]'] },
   { id: 'phone-queued', name: '手机 · 排队中', route: `#${Q}?run=run-queued`, viewport: 'phone', themes: both, entryReadySelector: ready('run-queued') },
   { id: 'phone-preview', name: '手机 · 预览成片', route: `#${Q}?run=run-published`, viewport: 'phone', themes: both, entryReadySelector: '[data-qc=video-player]', entryActions: ['[aria-label=对话与预览] button:nth-child(2)'] },
   { id: 'phone-assets', name: '手机 · 预览页签里的产物', route: `#${Q}`, viewport: 'phone', themes: both, entryReadySelector: '[data-qc=asset-detail]', entryActions: ['[aria-label=对话与预览] button:nth-child(2)', '[aria-label=选择与资产] button:nth-child(2)'] },
@@ -85,7 +89,7 @@ const rows = [
   ['A-32', null, 'web-done', 'human', D, '网页产出：生成中大纲逐节出现；完成后可切桌面 / 手机预览，重点点击定位到对应一节', '网页生成中右栏列出 4 节；完成后点「再画边界」，对应一节高亮'],
   ['A-33', null, 'done-video', 'human', D, '同一份稿件可一键改做另一种产出，稿件与要求自动带回', '点「用这份稿件做网页」回到创作，附件与要求已填好，产出切到网页'],
   ['A-34', null, 'works', 'screenshot', ALL, '作品列表：按状态筛选；标题桌面一行、手机两行截断；状态与时间在第二行；30 条稳定', '30 条作品逐行高度一致，长标题省略，不撑破行；状态标签不折行'],
-  ['A-35', null, 'phone-compose', 'screenshot', P, '手机上「对话 / 预览」切换，输入框与「快捷生成」在底部可达；产出切换与风格按钮在输入框里单独一行', '390×844 下底部可见输入框、资料托盘、「视频 / 网页」、风格按钮与「快捷生成」'],
+  ['A-35', null, 'phone-compose', 'screenshot', P, '手机上「对话 / 预览」切换；输入框做减法：左下「+」（上传、知识库）与「视频 · 风格」按钮（产出切换收在它的面板顶部），右下语音与一个动作（有字是发送，没字且稿件齐了是「生成」）；输入框下不放说明文字', '390×844 下输入框工具行只有 +、「视频 · 风格」、语音、一个动作；点 + 出现「上传稿件或图片 / 从知识库选择」；输入框下没有文字'],
   ['A-36', null, 'phone-queued', 'screenshot', P, '手机头部的状态不挤压标题', '状态标签在标题上方一行，标题完整一行显示'],
   ['A-37', null, 'phone-preview', 'screenshot', P, '手机播放器进度条单独一行，控件不换到第三行', '进度条在上，按钮一行排完'],
   ['A-38', null, 'toolbox', 'screenshot', D, '百宝箱里是一张独立的「快速创作」入口卡片，带开发中标记', '卡片名、简介与「开发中」标记可见，点击进入快速创作'],

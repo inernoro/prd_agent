@@ -22,14 +22,18 @@ export function BriefStrip({ brief }: { brief: QcBrief }) {
   return (
     <div className="mb-2 flex items-center gap-2 overflow-x-auto px-1 pb-0.5 text-[12px]" style={{ scrollbarWidth: 'none' }}
       data-qc="brief" data-ready={brief.ready ? 'true' : 'false'} data-filled={filled} aria-label="创作简报">
-      <span className="shrink-0 font-medium text-token-secondary">创作简报</span>
+      <span className="shrink-0 font-medium text-token-secondary max-md:hidden">创作简报</span>
       <span className="shrink-0 rounded-full px-1.5 leading-[18px] tabular-nums"
         style={brief.ready ? { background: 'var(--semantic-success-soft)', color: 'var(--accent-fg-success)' } : { background: 'var(--bg-tertiary)', color: 'var(--text-secondary)' }}>
         {brief.ready ? '可以开工' : `必填 ${filled}/${required.length}`}
       </span>
+      {/* 手机只留一句：缺什么，或已经定下的三项 */}
+      <span className="min-w-0 truncate text-token-secondary md:hidden" data-qc="brief-line">
+        {brief.ready ? required.map(f => f.value?.replace(/（默认，可换）$/, '')).join(' · ') : `还缺${brief.missing.join('、')}`}
+      </span>
       {brief.fields.map(f => (
         <span key={f.key} data-brief-field={f.key} data-filled={f.value ? 'true' : 'false'} title={f.value ? `${f.label}：${f.value}` : `${f.label}：待补`}
-          className={cn('inline-flex h-6 max-w-[200px] shrink-0 items-center gap-1 rounded-md',
+          className={cn('inline-flex h-6 max-w-[200px] shrink-0 items-center gap-1 rounded-md max-md:hidden',
             f.value ? 'px-0.5' : f.required ? 'border border-dashed border-[var(--border-default)] px-1.5' : 'px-0.5')}>
           {f.value ? <Check size={11} className="shrink-0 text-[color:var(--accent-fg-success)]" aria-hidden /> : <Circle size={11} className="shrink-0 text-token-muted" aria-hidden />}
           <span className="shrink-0 text-token-muted">{f.label}</span>
