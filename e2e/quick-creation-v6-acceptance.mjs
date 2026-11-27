@@ -26,7 +26,7 @@ async function data(response, name) {
   return envelope.data ?? envelope;
 }
 
-async function openWorkbench(page) {
+async function openWorkbench(page, { mobile = false } = {}) {
   await page.goto(origin.href);
   await page.getByRole('button', { name: '登录 / 注册', exact: true }).click();
   await page.locator('input[autocomplete="username"]').first().fill(process.env.E2E_USER);
@@ -37,10 +37,11 @@ async function openWorkbench(page) {
   ]);
   const { accessToken } = await data(login, 'MAP login');
   assert.ok(accessToken);
-  const mobileMenu = page.getByRole('button', { name: '打开导航菜单', exact: true });
-  if (await mobileMenu.isVisible()) await mobileMenu.click();
+  if (mobile) {
+    await page.getByRole('button', { name: '打开导航菜单', exact: true }).click();
+  }
   const toolbox = page.locator('nav button[title^="百宝箱"]:visible')
-    .or(page.getByRole('button', { name: '百宝箱', exact: true }).filter({ visible: true })).first();
+    .or(page.getByRole('button', { name: /^(?:AI\s*)?百宝箱$/ }).filter({ visible: true })).first();
   await toolbox.click();
   const [templates] = await Promise.all([
     page.waitForResponse(match(base + '/templates')),
@@ -98,11 +99,18 @@ try {
 
   const phone = await browser.newPage({ viewport: { width: 375, height: 812 }, isMobile: true, hasTouch: true, deviceScaleFactor: 1 });
   phone.setDefaultTimeout(55_000);
-  await openWorkbench(phone);
-  const phoneWidth = await phone.evaluate(() => ({ viewport: innerWidth, scroll: document.documentElement.scrollWidth }));
-  assert.equal(phoneWidth.scroll, phoneWidth.viewport);
-  await phone.screenshot({ path: join(out, '04-phone-compose.png') });
-  await phone.close();
+  try {
+    await openWorkbench(phone, { mobile: true });
+    const phoneWidth = await phone.evaluate(() => ({ viewport: innerWidth, scroll: document.documentElement.scrollWidth }));
+    assert.equal(phoneWidth.viewport, 375);
+    assert.equal(phoneWidth.scroll, phoneWidth.viewport);
+    await phone.screenshot({ path: join(out, '04-phone-compose.png') });
+  } catch (error) {
+    await phone.screenshot({ path: join(out, '04-phone-failure.png') }).catch(() => {});
+    throw error;
+  } finally {
+    await phone.close();
+  }
   receipt.cases.push('distinct touch context and no 375px page overflow');
 
   if (generate) {
