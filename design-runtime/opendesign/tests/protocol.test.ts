@@ -384,7 +384,7 @@ describe('POST /v1/tasks', () => {
     }
   });
 
-  it('identifies one missing scene from the saved order and requires a completed movie for retry', () => {
+  it('identifies one missing scene and keeps all completed clips beyond the former 16 MiB checkpoint ceiling', () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'film-scene-'));
     try {
       const work = path.join(directory, 'work');
@@ -401,9 +401,12 @@ describe('POST /v1/tasks', () => {
         value.write(tag, 4);
         return value;
       };
-      const movie = Buffer.concat([box('ftyp'), box('mdat'), box('moov')]);
+      const media = Buffer.alloc(4 * 1024 * 1024);
+      media.writeUInt32BE(media.length);
+      media.write('mdat', 4);
+      const movie = Buffer.concat([box('ftyp'), media, box('moov')]);
       for (const index of [1, 2, 3, 5, 6]) fs.writeFileSync(path.join(scenes, `${index}.mp4`), movie);
-      fs.writeFileSync(path.join(scenes, '4.mp4'), movie.subarray(0, 24));
+      fs.writeFileSync(path.join(scenes, '4.mp4'), movie.subarray(0, movie.length - 12));
       const store = new FilmProjectCheckpointStore(path.join(directory, 'checkpoints'));
       expect(store.capture('first', 'owner', 'inputs', work)).toBe(true);
       expect(store.inspect('first')).toEqual({ completedScenes: 5, narrationClips: 0, incompleteScene: 4 });

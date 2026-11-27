@@ -5,9 +5,12 @@ import { readRegularFileNoFollow } from '../workspace/output-preflight.js';
 import { sha256 } from '../workspace/primitives.js';
 import { hasCompletedMovie } from './film-recovery.js';
 
-const MAX_PROJECT_BYTES = 16 * 1024 * 1024;
-const MAX_CHECKPOINT_BYTES = 24 * 1024 * 1024;
-const MAX_STORE_BYTES = 128 * 1024 * 1024;
+const MIB = 1024 * 1024;
+// A project retains separate scene encodes and uncompressed narration. Its
+// working set can be larger than the final film even before the preview exists.
+const MAX_PROJECT_BYTES = 80 * MIB;
+const MAX_CHECKPOINT_BYTES = Math.ceil(MAX_PROJECT_BYTES / 3) * 4 + 256 * 1024;
+const MAX_STORE_BYTES = 3 * MAX_CHECKPOINT_BYTES;
 const MAX_FILE_COUNT = 160;
 const MAX_NODES = 512;
 const RETENTION_MS = 24 * 60 * 60 * 1000;
@@ -110,10 +113,11 @@ export class FilmProjectCheckpointStore {
         if (!entry.isFile() || !EXTENSIONS.has(extension) || (extension === '.mp4' && !isSceneVideo(relative))) continue;
         const stat = fs.lstatSync(absolute, { throwIfNoEntry: false });
         if (!stat?.isFile() || stat.size === 0 || fs.realpathSync(absolute) !== absolute) continue;
-        if (total + stat.size > MAX_PROJECT_BYTES || files.length >= MAX_FILE_COUNT)
-          throw new Error('Film checkpoint exceeds the workspace storage limit');
-        const bytes = readRegularFileNoFollow(absolute, MAX_PROJECT_BYTES - total);
+        if (stat.size > MAX_PROJECT_BYTES) throw new Error('Film checkpoint file exceeds the workspace storage limit');
+        const bytes = readRegularFileNoFollow(absolute, MAX_PROJECT_BYTES);
         if ((isNarration(relative) || isSceneVideo(relative)) && !isCompletedAsset(relative, bytes)) continue;
+        if (total + bytes.length > MAX_PROJECT_BYTES || files.length >= MAX_FILE_COUNT)
+          throw new Error('Film checkpoint exceeds the workspace storage limit');
         total += bytes.length;
         files.push({ path: relative, sha: sha256(bytes), bytes: bytes.toString('base64') });
       }
