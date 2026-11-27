@@ -13,7 +13,7 @@ namespace PrdAgent.Api.Services;
 public sealed class QuickCreationExportWorker(IServiceScopeFactory scopes, IHttpClientFactory http,
     IConfiguration config, ILogger<QuickCreationExportWorker> logger) : BackgroundService
 {
-    private const int MaxExportBytes = 192 * 1024 * 1024;
+    private const int MaxExportBytes = 384 * 1024 * 1024;
     private static readonly TimeSpan LeaseTime = TimeSpan.FromMinutes(50);
     private static readonly TimeSpan Poll = TimeSpan.FromSeconds(4);
 

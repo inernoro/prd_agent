@@ -584,6 +584,12 @@ export class DesignTaskExecutor {
           return id;
         };
         const daemon = this.options.daemon;
+        const getBrowserProject = () => {
+          if (!task.browserFilm) return undefined;
+          const project = findBrowserFilm(workspaceDir);
+          const resumingTwoSceneTrial = !task.browserFilm.trial && restoredFilm?.completedScenes === 2;
+          return resumingTwoSceneTrial && project?.indexes.length === 2 ? undefined : project;
+        };
         const getFilm = () => {
           daemon.freeze();
           try {
@@ -667,7 +673,7 @@ export class DesignTaskExecutor {
         try {
           await client.waitForRun(firstRunId, budget.finalizationDeadline, signal, onStage);
           let film = task.browserFilm ? undefined : getFilm();
-          let browserProject = task.browserFilm ? findBrowserFilm(workspaceDir) : undefined;
+          let browserProject = getBrowserProject();
           if (!film && !browserProject) {
             const conversation = await client.odJson(
               `/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/messages`,
@@ -682,7 +688,7 @@ export class DesignTaskExecutor {
               onStage('code_film_form_answered', { runId: finalRunId, previousRunId: firstRunId });
               await client.waitForRun(finalRunId, budget.finalizationDeadline, signal, onStage);
               film = task.browserFilm ? undefined : getFilm();
-              browserProject = task.browserFilm ? findBrowserFilm(workspaceDir) : undefined;
+              browserProject = getBrowserProject();
             }
           }
           if (task.browserFilm) {

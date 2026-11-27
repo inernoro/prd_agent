@@ -312,10 +312,11 @@ export function parseWorkspacePackage(bytes: Buffer, transfer: WorkspaceTransfer
       : 'application/octet-stream';
     return { path: relativePath, bytes: content, sha256: expectedSha, mediaType };
   });
-  if (!transfer.allowedOutputPaths.includes('film.mp4')) {
-    validateDesignTaskContract(runId, transfer.baseRevision, files);
-  } else if (transfer.allowedOutputPaths.includes('film.json')) {
+  if (transfer.allowedOutputPaths.includes('film-bundle.json') || (transfer.allowedOutputPaths.includes('film.mp4')
+      && transfer.allowedOutputPaths.includes('film.json'))) {
     validateQuickCreationFilmFiles(files);
+  } else if (!transfer.allowedOutputPaths.includes('film.mp4')) {
+    validateDesignTaskContract(runId, transfer.baseRevision, files);
   } else if (files.length !== 1 || files[0].mediaType !== 'text/markdown'
       || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,100}\.md$/.test(files[0].path)) {
     throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'a code film requires one original Markdown file');

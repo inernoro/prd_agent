@@ -291,18 +291,22 @@ describe('POST /v1/tasks', () => {
       original('reference/screenshot-01.png', 'image/png', reference),
     ];
     const request = taskRequest(map, pkg);
-    const parse = (inputs: typeof files) => {
+    const parse = (inputs: typeof files, browserFilm = false) => {
       const bytes = Buffer.from(JSON.stringify({
         schemaVersion: MAP_DESIGN_WORKSPACE_SCHEMA, runId: pkg.runId, baseRevision: pkg.baseRevision, files: inputs,
       }));
       const task = normalizeTaskRequest({
         ...request,
-        envelope: { schemaVersion: 'map-code-film-command-v1', runId: pkg.runId, command: '制作视频' },
-        transfer: { ...(request.transfer as object), inputSha256: sha256(bytes), allowedOutputPaths: ['film.mp4', 'film.json'] },
+        envelope: { schemaVersion: 'map-code-film-command-v1', runId: pkg.runId, command: '制作视频',
+          ...(browserFilm ? { browserFilm: { target: 180, scenes: 13, trial: true } } : {}) },
+        transfer: { ...(request.transfer as object), inputSha256: sha256(bytes),
+          allowedOutputPaths: [browserFilm ? 'film-bundle.json' : 'film.mp4', 'film.json'] },
       });
       return parseWorkspacePackage(bytes, task.transfer).files;
     };
     expect(parse(files).map(file => file.bytes)).toEqual([source, secondSource, guide, reference]);
+    expect(parse(files, true).map(file => file.bytes)).toEqual([source, secondSource, guide, reference]);
+    expect(() => parse([files[0], files[1], files[3]], true)).toThrow('one original STYLE.md');
     const userRequests = Buffer.from('只展示第二部分\n\n不要出现联系方式');
     const brief = original('brief/user-requests.txt', 'text/plain', userRequests);
     expect(parse([...files, brief]).map(file => file.bytes)).toEqual([source, secondSource, guide, reference, userRequests]);
