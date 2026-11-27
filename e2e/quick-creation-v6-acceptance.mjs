@@ -199,9 +199,17 @@ try {
         }
         row.currentStatus = view.status;
         row.elapsedSec = view.elapsedSec;
-        row.stages = view.stages?.map(({ id, label, status }) => ({ id, label, status }));
+        const stage = view.stages?.find(item => item.status === 'running') ?? view.stages?.at(-1);
+        if (stage) {
+          row.stages ??= [];
+          if (row.stages.at(-1)?.key !== stage.key || row.stages.at(-1)?.status !== stage.status) {
+            row.stages.push({ key: stage.key, label: stage.label, status: stage.status, elapsedSec: view.elapsedSec });
+          }
+        }
         if (view.status === 'failed' || Date.now() - started > budget) {
-          const failure = { id, kind: view.kind, code: view.failure?.code ?? (view.status === 'failed' ? 'task_failed' : 'acceptance_deadline') };
+          const failure = { id, kind: view.kind,
+            code: view.status === 'failed' ? 'task_failed' : 'acceptance_deadline',
+            stage: view.failure?.stageKey ?? stage?.key, message: view.failure?.message };
           receipt.failures.push(failure);
           console.log(JSON.stringify(failure));
           expected.delete(id);
