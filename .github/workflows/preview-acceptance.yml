@@ -49,6 +49,7 @@ on:
           - confirm
           - skip
           - survey
+          - proof
         default: none
       quick_creation_retry_film_id:
         description: '可选的本账号旧视频任务编号，复用该任务稿件和风格完成重试验收'
@@ -270,7 +271,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 160
     concurrency:
-      group: dsn-1400e277-v6-live
+      group: dsn-1400e277-v6-${{ inputs.quick_creation_brief_admission == 'proof' && 'proof' || 'live' }}
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
@@ -285,6 +286,7 @@ jobs:
           pnpm -C e2e install --frozen-lockfile
           pnpm -C e2e exec playwright install --with-deps chromium
       - name: Verify the deployed quick creation journey
+        if: inputs.quick_creation_brief_admission != 'proof'
         env:
           E2E_BASE_URL: ${{ inputs.e2e_base_url }}
           E2E_EXPECTED_COMMIT: ${{ inputs.quick_creation_commit }}
@@ -296,6 +298,14 @@ jobs:
           E2E_USER: ${{ secrets.E2E_USER }}
           E2E_PASSWORD: ${{ secrets.E2E_PASSWORD }}
         run: node e2e/quick-creation-v6-acceptance.mjs
+      - name: Capture annotated V8 acceptance evidence
+        if: inputs.quick_creation_brief_admission == 'proof'
+        env:
+          E2E_BASE_URL: ${{ inputs.e2e_base_url }}
+          E2E_EXPECTED_COMMIT: ${{ inputs.quick_creation_commit }}
+          E2E_USER: ${{ secrets.E2E_USER }}
+          E2E_PASSWORD: ${{ secrets.E2E_PASSWORD }}
+        run: node e2e/quick-creation-v8-proof.mjs
       - name: Retain cloud browser evidence
         if: always()
         uses: actions/upload-artifact@v4
