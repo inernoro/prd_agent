@@ -1,7 +1,7 @@
 import { apiRequest } from '@/services/real/apiClient';
 import { useAuthStore } from '@/stores/authStore';
 import { fail, type ApiResponse } from '@/types/api';
-import type { AssetScope, CreateRunInput, QcAsset, QcAttachment, QcRun, QcTemplate, QcTemplateCategory, QcTemplateSource, QcWork } from '@/pages/quick-creation-agent/types';
+import type { AssetScope, BriefContext, CreateRunInput, QcBriefSession, QcAsset, QcAttachment, QcRun, QcTemplate, QcTemplateCategory, QcTemplateSource, QcWork } from '@/pages/quick-creation-agent/types';
 
 /**
  * 快速创作接口。生成在服务端排队与执行（Run/Worker），离开页面不取消；页面按任务编号恢复。
@@ -16,6 +16,21 @@ export function listQuickCreationTemplates() {
 
 export function listQuickCreationWorks() {
   return apiRequest<{ items: QcWork[]; total: number }>(`${base}/works`);
+}
+
+/* 对话起稿：正式实现走 SSE 流式返回（useSseStream），助手消息逐字出现并带上网关返回的模型；原型一次返回整条，由页面逐字显示 */
+export function sendBriefMessage(input: { sessionId?: string; text: string; context: BriefContext }) {
+  return apiRequest<QcBriefSession>(`${base}/brief/messages`, { method: 'POST', body: input });
+}
+
+/** 输入框里的选择变了（产出、风格、资料），只更新简报，不产生对话 */
+export function updateBriefContext(input: { sessionId?: string; context: BriefContext }) {
+  return apiRequest<QcBriefSession>(`${base}/brief/context`, { method: 'POST', body: input });
+}
+
+/** 开工前先出分镜脚本（约一两分钟），确认后再正式排队 */
+export function requestBriefScript(sessionId: string, context: BriefContext) {
+  return apiRequest<QcBriefSession>(`${base}/brief/${encodeURIComponent(sessionId)}/script`, { method: 'POST', body: { context } });
 }
 
 /* 产物：已生成的成品，按「我的 / 团队」取；用于创作时回看与复用风格 */

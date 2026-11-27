@@ -150,5 +150,29 @@
  "A-48": {
   "status": "passed",
   "note": "交接场景 reuse-style-from-team-asset：团队里选林夏的「新版 OKR 填写指南」点「用这个风格」，风格按钮变为 ink-wash（中国水墨）；open-asset-during-run：生成中切到产物、点「打开」进入 asset-a-m1 任务；当前正在用的风格按钮置灰"
+ },
+ "A-49": {
+  "status": "passed",
+  "note": "chat-start 画面：点「我想做一个宣传片」后助手只问「宣传的是什么？」并给「新产品发布 / 公司年会 / 招聘宣传」三个可点回答；回复逐字出现，名字旁写「deepseek-v3 · 模型池「创作对话」」；交接场景 chat-to-ready-and-skip-script 第 1–4 步通过"
+ },
+ "A-50": {
+  "status": "passed",
+  "note": "chat-start 简报条写「必填 2/3」，讲什么显示虚线「待补」；chat-ready 写「可以开工」，做成什么 / 讲什么 / 风格都带勾，时长显示「约 1 分钟（默认）」；交接场景断言 data-ready 由 false 变 true，判定来自 /brief 接口返回的结构化字段"
+ },
+ "A-51": {
+  "status": "passed",
+  "note": "chat-recommend 画面：选「科技感」后出现暗色科技发布、玻璃质感产品、科幻全息界面三张卡，各带海报与一句理由；点「用这个」后风格按钮变为 dark-keynote；交接场景 say-second-and-start 说「第二个」后风格按钮变为 glass-product；手机 375 宽下卡片改为左图右文，三张一屏可见"
+ },
+ "A-52": {
+  "status": "passed",
+  "note": "chat-ready 画面：齐了之后出现「准备好了」卡，复述三行简报，主按钮「开始生成（约 30–60 分钟）」与「跳过脚本，直接开始」，卡片完整在视线内；交接场景 start-before-ready 一开始说「可以开始了」，出现 missing-note「还不能开始：还缺讲什么」，简报 data-ready 仍为 false"
+ },
+ "A-53": {
+  "status": "passed",
+  "note": "chat-script 画面：6 幕分镜脚本每幕一句画面一句旁白，底部「按这个脚本开始生成」与改法提示，脚本卡完整在视线内；交接场景 say-second-and-start 点确认后进入排队卡，chat-to-ready-and-skip-script 点跳过直接进入排队卡"
+ },
+ "A-54": {
+  "status": "passed",
+  "note": "交接场景 say-second-and-start 全程不放稿件，排队后任务左栏你的消息写「没有稿件：内容来自和快速创作的对话」，简报「讲什么」取自对话（宣传片：新产品发布）；原型的创建接口带 briefId 且无附件时不再回落到示例稿件"
  }
 }

@@ -440,6 +440,198 @@ index 00000000..f377f892
 +    </div>
 +  );
 +}
+diff --git a/prd-admin/src/pages/quick-creation-agent/BriefChat.tsx b/prd-admin/src/pages/quick-creation-agent/BriefChat.tsx
+new file mode 100644
+index 00000000..b4eadfe7
+--- /dev/null
++++ b/prd-admin/src/pages/quick-creation-agent/BriefChat.tsx
+@@ -0,0 +1,186 @@
++/**
++ * 对话起稿：不知道选什么的人先和快速创作聊，聊到条件齐了再开工。
++ * - 创作简报条：开工条件一眼可见（必填三项、建议两项），由服务端结构化给出；
++ * - 助手每轮问一个问题，带可点的回答；推荐风格用卡片说明理由；
++ * - 必填齐了出现「准备好了」卡，也可以直接说「可以开始了」；开工前先看分镜脚本，可一键跳过。
++ * 只有最新一条助手消息的按钮可点，旧消息里的选项收起，避免点到过时的选择。
++ */
++import { useEffect, useRef, useState } from 'react';
++import { Check, Circle, Clapperboard, Play, Sparkles } from 'lucide-react';
++import { cn } from '@/lib/cn';
++import { Button } from '@/components/design/Button';
++import { MapSpinner } from '@/components/ui/VideoLoader';
++import { StreamingText } from '@/components/streaming';
++import { StyleFrame } from './TemplateFrames';
++import { AgentTurn, UserTurn } from './Conversation';
++import type { QcBrief, QcBriefSession, QcChatMessage, QcTemplate } from './types';
++
++/** 创作简报条：放在输入框上方，聊到哪一条就勾哪一条 */
++export function BriefStrip({ brief }: { brief: QcBrief }) {
++  const required = brief.fields.filter(f => f.required);
++  const filled = required.filter(f => f.value).length;
++  return (
++    <div className="mb-2 flex items-center gap-2 overflow-x-auto px-1 pb-0.5 text-[12px]" style={{ scrollbarWidth: 'none' }}
++      data-qc="brief" data-ready={brief.ready ? 'true' : 'false'} data-filled={filled} aria-label="创作简报">
++      <span className="shrink-0 font-medium text-token-secondary">创作简报</span>
++      <span className="shrink-0 rounded-full px-1.5 leading-[18px] tabular-nums"
++        style={brief.ready ? { background: 'var(--semantic-success-soft)', color: 'var(--accent-fg-success)' } : { background: 'var(--bg-tertiary)', color: 'var(--text-secondary)' }}>
++        {brief.ready ? '可以开工' : `必填 ${filled}/${required.length}`}
++      </span>
++      {brief.fields.map(f => (
++        <span key={f.key} data-brief-field={f.key} data-filled={f.value ? 'true' : 'false'} title={f.value ? `${f.label}：${f.value}` : `${f.label}：待补`}
++          className={cn('inline-flex h-6 max-w-[200px] shrink-0 items-center gap-1 rounded-md border px-1.5',
++            f.value ? 'border-token-subtle bg-[var(--bg-card)]' : f.required ? 'border-dashed border-[var(--border-default)]' : 'border-dashed border-token-subtle')}>
++          {f.value ? <Check size={11} className="shrink-0 text-[color:var(--accent-fg-success)]" aria-hidden /> : <Circle size={11} className="shrink-0 text-token-muted" aria-hidden />}
++          <span className="shrink-0 text-token-muted">{f.label}</span>
++          <span className={cn('min-w-0 truncate', f.value ? 'text-token-primary' : 'text-token-muted')}>{f.value ?? (f.required ? '待补' : '可选')}</span>
++        </span>
++      ))}
++    </div>
++  );
++}
++
++/** 逐字显示助手的这一条（正式实现由 SSE 推送，原型按固定速度显示整条） */
++function useReveal(text: string, active: boolean) {
++  const [n, setN] = useState(active ? 0 : text.length);
++  useEffect(() => {
++    if (!active) { setN(text.length); return; }
++    setN(0);
++    const timer = window.setInterval(() => setN(v => { if (v >= text.length) { window.clearInterval(timer); return v; } return Math.min(text.length, v + 6); }), 16);
++    return () => window.clearInterval(timer);
++  }, [text, active]);
++  return { shown: text.slice(0, n), done: n >= text.length };
++}
++
++function AgentMessage({ m, latest, revealing, templates, session, busy, onReply, onUseStyle, onStart, onSkipScript, onConfirmScript }: {
++  m: QcChatMessage;
++  latest: boolean;
++  revealing: boolean;
++  templates: QcTemplate[];
++  session: QcBriefSession;
++  busy: boolean;
++  onReply: (text: string) => void;
++  onUseStyle: (templateId: string) => void;
++  onStart: () => void;
++  onSkipScript: () => void;
++  onConfirmScript: () => void;
++}) {
++  const { shown, done } = useReveal(m.text, revealing);
++  const style = (id: string) => templates.find(t => t.id === id);
++  const active = latest && done && !busy;
++  /* 最新一条出完（含选项、推荐卡、准备好了卡、脚本卡）后滚到它的底部，新内容不落在视线外 */
++  const endRef = useRef<HTMLDivElement>(null);
++  useEffect(() => { if (latest && done) endRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' }); }, [latest, done]);
++  return (
++    <AgentTurn status={session.model ? <span className="font-mono text-[11px]">● {session.model.model} · {session.model.platform}</span> : undefined}>
++      <div className={cn('whitespace-pre-wrap text-[13.5px] leading-6 text-token-primary', m.missingNote && 'text-token-primary')} data-qc={m.missingNote && latest ? 'missing-note' : undefined}>
++        <StreamingText text={shown} streaming={!done} mode="typewriter" cursor={!done} />
++      </div>
++      {done && latest && !!m.quickReplies?.length && (
++        <div className="flex flex-wrap gap-1.5" aria-label="可以直接点的回答">
++          {m.quickReplies.map(q => (
++            <button key={q} type="button" data-qc="quick-reply" data-value={q} disabled={!active} onClick={() => onReply(q)}
++              className="inline-flex h-8 items-center rounded-full border border-[var(--border-default)] bg-[var(--bg-input)] px-3 text-[12.5px] text-token-primary hover-bg-soft disabled:opacity-50 max-md:h-11">
++              {q}
++            </button>
++          ))}
++        </div>
++      )}
++      {done && !!m.recommendations?.length && (
++        <div className="grid grid-cols-1 gap-2 sm:grid-cols-3" aria-label="推荐的风格">
++          {m.recommendations.map((r, i) => {
++            const st = style(r.templateId);
++            if (!st) return null;
++            const chosen = session.styleId === st.id && session.brief.fields.find(f => f.key === 'style')?.source === 'chat';
++            return (
++              <div key={r.templateId} data-qc="rec-style" data-style={r.templateId}
++                className={cn('flex flex-col overflow-hidden rounded-[12px] border bg-[var(--bg-input)] max-sm:flex-row', chosen ? 'border-[color:var(--accent-primary)] shadow-[0_0_0_1px_var(--accent-primary)]' : 'border-token-subtle')}>
++                <div className="max-sm:w-32 max-sm:shrink-0 max-sm:self-center"><StyleFrame template={{ ...st, frame: undefined }} /></div>
++                <div className="flex min-w-0 flex-1 flex-col gap-1 p-2.5">
++                  <div className="flex items-center gap-1.5 text-[13px] font-medium text-token-primary"><span className="tabular-nums text-token-muted">{i + 1}</span>{st.name}</div>
++                  <p className="m-0 flex-1 text-[12px] leading-[18px] text-token-secondary">{r.reason}</p>
++                  {latest && (
++                    <Button size="xs" variant={chosen ? 'ghost' : 'secondary'} className="mt-1 self-start max-md:min-h-11" data-qc="rec-use" disabled={!active || chosen} onClick={() => onUseStyle(st.id)}>
++                      {chosen ? <><Check size={12} />已选</> : '用这个'}
++                    </Button>
++                  )}
++                </div>
++              </div>
++            );
++          })}
++        </div>
++      )}
++      {done && m.ready && latest && (
++        <section className="qc-card qc-rise p-3.5" data-qc="ready-card">
++          <div className="flex items-center gap-2 text-[14px] font-semibold text-token-primary"><Sparkles size={15} className="text-[color:var(--accent-primary)]" aria-hidden />准备好了</div>
++          {session.brief.summary && <p className="m-0 mt-1.5 whitespace-pre-line text-[12.5px] leading-5 text-token-secondary">{session.brief.summary}</p>}
++          <div className="mt-3 flex flex-wrap items-center gap-2">
++            <Button variant="primary" className="max-md:min-h-11" data-qc="brief-start" disabled={!active} onClick={onStart}><Play size={14} />开始生成（约 30–60 分钟）</Button>
++            <Button variant="ghost" size="sm" className="max-md:min-h-11" data-qc="brief-skip-script" disabled={!active} onClick={onSkipScript}>跳过脚本，直接开始</Button>
++          </div>
++          <p className="m-0 mt-2 text-[11.5px] text-token-muted">点「开始生成」会先花一两分钟出分镜脚本给你确认，再正式排队。</p>
++        </section>
++      )}
++      {done && !!m.script?.length && (
++        <section className="qc-card qc-rise overflow-hidden" data-qc={latest ? 'script-draft' : undefined}>
++          <div className="flex items-center gap-2 border-b border-token-subtle px-3.5 py-2.5 text-[13.5px] font-semibold text-token-primary">
++            <Clapperboard size={15} className="text-[color:var(--accent-primary)]" aria-hidden />分镜脚本 · {m.script.length} 幕
++          </div>
++          <ol className="m-0 list-none p-0">
++            {m.script.map(sc => (
++              <li key={sc.index} className="flex gap-3 border-b border-token-subtle px-3.5 py-2 text-[12.5px] last:border-b-0">
++                <span className="w-4 shrink-0 tabular-nums text-token-muted">{sc.index}</span>
++                <div className="min-w-0 flex-1">
++                  <div className="text-token-primary">{sc.visual}</div>
++                  <div className="text-token-secondary">旁白：{sc.narration}</div>
++                </div>
++              </li>
++            ))}
++          </ol>
++          {latest && (
++            <div className="flex flex-wrap items-center gap-2 border-t border-token-subtle bg-[var(--bg-secondary)] px-3.5 py-2.5">
++              <Button variant="primary" className="max-md:min-h-11" data-qc="script-confirm" disabled={!active} onClick={onConfirmScript}><Play size={14} />按这个脚本开始生成</Button>
++              <span className="text-[12px] text-token-muted">想改哪一幕，直接在下面说，例如「第 3 幕换成客户案例」</span>
++            </div>
++          )}
++        </section>
++      )}
++      <div ref={endRef} aria-hidden />
++    </AgentTurn>
++  );
++}
++
++/** 对话流：你的消息靠右，助手的回复带头像与模型名；正在等回复时显示一条在动的占位 */
++export function BriefConversation({ session, pendingText, revealId, templates, busy, onReply, onUseStyle, onStart, onSkipScript, onConfirmScript }: {
++  session: QcBriefSession | null;
++  pendingText: string | null;
++  revealId: string | null;
++  templates: QcTemplate[];
++  busy: boolean;
++  onReply: (text: string) => void;
++  onUseStyle: (templateId: string) => void;
++  onStart: () => void;
++  onSkipScript: () => void;
++  onConfirmScript: () => void;
++}) {
++  const messages = session?.messages ?? [];
++  const lastAgent = [...messages].reverse().find(x => x.role === 'agent');
++  return (
++    <>
++      {messages.map(m => m.role === 'user' ? (
++        <UserTurn key={m.id}><p className="m-0 whitespace-pre-wrap px-1 text-[14px] leading-6 text-token-primary">{m.text}</p></UserTurn>
++      ) : session && (
++        <AgentMessage key={m.id} m={m} latest={m.id === lastAgent?.id && !pendingText} revealing={m.id === revealId} templates={templates} session={session} busy={busy}
++          onReply={onReply} onUseStyle={onUseStyle} onStart={onStart} onSkipScript={onSkipScript} onConfirmScript={onConfirmScript} />
++      ))}
++      {pendingText && (
++        <>
++          <UserTurn><p className="m-0 whitespace-pre-wrap px-1 text-[14px] leading-6 text-token-primary">{pendingText}</p></UserTurn>
++          <AgentTurn status="正在想">
++            <div className="flex items-center gap-2 text-[13px] text-token-secondary" data-qc="agent-thinking"><MapSpinner size={13} />正在理解你的需求，马上回复</div>
++          </AgentTurn>
++        </>
++      )}
++    </>
++  );
++}
 diff --git a/prd-admin/src/pages/quick-creation-agent/Conversation.tsx b/prd-admin/src/pages/quick-creation-agent/Conversation.tsx
 new file mode 100644
 index 00000000..d4287826
@@ -482,10 +674,10 @@ index 00000000..d4287826
 +}
 diff --git a/prd-admin/src/pages/quick-creation-agent/QuickCreationAgentPage.tsx b/prd-admin/src/pages/quick-creation-agent/QuickCreationAgentPage.tsx
 new file mode 100644
-index 00000000..5b7d1565
+index 00000000..995319b0
 --- /dev/null
 +++ b/prd-admin/src/pages/quick-creation-agent/QuickCreationAgentPage.tsx
-@@ -0,0 +1,473 @@
+@@ -0,0 +1,571 @@
 +/**
 + * 快速创作智能体：一份文档 + 一个模板 → 能播放的视频或能浏览的网页，并发布到网页托管。
 + * - 生成在服务端排队执行，离开页面不取消；地址里的 ?run= 让用户回到同一个任务。
@@ -494,14 +686,14 @@ index 00000000..5b7d1565
 + */
 +import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 +import { useNavigate, useSearchParams } from 'react-router-dom';
-+import { BookOpen, Check, ChevronLeft, ChevronRight, CircleCheck, ExternalLink, FileText, Globe, LayoutList, Paperclip, Plus, Send, Upload, Video } from 'lucide-react';
++import { ArrowUp, BookOpen, Check, ChevronLeft, ChevronRight, CircleCheck, ExternalLink, FileText, Globe, LayoutList, Paperclip, Plus, Send, Upload, Video } from 'lucide-react';
 +import { toast } from '@/lib/toast';
 +import { Button } from '@/components/design/Button';
 +import { Badge } from '@/components/design/Badge';
 +import { MapSpinner } from '@/components/ui/VideoLoader';
 +import { PaneTabs, Segmented, WorkbenchLayout, WorkbenchPreview, fitComposerHeight, type WorkbenchPane } from '@/components/web-hosting/workbench/WorkbenchParts';
 +import {
-+  addKnowledgeAttachment, createQuickCreationRun, getQuickCreationRun, listQuickCreationAssets, listQuickCreationTemplates, listQuickCreationWorks,
++  addKnowledgeAttachment, createQuickCreationRun, getQuickCreationRun, listQuickCreationAssets, listQuickCreationTemplates, listQuickCreationWorks, requestBriefScript, sendBriefMessage, updateBriefContext,
 +  addTextAttachment, publishQuickCreationRun, retryAttachmentRead, retryQuickCreationRun, uploadQuickCreationAttachment,
 +} from '@/services/real/quickCreation';
 +import { AttachmentTray, MaterialsPanel, SentAttachments } from './AttachmentTray';
@@ -510,9 +702,10 @@ index 00000000..5b7d1565
 +import { ProgressPreview, VideoPlayer, WebPreview } from './ResultPanel';
 +import { StyleLibrary, StylePickerChip } from './StyleLibrary';
 +import { AssetLibrary } from './AssetLibrary';
++import { BriefConversation, BriefStrip } from './BriefChat';
 +import { WorksList } from './WorksList';
 +import { MAX_ATTACHMENTS, formatChars, formatClock, summarizeAttachments } from './format';
-+import type { AssetScope, OutputKind, QcAsset, QcAttachment, QcFailure, QcRun, QcTemplate, QcTemplateCategory, QcTemplateSource, QcWork } from './types';
++import type { AssetScope, BriefContext, OutputKind, QcAsset, QcAttachment, QcBriefSession, QcFailure, QcRun, QcTemplate, QcTemplateCategory, QcTemplateSource, QcWork } from './types';
 +import './quickCreation.css';
 +
 +const OUTPUT_LABEL: Record<OutputKind, string> = { video: '视频', web: '网页' };
@@ -644,7 +837,7 @@ index 00000000..5b7d1565
 +  };
 +  const sum = summarizeAttachments(attachments);
 +  const hasText = attachments.some(a => a.status === 'ready' && a.kind !== 'image');
-+  const blockReason = !hasText ? '放进至少一份稿件或知识库文档后即可生成' : sum.reading ? '还有附件在读取，读完即可生成' : null;
++  const blockReason = !hasText ? '放进一份稿件后可以快捷生成；没有稿件就直接告诉我想做什么' : sum.reading ? '还有附件在读取，读完即可生成' : null;
 +  const draftTitle = attachments.find(a => a.status === 'ready' && a.kind !== 'image')?.name.replace(/\.(md|markdown|txt)$/i, '') ?? (template ? `未命名 · ${template.name}` : '未命名');
 +
 +  const submit = async () => {
@@ -658,6 +851,64 @@ index 00000000..5b7d1565
 +    if (!res.success) { toast.error('没有提交成功', `${res.error?.message || '请稍后重试'}，稿件仍在输入框里`); return; }
 +    openRun(res.data.id);
 +  };
++
++  /* ---------- 对话起稿 ---------- */
++  const [briefSession, setBriefSession] = useState<QcBriefSession | null>(null);
++  const [pendingText, setPendingText] = useState<string | null>(null);
++  const [revealId, setRevealId] = useState<string | null>(null);
++  const [briefBusy, setBriefBusy] = useState(false);
++  const readyIds = attachments.filter(a => a.status === 'ready').map(a => a.id);
++  const briefContext: BriefContext = { kind, templateId: template?.id, attachmentIds: readyIds };
++  const contextKey = JSON.stringify(briefContext);
++  const briefId = briefSession?.id;
++  /* 输入框里的选择（产出、风格、资料）变了，简报跟着更新；只在新建时 */
++  useEffect(() => {
++    if (runId || !template) return;
++    let stop = false;
++    void updateBriefContext({ sessionId: briefId, context: JSON.parse(contextKey) as BriefContext }).then(res => { if (!stop && res.success) setBriefSession(res.data); });
++    return () => { stop = true; };
++  }, [contextKey, runId, briefId, template]);
++  /* 对话里选定了风格（例如说「第二个」），输入框里的风格按钮同步 */
++  const briefStyle = briefSession?.styleId;
++  useEffect(() => { if (briefStyle && briefStyle !== templateId) setTemplateId(briefStyle); }, [briefStyle]); // eslint-disable-line react-hooks/exhaustive-deps
++  const sendChat = async (text: string, styleOverride?: string) => {
++    const t = text.trim();
++    if (!t || briefBusy) return;
++    setPendingText(t); setBriefBusy(true); setAsk('');
++    const res = await sendBriefMessage({ sessionId: briefId, text: t, context: { ...briefContext, templateId: styleOverride ?? briefContext.templateId } });
++    setPendingText(null); setBriefBusy(false);
++    if (!res.success) { setAsk(t); toast.error('这句话没有发出去', `${res.error?.message || '请稍后重试'}，内容已放回输入框`); return; }
++    setBriefSession(res.data);
++    setRevealId([...res.data.messages].reverse().find(m => m.role === 'agent')?.id ?? null);
++  };
++  const pickRecommendedStyle = (id: string) => {
++    setTemplateId(id);
++    void sendChat(`就用「${templates.find(t => t.id === id)?.name ?? id}」`, id);
++  };
++  const startBriefScript = async () => {
++    if (!briefId || briefBusy) return;
++    setBriefBusy(true);
++    const res = await requestBriefScript(briefId, briefContext);
++    setBriefBusy(false);
++    if (!res.success) { toast.error('分镜脚本没有出来', res.error?.message || '请稍后重试'); return; }
++    setBriefSession(res.data);
++    setRevealId([...res.data.messages].reverse().find(m => m.role === 'agent')?.id ?? null);
++  };
++  const startFromBrief = async (withScript: boolean) => {
++    if (!briefSession || !template || briefBusy) return;
++    const script = withScript ? [...briefSession.messages].reverse().find(m => m.script)?.script : undefined;
++    setBriefBusy(true);
++    const res = await createQuickCreationRun({
++      kind, templateId: template.id, ask: briefSession.brief.summary ?? ask.trim(), attachmentIds: readyIds,
++      title: briefSession.brief.title ?? draftTitle, briefId: briefSession.id, ...(script ? { script } : {}),
++    });
++    setBriefBusy(false);
++    if (!res.success) { toast.error('没有提交成功', `${res.error?.message || '请稍后重试'}，对话和简报都还在`); return; }
++    openRun(res.data.id);
++  };
++  const hasBriefCard = !!briefSession?.messages.some(m => m.ready || m.script);
++  const conversationEnd = useRef<HTMLDivElement>(null);
++  useEffect(() => { conversationEnd.current?.scrollIntoView({ block: 'end', behavior: 'smooth' }); }, [briefSession?.messages.length, pendingText]);
 +
 +  /* ---------- 任务动作 ---------- */
 +  const onRecover = async (action: QcFailure['actions'][number]) => {
@@ -742,27 +993,60 @@ index 00000000..5b7d1565
 +        <>
 +          {startOptions}
 +          <p className="m-0 text-[12px] leading-5 text-token-muted">也可以把正文直接粘贴进下面的输入框，超过 300 字会自动变成一份稿件。</p>
++          {!briefSession?.messages.length && !pendingText && (
++            <div>
++              <p className="m-0 text-[12.5px] text-token-secondary">还没想好？直接告诉我想做什么，我们聊清楚再开工：</p>
++              <div className="mt-1.5 flex flex-wrap gap-1.5" aria-label="从一句话开始">
++                {['我想做一个宣传片', '给新同事做个培训短片', '不知道选什么风格'].map(t => (
++                  <button key={t} type="button" data-qc="starter" data-value={t} onClick={() => void sendChat(t)}
++                    className="inline-flex h-8 items-center rounded-full border border-[var(--border-default)] bg-[var(--bg-input)] px-3 text-[12.5px] text-token-primary hover-bg-soft max-md:h-11">
++                    {t}
++                  </button>
++                ))}
++              </div>
++            </div>
++          )}
 +        </>
 +      ) : (
 +        <div className="qc-card px-3.5 py-3 text-[13px] leading-6 text-token-secondary" data-qc="materials-note">
 +          收到 <span className="font-medium text-token-primary">{sum.total} 份资料</span>，可用 {formatChars(sum.chars)} 字。
 +          {sum.failed > 0 && <>{sum.failed} 份读取失败，不会用于生成，点资料栏的「管理」重试或移除。</>}
-+          {sum.reading > 0 ? <>{sum.reading} 份还在读取，读完就能生成。</> : sum.failed === 0 && <>确认模板后点「快捷生成」。</>}
++          {sum.reading > 0 ? <>{sum.reading} 份还在读取，读完就能生成。</> : sum.failed === 0 && <>确认风格后点「快捷生成」；拿不准的话直接问我。</>}
 +        </div>
 +      )}
 +    </AgentTurn>
 +  );
++  const composeFeed = (
++    <>
++      {composeConversation}
++      <BriefConversation session={briefSession} pendingText={pendingText} revealId={revealId} templates={templates} busy={briefBusy}
++        onReply={t => void sendChat(t)} onUseStyle={pickRecommendedStyle} onStart={() => void startBriefScript()}
++        onSkipScript={() => void startFromBrief(false)} onConfirmScript={() => void startFromBrief(true)} />
++      <div ref={conversationEnd} />
++    </>
++  );
 +
 +  const composer = (
 +    <div>
++      {briefSession && <BriefStrip brief={briefSession.brief} />}
 +      <div className="flex flex-col rounded-2xl border border-[var(--border-default)] bg-[var(--bg-input)] shadow-[var(--shadow-input-inset)] transition-[border-color,box-shadow] has-[textarea:focus]:border-[color:var(--accent-primary)] has-[textarea:focus]:shadow-[0_0_0_3px_var(--selection-bg)]">
 +        <AttachmentTray items={attachments} managing={panel?.mode === 'manage'} onRemove={id => setAttachments(l => l.filter(a => a.id !== id))} onManage={openManage} />
 +        {attachments.length > 0 && <div className="mx-3 h-px bg-[var(--border-subtle)]" />}
++        <div className="relative">
 +        <label htmlFor="qc-ask" className="sr-only">补充要求</label>
 +        <textarea id="qc-ask" ref={askRef} rows={2} value={ask} onChange={e => void onAskChange(e.target.value)}
-+          onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void submit(); } }}
-+          placeholder="可选：加一句要求，例如「先提醒三个重点，给新同事看」"
-+          className="block w-full resize-none overflow-y-auto bg-transparent px-3.5 pb-1 pt-3 text-base leading-relaxed text-token-primary outline-none placeholder:text-token-muted sm:text-[14px]" />
++          onKeyDown={e => {
++            if (e.key !== 'Enter' || e.nativeEvent.isComposing) return;
++            if (e.metaKey || e.ctrlKey) { e.preventDefault(); void submit(); return; }
++            if (!e.shiftKey && ask.trim()) { e.preventDefault(); void sendChat(ask); }
++          }}
++          placeholder="说说想做什么；不知道选什么风格也可以直接问"
++          className="block w-full resize-none overflow-y-auto bg-transparent pb-1 pl-3.5 pr-12 pt-3 text-base leading-relaxed text-token-primary outline-none placeholder:text-token-muted sm:text-[14px]" />
++            <button type="button" data-qc="send" aria-label="发给快速创作" title="发给快速创作（Enter）" disabled={!ask.trim() || briefBusy} onClick={() => void sendChat(ask)}
++              className="absolute bottom-1 right-2 inline-flex h-8 w-8 items-center justify-center rounded-[9px] border border-[var(--border-default)] text-token-primary hover-bg-soft disabled:cursor-not-allowed disabled:opacity-40 max-md:h-11 max-md:w-11">
++              {briefBusy ? <MapSpinner size={13} /> : <ArrowUp size={16} strokeWidth={2.4} />}
++            </button>
++        </div>
 +        <div className="flex flex-wrap items-center gap-1 px-2 pb-2 pt-1">
 +          <input ref={fileInput} type="file" accept=".md,.markdown,.txt,image/*" multiple hidden data-qc="file-input"
 +            onChange={e => { const files = Array.from(e.target.files ?? []); e.target.value = ''; files.forEach(f => void addFile(f)); }} />
@@ -779,14 +1063,18 @@ index 00000000..5b7d1565
 +            <StylePickerChip templates={templates} categories={categories} selected={template} onSelect={id => { setTemplateId(id); setPanel(null); }}
 +              onBrowse={() => { setPanel(null); setPane('preview'); }} />
 +          </div>
-+          <Button variant="primary" size="sm" className="ml-auto shrink-0 max-md:min-h-11" disabled={!!blockReason || submitting} onClick={() => void submit()} data-qc="submit">
-+            {submitting ? <MapSpinner size={13} /> : <Send size={13} />}快捷生成
-+          </Button>
++          <div className="ml-auto flex shrink-0 items-center gap-1.5">
++
++            {/* 对话里出现「准备好了」卡后，开工由卡片的主按钮负责，这里降为次要，保持一屏一个主动作 */}
++            <Button variant={hasBriefCard ? 'secondary' : 'primary'} size="sm" className="shrink-0 max-md:min-h-11" disabled={!!blockReason || submitting} onClick={() => void submit()} data-qc="submit">
++              {submitting ? <MapSpinner size={13} /> : <Send size={13} />}快捷生成
++            </Button>
++          </div>
 +        </div>
 +      </div>
 +      {blockReason
 +        ? <p className="m-0 px-2 pt-1.5 text-[11.5px] text-token-muted" data-qc="block-reason">{blockReason}</p>
-+        : <p className="m-0 hidden px-2 pt-1.5 text-[11.5px] text-token-muted lg:block">Ctrl / ⌘ + Enter 也可以生成 · 一支约 30–60 分钟，在后台进行，可以离开</p>}
++        : <p className="m-0 hidden px-2 pt-1.5 text-[11.5px] text-token-muted lg:block">Enter 发给快速创作 · Ctrl / ⌘ + Enter 快捷生成 · 一支约 30–60 分钟</p>}
 +    </div>
 +  );
 +
@@ -797,7 +1085,9 @@ index 00000000..5b7d1565
 +    <>
 +      <UserTurn meta={<>{run.kind === 'video' ? <Video size={12} aria-hidden /> : <Globe size={12} aria-hidden />}{OUTPUT_LABEL[run.kind]} · {runTemplate?.name}</>}>
 +        <p className="m-0 px-1 text-[14px] leading-6 text-token-primary">{run.ask || '没有补充要求，按模板默认节奏生成'}</p>
-+        <SentAttachments items={run.attachments} onOpenAll={() => openReview()} onOpen={id => openReview(id)} />
++        {run.attachments.some(x => x.status === 'ready')
++          ? <SentAttachments items={run.attachments} onOpenAll={() => openReview()} onOpen={id => openReview(id)} />
++          : <p className="m-0 px-1 text-[12px] text-token-secondary">没有稿件：内容来自和快速创作的对话，文案按对话先写。</p>}
 +      </UserTurn>
 +      <AgentTurn status={agentStatus}>
 +        <p className="m-0 flex items-center gap-1.5 text-[12.5px] text-token-secondary" data-qc="saved-notice">
@@ -951,7 +1241,7 @@ index 00000000..5b7d1565
 +        {loading ? (
 +          <div className="flex h-full items-center justify-center gap-2 text-[13px] text-token-muted"><MapSpinner size={14} />正在打开任务…</div>
 +        ) : (
-+          <WorkbenchLayout pane={pane} conversation={run ? runConversation : composeConversation} composer={run ? runFooter : composer} preview={preview} />
++          <WorkbenchLayout pane={pane} conversation={run ? runConversation : composeFeed} composer={run ? runFooter : composer} preview={preview} />
 +        )}
 +      </div>
 +    </div>
@@ -2096,10 +2386,10 @@ index 00000000..47942c32
 +}
 diff --git a/prd-admin/src/pages/quick-creation-agent/types.ts b/prd-admin/src/pages/quick-creation-agent/types.ts
 new file mode 100644
-index 00000000..0290c3ae
+index 00000000..63ff73e0
 --- /dev/null
 +++ b/prd-admin/src/pages/quick-creation-agent/types.ts
-@@ -0,0 +1,224 @@
+@@ -0,0 +1,301 @@
 +/** 快速创作：一份文档 + 一个模板 → 能播放（视频）或能浏览（网页）、能发布到网页托管的成品。 */
 +
 +export type OutputKind = 'video' | 'web';
@@ -2317,23 +2607,100 @@ index 00000000..0290c3ae
 +
 +export type AssetScope = 'mine' | 'team';
 +
++/**
++ * 对话起稿：不知道选什么时，和快速创作聊清楚再开工。
++ * 创作简报是开工条件的唯一判定源，由服务端按对话和输入框里的选择结构化填写；前端只展示，不从聊天文字里猜。
++ */
++export type BriefFieldKey = 'output' | 'content' | 'style' | 'audience' | 'duration';
++
++export interface QcBriefField {
++  key: BriefFieldKey;
++  label: string;
++  /** 必填项齐了才能开工；建议项不挡开工，有默认值 */
++  required: boolean;
++  value?: string;
++  /** 从哪来：对话、稿件、手动选择、默认值 */
++  source?: 'chat' | 'doc' | 'pick' | 'default';
++}
++
++export interface QcBrief {
++  fields: QcBriefField[];
++  /** 必填项都齐了 */
++  ready: boolean;
++  /** 还缺的必填项名称 */
++  missing: string[];
++  /** 作品标题（取稿件标题或对话里说的主题） */
++  title?: string;
++  /** 两三行复述，用在「准备好了」卡和任务里 */
++  summary?: string;
++}
++
++/** 推荐的风格：附一句为什么适合 */
++export interface QcStyleRec {
++  templateId: string;
++  reason: string;
++}
++
++/** 分镜脚本的一幕：画面一句、旁白一句 */
++export interface QcScriptScene {
++  index: number;
++  visual: string;
++  narration: string;
++}
++
++export interface QcChatMessage {
++  id: string;
++  role: 'user' | 'agent';
++  text: string;
++  /** 可以直接点的回答（只在最新一条助手消息上显示） */
++  quickReplies?: string[];
++  recommendations?: QcStyleRec[];
++  /** 必填条件都齐了：显示「准备好了」卡 */
++  ready?: boolean;
++  /** 想开工但条件不够：这条消息说明还缺什么 */
++  missingNote?: boolean;
++  /** 开工前的分镜脚本（确认后正式排队） */
++  script?: QcScriptScene[];
++}
++
++export interface QcBriefSession {
++  id: string;
++  messages: QcChatMessage[];
++  brief: QcBrief;
++  /** 这次对话实际用的模型（来自网关返回） */
++  model?: { model: string; platform: string };
++  /** 简报当前采用的风格（对话里说「第二个」选定时由服务端给出，输入框里的风格按钮随之同步） */
++  styleId?: string;
++}
++
++/** 每次对话都带上输入框里的当前选择，服务端据此更新简报 */
++export interface BriefContext {
++  kind: OutputKind;
++  templateId?: string;
++  attachmentIds: string[];
++}
++
 +export interface CreateRunInput {
 +  kind: OutputKind;
 +  templateId: string;
 +  ask: string;
 +  attachmentIds: string[];
 +  title?: string;
++  /** 从对话起稿时带上简报编号；内容可以只来自对话 */
++  briefId?: string;
++  /** 已确认的分镜脚本（跳过时为空） */
++  script?: QcScriptScene[];
 +}
 diff --git a/prd-admin/src/services/real/quickCreation.ts b/prd-admin/src/services/real/quickCreation.ts
 new file mode 100644
-index 00000000..521a528e
+index 00000000..b9d13929
 --- /dev/null
 +++ b/prd-admin/src/services/real/quickCreation.ts
-@@ -0,0 +1,72 @@
+@@ -0,0 +1,87 @@
 +import { apiRequest } from '@/services/real/apiClient';
 +import { useAuthStore } from '@/stores/authStore';
 +import { fail, type ApiResponse } from '@/types/api';
-+import type { AssetScope, CreateRunInput, QcAsset, QcAttachment, QcRun, QcTemplate, QcTemplateCategory, QcTemplateSource, QcWork } from '@/pages/quick-creation-agent/types';
++import type { AssetScope, BriefContext, CreateRunInput, QcBriefSession, QcAsset, QcAttachment, QcRun, QcTemplate, QcTemplateCategory, QcTemplateSource, QcWork } from '@/pages/quick-creation-agent/types';
 +
 +/**
 + * 快速创作接口。生成在服务端排队与执行（Run/Worker），离开页面不取消；页面按任务编号恢复。
@@ -2348,6 +2715,21 @@ index 00000000..521a528e
 +
 +export function listQuickCreationWorks() {
 +  return apiRequest<{ items: QcWork[]; total: number }>(`${base}/works`);
++}
++
++/* 对话起稿：正式实现走 SSE 流式返回（useSseStream），助手消息逐字出现并带上网关返回的模型；原型一次返回整条，由页面逐字显示 */
++export function sendBriefMessage(input: { sessionId?: string; text: string; context: BriefContext }) {
++  return apiRequest<QcBriefSession>(`${base}/brief/messages`, { method: 'POST', body: input });
++}
++
++/** 输入框里的选择变了（产出、风格、资料），只更新简报，不产生对话 */
++export function updateBriefContext(input: { sessionId?: string; context: BriefContext }) {
++  return apiRequest<QcBriefSession>(`${base}/brief/context`, { method: 'POST', body: input });
++}
++
++/** 开工前先出分镜脚本（约一两分钟），确认后再正式排队 */
++export function requestBriefScript(sessionId: string, context: BriefContext) {
++  return apiRequest<QcBriefSession>(`${base}/brief/${encodeURIComponent(sessionId)}/script`, { method: 'POST', body: { context } });
 +}
 +
 +/* 产物：已生成的成品，按「我的 / 团队」取；用于创作时回看与复用风格 */

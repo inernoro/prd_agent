@@ -215,10 +215,87 @@ export interface QcAsset {
 
 export type AssetScope = 'mine' | 'team';
 
+/**
+ * 对话起稿：不知道选什么时，和快速创作聊清楚再开工。
+ * 创作简报是开工条件的唯一判定源，由服务端按对话和输入框里的选择结构化填写；前端只展示，不从聊天文字里猜。
+ */
+export type BriefFieldKey = 'output' | 'content' | 'style' | 'audience' | 'duration';
+
+export interface QcBriefField {
+  key: BriefFieldKey;
+  label: string;
+  /** 必填项齐了才能开工；建议项不挡开工，有默认值 */
+  required: boolean;
+  value?: string;
+  /** 从哪来：对话、稿件、手动选择、默认值 */
+  source?: 'chat' | 'doc' | 'pick' | 'default';
+}
+
+export interface QcBrief {
+  fields: QcBriefField[];
+  /** 必填项都齐了 */
+  ready: boolean;
+  /** 还缺的必填项名称 */
+  missing: string[];
+  /** 作品标题（取稿件标题或对话里说的主题） */
+  title?: string;
+  /** 两三行复述，用在「准备好了」卡和任务里 */
+  summary?: string;
+}
+
+/** 推荐的风格：附一句为什么适合 */
+export interface QcStyleRec {
+  templateId: string;
+  reason: string;
+}
+
+/** 分镜脚本的一幕：画面一句、旁白一句 */
+export interface QcScriptScene {
+  index: number;
+  visual: string;
+  narration: string;
+}
+
+export interface QcChatMessage {
+  id: string;
+  role: 'user' | 'agent';
+  text: string;
+  /** 可以直接点的回答（只在最新一条助手消息上显示） */
+  quickReplies?: string[];
+  recommendations?: QcStyleRec[];
+  /** 必填条件都齐了：显示「准备好了」卡 */
+  ready?: boolean;
+  /** 想开工但条件不够：这条消息说明还缺什么 */
+  missingNote?: boolean;
+  /** 开工前的分镜脚本（确认后正式排队） */
+  script?: QcScriptScene[];
+}
+
+export interface QcBriefSession {
+  id: string;
+  messages: QcChatMessage[];
+  brief: QcBrief;
+  /** 这次对话实际用的模型（来自网关返回） */
+  model?: { model: string; platform: string };
+  /** 简报当前采用的风格（对话里说「第二个」选定时由服务端给出，输入框里的风格按钮随之同步） */
+  styleId?: string;
+}
+
+/** 每次对话都带上输入框里的当前选择，服务端据此更新简报 */
+export interface BriefContext {
+  kind: OutputKind;
+  templateId?: string;
+  attachmentIds: string[];
+}
+
 export interface CreateRunInput {
   kind: OutputKind;
   templateId: string;
   ask: string;
   attachmentIds: string[];
   title?: string;
+  /** 从对话起稿时带上简报编号；内容可以只来自对话 */
+  briefId?: string;
+  /** 已确认的分镜脚本（跳过时为空） */
+  script?: QcScriptScene[];
 }

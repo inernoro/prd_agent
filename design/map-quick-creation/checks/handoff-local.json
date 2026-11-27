@@ -1,5 +1,5 @@
 {
-  "runAt": "2026-11-26",
+  "runAt": "2026-11-27",
   "note": "本机预跑，结论以 CDS 交接检查回执为准",
   "results": [
     {
@@ -29,6 +29,21 @@
     },
     {
       "id": "open-asset-during-run",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "id": "chat-to-ready-and-skip-script",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "id": "say-second-and-start",
+      "status": "passed",
+      "errors": []
+    },
+    {
+      "id": "start-before-ready",
       "status": "passed",
       "errors": []
     },

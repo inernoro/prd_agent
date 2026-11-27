@@ -6,10 +6,10 @@
   "title": "快速创作 · 交付说明（V1）"
  },
  "to": {
-  "label": "V6",
-  "version": 6,
+  "label": "V7",
+  "version": 7,
   "commit": null,
-  "title": "快速创作 · 交付说明（V6）"
+  "title": "快速创作 · 交付说明（V7）"
  },
  "direction": "upgrade",
  "acceptance": {
@@ -103,6 +103,77 @@
     "expected": "选同事的「新版 OKR 填写指南」点「用这个风格」→ 风格按钮变为「中国水墨」并提示；任务中点「打开」→ 进入该产物的任务",
     "how": "human",
     "screenId": "assets-team",
+    "slots": [
+     "desktop-light",
+     "desktop-dark"
+    ],
+    "interaction": true
+   },
+   {
+    "id": "A-49",
+    "rule": "对话起稿：不知道选什么时可以直接说想做什么；快速创作每次只问一个它还拿不准的问题，并给几个可以直接点的回答；回复逐字出现，顶部显示这次用的模型",
+    "expected": "点「我想做一个宣传片」→ 助手问「宣传的是什么？」并给「新产品发布 / 公司年会 / 招聘宣传」；回复逐字出现，名字旁写模型与平台",
+    "how": "human",
+    "screenId": "chat-start",
+    "slots": [
+     "desktop-light",
+     "desktop-dark"
+    ],
+    "interaction": true
+   },
+   {
+    "id": "A-50",
+    "rule": "创作简报：开工条件一眼可见，必填三项（做成什么、讲什么、风格）与建议两项（给谁看、时长），聊到哪一条勾哪一条；判定由服务端结构化给出，前端不从聊天文字里猜",
+    "expected": "输入框上方的简报条写「必填 x/3」或「可以开工」，每项带勾或「待补」，值来自对话、稿件、手动选择或默认",
+    "how": "screenshot",
+    "screenId": "chat-ready",
+    "slots": [
+     "desktop-light",
+     "desktop-dark"
+    ]
+   },
+   {
+    "id": "A-51",
+    "rule": "推荐风格：按目的与感觉推荐 3 个风格，每个带样片海报与一句为什么适合；点「用这个」或说「第二个」都能选定，输入框的风格按钮与右栏同步",
+    "expected": "选「科技感」后出现暗色科技发布、玻璃质感产品、科幻全息界面三张卡；说「第二个」后风格按钮变为玻璃质感产品",
+    "how": "human",
+    "screenId": "chat-recommend",
+    "slots": [
+     "desktop-light",
+     "desktop-dark"
+    ],
+    "interaction": true
+   },
+   {
+    "id": "A-52",
+    "rule": "准备好了：必填条件都齐了，助手复述简报并给主按钮「开始生成（约 30–60 分钟）」；直接说「可以开始了」效果一样；条件不够时说明还缺什么，不硬开始",
+    "expected": "条件齐时出现「准备好了」卡；一开始就说「可以开始了」，助手回「还不能开始：还缺讲什么」并接着问",
+    "how": "human",
+    "screenId": "chat-ready",
+    "slots": [
+     "desktop-light",
+     "desktop-dark"
+    ],
+    "interaction": true
+   },
+   {
+    "id": "A-53",
+    "rule": "开工前先看分镜脚本：每幕一句画面、一句旁白，确认后正式排队；不想看可以一键跳过；想改直接在对话里说",
+    "expected": "点「开始生成」→ 出现 6 幕分镜脚本与「按这个脚本开始生成」；点它或「跳过脚本，直接开始」都进入排队",
+    "how": "human",
+    "screenId": "chat-script",
+    "slots": [
+     "desktop-light",
+     "desktop-dark"
+    ],
+    "interaction": true
+   },
+   {
+    "id": "A-54",
+    "rule": "没有稿件也能只靠对话出片：讲什么来自对话，文案由快速创作按对话先写；任务里写明内容来自对话",
+    "expected": "不放稿件聊完后开工，任务左栏你的消息写「没有稿件：内容来自和快速创作的对话」",
+    "how": "human",
+    "screenId": "chat-script",
     "slots": [
      "desktop-light",
      "desktop-dark"
@@ -466,6 +537,54 @@
     ]
    },
    {
+    "id": "chat-ready",
+    "name": "对话起稿：条件齐了，准备好了",
+    "route": "#/quick-creation-agent",
+    "viewport": "desktop",
+    "entryActions": [
+     "[data-qc=starter][data-value=\"我想做一个宣传片\"]",
+     "[data-qc=quick-reply][data-value=\"新产品发布\"]",
+     "[data-qc=quick-reply][data-value=\"客户\"]",
+     "[data-qc=quick-reply][data-value=\"科技感\"]",
+     "[data-qc=rec-style][data-style=dark-keynote] [data-qc=rec-use]"
+    ]
+   },
+   {
+    "id": "chat-recommend",
+    "name": "对话起稿：按「科技感」推荐 3 个风格",
+    "route": "#/quick-creation-agent",
+    "viewport": "desktop",
+    "entryActions": [
+     "[data-qc=starter][data-value=\"我想做一个宣传片\"]",
+     "[data-qc=quick-reply][data-value=\"新产品发布\"]",
+     "[data-qc=quick-reply][data-value=\"客户\"]",
+     "[data-qc=quick-reply][data-value=\"科技感\"]"
+    ]
+   },
+   {
+    "id": "chat-script",
+    "name": "对话起稿：开工前确认分镜脚本",
+    "route": "#/quick-creation-agent",
+    "viewport": "desktop",
+    "entryActions": [
+     "[data-qc=starter][data-value=\"我想做一个宣传片\"]",
+     "[data-qc=quick-reply][data-value=\"新产品发布\"]",
+     "[data-qc=quick-reply][data-value=\"客户\"]",
+     "[data-qc=quick-reply][data-value=\"科技感\"]",
+     "[data-qc=rec-style][data-style=dark-keynote] [data-qc=rec-use]",
+     "[data-qc=brief-start]"
+    ]
+   },
+   {
+    "id": "chat-start",
+    "name": "对话起稿：不知道选什么，直接说想做宣传片",
+    "route": "#/quick-creation-agent",
+    "viewport": "desktop",
+    "entryActions": [
+     "[data-qc=starter][data-value=\"我想做一个宣传片\"]"
+    ]
+   },
+   {
     "id": "phone-assets",
     "name": "手机 · 预览页签里的产物",
     "route": "#/quick-creation-agent",
@@ -473,6 +592,18 @@
     "entryActions": [
      "[aria-label=对话与预览] button:nth-child(2)",
      "[aria-label=选择与资产] button:nth-child(2)"
+    ]
+   },
+   {
+    "id": "phone-chat",
+    "name": "手机 · 对话起稿与推荐风格",
+    "route": "#/quick-creation-agent",
+    "viewport": "phone",
+    "entryActions": [
+     "[data-qc=starter][data-value=\"我想做一个宣传片\"]",
+     "[data-qc=quick-reply][data-value=\"新产品发布\"]",
+     "[data-qc=quick-reply][data-value=\"客户\"]",
+     "[data-qc=quick-reply][data-value=\"科技感\"]"
     ]
    },
    {
@@ -514,7 +645,7 @@
  "meta": {
   "prototypeVersion": {
    "from": 1,
-   "to": 6
+   "to": 7
   }
  },
  "files": {
@@ -528,6 +659,10 @@
     "area": "源码"
    },
    {
+    "path": "src/added/pages/quick-creation-agent/BriefChat.tsx",
+    "area": "源码"
+   },
+   {
     "path": "src/added/pages/quick-creation-agent/Conversation.tsx",
     "area": "源码"
    },
@@ -537,6 +672,10 @@
    },
    {
     "path": "src/assets/demo-film.webm",
+    "area": "源码"
+   },
+   {
+    "path": "src/briefEngine.ts",
     "area": "源码"
    },
    {
@@ -1079,13 +1218,13 @@
    "failed": []
   },
   "to": {
-   "passed": 49,
-   "total": 49,
+   "passed": 55,
+   "total": 55,
    "failed": []
   }
  },
  "source": {
-  "files": 116,
-  "bytes": 250879
+  "files": 118,
+  "bytes": 284874
  }
 }

@@ -4,6 +4,7 @@
 import type { QcAttachment, QcRun, QcScene } from '@/pages/quick-creation-agent/types';
 /* 演示成片：由 tools/make-demo-film.mjs 用模板画面渲染、带示意音轨的 WebM，构建时内嵌为 data: 地址 */
 import filmUrl from './assets/demo-film.webm';
+import { briefContext, briefMessage, briefScript } from './briefEngine';
 import { assets, attachmentQueue, fixedRuns, queueAt, sampleDoc, scenes, stagesAt, templateCategories, templateSource, templates, webKeyPoints, webSections, works } from './fixtures';
 
 class MemStorage {
@@ -131,6 +132,14 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
   if (/user-preferences\/?$/.test(path)) return ok({ navOrder: [], navHidden: [], defaultNavOrder: [], defaultNavHidden: [] });
   if (!path.startsWith('/api/quick-creation')) return ok(null);
   if (path.endsWith('/templates')) return ok({ items: templates, categories: templateCategories, source: templateSource });
+  if (path.endsWith('/brief/messages') && method === 'POST') { await new Promise(r => setTimeout(r, 120)); return ok(briefMessage(body)); }
+  if (path.endsWith('/brief/context') && method === 'POST') return ok(briefContext(body));
+  const scriptMatch = path.match(/\/brief\/([^/]+)\/script$/);
+  if (scriptMatch && method === 'POST') {
+    await new Promise(r => setTimeout(r, 160));
+    const v = briefScript(decodeURIComponent(scriptMatch[1]), body.context);
+    return v ? ok(v) : fail('这次对话已失效，请重新开始', 'NOT_FOUND');
+  }
   if (path.endsWith('/assets')) {
     /* 团队视图按时间混排（演示数据里同事的成品更新），我的视图只列自己的 */
     const mine = assets.filter(a => a.mine), others = assets.filter(a => !a.mine);
@@ -184,7 +193,7 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     seq += 1;
     const id = `run-live-${seq}`;
     const atts = [sampleDoc, ...attachmentQueue, ...createdAttachments.values()].filter(a => (body.attachmentIds ?? []).includes(a.id));
-    live.set(id, { kind: body.kind, startedAt: Date.now(), title: body.title || '未命名', templateId: body.templateId, ask: body.ask ?? '', attachments: atts.length ? atts : [sampleDoc] });
+    live.set(id, { kind: body.kind, startedAt: Date.now(), title: body.title || '未命名', templateId: body.templateId, ask: body.ask ?? '', attachments: atts.length || body.briefId ? atts : [sampleDoc] });
     return ok(getRun(id));
   }
   const retry = path.match(/\/runs\/([^/]+)\/retry$/);

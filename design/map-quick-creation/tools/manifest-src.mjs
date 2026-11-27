@@ -11,6 +11,7 @@ const D = ['desktop-light', 'desktop-dark'];
 const P = ['phone-light', 'phone-dark'];
 const ALL = [...D, ...P];
 const ready = s => `[data-qc-ready=${s}]`;
+const CHAT = ['[data-qc=starter][data-value="我想做一个宣传片"]', '[data-qc=quick-reply][data-value="新产品发布"]', '[data-qc=quick-reply][data-value="客户"]', '[data-qc=quick-reply][data-value="科技感"]'];
 const ADD6 = ['[data-qc=sample-doc]', '[data-qc=pick-knowledge]', '[data-qc=pick-knowledge]', '[data-qc=pick-knowledge]', '[data-qc=pick-knowledge]', '[data-qc=pick-knowledge]'];
 
 const screens = [
@@ -19,6 +20,10 @@ const screens = [
   { id: 'style-picker', name: '输入框里就地换风格（15 类 99 种）', route: `#${Q}`, viewport: 'desktop', themes: both, entryReadySelector: '[data-qc=style-popover]', entryActions: ['[data-qc=style-chip]'] },
   { id: 'assets', name: '右栏产物：回看我生成过的视频与网页', route: `#${Q}`, viewport: 'desktop', themes: both, entryReadySelector: '[data-qc=asset-detail]', entryActions: ['[aria-label=选择与资产] button:nth-child(2)'] },
   { id: 'assets-team', name: '右栏产物 · 团队：同事用其他风格做的成品', route: `#${Q}`, viewport: 'desktop', themes: both, entryReadySelector: '[data-qc=asset-library][data-scope=team] [data-qc=asset-detail]', entryActions: ['[aria-label=选择与资产] button:nth-child(2)', '[aria-label=产物范围] button:nth-child(2)'] },
+  { id: 'chat-start', name: '对话起稿：不知道选什么，直接说想做宣传片', route: `#${Q}`, viewport: 'desktop', themes: both, entryReadySelector: '[data-qc=quick-reply][data-value="新产品发布"]', entryActions: CHAT.slice(0, 1) },
+  { id: 'chat-recommend', name: '对话起稿：按「科技感」推荐 3 个风格', route: `#${Q}`, viewport: 'desktop', themes: both, entryReadySelector: '[data-qc=rec-style][data-style=dark-keynote]', entryActions: CHAT },
+  { id: 'chat-ready', name: '对话起稿：条件齐了，准备好了', route: `#${Q}`, viewport: 'desktop', themes: both, entryReadySelector: '[data-qc=ready-card]', entryActions: [...CHAT, '[data-qc=rec-style][data-style=dark-keynote] [data-qc=rec-use]'] },
+  { id: 'chat-script', name: '对话起稿：开工前确认分镜脚本', route: `#${Q}`, viewport: 'desktop', themes: both, entryReadySelector: '[data-qc=script-draft]', entryActions: [...CHAT, '[data-qc=rec-style][data-style=dark-keynote] [data-qc=rec-use]', '[data-qc=brief-start]'] },
   { id: 'attachments', name: '多附件 · 收起（读取中与失败）', route: `#${Q}`, viewport: 'desktop', themes: both, entryReadySelector: '[data-qc=attachment-tray]', entryActions: ADD6 },
   { id: 'attachments-expanded', name: '多附件 · 展开管理', route: `#${Q}`, viewport: 'desktop', themes: both, entryReadySelector: '[data-qc=attachment-list]', entryActions: [...ADD6.slice(0, 5), '[data-qc=tray-toggle]'] },
   { id: 'queued', name: '已提交 · 排队中', route: `#${Q}?run=run-queued`, viewport: 'desktop', themes: both, entryReadySelector: ready('run-queued') },
@@ -38,6 +43,7 @@ const screens = [
   { id: 'phone-queued', name: '手机 · 排队中', route: `#${Q}?run=run-queued`, viewport: 'phone', themes: both, entryReadySelector: ready('run-queued') },
   { id: 'phone-preview', name: '手机 · 预览成片', route: `#${Q}?run=run-published`, viewport: 'phone', themes: both, entryReadySelector: '[data-qc=video-player]', entryActions: ['[aria-label=对话与预览] button:nth-child(2)'] },
   { id: 'phone-assets', name: '手机 · 预览页签里的产物', route: `#${Q}`, viewport: 'phone', themes: both, entryReadySelector: '[data-qc=asset-detail]', entryActions: ['[aria-label=对话与预览] button:nth-child(2)', '[aria-label=选择与资产] button:nth-child(2)'] },
+  { id: 'phone-chat', name: '手机 · 对话起稿与推荐风格', route: `#${Q}`, viewport: 'phone', themes: both, entryReadySelector: '[data-qc=rec-style][data-style=dark-keynote]', entryActions: CHAT },
   { id: 'phone-works', name: '手机 · 我的作品（长标题）', route: `#${Q}?view=works`, viewport: 'phone', themes: both, entryReadySelector: ready('works') },
   { id: 'concept-settings', name: '未来 · 设置概念稿（不在快捷版实现）', route: '#/concept/settings', viewport: 'desktop', themes: both, entryReadySelector: ready('concept-settings') },
   { id: 'concept-studio', name: '未来 · 逐幕调整概念稿（不在快捷版实现）', route: '#/concept/studio', viewport: 'desktop', themes: both, entryReadySelector: ready('concept-studio') },
@@ -93,17 +99,23 @@ const rows = [
   ['A-46', null, 'compose', 'human', D, '风格说明（STYLE.md，已取得使用授权）由服务端在生成时交给智能体，界面只显示风格名、样片与一句话说明，不展示风格说明全文；样片海报署名「Lemo-Opuscar by Lemomo (LemoLab)」', '风格详情底部有署名；界面与前端源码里没有风格说明正文，类型字段 promptRef 只存位置，正文由服务端按编号读取'],
   ['A-47', null, 'assets', 'screenshot', D, '右栏是「选择与资产」：新建时页签为「风格 / 产物」，任务中为「本次 / 产物」；产物页签只列已生成的视频与网页，上方是选中产物的大图、风格、作者、时间与发布状态，下方按「我的 / 团队」和视频、网页浏览', '产物页签首屏：选中产物大图带「视频 · 时长」，信息区写作者、时间、风格与「已发布」；筛选行有「我的 / 团队」与「全部 / 视频 / 网页」及数量；卡片写标题、风格、作者与时间'],
   ['A-48', null, 'assets-team', 'human', D, '从产物复用：「用这个风格」把风格带回输入框（任务中则新建并带上风格），「打开」回到原任务，已发布的可去网页托管；当前正在用的风格不重复带回', '选同事的「新版 OKR 填写指南」点「用这个风格」→ 风格按钮变为「中国水墨」并提示；任务中点「打开」→ 进入该产物的任务'],
+  ['A-49', null, 'chat-start', 'human', D, '对话起稿：不知道选什么时可以直接说想做什么；快速创作每次只问一个它还拿不准的问题，并给几个可以直接点的回答；回复逐字出现，顶部显示这次用的模型', '点「我想做一个宣传片」→ 助手问「宣传的是什么？」并给「新产品发布 / 公司年会 / 招聘宣传」；回复逐字出现，名字旁写模型与平台'],
+  ['A-50', null, 'chat-ready', 'screenshot', D, '创作简报：开工条件一眼可见，必填三项（做成什么、讲什么、风格）与建议两项（给谁看、时长），聊到哪一条勾哪一条；判定由服务端结构化给出，前端不从聊天文字里猜', '输入框上方的简报条写「必填 x/3」或「可以开工」，每项带勾或「待补」，值来自对话、稿件、手动选择或默认'],
+  ['A-51', null, 'chat-recommend', 'human', D, '推荐风格：按目的与感觉推荐 3 个风格，每个带样片海报与一句为什么适合；点「用这个」或说「第二个」都能选定，输入框的风格按钮与右栏同步', '选「科技感」后出现暗色科技发布、玻璃质感产品、科幻全息界面三张卡；说「第二个」后风格按钮变为玻璃质感产品'],
+  ['A-52', null, 'chat-ready', 'human', D, '准备好了：必填条件都齐了，助手复述简报并给主按钮「开始生成（约 30–60 分钟）」；直接说「可以开始了」效果一样；条件不够时说明还缺什么，不硬开始', '条件齐时出现「准备好了」卡；一开始就说「可以开始了」，助手回「还不能开始：还缺讲什么」并接着问'],
+  ['A-53', null, 'chat-script', 'human', D, '开工前先看分镜脚本：每幕一句画面、一句旁白，确认后正式排队；不想看可以一键跳过；想改直接在对话里说', '点「开始生成」→ 出现 6 幕分镜脚本与「按这个脚本开始生成」；点它或「跳过脚本，直接开始」都进入排队'],
+  ['A-54', null, 'chat-script', 'human', D, '没有稿件也能只靠对话出片：讲什么来自对话，文案由快速创作按对话先写；任务里写明内容来自对话', '不放稿件聊完后开工，任务左栏你的消息写「没有稿件：内容来自和快速创作的对话」'],
 ];
 
 /* 关键操作：CDS 交接检查按 handoff.cases 实际执行 */
-const INTERACTIVE = new Set(['A-12', 'A-15', 'A-17', 'A-18', 'A-19', 'A-20', 'A-23', 'A-24', 'A-25', 'A-26', 'A-27', 'A-29', 'A-30', 'A-32', 'A-33', 'A-39', 'A-40', 'A-41', 'A-42', 'A-43', 'A-44', 'A-45', 'A-47', 'A-48']);
+const INTERACTIVE = new Set(['A-12', 'A-15', 'A-17', 'A-18', 'A-19', 'A-20', 'A-23', 'A-24', 'A-25', 'A-26', 'A-27', 'A-29', 'A-30', 'A-32', 'A-33', 'A-39', 'A-40', 'A-41', 'A-42', 'A-43', 'A-44', 'A-45', 'A-47', 'A-48', 'A-49', 'A-51', 'A-52', 'A-53', 'A-54']);
 /* 覆盖维度（CDS 六维）：每条验收项归一个维度，缺规则的维度在 risks 里写风险与理由 */
 const DIM = {
   compatibility: ['A-01', 'A-02', 'A-03', 'A-06', 'A-35', 'A-36', 'A-37'],
   security: ['A-10', 'A-46'],
   operations: ['A-07', 'A-08', 'A-23'],
   performance: ['A-16', 'A-20', 'A-34'],
-  correctness: ['A-12', 'A-13', 'A-15', 'A-17', 'A-24', 'A-25', 'A-26', 'A-27', 'A-29', 'A-30', 'A-32', 'A-33', 'A-39', 'A-41', 'A-42', 'A-44', 'A-45', 'A-48'],
+  correctness: ['A-12', 'A-13', 'A-15', 'A-17', 'A-24', 'A-25', 'A-26', 'A-27', 'A-29', 'A-30', 'A-32', 'A-33', 'A-39', 'A-41', 'A-42', 'A-44', 'A-45', 'A-48', 'A-50', 'A-51', 'A-52', 'A-53', 'A-54'],
 };
 const dimensionOf = id => Object.entries(DIM).find(([, ids]) => ids.includes(id))?.[0] ?? 'experience';
 const acceptance = rows.map(([id, ruleId, screenId, how, slots, rule, expected, extra]) => ({ id, ...(ruleId ? { ruleId } : {}), screenId, how, slots, rule, expected, dimension: dimensionOf(id), ...(extra ?? {}), ...(INTERACTIVE.has(id) ? { interaction: true } : {}) }));
@@ -155,6 +167,50 @@ const cases = [
     { action: 'click', selector: '[data-asset=a-m1]' },
     { action: 'click', selector: '[data-qc=asset-open]' },
     { action: 'expect', selector: '[data-qc-ready]', check: 'attribute', attribute: 'data-run-id', equals: 'asset-a-m1' },
+  ] },
+  { id: 'chat-to-ready-and-skip-script', title: '不知道选什么：聊天问清、选推荐风格，准备好了后跳过脚本直接开始', screenId: 'compose', theme: 'light', ruleIds: ['A-49', 'A-50', 'A-51', 'A-52', 'A-53'], steps: [
+    { action: 'expect', selector: '[data-qc=starter][data-value="我想做一个宣传片"]', check: 'visible' },
+    { action: 'click', selector: '[data-qc=starter][data-value="我想做一个宣传片"]' },
+    { action: 'expect', selector: '[data-qc=quick-reply][data-value="新产品发布"]', check: 'visible' },
+    { action: 'click', selector: '[data-qc=quick-reply][data-value="新产品发布"]' },
+    { action: 'expect', selector: '[data-qc=quick-reply][data-value="客户"]', check: 'visible' },
+    { action: 'click', selector: '[data-qc=quick-reply][data-value="客户"]' },
+    { action: 'expect', selector: '[data-qc=quick-reply][data-value="科技感"]', check: 'visible' },
+    { action: 'click', selector: '[data-qc=quick-reply][data-value="科技感"]' },
+    { action: 'expect', selector: '[data-qc=rec-style][data-style=dark-keynote] [data-qc=rec-use]', check: 'visible' },
+    { action: 'click', selector: '[data-qc=rec-style][data-style=dark-keynote] [data-qc=rec-use]' },
+    { action: 'expect', selector: '[data-qc=style-chip]', check: 'attribute', attribute: 'data-template', equals: 'dark-keynote' },
+    { action: 'expect', selector: '[data-qc=brief]', check: 'attribute', attribute: 'data-ready', equals: 'true' },
+    { action: 'expect', selector: '[data-qc=brief-skip-script]', check: 'visible' },
+    { action: 'click', selector: '[data-qc=brief-skip-script]' },
+    { action: 'expect', selector: '[data-qc=queue-card]', check: 'visible' },
+  ] },
+  { id: 'say-second-and-start', title: '说「第二个」选风格，再说「可以开始了」，确认分镜脚本后排队（没有稿件）', screenId: 'compose', theme: 'dark', ruleIds: ['A-51', 'A-52', 'A-53', 'A-54'], steps: [
+    { action: 'expect', selector: '[data-qc=starter][data-value="我想做一个宣传片"]', check: 'visible' },
+    { action: 'click', selector: '[data-qc=starter][data-value="我想做一个宣传片"]' },
+    { action: 'expect', selector: '[data-qc=quick-reply][data-value="新产品发布"]', check: 'visible' },
+    { action: 'click', selector: '[data-qc=quick-reply][data-value="新产品发布"]' },
+    { action: 'expect', selector: '[data-qc=quick-reply][data-value="客户"]', check: 'visible' },
+    { action: 'click', selector: '[data-qc=quick-reply][data-value="客户"]' },
+    { action: 'expect', selector: '[data-qc=quick-reply][data-value="科技感"]', check: 'visible' },
+    { action: 'click', selector: '[data-qc=quick-reply][data-value="科技感"]' },
+    { action: 'fill', selector: '#qc-ask', value: '第二个' },
+    { action: 'expect', selector: '[data-qc=send]', check: 'visible' },
+    { action: 'click', selector: '[data-qc=send]' },
+    { action: 'expect', selector: '[data-qc=style-chip]', check: 'attribute', attribute: 'data-template', equals: 'glass-product' },
+    { action: 'fill', selector: '#qc-ask', value: '可以开始了' },
+    { action: 'expect', selector: '[data-qc=send]', check: 'visible' },
+    { action: 'click', selector: '[data-qc=send]' },
+    { action: 'expect', selector: '[data-qc=script-draft]', check: 'visible' },
+    { action: 'expect', selector: '[data-qc=script-confirm]', check: 'visible' },
+    { action: 'click', selector: '[data-qc=script-confirm]' },
+    { action: 'expect', selector: '[data-qc=queue-card]', check: 'visible' },
+  ] },
+  { id: 'start-before-ready', title: '条件不够时说「可以开始了」，助手说明还缺什么', screenId: 'compose', theme: 'light', ruleIds: ['A-52'], steps: [
+    { action: 'fill', selector: '#qc-ask', value: '可以开始了' },
+    { action: 'click', selector: '[data-qc=send]' },
+    { action: 'expect', selector: '[data-qc=missing-note]', check: 'visible' },
+    { action: 'expect', selector: '[data-qc=brief]', check: 'attribute', attribute: 'data-ready', equals: 'false' },
   ] },
   { id: 'submit-pasted-text', title: '粘贴长正文成为稿件附件后生成', screenId: 'compose', theme: 'light', ruleIds: ['A-41'], steps: [
     { action: 'fill', selector: '#qc-ask', value: SAMPLE_PASTE },
@@ -245,6 +301,7 @@ const cases = [
 ];
 const goals = [
   { id: 'G-01', goal: '一份文档 + 一个模板，最快路径得到成品', doneWhen: '首次打开即可选产出与模板，用示例、上传、知识库或粘贴放进稿件并快捷生成；没有稿件时按钮不可用且说明原因', items: ['A-11', 'A-12', 'A-13', 'A-39', 'A-41', 'A-42'] },
+  { id: 'G-12', goal: '不知道选什么的人也能通过对话开工', doneWhen: '可以直接说想做什么，助手逐个问清并推荐风格；创作简报显示开工条件；条件齐了出现「准备好了」，也能说「可以开始了」；开工前确认分镜脚本；没有稿件也能出片', items: ['A-49', 'A-50', 'A-51', 'A-52', 'A-53', 'A-54'] },
   { id: 'G-11', goal: '右栏同时承担选择与资产：创作时能回看自己和团队生成过的产物', doneWhen: '右栏有「产物」页签，可按我的 / 团队与产出类型浏览已生成的成品，能打开原任务、把风格带回输入框、去网页托管', items: ['A-47', 'A-48'] },
   { id: 'G-10', goal: '模板按 Lemo-Opuscar 风格库选择，并在输入框里决定产出与风格', doneWhen: '15 类 99 种风格可筛选、搜索、看样片说明；输入框里就地切换视频 / 网页与风格，两者相互独立；风格说明只按编号引用并署名来源', items: ['A-43', 'A-44', 'A-45', 'A-46'] },
   { id: 'G-02', goal: '附件再多也清楚、不堆一大把', doneWhen: '收起时只占一行，展开可分组管理，失败项单独处理；发送后可回看', items: ['A-14', 'A-15', 'A-16', 'A-17', 'A-18'] },
@@ -263,7 +320,7 @@ const manifest = {
   group: 'MAP · 创作',
   framework: 'FW-MAP-ADMIN',
   frameworkVersion: 1,
-  prototypeVersion: 6,
+  prototypeVersion: 7,
   date: new Date().toISOString().slice(0, 10),
   rationale: '思路.md',
   prototype: 'dist/index.html',
@@ -291,6 +348,9 @@ const manifest = {
     { dimension: 'security', risk: '前端请求绕过统一鉴权', ruleIds: ['A-10'] },
     { dimension: 'operations', risk: '用户离开或刷新后任务丢失、重复提交', ruleIds: ['A-08', 'A-23'] },
     { dimension: 'compatibility', risk: '手机与深浅主题下布局挤压、对比度不足', ruleIds: ['A-03', 'A-06', 'A-35'] },
+    { dimension: 'correctness', risk: '对话没问清就开工，跑了 30–60 分钟才发现方向不对；或开工判据靠前端猜聊天文字', ruleIds: ['A-50', 'A-52', 'A-53'] },
+    { dimension: 'experience', risk: '不知道选什么的人问了没有回答，只能自己翻 99 种风格（像伪智能体）', ruleIds: ['A-49'] },
+    { dimension: 'correctness', risk: '真实模型的提问质量、推荐准确度与开工意图判定', reason: '原型用固定路线演示对话，无法测真实模型；接入模型池后按验收债务 D-05 用真实开场跑一轮校准' },
   ],
   acceptance,
   goals,

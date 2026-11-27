@@ -1,9 +1,9 @@
 {
-  "runAt": "2026-11-26",
+  "runAt": "2026-11-27",
   "browser": "Chromium（Playwright），本机还原 CDS 预览容器（技能 design-preview-contract.json 的 CSP 响应头与桥接脚本、sandbox=\"allow-scripts\"），桌面 1440×900 与手机 390×844、浅色与深色",
   "url": "dist/index.html",
-  "total": 49,
-  "passed": 49,
+  "total": 55,
+  "passed": 55,
   "items": [
     {
       "id": "A-01",
@@ -39,7 +39,7 @@
       "id": "A-06",
       "name": "A-06 R-06 手机两栏改成「创作 / 预览」切换，375 宽没有整页横向溢出，本页新增的可点元素触控高度不小于 44px",
       "pass": true,
-      "note": "测量：phone-compose/light：溢出 0px；phone-compose/dark：溢出 0px；phone-queued/light：溢出 0px；phone-queued/dark：溢出 0px；phone-preview/light：溢出 0px；phone-preview/dark：溢出 0px；phone-assets/light：溢出 0px；phone-assets/dark：溢出 0px；phone-works/light：溢出 0px；phone-works/dark：溢出 0px"
+      "note": "测量：phone-compose/light：溢出 0px；phone-compose/dark：溢出 0px；phone-queued/light：溢出 0px；phone-queued/dark：溢出 0px；phone-preview/light：溢出 0px；phone-preview/dark：溢出 0px；phone-assets/light：溢出 0px；phone-assets/dark：溢出 0px；phone-chat/light：溢出 0px；phone-chat/dark：溢出 0px；phone-works/light：溢出 0px；phone-works/dark：溢出 0px"
     },
     {
       "id": "A-07",
@@ -294,10 +294,46 @@
       "note": "交接场景 reuse-style-from-team-asset：团队里选林夏的「新版 OKR 填写指南」点「用这个风格」，风格按钮变为 ink-wash（中国水墨）；open-asset-during-run：生成中切到产物、点「打开」进入 asset-a-m1 任务；当前正在用的风格按钮置灰"
     },
     {
+      "id": "A-49",
+      "name": "A-49 对话起稿：不知道选什么时可以直接说想做什么；快速创作每次只问一个它还拿不准的问题，并给几个可以直接点的回答；回复逐字出现，顶部显示这次用的模型",
+      "pass": true,
+      "note": "chat-start 画面：点「我想做一个宣传片」后助手只问「宣传的是什么？」并给「新产品发布 / 公司年会 / 招聘宣传」三个可点回答；回复逐字出现，名字旁写「deepseek-v3 · 模型池「创作对话」」；交接场景 chat-to-ready-and-skip-script 第 1–4 步通过"
+    },
+    {
+      "id": "A-50",
+      "name": "A-50 创作简报：开工条件一眼可见，必填三项（做成什么、讲什么、风格）与建议两项（给谁看、时长），聊到哪一条勾哪一条；判定由服务端结构化给出，前端不从聊天文字里猜",
+      "pass": true,
+      "note": "chat-start 简报条写「必填 2/3」，讲什么显示虚线「待补」；chat-ready 写「可以开工」，做成什么 / 讲什么 / 风格都带勾，时长显示「约 1 分钟（默认）」；交接场景断言 data-ready 由 false 变 true，判定来自 /brief 接口返回的结构化字段"
+    },
+    {
+      "id": "A-51",
+      "name": "A-51 推荐风格：按目的与感觉推荐 3 个风格，每个带样片海报与一句为什么适合；点「用这个」或说「第二个」都能选定，输入框的风格按钮与右栏同步",
+      "pass": true,
+      "note": "chat-recommend 画面：选「科技感」后出现暗色科技发布、玻璃质感产品、科幻全息界面三张卡，各带海报与一句理由；点「用这个」后风格按钮变为 dark-keynote；交接场景 say-second-and-start 说「第二个」后风格按钮变为 glass-product；手机 375 宽下卡片改为左图右文，三张一屏可见"
+    },
+    {
+      "id": "A-52",
+      "name": "A-52 准备好了：必填条件都齐了，助手复述简报并给主按钮「开始生成（约 30–60 分钟）」；直接说「可以开始了」效果一样；条件不够时说明还缺什么，不硬开始",
+      "pass": true,
+      "note": "chat-ready 画面：齐了之后出现「准备好了」卡，复述三行简报，主按钮「开始生成（约 30–60 分钟）」与「跳过脚本，直接开始」，卡片完整在视线内；交接场景 start-before-ready 一开始说「可以开始了」，出现 missing-note「还不能开始：还缺讲什么」，简报 data-ready 仍为 false"
+    },
+    {
+      "id": "A-53",
+      "name": "A-53 开工前先看分镜脚本：每幕一句画面、一句旁白，确认后正式排队；不想看可以一键跳过；想改直接在对话里说",
+      "pass": true,
+      "note": "chat-script 画面：6 幕分镜脚本每幕一句画面一句旁白，底部「按这个脚本开始生成」与改法提示，脚本卡完整在视线内；交接场景 say-second-and-start 点确认后进入排队卡，chat-to-ready-and-skip-script 点跳过直接进入排队卡"
+    },
+    {
+      "id": "A-54",
+      "name": "A-54 没有稿件也能只靠对话出片：讲什么来自对话，文案由快速创作按对话先写；任务里写明内容来自对话",
+      "pass": true,
+      "note": "交接场景 say-second-and-start 全程不放稿件，排队后任务左栏你的消息写「没有稿件：内容来自和快速创作的对话」，简报「讲什么」取自对话（宣传片：新产品发布）；原型的创建接口带 briefId 且无附件时不再回落到示例稿件"
+    },
+    {
       "id": "C-01",
       "name": "C-01 预览容器零报错（所有画面 × 主题）",
       "pass": true,
-      "note": "54 次打开，控制台与 CSP 报错 0 条"
+      "note": "64 次打开，控制台与 CSP 报错 0 条"
     }
   ]
 }
