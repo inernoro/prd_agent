@@ -151,6 +151,7 @@ export type RunStatus = 'queued' | 'running' | 'failed' | 'done';
 
 export interface QcRun {
   contentSource?: 'chat' | 'doc';
+  briefUserRequests?: string | null;
   id: string;
   title: string;
   kind: OutputKind;

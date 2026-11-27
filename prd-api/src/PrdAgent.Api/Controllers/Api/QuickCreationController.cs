@@ -472,6 +472,7 @@ public sealed partial class DesignArtifactsController
             run.Id, run.Title, kind = QuickKind(run), templateId = input.TemplateId,
             contentSource = includePrivate ? input.BriefContentSource : null,
             ask = includePrivate ? input.Ask : string.Empty,
+            briefUserRequests = includePrivate ? input.BriefUserRequests : null,
             attachments = input.AttachmentIds.Where(byId.ContainsKey).Select(id => ToQuickAttachment(byId[id])),
             status, queue, elapsedSec = ElapsedSeconds(run, now), failure,
             remainSec = status == "running" && estimate is { } seconds ? Math.Max(0, seconds - ElapsedSeconds(run, now)) : (int?)null,

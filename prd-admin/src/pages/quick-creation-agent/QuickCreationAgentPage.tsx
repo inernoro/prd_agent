@@ -537,7 +537,15 @@ export function QuickCreationAgentPage() {
     <>
       <UserTurn meta={<>{run.kind === 'video' ? <Video size={12} aria-hidden /> : <Globe size={12} aria-hidden />}{OUTPUT_LABEL[run.kind]} · {runTemplate?.name}</>}>
         {run.contentSource === 'chat' && <p className="m-0 px-1 text-[12px] text-token-secondary">没有稿件，内容来自和快速创作的对话</p>}
-        <p className="m-0 px-1 text-[14px] leading-6 text-token-primary">{run.ask || '没有补充要求，按模板默认节奏生成'}</p>
+        {run.briefUserRequests && (
+          <details className="px-1 text-sm text-token-primary" data-qc="brief-run-requests">
+            <summary className="cursor-pointer">对话中的创作要求</summary>
+            <p className="my-1 max-h-40 overflow-y-auto whitespace-pre-wrap break-words leading-6">{run.briefUserRequests}</p>
+          </details>
+        )}
+        {(run.ask || !run.briefUserRequests) && (
+          <p className="m-0 px-1 text-[14px] leading-6 text-token-primary">{run.ask || '没有补充要求，按模板默认节奏生成'}</p>
+        )}
         <SentAttachments items={run.attachments} onOpenAll={() => openReview()} onOpen={id => openReview(id)} />
       </UserTurn>
       <AgentTurn status={agentStatus}>
