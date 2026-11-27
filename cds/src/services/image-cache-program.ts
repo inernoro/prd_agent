@@ -6,6 +6,7 @@ export const IMAGE_CACHE_PULL_RECEIPT_WINDOW_MS = 9_000;
 export const IMAGE_CACHE_PROGRAM = DISK_RESOURCE_NATIVE + String.raw`
 import datetime,http.client,re,socket,subprocess,tempfile
 PULL_OVERDUE_MS=10*60*1000
+MAX_UNSETTLED_PULLS=32
 DEFAULT_PULL_PEAK_BYTES=4*1024**3
 PULL_RECEIPT_WRITE_MARGIN_SECONDS=1
 PULL_RECEIPT_MAX_WINDOW_SECONDS=${IMAGE_CACHE_PULL_RECEIPT_WINDOW_MS}/1000
@@ -91,7 +92,7 @@ def matched_local_docker_socket():
  except (OSError,ValueError,http.client.HTTPException):pass
  return None
 
-local_socket=matched_local_docker_socket() if action in ('prepare','preview','reconcile','adopt') else None
+local_socket=matched_local_docker_socket() if action in ('preview','reconcile','adopt') else None
 def docker_summary(endpoint):
  try:
   rows=local_docker_json(local_socket,endpoint)
@@ -158,6 +159,9 @@ def reference_key(reference):
  if not isinstance(reference,str) or '@sha256:' not in reference:return reference
  name,digest=reference.rsplit('@',1)
  return repository(name)+'@'+digest
+def matches_pull_digest(receipt,image,digests):
+ digest=receipt.get('registryDigest')
+ return isinstance(digest,str) and re.fullmatch(r'sha256:[a-f0-9]{64}',digest) and repository(image)+'@'+digest in digests
 def inspect_image(reference):
  reference=reference_key(reference)
  if not isinstance(reference,str) or not reference or reference.startswith('-'):raise ValueError('image-reference-invalid')
@@ -252,9 +256,14 @@ def pull_evidence(stdout,stderr,execution_state,outcome):
       '拉取程序返回了未分类的错误' if stdout or stderr else '拉取程序未返回诊断内容')
  return {'executionState':execution_state,'summary':summary,'signals':signals}
 
+def pull_has_been_overdue(pull):
+ created=pull.get('createdAt')
+ started=pull.get('startedAt',created)
+ return type(created) is int and type(started) is int and now-max(created,started)>PULL_OVERDUE_MS
+
 if action=='execute-pull':
  token=cache_token(req['token']);pull=state['pulls'].get(token)
- if not pull or pull['instanceId']!=instance or not pull.get('nativePull') or pull['image']!=req['image'] or pull.get('confirmed') or 'startedAt' in pull:
+ if not pull or pull['instanceId']!=instance or not pull.get('nativePull') or pull['image']!=req['image'] or pull.get('confirmed') or 'startedAt' in pull or pull_has_been_overdue(pull):
   raise ValueError('pull-authorization-unconfirmed')
  image=pull['image']
  if not isinstance(image,str) or not image or image.startswith('-') or len(image)>512 or any(c.isspace() for c in image):
@@ -322,28 +331,75 @@ def containers():
  for offset in range(0,len(ids),100):rows+=json.loads(docker(['inspect',*ids[offset:offset+100]]))
  if len(rows)!=len(ids) or ids!=sorted(set(docker(['ps','-aq','--no-trunc']).splitlines())):raise ValueError('container-reference-inventory-incomplete')
  return rows
-if action=='publish':
+def publish_references(references):
  # Offline masters keep their last pins. A timeout is never proof their rollback anchors are disposable.
- state['masters'][instance]={'references':list(set(req['references'])),'updatedAt':now}
+ state['masters'][instance]={'references':list(set(references)),'updatedAt':now}
  # Clear only this master's acknowledged pulls after its current + persisted in-flight pins were published.
  for token,pull in list(state['pulls'].items()):
-  if pull['instanceId']==instance and pull.get('confirmed') and now-pull['createdAt']>PULL_OVERDUE_MS:del state['pulls'][token]
- save();print(json.dumps({'published':True}));sys.exit(0)
+  if pull['instanceId']==instance and pull.get('confirmed') and now>max(pull['createdAt']+PULL_OVERDUE_MS,pull.get('reuseUntil',0)):del state['pulls'][token]
+ save()
+
+if action=='publish':
+ publish_references(req['references']);print(json.dumps({'published':True}));sys.exit(0)
+def pull_slot_state(pull):
+ if pull.get('confirmed') or pull.get('reserveBytes')==0 and not pull.get('nativePull'):
+  return 'reference-only'
+ # An expired reservation belongs to reconciliation. Its bytes and references
+ # are still reserved. Without a byte budget, keep the original count guard.
+ if req.get('budgetBytes',0)>0 and pull_has_been_overdue(pull):
+  return 'awaiting-reconciliation'
+ return 'active'
+
+def check_pull_slots():
+ if sum(pull_slot_state(p)=='active' for p in state['pulls'].values())>=MAX_UNSETTLED_PULLS:
+  raise ValueError('unsettled-image-pull-budget-reached')
+
 def reserve_pull(image,present,peak):
- if sum(not p.get('confirmed') for p in state['pulls'].values())>=32:raise ValueError('unsettled-image-pull-budget-reached')
  token=secrets.token_hex(16)
  state['pulls'][token]={'image':image,'instanceId':instance,'createdAt':now,'beforeId':present['Id'] if present else None,'reserveBytes':peak}
  if req.get('nativePull'):state['pulls'][token]['nativePull']=True
  save();print(json.dumps({'token':token,'alreadyPresent':bool(present)}));sys.exit(0)
 if action=='prepare':
+ if 'references' in req:publish_references(req['references'])
  image=req['image'];force_new=req.get('forceNew')
+ revision=req.get('reuseVerifiedRevision')
+ exact_retry=bool(req.get('nativePull') and isinstance(revision,str) and re.fullmatch(r'[a-f0-9]{40}',revision) and image.endswith(':sha-'+revision))
+ if exact_retry:
+  confirmed=[p for p in state['pulls'].values() if p['instanceId']==instance and p['image']==image and p.get('nativePull') and p.get('confirmed')]
+  settled=[r for r in state.get('settledPulls',{}).values() if r.get('instanceId')==instance and r.get('daemonId')==state['daemonId']
+           and r.get('image')==image and r.get('outcome')=='success' and r.get('exitCode')==0 and r.get('observation')=='present']
+  if confirmed or settled:
+   present=inspect_image(image)
+   if present:
+    pin=next((p for p in confirmed if p.get('identity')==present['Id']),None)
+    labels=(present.get('Config') or {}).get('Labels') or {}
+    arch={'x86_64':'amd64','aarch64':'arm64'}.get(info.get('Architecture'),info.get('Architecture'))
+    digests=[ref for ref in present.get('RepoDigests') or [] if re.fullmatch(r'.+@sha256:[a-f0-9]{64}',ref) and repository(ref)==repository(image)]
+    settled_match=any(r.get('observedId')==present['Id'] and matches_pull_digest(r,image,digests) for r in settled)
+    if (pin or settled_match) and digests and labels.get('org.opencontainers.image.revision')==revision and present.get('Os')==info.get('OSType') and present.get('Architecture')==arch:
+     # A retained receipt can outlive its temporary pin. Renew the pin without reserving a new transfer.
+     if not pin:
+      pin={'image':image,'instanceId':instance,'createdAt':now,'beforeId':present['Id'],'reserveBytes':0,
+           'nativePull':True,'confirmed':True,'identity':present['Id']}
+      state['pulls'][secrets.token_hex(16)]=pin
+     pin['reuseUntil']=now+PULL_OVERDUE_MS
+     evidence={'Id':present['Id'],'RepoDigests':digests,'Os':present['Os'],'Architecture':arch,
+               'Config':{'Labels':{'org.opencontainers.image.revision':revision}}}
+     save();print(json.dumps({'confirmedImage':evidence}));sys.exit(0)
  if req.get('requirePresent') or not force_new and '@sha256:' in image:
   # A present immutable reference cannot create a new image. Pin its exact identity without scanning unrelated images.
   present=inspect_image(image)
   if not present and req.get('requirePresent'):print(json.dumps({'absent':True}));sys.exit(0)
-  if present and not force_new:reserve_pull(image,present,0)
+  if present and not force_new:
+   if req.get('nativePull'):check_pull_slots()
+   reserve_pull(image,present,0)
+ budget=req.get('budgetBytes',0)
+ peak_limit=req.get('peakBytes',DEFAULT_PULL_PEAK_BYTES)
+ # No transfer can be admitted without a slot. Check under the same lock before scanning the whole Docker daemon.
+ check_pull_slots()
+ local_socket=matched_local_docker_socket()
  rows=images();by_ref={reference_key(value):row for row in rows for value in refs(row)}
- image=req['image'];present=by_ref.get(reference_key(image));budget=req.get('budgetBytes',0)
+ present=by_ref.get(reference_key(image))
  if req.get('requirePresent') and not present:print(json.dumps({'absent':True}));sys.exit(0)
  foreign=set(state.get('seenForeignIds',[]))&{r['Id'] for r in rows}
  starting={reference_key(p['image']) for p in state['pulls'].values() if not p.get('beforeId')}
@@ -351,7 +407,7 @@ if action=='prepare':
   if row['Id'] not in state['images'] and not any(reference_key(value) in starting for value in refs(row)):foreign.add(row['Id'])
  state['seenForeignIds']=sorted(foreign)
  reserved=sum(p.get('reserveBytes',0) for p in state['pulls'].values() if not p.get('confirmed'))
- peak=req.get('peakBytes',DEFAULT_PULL_PEAK_BYTES) if not present or req.get('forceNew') else 0
+ peak=peak_limit if not present or force_new else 0
  if peak and budget and sum(r['Size'] for r in rows)+reserved+peak>budget:raise ValueError('host-image-cache-budget-exceeded')
  reserve_pull(image,present,peak)
 def confirm_pull(pull,row):
@@ -379,19 +435,22 @@ if action=='abort':
 
 def pull_public_id(token):return 'pull:'+hashlib.sha256(token.encode()).hexdigest()[:16]
 
-def settle_pull(token,pull):
+def settle_pull(token,pull,release_unstarted=False):
  if not pull or pull['instanceId']!=instance or not pull.get('nativePull') or pull.get('confirmed'):
   return None
  if 'startedAt' not in pull:
   # This token cannot start after it is removed under the same host lock.
-  if now-pull['createdAt']<=PULL_OVERDUE_MS:return None
+  if not release_unstarted and now-pull['createdAt']<=PULL_OVERDUE_MS:return None
   return {'outcome':'never-started','completedAt':now}
  receipt=read_pull_receipt(token,pull)
  if not receipt or receipt['exitCode'] is None:return None
  row=inspect_image(pull['image'])
  current_id=row['Id'] if row else None
  if receipt['observation']!=('present' if row else 'absent') or receipt['observedId']!=current_id:
-  return None
+  if not (receipt['observation']=='unconfirmed' and receipt['exitCode']==0 and receipt['outcome']=='success' and row
+          and matches_pull_digest(receipt,pull['image'],row.get('RepoDigests') or [])):
+   return None
+  receipt={**receipt,'observation':'present','observedId':current_id,'reobserved':True}
  if receipt['outcome']=='success' and receipt['exitCode']==0 and row:
   confirm_pull(pull,row)
  elif receipt['exitCode']<=0 or receipt['outcome'] not in ('missing','access-denied') or (row and current_id!=pull['beforeId']):
@@ -412,12 +471,13 @@ if action=='settle-pulls':
   if time.monotonic()>deadline-4:break
   try:
    cache_token(token)
-   receipt=settle_pull(token,pull)
+   receipt=settle_pull(token,pull,bool(specific) and req.get('releaseUnstarted') is True)
   except (OSError,ValueError,KeyError,TypeError):
    pending.append(pull_public_id(token));continue
   if not receipt:continue
   entry={**receipt,'identity':pull_public_id(token),'instanceId':instance,'image':pull['image'],
          'reservedBytesEstimate':pull['reserveBytes'],'reconciledAt':now,'source':'caller' if specific else 'scheduled'}
+  if pull.get('recovery'):entry['recovery']=True
   history[token]=entry
   if not pull.get('confirmed'):del state['pulls'][token]
   settled.append(entry);written.append(token)
@@ -449,8 +509,10 @@ out={'scanStatus':'complete','daemonId':state['daemonId'],'platform':{'os':info.
 def pull_reservation_report(token,pull):
  confirmed=bool(pull.get('confirmed'))
  report={'identity':pull_public_id(token),'image':pull['image'],'instanceId':pull['instanceId'],'createdAt':pull['createdAt'],
-         'confirmed':confirmed,'reservedBytesEstimate':pull.get('reserveBytes',0),
+         'confirmed':confirmed,'reservedBytesEstimate':pull.get('reserveBytes',0),'slotState':pull_slot_state(pull),
+         'overdue':not confirmed and pull_has_been_overdue(pull),
          'reason':'awaiting-current-and-inflight-reference-publication' if confirmed else 'native-pull-result-unconfirmed'}
+ if pull.get('recovery'):report['recovery']=True
  if not confirmed and pull.get('nativePull') and 'startedAt' in pull:
   try:
    receipt=read_pull_receipt(cache_token(token),pull)
@@ -460,12 +522,14 @@ def pull_reservation_report(token,pull):
 out['pullReservations']=[pull_reservation_report(token,pull) for token,pull in state['pulls'].items()]
 unconfirmed=[p for p in out['pullReservations'] if not p['confirmed']]
 reserved=sum(p['reservedBytesEstimate'] for p in unconfirmed)
-overdue=[p for p in unconfirmed if now-p['createdAt']>PULL_OVERDUE_MS]
+overdue=[p for p in unconfirmed if p['overdue']]
 available=out['budgetBytes']-out['imageBytesEstimate']-reserved if out['budgetBytes'] else None
 default_peak=req.get('peakBytes',DEFAULT_PULL_PEAK_BYTES)
 headroom=None if available is None else 'blocked' if available<default_peak else 'low' if available<2*default_peak else 'normal'
 out['pullBudget']={'reservedBytes':reserved,'overdueCount':len(overdue),'overdueReservedBytes':sum(p['reservedBytesEstimate'] for p in overdue),
-                   'availableBytes':available,'headroom':headroom,'peakBytes':default_peak,'overdueAfterMs':PULL_OVERDUE_MS}
+                   'availableBytes':available,'headroom':headroom,'peakBytes':default_peak,'overdueAfterMs':PULL_OVERDUE_MS,
+                   'activeSlotCount':sum(p['slotState']=='active' for p in unconfirmed),'slotLimit':MAX_UNSETTLED_PULLS,
+                   'reconciliationCount':sum(p['slotState']=='awaiting-reconciliation' for p in unconfirmed)}
 out['recentPullSettlements']=list(state.get('settledPulls',{}).values())[-16:][::-1]
 out['unknown'].extend({'identity':pull['identity'],'reason':pull['reason']} for pull in out['pullReservations'] if not pull['confirmed'])
 for row in rows:

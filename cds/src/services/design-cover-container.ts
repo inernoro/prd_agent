@@ -8,14 +8,17 @@ import { shellQuoteArg } from './secure-database-cli.js';
 type Shell = Pick<IShellExecutor, 'exec'>;
 type Image = () => Promise<string | undefined>;
 
-async function runDesignBrowserContainer(shell: Shell, resolveImage: Image, input: object, timeout: number) {
+async function runDesignBrowserContainer(shell: Shell, resolveImage: Image, input: object, timeout: number): Promise<{
+  output?: string;
+  unavailable?: boolean;
+}> {
   const name = 'cds-design-cover-' + randomUUID();
   const startedAt = Date.now();
   let stage: 'image' | 'create' | 'run' = 'image';
   const incomplete = (reason: string, exitCode?: number) => {
     // Shell output may include untrusted prototype content. Report the stage and fixed codes only.
     console.warn('[design-browser] request failed', { stage, reason, exitCode, elapsedMs: Date.now() - startedAt });
-    return undefined;
+    return { unavailable: stage !== 'run' || reason === 'capacity' || reason === 'unavailable' };
   };
   let createdId: string | undefined;
   try {
@@ -37,7 +40,7 @@ async function runDesignBrowserContainer(shell: Shell, resolveImage: Image, inpu
     stage = 'run';
     const result = await shell.exec('docker start --attach --interactive ' + id, { timeout, stdin: JSON.stringify(input) + '\n' });
     const output = result.stdout.trim();
-    return result.exitCode === 0 && output ? output : incomplete('container-result', result.exitCode);
+    return result.exitCode === 0 && output ? { output } : incomplete('container-result', result.exitCode);
   } catch (error) {
     const code = (error as { code?: unknown } | null)?.code;
     return incomplete(code === 'deadline' || code === 'capacity' || code === 'unavailable' ? code : 'execution');
@@ -51,7 +54,7 @@ async function runDesignBrowserContainer(shell: Shell, resolveImage: Image, inpu
 
 export function createDesignCoverContainer(shell: Shell, resolveImage: Image): DesignCoverCapture {
   return async (prototype, target) => {
-    const output = await runDesignBrowserContainer(shell, resolveImage, { prototype: prototype.toString('base64'), target }, 30_000);
+    const { output } = await runDesignBrowserContainer(shell, resolveImage, { prototype: prototype.toString('base64'), target }, 40_000);
     if (!output || output.length > 6 * 1024 * 1024 || !/^[A-Za-z0-9+/]+={0,2}$/.test(output)) return undefined;
     return Buffer.from(output, 'base64');
   };
@@ -60,7 +63,7 @@ export function createDesignCoverContainer(shell: Shell, resolveImage: Image): D
 export function createDesignHandoffContainer(shell: Shell, resolveImage: Image): DesignHandoffExecutor {
   return async ({ prototype, screens, cases }) => {
     const involved = new Set(cases.map(test => test.screenId));
-    const output = await runDesignBrowserContainer(shell, resolveImage, {
+    const { output } = await runDesignBrowserContainer(shell, resolveImage, {
       prototype: prototype.toString('base64'), cases, screens: screens.filter(screen => involved.has(screen.id)),
     }, 75_000);
     if (!output || output.length > 32_000) return undefined;
@@ -70,26 +73,33 @@ export function createDesignHandoffContainer(shell: Shell, resolveImage: Image):
 }
 
 export function createDesignReferenceContainer(shell: Shell, resolveImage: Image): DesignReferenceCapture {
-  return async function* (prototype, targets) {
+  return async function* (prototype, targets, retry = false) {
     const source = prototype.toString('base64');
-    const readBatch = async (references: typeof targets): Promise<unknown[] | undefined> => {
-      const output = await runDesignBrowserContainer(shell, resolveImage, { prototype: source, references }, references.length === 1 ? 30_000 : 70_000);
-      if (!output || output.length > 8 * 1024 * 1024) return undefined;
+    const readBatch = async (references: typeof targets): Promise<{ images?: unknown[]; unavailable?: boolean }> => {
+      const singleTimeout = retry ? 60_000 : 40_000;
+      const { output, unavailable } = await runDesignBrowserContainer(shell, resolveImage, { prototype: source, references, retry },
+        references.length === 1 ? singleTimeout : 70_000);
+      if (!output || output.length > 8 * 1024 * 1024) return { unavailable };
       try {
         const images: unknown = JSON.parse(output);
-        return Array.isArray(images) && images.length === references.length ? images : undefined;
-      } catch { return undefined; }
+        return Array.isArray(images) && images.length === references.length ? { images } : {};
+      } catch { return {}; }
     };
-    // Keep output within the executor limit. After a batch failure, isolate each remaining screen.
-    let batchSize = 4;
+    // Small partial batches get a fresh browser for each missing screenshot on retry.
+    const standardBatchSize = 4;
+    let batchSize = retry && targets.length <= standardBatchSize ? 1 : standardBatchSize;
+    let consecutiveFailures = 0;
     for (let offset = 0; offset < targets.length;) {
       const references = targets.slice(offset, offset + batchSize);
-      const images = await readBatch(references);
+      const { images, unavailable } = await readBatch(references);
+      if (unavailable) return;
       if (!images) {
-        if (references.length === 1) return;
-        batchSize = 1;
+        if (++consecutiveFailures === 3) return;
+        if (references.length === 1) offset++;
+        else batchSize = 1;
         continue;
       }
+      consecutiveFailures = 0;
       for (const [index, target] of references.entries()) {
         const image: unknown = images[index];
         if (typeof image === 'string' && image.length <= 2 * 1024 * 1024 && /^[A-Za-z0-9+/]+={0,2}$/.test(image)) {

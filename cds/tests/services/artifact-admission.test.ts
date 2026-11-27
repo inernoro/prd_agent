@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { configureImageCacheGovernance, ImageCacheGovernance, ImageCacheBudgetError } from '../../src/services/image-cache-governance.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import { admittedArtifactProfile, inspectDeploymentArtifacts } from '../../src/services/artifact-admission.js';
+import { ArtifactVerificationAttempt, readArtifactVerificationProbe } from '../../src/services/artifact-verification-probe.js';
 import type { BuildProfile } from '../../src/types.js';
 
 const target = 'b'.repeat(40);
@@ -22,13 +23,13 @@ function fixture() {
 }
 
 describe('完整预构建产物准入', () => {
-  it('数字失败状态没有原生完成回执时保留拉取预留，避免把超时当作完成', async () => {
+  it('没有原生完成回执时只请求结清有安全证据的预留', async () => {
     const shell=fixture();const cache=new ImageCacheGovernance({shell,catalog:'/unused',instanceId:'pull-failure',budgetBytes:1,protectedReferences:()=>[]});
     vi.spyOn(cache,'prepare').mockResolvedValue({token:'owned-pin'});
     vi.spyOn(cache,'executePull').mockResolvedValue({outcome:'verification-unavailable',recorded:false});
-    const settle=vi.spyOn(cache,'settlePulls');configureImageCacheGovernance(cache);
+    const settle=vi.spyOn(cache,'settlePulls').mockResolvedValue([]);configureImageCacheGovernance(cache);
     expect(await inspectDeploymentArtifacts(shell,[profile('api')],target)).toMatchObject({state:'waiting'});
-    expect(settle).not.toHaveBeenCalled();
+    expect(settle).toHaveBeenCalledWith('owned-pin', true);
   });
   it('只有匹配本轮原生完成回执的失败才结清拉取预留', async () => {
     const shell=fixture();const cache=new ImageCacheGovernance({shell,catalog:'/unused',instanceId:'pull-failure',budgetBytes:1,protectedReferences:()=>[]});
@@ -67,7 +68,7 @@ describe('完整预构建产物准入', () => {
     });
     vi.spyOn(cache, 'confirm').mockResolvedValue({});configureImageCacheGovernance(cache);
     expect(await inspectDeploymentArtifacts(shell, [profile('api')], target)).toMatchObject({ state: 'waiting', reason: 'cache-budget' });
-    expect(prepare).toHaveBeenCalledWith(image, expect.any(Function), false, true, true);
+    expect(prepare).toHaveBeenCalledWith(image, expect.any(Function), false, true, true, undefined);
     expect(shell.commands.filter(command => command.startsWith('docker pull '))).toEqual([]);
   });
   it('已缓存固定digest和纯本地产物保持原有复用，不预留不存在的新内容', async () => {
@@ -78,9 +79,75 @@ describe('完整预构建产物准入', () => {
     vi.spyOn(cache, 'settlePulls').mockResolvedValue([{identity:'pull:fixture',outcome:'success',source:'caller',reservedBytesEstimate:0}]);
     configureImageCacheGovernance(cache);
     expect((await inspectDeploymentArtifacts(shell, [{ ...profile('api'), dockerImage: digest }], target)).state).toBe('ready');
-    expect(prepare).toHaveBeenLastCalledWith(digest, expect.any(Function), false, false, true);
+    expect(prepare).toHaveBeenLastCalledWith(digest, expect.any(Function), false, false, true, undefined);
     expect((await inspectDeploymentArtifacts(shell, [{ ...profile('api'), localArtifact: true }], target, () => {}, { inspectLocalArtifacts: true })).state).toBe('ready');
-    expect(prepare).toHaveBeenLastCalledWith(image, expect.any(Function), true, false, false);
+    expect(prepare).toHaveBeenLastCalledWith(image, expect.any(Function), true, false, false, undefined);
+  });
+
+  it('上一轮耗尽时优先核验卡住的服务，已结清的同提交镜像不再拉取，全部通过后才准入', async () => {
+    const shell = fixture();
+    const cache = new ImageCacheGovernance({ shell, catalog: '/unused', instanceId: 'retry', budgetBytes: 1, protectedReferences: () => [] });
+    const web = { ...profile('web'), dockerImage: `ghcr.io/owned/web:sha-${target}` };
+    const webDigest = digest.replace('/worker@', '/web@');
+    const webId = `sha256:${'d'.repeat(64)}`;
+    const metadata = (Id: string, repoDigest: string) => ({
+      Id, RepoDigests: [repoDigest], Os: 'linux', Architecture: 'amd64',
+      Config: { Labels: { 'org.opencontainers.image.revision': target } },
+    });
+    shell.addResponsePatternFirst(/docker image inspect .*\/web:/, () => ({
+      stdout: JSON.stringify([metadata(webId, webDigest)]), stderr: '', exitCode: 0,
+    }));
+    let expired = false;
+    let firstRound = true;
+    const prepare = vi.spyOn(cache, 'prepare').mockImplementation(async (ref, _check, _present, _force, _native, reuseRevision) => {
+      if (ref === web.dockerImage && firstRound) expired = true;
+      if (ref === image && reuseRevision === target) return { confirmedImage: metadata(id, digest) };
+      return { token: ref };
+    });
+    const remainingMs = () => {
+      if (expired) throw new Error('inspection deadline');
+      return 1_000;
+    };
+    const execute = vi.spyOn(cache, 'executePull').mockImplementation(async (_token, _image, _check, left) => {
+      left?.();
+      return { outcome: 'success', recorded: true };
+    });
+    const settle = vi.spyOn(cache, 'settlePulls').mockImplementation(async (_token, release) => [{
+      identity: 'pull:fixture', outcome: release ? 'never-started' : 'success', source: 'caller', reservedBytesEstimate: 0,
+    }]);
+    configureImageCacheGovernance(cache);
+
+    const first = await inspectDeploymentArtifacts(shell, [profile('api'), web], target, () => {}, { remainingMs });
+    expect(first).toMatchObject({ state: 'waiting', reason: 'verification-unavailable', profileIds: ['web'], artifacts: [] });
+    expect(settle).toHaveBeenCalledWith(web.dockerImage, true);
+
+    firstRound = false;
+    expired = false;
+    prepare.mockClear();
+    execute.mockClear();
+    const measurement = new ArtifactVerificationAttempt(true);
+    const retried = await inspectDeploymentArtifacts(shell, [profile('api'), web], target, () => {}, {
+      remainingMs, retry: { profileId: first.profileIds?.[0] }, measurement,
+    });
+    expect(prepare.mock.calls.map(([ref]) => ref)).toEqual([web.dockerImage, image]);
+    expect(execute.mock.calls.map(([, ref]) => ref)).toEqual([web.dockerImage]);
+    expect(measurement.snapshot()).toMatchObject({ pullRequests: 1, pullsSucceeded: 1, reusedImages: 1, lastStep: 'compare' });
+    expect(retried).toMatchObject({ state: 'ready', artifacts: [
+      { profileIds: ['web'], image: webDigest, revision: target }, { profileIds: ['api'], image: digest, revision: target },
+    ] });
+  });
+
+  it('只接收远端探针的有界数值与已识别阶段和原因', () => {
+    expect(readArtifactVerificationProbe({
+      pullRequests: 2, pullsSucceeded: 1, reusedImages: 1,
+      lastStep: 'receipt', signals: ['private diagnostic', 'receipt-unconfirmed', 'receipt-unconfirmed'],
+      stepsMs: { pull: 120, receipt: -1, daemon: 4_000_000, command: 'private output' },
+      token: 'private token',
+    })).toEqual({
+      pullRequests: 2, pullsSucceeded: 1, reusedImages: 1, stepsMs: { pull: 120 },
+      lastStep: 'receipt', signals: ['receipt-unconfirmed'],
+    });
+    expect(readArtifactVerificationProbe({ pullRequests: 1, pullsSucceeded: 2, reusedImages: 0, stepsMs: {} })).toBeUndefined();
   });
 
   it('全量部署已预检的固定镜像使用只读通道复核内容，不会在并发启动时再抢账本', async () => {

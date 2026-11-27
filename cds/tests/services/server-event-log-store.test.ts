@@ -1,9 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { MongoClient, type Db } from 'mongodb';
+import { describe, expect, it, vi } from 'vitest';
 import {
   buildServerEventQuery,
   compactServerEventValue,
   enrichServerEventRecord,
   normalizeLogText,
+  ServerEventLogStore,
 } from '../../src/services/server-event-log-store.js';
 import { runWithAgentOperationContext } from '../../src/services/agent-operation-context.js';
 
@@ -42,6 +44,43 @@ describe('ServerEventLogStore query builder', () => {
       ],
       severity: { $in: ['warn', 'error'] },
     });
+  });
+
+  it('can query consecutive observation windows without counting the boundary twice', () => {
+    const since = '2026-11-27T00:00:00Z';
+    const before = '2026-12-04T00:00:00Z';
+    expect(buildServerEventQuery({ since, before, source: 'artifact-verification' })).toEqual({
+      source: 'artifact-verification', ts: { $gte: new Date(since), $lt: new Date(before) },
+    });
+  });
+
+  it('retains verification operations for 14 days independently of the general log quota and TTL', async () => {
+    const general = { createIndex: vi.fn(), insertOne: vi.fn(), countDocuments: vi.fn().mockResolvedValue(0) };
+    const cursor = { sort: vi.fn().mockReturnThis(), limit: vi.fn().mockReturnThis(), toArray: vi.fn().mockResolvedValue([]) };
+    const verification = { createIndex: vi.fn(), insertOne: vi.fn(), find: vi.fn().mockReturnValue(cursor) };
+    const collection = vi.fn((name: string) => name === 'custom_events' ? general : verification);
+    const connect = vi.spyOn(MongoClient.prototype, 'connect').mockResolvedValue({} as MongoClient);
+    const db = vi.spyOn(MongoClient.prototype, 'db').mockReturnValue({ collection } as unknown as Db);
+    const close = vi.spyOn(MongoClient.prototype, 'close').mockResolvedValue();
+    const store = new ServerEventLogStore({ uri: 'mongodb://127.0.0.1:1', collectionName: 'custom_events', retentionDays: 1 });
+    try {
+      await store.init();
+      expect(collection).toHaveBeenCalledWith('custom_events_artifact_verification');
+      expect(general.createIndex).toHaveBeenCalledWith({ ts: 1 }, { name: 'ttl_ts', expireAfterSeconds: 86_400 });
+      expect(verification.createIndex).toHaveBeenCalledWith({ ts: 1 }, { name: 'ttl_ts', expireAfterSeconds: 14 * 86_400 });
+      store.record({ category: 'system', severity: 'info', source: 'artifact-verification', action: 'artifact-verification.attempt', operationId: 'op_1' });
+      await store.flush();
+      expect(verification.insertOne).toHaveBeenCalledWith(expect.objectContaining({ operationId: 'op_1' }));
+      expect(general.insertOne).not.toHaveBeenCalled();
+      expect(general.countDocuments).not.toHaveBeenCalled();
+      await store.findRecent({ source: 'artifact-verification', projectId: 'map', since: '2026-11-27T00:00:00Z' });
+      expect(verification.find).toHaveBeenCalledWith(expect.objectContaining({ projectId: 'map', source: 'artifact-verification' }));
+    } finally {
+      await store.close();
+      connect.mockRestore();
+      db.mockRestore();
+      close.mockRestore();
+    }
   });
 
   it('truncates long log bodies before they can become oversized Mongo documents', () => {

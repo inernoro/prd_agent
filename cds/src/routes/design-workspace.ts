@@ -21,6 +21,7 @@ export function normalizedDesignPath(value: unknown): string | undefined {
 
 export function createDesignWorkspaceRouter(deps: {
   service: DesignWorkspaceService;
+  resolveProjectId?: (selector: string) => string | undefined;
   resolveAccess: (req: Request, projectId: string) => DesignActor | null | Promise<DesignActor | null>;
   reviewCandidates?: (projectId: string) => Promise<DesignReviewer[]>;
   mapShareHandoff?: () => DesignShareHandoffConfig | undefined;
@@ -38,7 +39,8 @@ export function createDesignWorkspaceRouter(deps: {
     res.setHeader('Cache-Control', 'private, no-store');
     res.setHeader('Referrer-Policy', 'no-referrer');
     try {
-      const projectId = planningId(req.params.projectId, 'projectId');
+      const selector = planningId(req.params.projectId, 'projectId');
+      const projectId = deps.resolveProjectId?.(selector) ?? selector;
       const actor = await deps.resolveAccess(req, projectId);
       if (!actor?.permissions.includes('read')) return rejectPlanning(404, 'design_not_found', '没有可访问的设计项目');
       res.locals.designAccess = { actor, projectId };

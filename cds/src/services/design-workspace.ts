@@ -24,7 +24,7 @@ import {
   designCommit, designDigest, designId, designPngDimensions, designRecord, designScopeId, designSourcePath, invalidDesign, isDesignMp4, localDesignPath,
   parseDesignDimension, parseDesignScope, parseFrameworkCharter, readArchivedDesignFile, readDesignFrameworkSource, readDesignPackage,
 } from './design-package.js';
-import { planningText, rejectPlanning } from './engineering-planning-input.js';
+import { PlanningError, planningText, rejectPlanning } from './engineering-planning-input.js';
 import type { ProjectRevisionAsset, ProjectRevisionStore } from './project-revision-store.js';
 
 export type DesignActor = PlanningActor & { steward?: boolean; feedbackSupplement?: boolean; gitPublishOnly?: boolean; requireGitSource?: boolean; feedback?: boolean };
@@ -86,6 +86,8 @@ const writeFeedback = (actor: DesignActor) => {
 const review = (actor: DesignActor) => {
   if (actor.kind !== 'human' || !actor.permissions.includes('approve')) forbidden('此操作需要项目成员确认');
 };
+const canManageImplementation = (actor: DesignActor) =>
+  actor.kind === 'agent' && actor.projectCollaborator === true && actor.permissions.includes('write');
 const authored = (actor: DesignActor, resource: { id: string }) => {
   if (resource.id !== actor.id && !actor.steward) forbidden('需要原作者或项目管理者确认');
 };
@@ -343,8 +345,11 @@ function runOf(design: DesignEntry, value: unknown): DesignRun {
   return design.runs.find(row => row.id === id) ?? missing('该验收运行不存在');
 }
 
-function expectBaseline(entry: DesignEntry, value: unknown) {
-  if (value === undefined) return;
+function expectBaseline(entry: DesignEntry, value: unknown, required = false) {
+  if (value === undefined) {
+    if (required) invalidDesign('请先回读当前实施基线，并填入预期基线。尚无基线时填写 null。');
+    return;
+  }
   const expected = value === null ? null : number(value, '预期实施基线');
   if (expected !== (entry.frozen ?? null)) conflict('实施基线已经变化，请回读再操作');
 }
@@ -661,6 +666,7 @@ export class DesignWorkspaceService {
       ...(state.systems.size ? { systems: structuredClone([...state.systems.values()]) } : {}),
       ...(actor.kind === 'human' ? { viewer: structuredClone(state.viewers.get(actor.id) ?? { designs: {}, briefs: {} }) } : {}),
       permissions: { write: actor.permissions.includes('write'), feedback: canLeaveFeedback(actor), visual: !actor.gitPublishOnly && actor.permissions.includes('write'), review: actor.kind === 'human' && actor.permissions.includes('approve'),
+        ...(canManageImplementation(actor) ? { implementation: true } : {}),
         frameworkPublish: actor.permissions.includes('write'),
       ...(this.deps.handoff && actor.permissions.includes('write') ? { handoffCheck: true } : {}),
         sign: actor.kind === 'human' && actor.permissions.includes('write'),
@@ -732,7 +738,8 @@ export class DesignWorkspaceService {
     const state = await this.load(projectId);
     const canWrite = actor.permissions.includes('write');
     return {
-      protocolVersion: 1, projectId, permissions: { write: canWrite, feedback: canLeaveFeedback(actor), frameworkPublish: canWrite },
+      protocolVersion: 1, projectId, permissions: { write: canWrite, feedback: canLeaveFeedback(actor), frameworkPublish: canWrite,
+        ...(canManageImplementation(actor) ? { implementation: true } : {}) },
       keyFormat: 'module/draft', intents: ['create', 'revise'], acceptancePolicy: designAcceptancePolicy,
       ...(this.deps.handoff ? { handoffPolicy: designHandoffPolicy } : {}),
       requirements: visibleRequirements(state),
@@ -1117,32 +1124,52 @@ export class DesignWorkspaceService {
     if (!capture || this.referenceJobs.has(key) || this.referenceJobs.size >= 8) return;
     this.referenceJobs.add(key);
     this.referenceQueue = this.referenceQueue.then(async () => {
+      const isSigned = (draft: DesignEntry) => draft.runs.some(run => run.version === versionNumber && run.signed);
       const entry = (await this.load(projectId)).designs.get(id);
-      if (!entry || entry.runs.some(run => run.version === versionNumber && run.signed)) return;
+      if (!entry || isSigned(entry)) return;
       const version = implementationVersion(entry, versionOf(entry, versionNumber));
       const targets = version.screens.flatMap(screen => screen.themes.filter(theme => !version.renders?.[screen.id]?.[theme])
         .map(theme => ({ screen, theme })));
       if (!targets.length) return;
       const prototype = await this.artifact(projectId, actor, version.prototypeId);
       if (!version.prototypeSha256 || designDigest(prototype.bytes) !== version.prototypeSha256) return;
-      for await (const { screen, theme, bytes } of capture(prototype.bytes, targets)) {
-        const dimensions = designPngDimensions(bytes);
-        if (!dimensions || dimensions.width !== designViewports[screen.viewport].width
-          || dimensions.height !== designViewports[screen.viewport].height) continue;
-        const token = { designId: id, version: versionNumber, screenId: screen.id, theme, prototype: version.prototypeSha256 };
-        const requestId = 'design-reference-' + designDigest(stableJson(token));
-        const sha256 = designDigest(bytes);
-        const asset = { id: randomUUID(), mime: 'image/png', base64: bytes.toString('base64') };
-        await this.mutate(projectId, actor, requestId, token, ({ state }) => {
-          const current = state.designs.get(id) ?? missing('该稿件不存在');
-          const check = implementationVersion(current, versionOf(current, versionNumber));
-          const result = { type: 'reference.generated', designId: id, version: versionNumber, screenId: screen.id };
-          if (current.runs.some(run => run.version === versionNumber && run.signed) || check.renders?.[screen.id]?.[theme]) {
-            return { result, changes: {} };
+      const pending = new Map(targets.map(target => [`${target.screen.id}/${target.theme}`, target]));
+      for (let attempt = 0; attempt < 2 && pending.size; attempt++) {
+        if (attempt > 0) {
+          const current = (await this.load(projectId)).designs.get(id);
+          if (!current || isSigned(current)) return;
+        }
+        try {
+          for await (const image of capture(prototype.bytes, [...pending.values()], attempt > 0)) {
+            const slot = `${image.screen.id}/${image.theme}`;
+            const target = pending.get(slot);
+            if (!target) continue;
+            const { screen, theme } = target;
+            const dimensions = designPngDimensions(image.bytes);
+            if (!dimensions || dimensions.width !== designViewports[screen.viewport].width
+              || dimensions.height !== designViewports[screen.viewport].height) continue;
+            const token = { designId: id, version: versionNumber, screenId: screen.id, theme, prototype: version.prototypeSha256 };
+            const requestId = 'design-reference-' + designDigest(stableJson(token));
+            const sha256 = designDigest(image.bytes);
+            const asset = { id: randomUUID(), mime: 'image/png', base64: image.bytes.toString('base64') };
+            await this.mutate(projectId, actor, requestId, token, ({ state }) => {
+              const current = state.designs.get(id) ?? missing('该稿件不存在');
+              const check = implementationVersion(current, versionOf(current, versionNumber));
+              const result = { type: 'reference.generated', designId: id, version: versionNumber, screenId: screen.id };
+              if (isSigned(current)) return rejectPlanning(409, 'design_capture_locked', '已签收版本保留原有对照图');
+              if (check.renders?.[screen.id]?.[theme]) return { result, changes: {} };
+              return { result, changes: { assets: [asset], design: { id,
+                generatedRender: { version: versionNumber, screenId: screen.id, theme, id: asset.id, sha256 } } } };
+            });
+            pending.delete(slot);
           }
-          return { result, changes: { assets: [asset], design: { id,
-            generatedRender: { version: versionNumber, screenId: screen.id, theme, id: asset.id, sha256 } } } };
-        });
+        } catch (error) {
+          if (error instanceof PlanningError && error.code === 'design_capture_locked') return;
+          console.warn('[design] Thumbnail capture interrupted', { projectId, designId: id, version: versionNumber, missing: pending.size });
+        }
+      }
+      if (pending.size) {
+        console.warn('[design] Thumbnail generation incomplete', { projectId, designId: id, version: versionNumber, missing: pending.size });
       }
     }).catch(() => {
       // Publication already succeeded. Missing thumbnails stay visible and can be retried.
@@ -1346,7 +1373,7 @@ export class DesignWorkspaceService {
       if (type === 'design.freeze') {
         designRecord(input, '定稿请求', ['type', 'requestId', 'designId', 'version', 'reason', 'expectedBaseline']);
         await this.reviewBaseline(context, entry);
-        expectBaseline(entry, input.expectedBaseline);
+        expectBaseline(entry, input.expectedBaseline, canManageImplementation(actor));
         const version = versionOf(entry, input.version).version;
         const reason = optionalText(input.reason, '基线变更理由', 1000);
         if (entry.upgrade?.status === 'active' && entry.upgrade.targetVersion !== version) conflict('升级目标已锁定，请先完成签收或取消本次升级');
@@ -1358,10 +1385,11 @@ export class DesignWorkspaceService {
       }
       if (type === 'design.unfreeze') {
         designRecord(input, '撤销定稿请求', ['type', 'requestId', 'designId', 'version']);
-        review(actor);
-        const assigned = entry.reviewers?.length;
-        if (!actor.steward && assigned && (!entry.reviewers?.some(reviewer => reviewer.id === actor.id)
-          || !await this.deps.reviewer?.(projectId, actor.id))) forbidden('请由此稿件的指定评审人或系统所有者撤销定稿');
+        if (!canManageImplementation(actor)) {
+          review(actor);
+          if (!actor.steward && entry.reviewers?.length && (!entry.reviewers.some(reviewer => reviewer.id === actor.id)
+            || !await this.deps.reviewer?.(projectId, actor.id))) forbidden('请由此稿件的指定评审人或系统所有者撤销定稿');
+        }
         const version = versionOf(entry, input.version).version;
         if (entry.frozen !== version) conflict('当前定稿已变化，请刷新稿件后再操作');
         if (entry.upgrade?.status === 'active') conflict('升级目标已锁定，请先完成签收或取消本次升级');
@@ -1380,6 +1408,7 @@ export class DesignWorkspaceService {
   }
 
   private async reviewBaseline({ actor, projectId }: Context, entry: DesignEntry) {
+    if (canManageImplementation(actor)) return;
     review(actor);
     if (entry.reviewers?.length && (!entry.reviewers.some(reviewer => reviewer.id === actor.id)
       || !await this.deps.reviewer?.(projectId, actor.id))) forbidden('请由此稿件的指定评审人定稿');
@@ -1402,7 +1431,7 @@ export class DesignWorkspaceService {
 
     designRecord(input, '开始实施升级', ['type', 'requestId', 'designId', 'version', 'expectedBaseline']);
     await this.reviewBaseline(context, entry);
-    expectBaseline(entry, input.expectedBaseline);
+    expectBaseline(entry, input.expectedBaseline, canManageImplementation(actor));
     const active = entry.upgrade?.status === 'active' ? entry.upgrade : undefined;
     const latest = entry.versions.at(-1)!.version;
     const version = input.version === undefined ? active?.targetVersion ?? latest : versionOf(entry, input.version).version;
@@ -1421,9 +1450,11 @@ export class DesignWorkspaceService {
   }
 
   private bindImplementation(input: Record<string, unknown>, { actor, now }: Context, entry: DesignEntry): Update {
-    review(actor);
+    const shared = canManageImplementation(actor);
+    if (!shared) review(actor);
     designRecord(input, '实现画面定位', ['type', 'requestId', 'designId', 'version', 'screens']);
     const version = implementationVersion(entry, versionOf(entry, input.version));
+    if (shared && designImplementationTargetVersion(entry) !== version.version) conflict('请绑定当前实施目标版本的画面');
     const runs = entry.runs.filter(run => run.version === version.version);
     const latest = runs.at(-1);
     if (latest && (!(designVisualRequired(version, latest) || designMethodPlanEnabled(version)) || runs.some(run => run.signed))) {

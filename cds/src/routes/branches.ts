@@ -44,6 +44,7 @@ import { worktreePathActivity, WorktreeClaimHeldError } from '../services/worktr
 import { captureDeploymentInput, deploymentInputBranch, type DeploymentInputSnapshot } from '../services/deployment-input.js';
 import { appendEnvironmentAudit, freezeEnvironmentAudit } from '../services/environment-audit.js';
 import { admittedArtifactProfile, artifactInspectionContext, verifyArtifactAdmission, type ArtifactAdmission } from '../services/artifact-admission.js';
+import { ArtifactVerificationAttempt, artifactVerificationMonitorEnabled } from '../services/artifact-verification-probe.js';
 import { resolveArtifactCommitIdentity } from '../services/artifact-commit-identity.js';
 import { refreshArtifactWaiters, registerArtifactWaitRefresher, requestArtifactWaitRefresh } from '../services/artifact-admission-wait.js';
 import { diagnoseCiImage, mapArtifactProducer } from '../services/ci-image-diagnosis.js';
@@ -3190,7 +3191,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
   }
 
   async function inspectArtifactInput(entry: BranchEntry, input: DeploymentInputSnapshot, profileId: string | null | undefined,
-    assertCurrent: () => void, explicitTarget?: string): Promise<ArtifactAdmission> {
+    assertCurrent: () => void, explicitTarget?: string, measurement?: ArtifactVerificationAttempt): Promise<ArtifactAdmission> {
     const profiles = input.profiles.filter(profile => !profileId || profile.id === profileId)
       .map(profile => resolveEffectiveProfile(profile, deploymentInputBranch(input, entry)));
     const target = input.artifactAdmission!.targetCommitSha;
@@ -3202,14 +3203,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
         || !stateService.getProject(projectId) || stateService.getProjectRepoRoot(current.projectId, config.repoRoot) !== repoRoot
         || input.artifactAdmission?.targetCommitSha !== target) throw new BranchOperationSupersededError('', entry.id, 'artifact-input-owner');
     };
-    const context = artifactInspectionContext(shell, worktreeService, repoRoot, assertOwner), compare = context.isComponentUnchangedSince;
+    const context = artifactInspectionContext(shell, worktreeService, repoRoot, assertOwner, undefined, measurement);
+    const compare = context.isComponentUnchangedSince;
+    const retry = input.artifactAdmission?.checkedAt ? { profileId: input.artifactAdmission.profileIds?.[0] } : undefined;
     // 当前单服务入口执行于本机；整分支按其实际派发执行器核验，不借Master架构冒充。
     const executor = profileId ? null : resolveDeployTarget(entry, explicitTarget);
-    if (!executor) return { ...await containerService.inspectDeploymentArtifacts(profiles, target, assertOwner, context), executorId: 'local' };
+    measurement?.onExecutor(executor?.id || 'local', profiles.filter(profile => profile.prebuiltImage && !profile.managedBuild && !profile.localArtifact).length);
+    if (!executor) return { ...await containerService.inspectDeploymentArtifacts(profiles, target, assertOwner,
+      { ...context, retry }), executorId: 'local' };
     assertCurrent();
     const response = await fetch(`http://${executor.host}:${executor.port}/exec/artifact-preflight`, {
       method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Executor-Token': config.executorToken || '' },
-      body: JSON.stringify({ profiles, commitSha: target, owner: { branchId: entry.id, branchName, projectId }, remainingMs: context.remainingMs() }),
+      body: JSON.stringify({ profiles, commitSha: target, owner: { branchId: entry.id, branchName, projectId },
+        remainingMs: context.remainingMs(), retry, measure: measurement ? true : undefined }),
       signal: AbortSignal.timeout(context.remainingMs()),
     });
     context.remainingMs();
@@ -3226,12 +3232,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
         chunks.push(Buffer.from(value));
       }
     } finally { await reader.cancel().catch(() => {}); }
-    const result = JSON.parse(Buffer.concat(chunks, bytes).toString('utf8')) as ArtifactAdmission;
+    const responseBody = JSON.parse(Buffer.concat(chunks, bytes).toString('utf8')) as (ArtifactAdmission & { probe?: unknown }) | null;
     context.remainingMs();
-    if (!result || result.targetCommitSha !== target || !['ready', 'waiting'].includes(result.state) || !Array.isArray(result.artifacts)) {
+    if (!responseBody || responseBody.targetCommitSha !== target || !['ready', 'waiting'].includes(responseBody.state) || !Array.isArray(responseBody.artifacts)) {
       return { state: 'waiting', targetCommitSha: target, checkedAt: new Date().toISOString(),
         reason: 'verification-unavailable', artifacts: [], executorId: executor.id };
     }
+    const { probe, ...result } = responseBody;
+    measurement?.useRemoteProbe(probe);
     if (result.state === 'ready' && !await verifyArtifactAdmission(profiles, target, result, compare, () => { context.remainingMs(); })) {
       return { state: 'waiting', targetCommitSha: target, checkedAt: new Date().toISOString(),
         reason: 'verification-unavailable', artifacts: [], executorId: executor.id };
@@ -3242,12 +3250,30 @@ export function createBranchRouter(deps: RouterDeps): Router {
   if (branchOperationCoordinator) registerArtifactWaitRefresher(branchOperationCoordinator, async () => {
     const ready = await refreshArtifactWaiters({ coordinator: branchOperationCoordinator, containerService,
       getBranch: id => stateService.getBranch(id), inspect: async (pending, input, entry, assertCurrent) => {
-        const result = await inspectArtifactInput(entry, input, pending.request.profileId, assertCurrent)
-          .catch((): ArtifactAdmission => {
-            assertCurrent();
-            return { state: 'waiting', targetCommitSha: input.artifactAdmission!.targetCommitSha,
-              checkedAt: new Date().toISOString(), reason: 'verification-unavailable', artifacts: [] };
-          });
+        const monitoredRun = artifactVerificationMonitorEnabled()
+          ? deploymentRunService?.getForOperation(pending.operationId, pending.generation) : undefined;
+        const measurement = monitoredRun && new ArtifactVerificationAttempt(Boolean(input.artifactAdmission?.checkedAt));
+        let result: ArtifactAdmission | undefined;
+        try {
+          result = await inspectArtifactInput(entry, input, pending.request.profileId, assertCurrent, undefined, measurement)
+            .catch((): ArtifactAdmission => {
+              assertCurrent();
+              return { state: 'waiting', targetCommitSha: input.artifactAdmission!.targetCommitSha,
+                checkedAt: new Date().toISOString(), reason: 'verification-unavailable', artifacts: [] };
+            });
+        } finally {
+          if (monitoredRun && measurement) {
+            const log = measurement.record(serverEventLogStore, monitoredRun, pending.request, result);
+            if (result && deploymentRunService?.get(monitoredRun.id)?.status === 'queued') {
+              try {
+                deploymentRunService.append(monitoredRun.id, {
+                  phase: 'artifact-check', status: 'queued', level: log.level, message: log.message,
+                  detail: { ...log.details, profileIds: result.profileIds },
+                });
+              } catch { /* A diagnostic event cannot reject the deployment. */ }
+            }
+          }
+        }
         if (result.state !== 'waiting' || !deploymentRunService) return result;
         const run = deploymentRunService.getForOperation(pending.operationId, pending.generation);
         if (!run || run.status !== 'queued' || run.commitSha?.toLowerCase() !== result.targetCommitSha) return result;

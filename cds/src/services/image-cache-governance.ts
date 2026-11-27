@@ -14,6 +14,7 @@ import type { ServerEventLogSink } from './server-event-log-store.js';
 import { resumedReclaimExecution, recordReclaimExecution, type ReclaimExecutionJournal } from './reclaim-execution-journal.js';
 
 export class ImageCacheBudgetError extends Error {}
+export class ImageCachePullSlotLimitError extends Error {}
 const IMAGE_CACHE_REQUEST_TIMEOUT_MS = 30_000;
 const IMAGE_CACHE_LOCK_RETRY_MS = 150;
 const NATIVE_PULL_LIMIT_MS = 90_000;
@@ -33,11 +34,15 @@ interface PullBudget {
   availableBytes: number | null;
   peakBytes: number;
   headroom: 'normal' | 'low' | 'blocked' | null;
+  activeSlotCount?: number;
+  slotLimit?: number;
+  reconciliationCount?: number;
 }
 
 export class ImageCacheGovernance {
   private execution: { id: string; status: string; startedAt: string; report?: any; error?: string } | null = null;
   private overdue = false;
+  private slotsFull = false;
   private headroom: 'normal' | 'low' | 'blocked' = 'normal';
   constructor(readonly options: { shell: IShellExecutor; catalog: string; instanceId: string; budgetBytes: number; protectedReferences: () => string[]; peakBytes?: number; audit?: ServerEventLogSink | null; journal?: ReclaimExecutionJournal }) { this.execution = resumedReclaimExecution(options.journal); }
   private persist() { recordReclaimExecution(this.options.journal, this.execution); }
@@ -96,17 +101,26 @@ export class ImageCacheGovernance {
         beforeStart: assertCurrent,
       });
       // Native exit 3 means the catalog lock rejected the request before any write.
-      if (action !== 'execute-pull' || result.exitCode === 3) assertCurrent();
+      // An expired native caller still needs the token to fence a reservation that never started.
+      const reservedNativePull = action === 'prepare' && payload.nativePull === true && result.exitCode === 0;
+      if (!reservedNativePull && (action !== 'execute-pull' || result.exitCode === 3)) assertCurrent();
       if (result.exitCode !== 3) break;
       const wait = Math.min(IMAGE_CACHE_LOCK_RETRY_MS, deadline - performance.now());
       if (wait > 0) await delay(wait);
     }
     if (result && result.exitCode !== 0 && result.stderr.includes('ValueError: host-image-cache-budget-exceeded')) throw new ImageCacheBudgetError('宿主镜像总量预算不足，等待回收或容量调整。');
+    if (result && result.exitCode !== 0 && result.stderr.includes('ValueError: unsettled-image-pull-budget-reached')) {
+      throw new ImageCachePullSlotLimitError('宿主活动镜像拉取名额已满。');
+    }
     if (result?.exitCode !== 0 || result.stdout.length > 4 * 1024 * 1024) throw new Error('镜像总量预算、对象身份或引用未确认，未允许新的大批量拉取或删除。');
     try { return JSON.parse(result.stdout); } catch { throw new Error('镜像盘点不完整，不能判断零占用。'); }
   }
   async publish(assertCurrent?: () => void) { return this.request('publish', () => ({ references: this.options.protectedReferences() }), assertCurrent); }
-  async prepare(image: string, assertCurrent: () => void, requirePresent = false, forceNew = false, nativePull = false) { await this.publish(assertCurrent);return this.request('prepare', { image, requirePresent, forceNew, nativePull }, assertCurrent); }
+  async prepare(image: string, assertCurrent: () => void, requirePresent = false, forceNew = false, nativePull = false,
+    reuseVerifiedRevision?: string) {
+    return this.request('prepare', () => ({ image, requirePresent, forceNew, nativePull, reuseVerifiedRevision,
+      references: this.options.protectedReferences() }), assertCurrent);
+  }
   confirm(token: string, assertCurrent: () => void) { return this.request('confirm', { token }, assertCurrent); }
   abort(token: string, assertCurrent: () => void, completedNativeOperation = false) { return this.request('abort', { token, completedNativeOperation }, assertCurrent); }
   async executePull(token: string, image: string, assertCurrent: () => void, remainingMs?: () => number): Promise<{ outcome: NativePullOutcome; recorded: boolean }> {
@@ -116,8 +130,9 @@ export class ImageCacheGovernance {
       pullDeadlineMs: Date.now() + remaining,
     }), assertCurrent, limit);
   }
-  async settlePulls(token?: string): Promise<PullSettlement[]> {
-    const result: { settled: PullSettlement[] } = await this.request('settle-pulls', token ? { token } : {});
+  async settlePulls(token?: string, releaseUnstarted = false): Promise<PullSettlement[]> {
+    const result: { settled: PullSettlement[] } = await this.request('settle-pulls',
+      token ? { token, releaseUnstarted } : {}, undefined, releaseUnstarted ? 3_000 : IMAGE_CACHE_REQUEST_TIMEOUT_MS);
     if (!token && result.settled.length) {
       this.options.audit?.record({
         category: 'system', severity: 'info', source: 'image-cache-retention', action: 'image.cache.pulls.settled',
@@ -127,7 +142,7 @@ export class ImageCacheGovernance {
     return result.settled;
   }
   observePullBudget(budget?: PullBudget): void {
-    if (!budget?.headroom) return;
+    if (!budget) return;
     const overdue = budget.overdueCount > 0;
     if (overdue !== this.overdue) {
       this.recordPullAlert('overdue', overdue ? 'warn' : 'info', overdue
@@ -135,8 +150,17 @@ export class ImageCacheGovernance {
         : '镜像拉取预留超时告警已恢复。', { ...budget });
       this.overdue = overdue;
     }
+    if (budget.activeSlotCount !== undefined && budget.slotLimit !== undefined) {
+      const slotsFull = budget.activeSlotCount >= budget.slotLimit;
+      if (slotsFull !== this.slotsFull) {
+        this.recordPullAlert('slots', slotsFull ? 'warn' : 'info', slotsFull
+          ? `活动镜像拉取名额已满（${budget.activeSlotCount}/${budget.slotLimit}）。`
+          : '活动镜像拉取名额恢复。', { ...budget });
+        this.slotsFull = slotsFull;
+      }
+    }
     const { headroom } = budget;
-    if (headroom !== this.headroom) {
+    if (headroom && headroom !== this.headroom) {
       this.recordPullAlert('headroom', headroom === 'blocked' ? 'error' : headroom === 'low' ? 'warn' : 'info',
         headroom === 'blocked' ? '镜像预算不足以接纳一次新拉取。请核对未结清预留和可回收镜像。'
           : headroom === 'low' ? '镜像拉取余量低于两次峰值预留，请核对宿主镜像预算。' : '镜像拉取余量告警已恢复。',

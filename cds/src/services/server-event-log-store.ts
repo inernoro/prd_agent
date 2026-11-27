@@ -4,6 +4,7 @@ import { ensureIndexWithReconcile } from './mongo-index-reconcile.js';
 import { maskSecrets } from './secret-masker.js';
 import { getAgentOperationContext } from './agent-operation-context.js';
 import type { AgentOperatorIdentitySummary } from '../types.js';
+import { ARTIFACT_VERIFICATION_SOURCE } from '../shared/artifact-verification-metrics.js';
 
 export type ServerEventCategory = 'container' | 'docker' | 'system';
 export type ServerEventSeverity = 'info' | 'warn' | 'error';
@@ -87,11 +88,13 @@ export interface ServerEventLogSink {
     operationSource?: string;
     commitSha?: string;
     since?: Date | string;
+    before?: Date | string;
   }): Promise<ServerEventRecord[]>;
 }
 
 const DEFAULT_COLLECTION = 'cds_server_events';
 const DEFAULT_RETENTION_DAYS = 14;
+const ARTIFACT_VERIFICATION_RETENTION_SECONDS = 14 * 86_400;
 const DEFAULT_MAX_DOCUMENTS = 100_000;
 const MAX_TEXT_BYTES = 16 * 1024;
 const MAX_ERROR_MESSAGE = 1200;
@@ -175,6 +178,7 @@ export function buildServerEventQuery(filter: {
   operationSource?: string;
   commitSha?: string;
   since?: Date | string;
+  before?: Date | string;
 } = {}): Record<string, unknown> {
   const query: Record<string, unknown> = {};
   if (filter.category) query.category = filter.category;
@@ -197,7 +201,10 @@ export function buildServerEventQuery(filter: {
       { 'details.operationId': filter.operationId },
     ];
   }
-  if (filter.since) query.ts = { $gte: new Date(filter.since) };
+  if (filter.since || filter.before) query.ts = {
+    ...(filter.since ? { $gte: new Date(filter.since) } : {}),
+    ...(filter.before ? { $lt: new Date(filter.before) } : {}),
+  };
   if (filter.minSeverity) {
     const min = SEVERITY_RANK[filter.minSeverity];
     query.severity = { $in: Object.entries(SEVERITY_RANK).filter(([, rank]) => rank >= min).map(([sev]) => sev) };
@@ -236,6 +243,7 @@ export function enrichServerEventRecord(
 export class ServerEventLogStore implements ServerEventLogSink {
   private client: MongoClient | null = null;
   private collection: Collection<ServerEventRecord> | null = null;
+  private artifactVerificationCollection: Collection<ServerEventRecord> | null = null;
   /** 索引是否已建全；false 时由 scheduleIndexRetry 排程重试（不重连） */
   private indexesReady = false;
   private indexRetryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -272,9 +280,12 @@ export class ServerEventLogStore implements ServerEventLogSink {
       connectTimeoutMS: this.connectTimeoutMs,
     });
     let collection: Collection<ServerEventRecord>;
+    let artifactVerificationCollection: Collection<ServerEventRecord>;
     try {
       await client.connect();
-      collection = client.db(this.databaseName).collection<ServerEventRecord>(this.collectionName);
+      const db = client.db(this.databaseName);
+      collection = db.collection<ServerEventRecord>(this.collectionName);
+      artifactVerificationCollection = db.collection<ServerEventRecord>(`${this.collectionName}_artifact_verification`);
     } catch (err) {
       await client.close().catch(() => undefined);
       this.client = null;
@@ -287,6 +298,7 @@ export class ServerEventLogStore implements ServerEventLogSink {
     // 「建索引失败即整体失败」，这个日志库会在改配置那天起静默死掉，而排障恰恰靠它。
     this.client = client;
     this.collection = collection;
+    this.artifactVerificationCollection = artifactVerificationCollection;
     await this.tryEnsureIndexes(collection);
   }
 
@@ -334,6 +346,7 @@ export class ServerEventLogStore implements ServerEventLogSink {
   private async ensureIndexes(collection: Collection<ServerEventRecord>): Promise<void> {
     // 逐条对账而非 Promise.all 直挂：一条索引冲突不该掩盖其余索引的结果，
     // 同名不同选项（改保留天数后的 ttl_ts）走 drop 再建（见 mongo-index-reconcile）。
+    const verification = this.artifactVerificationCollection;
     const results = await Promise.allSettled([
       ensureIndexWithReconcile(collection, { ts: -1 }, { name: 'ts_desc' }),
       ensureIndexWithReconcile(collection, { category: 1, ts: -1 }, { name: 'category_ts_desc' }),
@@ -348,6 +361,11 @@ export class ServerEventLogStore implements ServerEventLogSink {
       ensureIndexWithReconcile(collection, { operationActor: 1, ts: -1 }, { name: 'operationActor_ts_desc', sparse: true }),
       ensureIndexWithReconcile(collection, { commitSha: 1, ts: -1 }, { name: 'commitSha_ts_desc', sparse: true }),
       ensureIndexWithReconcile(collection, { ts: 1 }, { name: 'ttl_ts', expireAfterSeconds: this.retentionDays * 86400 }),
+      ...(verification ? [
+        ensureIndexWithReconcile(verification, { ts: 1 }, { name: 'ttl_ts', expireAfterSeconds: ARTIFACT_VERIFICATION_RETENTION_SECONDS }),
+        ensureIndexWithReconcile(verification, { projectId: 1, ts: -1 }, { name: 'project_ts_desc' }),
+        ensureIndexWithReconcile(verification, { operationId: 1, ts: -1 }, { name: 'operation_ts_desc' }),
+      ] : []),
     ]);
     const failed = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
     if (failed.length > 0) {
@@ -356,14 +374,15 @@ export class ServerEventLogStore implements ServerEventLogSink {
   }
 
   record(record: Omit<ServerEventRecord, '_id' | 'ts'> & { ts?: Date | string }): void {
-    if (!this.collection) return;
+    const collection = this.collectionForSource(record.source);
+    if (!collection) return;
     const doc = this.buildDocument(record);
 
     this.chain = this.chain
       .catch(() => { /* keep chain alive */ })
       .then(async () => {
-        await this.collection!.insertOne(doc);
-        this.schedulePrune();
+        await collection.insertOne(doc);
+        if (collection === this.collection) this.schedulePrune();
       })
       .catch((err) => {
         console.warn(`[server-event-log] write failed: ${(err as Error).message}`);
@@ -371,9 +390,14 @@ export class ServerEventLogStore implements ServerEventLogSink {
   }
 
   async recordImmediate(record: Omit<ServerEventRecord, '_id' | 'ts'> & { ts?: Date | string }): Promise<void> {
-    if (!this.collection) return;
-    await this.collection.insertOne(this.buildDocument(record));
-    this.schedulePrune();
+    const collection = this.collectionForSource(record.source);
+    if (!collection) return;
+    await collection.insertOne(this.buildDocument(record));
+    if (collection === this.collection) this.schedulePrune();
+  }
+
+  private collectionForSource(source?: string): Collection<ServerEventRecord> | null {
+    return source === ARTIFACT_VERIFICATION_SOURCE ? this.artifactVerificationCollection : this.collection;
   }
 
   private buildDocument(record: Omit<ServerEventRecord, '_id' | 'ts'> & { ts?: Date | string }): ServerEventRecord {
@@ -434,11 +458,13 @@ export class ServerEventLogStore implements ServerEventLogSink {
     operationSource?: string;
     commitSha?: string;
     since?: Date | string;
+    before?: Date | string;
   } = {}): Promise<ServerEventRecord[]> {
-    if (!this.collection) return [];
+    const collection = this.collectionForSource(filter.source);
+    if (!collection) return [];
     const query = buildServerEventQuery(filter);
     const limit = Math.max(1, Math.min(filter.limit ?? 200, 1000));
-    return await this.collection.find(query).sort({ ts: -1 }).limit(limit).toArray();
+    return await collection.find(query).sort({ ts: -1 }).limit(limit).toArray();
   }
 
   async flush(): Promise<void> {
@@ -455,6 +481,7 @@ export class ServerEventLogStore implements ServerEventLogSink {
       await this.client?.close();
       this.client = null;
       this.collection = null;
+      this.artifactVerificationCollection = null;
       this.indexesReady = false;
       this.indexRetryAttempt = 0;
     }

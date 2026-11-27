@@ -1693,6 +1693,35 @@ describe('human project grants through the production server', () => {
     expect((await credentialCall('GET', design, key)).status).not.toBe(200);
   });
 
+  it('reads the same design workspace through the project ID, current slug and former slug', async () => {
+    await grant(['project-a']);
+    const issued = await call('POST', '/api/projects/project-a/agent-keys', owner, { designAccess: 'read' });
+    expect(issued.status).toBe(201);
+    state.updateProject('project-a', { slug: 'fixture-former-design' });
+    state.updateProject('project-a', { slug: 'fixture-current-design', agentKeyCollaboration: true });
+
+    for (const selector of ['project-a', 'fixture-former-design', 'fixture-current-design']) {
+      const workspace = `/api/projects/${selector}/design`;
+      expect.soft(await call('GET', workspace + '?view=summary', member))
+        .toMatchObject({ status: 200, body: { projectId: 'project-a' } });
+      expect.soft(await credentialCall('GET', workspace + '/intake', issued.body.plaintext))
+        .toMatchObject({ status: 200, body: { projectId: 'project-a', permissions: { implementation: true } } });
+    }
+    expect((await credentialCall('GET', '/api/projects/project-b/design/intake', issued.body.plaintext)).status).toBe(403);
+  });
+
+  it('reports an authenticated instance key without implying that a private project exists', async () => {
+    const key = 'fixture-instance-design-key';
+    vi.stubEnv('CDS_AI_ACCESS_KEY', key);
+    const selfCheck = await credentialCall('GET', '/api/credentials/self-check', key);
+    expect(selfCheck).toMatchObject({ status: 200, body: { kind: 'static', status: 'active' } });
+    expect(selfCheck.body.projectId ?? null).toBeNull();
+    for (const selector of ['project-a', 'no-such-design-project']) {
+      expect.soft(await credentialCall('GET', `/api/projects/${selector}/design/intake`, key))
+        .toMatchObject({ status: 403, body: { error: 'design_project_credential_required' } });
+    }
+  });
+
   it('combines planning and design grants without granting general project access', async () => {
     const project = '/api/projects/project-a';
     const permissions = { planningAccess: 'propose', designAccess: 'read' };

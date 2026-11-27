@@ -14,7 +14,7 @@
  *
  * Theme: every color goes through tokens (light + dark). See cds-theme-tokens.md.
  */
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   Activity,
   AlertTriangle,
@@ -37,6 +37,9 @@ import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ErrorBlock, LoadingBlock, MetricTile } from '@/pages/cds-settings/components';
 import type { ExecutorNode } from '@/pages/cds-settings/types';
+import { ARTIFACT_VERIFICATION_SOURCE, type ArtifactVerificationEventDetails } from '../../../../src/shared/artifact-verification-metrics.js';
+import { ARTIFACT_VERIFICATION_DAY_MS, ARTIFACT_VERIFICATION_SAMPLE_LIMIT,
+  ArtifactVerificationLogDetails, ArtifactVerificationMetrics } from './ArtifactVerificationMetrics';
 import {
   useMonitoringData,
   type MonitoringActivityLog,
@@ -136,15 +139,17 @@ interface ServerEvent {
   action: string;
   message?: string;
   branchId?: string | null;
+  profileId?: string | null;
   commitSha?: string | null;
   status?: string | null;
+  details?: ArtifactVerificationEventDetails;
 }
 
 type LogCenterState =
   | { status: 'loading' }
   | { status: 'disabled'; message: string }
   | { status: 'error'; message: string }
-  | { status: 'ok'; events: ServerEvent[] };
+  | { status: 'ok'; events: ServerEvent[]; observedAt: number };
 
 const LOG_SEVERITY_FILTERS: Array<{ value: '' | 'warn' | 'error'; label: string }> = [
   { value: '', label: '全部' },
@@ -545,28 +550,51 @@ function ActivityRow({ log }: { log: MonitoringActivityLog }): JSX.Element {
 // 按严重级过滤。这是"权威可观测"的统一入口，比分散在各处的日志更可信。
 function LogCenterTab({ projectId }: { projectId?: string }): JSX.Element {
   const [minSeverity, setMinSeverity] = useState<'' | 'warn' | 'error'>('');
+  const [artifactOnly, setArtifactOnly] = useState(false);
   const [state, setState] = useState<LogCenterState>({ status: 'loading' });
+  const activeRead = useRef<AbortController | null>(null);
 
-  const load = useCallback(async () => {
-    setState({ status: 'loading' });
+  const load = useCallback(async (preserve = false) => {
+    activeRead.current?.abort();
+    const controller = new AbortController();
+    activeRead.current = controller;
+    const { signal } = controller;
+    if (!preserve) setState({ status: 'loading' });
     try {
-      const qs = new URLSearchParams({ limit: '200' });
+      const observedAt = Date.now();
+      const qs = new URLSearchParams({ limit: artifactOnly ? String(ARTIFACT_VERIFICATION_SAMPLE_LIMIT) : '200' });
       if (projectId) qs.set('projectId', projectId);
-      if (minSeverity) qs.set('minSeverity', minSeverity);
+      if (artifactOnly) {
+        qs.set('source', ARTIFACT_VERIFICATION_SOURCE);
+        qs.set('since', new Date(observedAt - 2 * ARTIFACT_VERIFICATION_DAY_MS).toISOString());
+      } else if (minSeverity) qs.set('minSeverity', minSeverity);
       const res = await apiRequest<{ ok: boolean; disabled?: boolean; message?: string; events: ServerEvent[] }>(
-        `/api/server-events?${qs.toString()}`,
+        `/api/server-events?${qs.toString()}`, { signal },
       );
+      if (signal.aborted) return;
       if (res.disabled) {
         setState({ status: 'disabled', message: res.message || '服务器事件日志未启用' });
         return;
       }
-      setState({ status: 'ok', events: res.events || [] });
+      setState({ status: 'ok', events: res.events || [], observedAt });
     } catch (err) {
+      if (signal.aborted) return;
       setState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
+    } finally {
+      if (activeRead.current === controller) activeRead.current = null;
     }
-  }, [projectId, minSeverity]);
+  }, [projectId, minSeverity, artifactOnly]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    void load();
+    const timer = artifactOnly ? window.setInterval(() => {
+      if (!activeRead.current) void load(true);
+    }, 30_000) : undefined;
+    return () => {
+      activeRead.current?.abort();
+      if (timer !== undefined) window.clearInterval(timer);
+    };
+  }, [load, artifactOnly]);
 
   return (
     <div className="space-y-3">
@@ -575,7 +603,9 @@ function LogCenterTab({ projectId }: { projectId?: string }): JSX.Element {
           权威系统事件日志（容器 / docker / 系统）{projectId ? ' · 本项目' : ' · 全实例'}。
         </span>
         <div className="ml-auto flex items-center gap-1.5">
-          {LOG_SEVERITY_FILTERS.map((f) => (
+          <Button type="button" variant={artifactOnly ? 'default' : 'outline'} size="sm" aria-pressed={artifactOnly}
+            onClick={() => setArtifactOnly(value => !value)}>镜像核验</Button>
+          {!artifactOnly && LOG_SEVERITY_FILTERS.map((f) => (
             <button
               key={f.value || 'all'}
               type="button"
@@ -605,12 +635,15 @@ function LogCenterTab({ projectId }: { projectId?: string }): JSX.Element {
       {state.status === 'ok' ? (
         state.events.length === 0 ? (
           <div className="rounded-md border border-dashed border-[hsl(var(--hairline))] px-4 py-10 text-center text-sm text-muted-foreground">
-            暂无匹配的系统事件。
+            {artifactOnly ? '最近 48 小时暂无镜像核验样本。' : '暂无匹配的系统事件。'}
           </div>
         ) : (
-          <ul className="space-y-1.5">
-            {state.events.map((ev) => <LogRow key={ev._id} ev={ev} />)}
-          </ul>
+          <>
+            {artifactOnly ? <ArtifactVerificationMetrics events={state.events} now={state.observedAt} /> : null}
+            <ul className="space-y-1.5">
+              {(artifactOnly ? state.events.slice(0, 40) : state.events).map((ev) => <LogRow key={ev._id} ev={ev} />)}
+            </ul>
+          </>
         )
       ) : null}
     </div>
@@ -634,11 +667,13 @@ function LogRow({ ev }: { ev: ServerEvent }): JSX.Element {
         <span className="font-medium text-foreground/80">{ev.source}</span>
         <span className="text-muted-foreground">/ {ev.action}</span>
         {ev.branchId ? <span className="truncate font-mono text-muted-foreground/80">{ev.branchId}</span> : null}
+        {ev.source === ARTIFACT_VERIFICATION_SOURCE && ev.profileId ? <span className="break-all">{ev.profileId}</span> : null}
         <span className="ml-auto shrink-0 text-muted-foreground/65">{formatRelativeTime(ev.ts)}</span>
       </div>
       {ev.message ? (
         <p className="mt-1 break-words text-xs leading-5 text-muted-foreground">{ev.message}</p>
       ) : null}
+      {ev.source === ARTIFACT_VERIFICATION_SOURCE && ev.details ? <ArtifactVerificationLogDetails details={ev.details} /> : null}
     </li>
   );
 }

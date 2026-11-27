@@ -407,21 +407,22 @@ describe('V20 自动生成对照图', () => {
     const fixture = referenceFixture(async function* (_prototype, targets) {
       attempts++;
       if (attempts === 1) yield { ...targets[0], bytes: wrongSize };
-      if (attempts < 3) throw new Error('合成截图服务故障');
+      if (attempts < 5) throw new Error('合成截图服务故障');
       yield { ...targets[0], bytes: desktop };
     });
     const id = await fixture.publish();
-    await vi.waitFor(() => expect(attempts).toBe(1));
-    await nextTurn();
+    const status = () => fixture.service.thumbnailStatus(project, reviewer, id, 1);
+    await vi.waitFor(async () => expect(await status()).toMatchObject({ state: 'incomplete', completed: 0 }));
+    expect(attempts).toBe(2);
     expect((await fixture.version(id)).renders?.demo?.light).toBeUndefined();
     await expect(fixture.generate(id, { ...reviewer, permissions: ['read', 'write'] })).rejects.toMatchObject({ status: 403 });
     expect((await fixture.generate(id)).result).toMatchObject({ type: 'reference.generate', designId: id, version: 1 });
-    await vi.waitFor(() => expect(attempts).toBe(2));
-    await nextTurn();
+    await vi.waitFor(async () => expect(await status()).toMatchObject({ state: 'incomplete', completed: 0 }));
+    expect(attempts).toBe(4);
     expect((await fixture.version(id)).renders?.demo?.light).toBeUndefined();
     expect((await fixture.generate(id)).reused).toBe(true);
     await vi.waitFor(async () => expect((await fixture.version(id)).renders?.demo?.light).toBeDefined());
-    expect(attempts).toBe(3);
+    expect(attempts).toBe(5);
   });
 
   it('按版本回读随稿图和生成进度，部分失败后沿用请求编号只补缺图', async () => {
@@ -437,7 +438,7 @@ describe('V20 自动生成对照图', () => {
         yield { ...targets[0], bytes: desktop };
         throw new Error('合成浏览器未能完成本轮');
       }
-      if (capture.mock.calls.length === 2) throw new Error('合成浏览器暂不可用');
+      if (capture.mock.calls.length < 5) throw new Error('合成浏览器暂不可用');
       for (const target of targets) yield { ...target, bytes: desktop };
     });
     const fixture = referenceFixture(capture, archive);
@@ -461,7 +462,7 @@ describe('V20 自动生成对照图', () => {
       expect(dark).toBeDefined();
       expect((await fixture.generate(id)).reused).toBe(false);
       await vi.waitFor(async () => {
-        expect(capture).toHaveBeenCalledTimes(2);
+        expect(capture).toHaveBeenCalledTimes(4);
         expect(await read()).toMatchObject({ state: 'incomplete', total: 3, completed: 2 });
       });
       expect((await fixture.generate(id)).reused).toBe(true);
@@ -470,12 +471,38 @@ describe('V20 自动生成对照图', () => {
       expect(ready.renders.demo).toEqual({ light: published, dark });
       expect(ready.renders.second.light).toBeDefined();
       expect(capture.mock.calls.map(([, targets]) => targets.map(({ screen, theme }) => `${screen.id}/${theme}`))).toEqual([
-        ['demo/dark', 'second/light'], ['second/light'], ['second/light'],
+        ['demo/dark', 'second/light'], ['second/light'], ['second/light'], ['second/light'], ['second/light'],
       ]);
       expect((await fixture.service.workspace(project, reviewer, { designId: id, version: 1 })).designs[0].runs).toEqual([]);
     } finally {
       release();
     }
+  });
+
+  it('无需重新提交或点击重试即可自动补齐未完成的缩略图', async () => {
+    const archive = demoBundle({ screens: [
+      { id: 'demo', name: '演示画面', route: '#/demo', viewport: 'desktop', themes: ['light', 'dark'], entryReadySelector: 'main' },
+      { id: 'second', name: '第二画面', route: '#/second', viewport: 'desktop', themes: ['light'], entryReadySelector: 'main' },
+    ] }, mp4, [{ name: 'screens/demo.light.png', data: desktop }]);
+    let firstImageId: string | undefined;
+    const capture = vi.fn(async function* (_prototype: Buffer, targets: Parameters<DesignReferenceCapture>[1], retry?: boolean) {
+      for (const target of targets) {
+        yield { ...target, bytes: desktop };
+        if (!retry) throw new Error('合成浏览器中断');
+      }
+    });
+    const fixture = referenceFixture(capture, archive);
+    const id = await fixture.publish();
+    const read = () => fixture.service.thumbnailStatus(project, reviewer, id, 1);
+    await vi.waitFor(async () => {
+      const status = await read();
+      firstImageId ??= status.renders.demo.light.id;
+      expect(status).toMatchObject({ state: 'ready', total: 3, completed: 3 });
+    });
+    expect((await read()).renders.demo.light.id).toBe(firstImageId);
+    expect(capture.mock.calls.map(call => call[2])).toEqual([false, true]);
+    expect(capture.mock.calls.map(([, targets]) => targets.map(({ screen, theme }) => `${screen.id}/${theme}`)))
+      .toEqual([['demo/dark', 'second/light'], ['second/light']]);
   });
 
   it('签收后的版本拒绝再次生成，并保护已经排队但还没写入的证据', async () => {
@@ -502,7 +529,9 @@ describe('V20 自动生成对照图', () => {
       release();
       await nextTurn();
       expect((await fixture.version(id)).renders?.demo?.light).toBeUndefined();
+      expect(capture).toHaveBeenCalledOnce();
       const revisions = await fixture.store.read(project, 0);
+      expect(revisions).toHaveLength(2);
       expect(revisions[1].design?.run).toEqual(signed);
       expect(revisions.flatMap(row => row.assets ?? []).map(asset => asset.mime)).toEqual(['application/zip']);
     } finally {
