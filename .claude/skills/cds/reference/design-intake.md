@@ -120,13 +120,16 @@
 程序在本技能的 `scripts/design/` 里，对任何稿件目录都适用，不用复制进稿件包。发布只走两条固定命令，版本号由程序推算：
 
 ```bash
-# 发布前生成 changes/（有旧版本时），运行门禁。通过后打印发布命令
-node <技能根>/cds/scripts/design/release.mjs check --dir design/<目录> [--full <实现所在版本>]
-# 发布成功后：核对来源提交和工作区一致，写 versions.json，打本地 tag
+# 发布前生成 changes/（有旧版本时），有交互验收项时先在本地跑交接场景，再运行门禁。通过后打印发布命令
+node <技能根>/cds/scripts/design/release.mjs check --dir design/<目录> [--full <实现所在版本>] [--checkout <CDS 检出>]
+# 发布成功后（有交互验收项时先 cdscli design handoff <稿件> --version <版号> --run，等回执「通过」）：
+# 回读逐文件比对、确认交接回执通过，再核对来源提交和工作区一致，写 versions.json，打本地 tag
 node <技能根>/cds/scripts/design/release.mjs register --dir design/<目录> --commit <来源提交> [--design <稿件编号>]
 ```
 
 - 驳回时退出码为 1，逐条列出规则编号。按编号修改，修完重跑，不跳过、不手改结果。
+- **完成由程序判定**：`register` 成功才算这一版完成。它先回读 CDS 上这一版的交付文件，逐个和来源提交比对；有交互验收项时再确认 CDS 交接回执是「通过」。任何一条不满足就不登记，不能对用户说做完了。已发布的版本不能原地改，补救是下一版只补缺的部分。
+- 本地跑交接场景要 CDS 检出（`--checkout` 或 `CDS_WEB_CHECKOUT`）里的运行器和 playwright（检出的 `cds/node_modules`，或用 `CDS_PLAYWRIGHT` 指向 playwright / playwright-core 目录）；浏览器用 playwright 自带的 Chromium 或 `CHROME_PATH`。
 - 首发后第一次登记要带 `--design`。已经发布过、但还没有 `versions.json` 的稿件，先用 `--version <已发布的最新版>` 补登记，再出下一版。
 - 自检没通过（包括未验证）的项，登记在稿件目录的 `tools/gate-allow.json` 里，写负责人和理由。新增例外要人确认。
 - CDS 发布接口复核 G-01 至 G-09 和 G-11。本地 G-10 核对应用框架，G-11 与发布接口使用同一个校验程序。
@@ -357,7 +360,7 @@ CDS 按以下规则校验稿件。驳回回执返回规则编号。用 `intake` 
 | 编号 | 提交条件 |
 | --- | --- |
 | G-01 | `design.json` 可解析，项目、标题、原型版本、日期与交付资料字段有效。 |
-| G-02 | 画面编号唯一，路由以 `#/` 开头，视口、主题、入口选择器与就绪选择器有效。 |
+| G-02 | 最多 80 个画面，编号唯一，路由以 `#/` 开头，视口、主题、入口选择器与就绪选择器有效。 |
 | G-03 | 最多 60 个唯一验收项，每项关联画面并写明规则和预期。测量预期含「检查：」。 |
 | G-04 | 清单引用的思路、原型、自检和文档都在包内。 |
 | G-05 | 自检总数和通过数与条目结果一致。未通过的条目在 `tools/gate-allow.json` 写负责人和理由。 |
@@ -367,6 +370,7 @@ CDS 按以下规则校验稿件。驳回回执返回规则编号。用 `intake` 
 | G-09 | ZIP 不超过 3.8 MiB。 |
 | G-10 | 本地检查正式应用壳、构建指纹和框架规则自检。 |
 | G-11 | 所有新发布版本明确八种验收手段与适用理由，验收项标注维度，覆盖空缺说明原因。回执提供出错字段、规则编号和修复说明。 |
+| G-12 | 本地门禁：每条 `interaction: true` 的验收项都有 `handoff.cases` 覆盖，场景结构和 CDS 一致；并已用 CDS 同一个运行器在本地跑通（`handoff-run.mjs` 写的 `checks/handoff.json`，绑定这份原型和这组场景）。缺了场景，CDS 判「缺交接计划」，实施目标切不过去。 |
 
 ## 双向反馈
 

@@ -2,7 +2,9 @@
 // 设计稿件发布门禁（程序判定，不靠智能体）。智能体只负责产出稿件包；不满足规则，程序直接驳回，不发布。
 // 用法：node gate.mjs --expect <这次要发布的版本号> [--dir <稿件目录>]（默认当前目录）
 // 退出码：0 通过；1 驳回（逐条列出违反的规则）；2 参数错误。
-// 规则编号固定（G-01 到 G-11），驳回信息里写编号，智能体按编号修，修完重跑，直到通过。
+// 规则编号固定（G-01 到 G-12），驳回信息里写编号，智能体按编号修，修完重跑，直到通过。
+// G-12 交接场景：标了 interaction 的验收项都要有场景覆盖，结构和 CDS 服务端（design-package.ts 的 parseDesignHandoffPlan）一致，
+//   并且本地已用 CDS 同一个运行器跑通（handoff-run.mjs 写的 checks/handoff.json，绑定这份原型和这组场景）。
 // G-01 到 G-09 按 CDS 发布接口校验，G-11 共用同一程序（技能 reference/design-intake.md「发布门禁」），本地先驳回，省一次往返。
 // 稿件自己的例外登记在 <稿件目录>/tools/gate-allow.json（CDS 只认这个位置）。
 // 不能出现在稿件包里的真实站点，用环境变量 CDS_DESIGN_FORBIDDEN_HOSTS（逗号分隔）传入，不必写进稿件包。
@@ -67,6 +69,8 @@ const checksFile = d?.checks ?? (files.includes('checks/result.json') ? 'checks/
 const screens = Array.isArray(d?.screens) ? d.screens : [];
 const screenIds = new Set();
 if (d && !screens.length) reject('G-02', '至少要有一个画面');
+/* CDS 服务端：画面清单最多 80 个（design-package.ts：list(input.screens, '画面清单', 80)） */
+if (screens.length > 80) reject('G-02', `画面 ${screens.length} 个，超过 CDS 上限 80`);
 for (const s of screens) {
   if (!/^[a-z0-9][a-z0-9-]*$/.test(s.id ?? '')) reject('G-02', `画面编号不合法：${s.id}`);
   if (typeof s.name !== 'string' || !s.name.trim() || s.name.length > 120) reject('G-02', `${s.id} 的名称要有，且不超过 120 字`);
@@ -215,6 +219,73 @@ if (d?.framework) {
     else if (!hits.some(ok)) reject('G-10', `框架规则 ${id} 的自检没有通过：框架规则必须通过`);
   }
   for (const entry of allow.checks ?? []) if (ruleIdsOfFramework.some(id => mentions(entry.name, id))) reject('G-10', `框架规则不能登记为例外：${entry.name}`);
+}
+
+/* G-12 交接场景。CDS 对标了 interaction 的验收项要求可运行的场景，缺了就是「缺交接计划」，实施目标切不过去。
+ * 结构规则逐条照 design-package.ts 的 parseDesignHandoffPlan；能不能跑通由 handoff-run.mjs 用 CDS 同一个运行器在本地跑，这里核对它的回执。 */
+{
+  const interaction = acceptance.filter(a => a.interaction === true);
+  for (const a of acceptance) if (a.interaction !== undefined && a.interaction !== true) reject('G-12', `${a.id} 的 interaction 只能是 true`);
+  const plan = d?.handoff;
+  if (plan !== undefined || interaction.length) {
+    const cases = Array.isArray(plan?.cases) ? plan.cases : [];
+    const css = /^(?:css|text|xpath|internal:[^=]+)=|>>|[\u0000-\u001f]/i;
+    const checks = ['text', 'value', 'attribute', 'visible', 'enabled', 'media-playing', 'audio-playing', 'fullscreen'];
+    const reads = ['text', 'value', 'attribute'];
+    /* 和服务端 designId 一致：字母、数字、下划线、点、连字符，不超过 120 字，不能是 . 或 .. */
+    const idOk = v => typeof v === 'string' && v.length <= 120 && /^[A-Za-z0-9_.-]+$/.test(v) && v !== '.' && v !== '..';
+    if (plan !== undefined && (typeof plan !== 'object' || Object.keys(plan).some(k => k !== 'cases'))) reject('G-12', 'handoff 只能有 cases');
+    if (!cases.length) reject('G-12', `有 ${interaction.length} 条交互验收项（${interaction.map(a => a.id).join('、')}），要在 design.json.handoff.cases 写能跑通的场景`);
+    if (cases.length > 24) reject('G-12', `交接场景 ${cases.length} 个，超过 CDS 上限 24`);
+    const caseIds = new Set();
+    for (const c of cases) {
+      const where = `场景 ${c?.id ?? '?'}`;
+      if (!idOk(c?.id)) reject('G-12', `${where} 的编号不合法`);
+      if (caseIds.has(c?.id)) reject('G-12', `${where} 编号重复`); caseIds.add(c?.id);
+      if (typeof c?.title !== 'string' || !c.title.trim() || c.title.length > 120) reject('G-12', `${where} 要有不超过 120 字的标题`);
+      const screen = screens.find(s => s.id === c?.screenId);
+      if (!screen) reject('G-12', `${where} 引用了不存在的画面：${c?.screenId}`);
+      else if (c.theme !== undefined && !screen.themes?.includes(c.theme)) reject('G-12', `${where} 的主题要来自画面 ${screen.id} 的主题`);
+      const ids = Array.isArray(c?.ruleIds) ? c.ruleIds : [];
+      if (!ids.length || ids.length > 12 || new Set(ids).size !== ids.length) reject('G-12', `${where} 要关联 1 到 12 条不重复的验收项`);
+      for (const id of ids) if (!ruleIds.has(id)) reject('G-12', `${where} 引用了不存在的验收项：${id}`);
+      const steps = Array.isArray(c?.steps) ? c.steps : [];
+      if (!steps.length || steps.length > 24) reject('G-12', `${where} 要有 1 到 24 步`);
+      const remembered = new Set();
+      steps.forEach((s, i) => {
+        const at = `${where} 第 ${i + 1} 步`;
+        if (typeof s?.selector !== 'string' || !s.selector.trim() || s.selector.length > 240 || css.test(s.selector)) reject('G-12', `${at} 的选择器要是本画面内的 CSS 选择器（不超过 240 字）`);
+        if (['fill', 'select'].includes(s?.action) && (typeof s.value !== 'string' || s.value.length > 1600)) reject('G-12', `${at} 要写不超过 1600 字的值`);
+        else if (s?.action === 'remember') {
+          if (!reads.includes(s.check)) reject('G-12', `${at} 的 remember 只能读 text、value、attribute`);
+          if (!idOk(s.as) || remembered.has(s.as)) reject('G-12', `${at} 的 as 要是本场景里不重复的编号`); else remembered.add(s.as);
+        } else if (s?.action === 'expect') {
+          if (!checks.includes(s.check)) reject('G-12', `${at} 的检查方式不受支持：${s.check}`);
+          if (s.sameAs !== undefined && (!reads.includes(s.check) || !remembered.has(s.sameAs) || s.equals !== undefined)) reject('G-12', `${at} 的 sameAs 要引用本场景前面 remember 过的状态`);
+          if (s.sameAs === undefined && reads.includes(s.check) && typeof s.equals !== 'string') reject('G-12', `${at} 读文字、值或属性时要写 equals（文字）`);
+          if (s.sameAs === undefined && !reads.includes(s.check) && s.equals !== undefined && typeof s.equals !== 'boolean') reject('G-12', `${at} 的 equals 只能是 true 或 false`);
+        } else if (!['click', 'attach', 'fill', 'select'].includes(s?.action)) reject('G-12', `${at} 不支持的动作：${s?.action}`);
+        if (s?.check === 'attribute' && !/^[a-zA-Z_][a-zA-Z0-9_.:-]*$/.test(s.attribute ?? '')) reject('G-12', `${at} 要写有效的属性名`);
+      });
+      const acts = steps.some(s => ['click', 'fill', 'select', 'attach'].includes(s?.action));
+      if (steps.at(-1)?.action !== 'expect') reject('G-12', `${where} 最后一步要是结果检查（expect）`);
+      if (!acts && ids.some(id => interaction.some(a => a.id === id))) reject('G-12', `${where} 覆盖交互验收项，至少要有一步操作（click、fill、select、attach）`);
+    }
+    for (const a of interaction) if (!cases.some(c => (c.ruleIds ?? []).includes(a.id))) reject('G-12', `交互验收项 ${a.id} 没有场景覆盖`);
+    /* 本地跑通的回执：绑定这份原型和这组场景 */
+    const receipt = readJson('checks/handoff.json');
+    if (cases.length) {
+      const proto = path.join(root, d?.prototype ?? 'dist/index.html');
+      const used = new Set(cases.map(c => c.screenId));
+      const binding = existsSync(proto) ? createHash('sha256').update(readFileSync(proto)).update(JSON.stringify({ cases, screens: screens.filter(s => used.has(s.id)) })).digest('hex') : '';
+      if (!receipt) reject('G-12', '没有本地跑通的回执 checks/handoff.json：先运行 handoff-run.mjs（release.mjs check 带 --checkout 或设 CDS_WEB_CHECKOUT 时会自动跑）');
+      else if (receipt.binding !== binding) reject('G-12', 'checks/handoff.json 不是这份原型和这组场景跑出来的（原型或场景改过），重跑 handoff-run.mjs');
+      else if (receipt.status !== 'passed' || (receipt.cases ?? []).length !== cases.length) {
+        const bad = (receipt.cases ?? []).filter(x => x.status !== 'passed').map(x => `${x.caseId} 第 ${x.step ?? '?'} 步 ${x.code}`);
+        reject('G-12', `交接场景本地没有全部跑通：${bad.join('；') || receipt.status}`);
+      }
+    }
+  }
 }
 
 const digest = createHash('sha256').update(files.map(rel => rel + ':' + createHash('sha256').update(readFileSync(path.join(root, rel))).digest('hex')).join('\n')).digest('hex');
