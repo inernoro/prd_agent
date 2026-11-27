@@ -717,6 +717,36 @@ jobs:
       - name: Type check
         run: pnpm tsc --noEmit
 
+      - name: Lint the V7 changed source
+        shell: bash
+        run: |
+          set -euo pipefail
+          files=(src/pages/WebPagesPage.tsx src/pages/quick-creation-agent/{QuickCreationAgentPage,BriefChat}.tsx src/pages/quick-creation-agent/{types,useQuickCreationBrief}.ts src/services/real/quickCreation.ts)
+          work="$(mktemp -d)"
+          pnpm exec eslint "${files[@]}" -f json -o "$work/current.json" || test -s "$work/current.json"
+          git fetch --no-tags origin 8edb970ca924222d91f11f1846da25d60a9853f6
+          old=()
+          for path in "${files[@]}"; do
+            if git cat-file -e "FETCH_HEAD:prd-admin/$path" 2>/dev/null; then
+              cp "$path" "$work/$(basename "$path")"
+              git show "FETCH_HEAD:prd-admin/$path" > "$path"
+              old+=("$path")
+            fi
+          done
+          pnpm exec eslint "${old[@]}" -f json -o "$work/baseline.json" || test -s "$work/baseline.json"
+          for path in "${old[@]}"; do cp "$work/$(basename "$path")" "$path"; done
+          python3 - "$work" <<'PY_LINT'
+          import collections, json, pathlib, sys
+          work = pathlib.Path(sys.argv[1])
+          def messages(name):
+              rows = json.loads((work / (name + ".json")).read_text())
+              return collections.Counter((row["filePath"], message["ruleId"], message["severity"], message["message"])
+                  for row in rows for message in row["messages"])
+          added = messages("current") - messages("baseline")
+          print(json.dumps({"newDiagnostics": [list(key) for key in added.elements()]}, ensure_ascii=False))
+          raise SystemExit(int(bool(added)))
+          PY_LINT
+
       - name: Run tests
         run: pnpm test
 
