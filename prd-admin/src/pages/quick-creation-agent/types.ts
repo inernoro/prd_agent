@@ -252,6 +252,7 @@ export interface QcBriefMessage {
   platform?: string;
   quickReplies?: string[];
   recommendations?: QcBriefRecommendation[];
+  startsProduction?: boolean;
 }
 
 export interface QcBriefSession {

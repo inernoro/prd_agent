@@ -25,7 +25,7 @@ public sealed class QuickCreationBrief
 
 public sealed record QuickCreationBriefMessage(string Id, string Role, string Text,
     string? Model = null, string? Platform = null, IReadOnlyList<string>? QuickReplies = null,
-    IReadOnlyList<QuickCreationStyleRecommendation>? Recommendations = null);
+    IReadOnlyList<QuickCreationStyleRecommendation>? Recommendations = null, bool StartsProduction = false);
 
 public sealed record QuickCreationStyleRecommendation(string TemplateId, string Reason);
 public sealed record QuickCreationScriptScene(int Index, string Visual, string Narration);

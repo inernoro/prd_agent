@@ -276,13 +276,7 @@ export function QuickCreationAgentPage() {
     });
     if (result) acceptBrief(result.session);
   };
-  const sendToBrief = async (value: string) => {
-    const text = value.trim();
-    if (!text || !template || pendingBrief || restoringBrief || syncingBrief || adding || submitLock.current) return;
-    const id = briefId ?? crypto.randomUUID().replaceAll('-', '');
-    if (!briefId) showPage({ brief: id }, true);
-    if (ask.trim() === text) setAsk('');
-    const result = await briefFlow.send({ id, turnId: crypto.randomUUID().replaceAll('-', ''), mode: 'message', text, context: briefContext });
+  const continueBrief = async (result: { session: QcBriefSession; start: boolean } | null) => {
     if (!result) return;
     acceptBrief(result.session);
     if (!result.start) return;
@@ -291,6 +285,14 @@ export function QuickCreationAgentPage() {
     } else {
       await submit(result.session, 'skip', '');
     }
+  };
+  const sendToBrief = async (value: string) => {
+    const text = value.trim();
+    if (!text || !template || pendingBrief || restoringBrief || syncingBrief || adding || submitLock.current) return;
+    const id = briefId ?? crypto.randomUUID().replaceAll('-', '');
+    if (!briefId) showPage({ brief: id }, true);
+    if (ask.trim() === text) setAsk('');
+    await continueBrief(await briefFlow.send({ id, turnId: crypto.randomUUID().replaceAll('-', ''), mode: 'message', text, context: briefContext }));
   };
   const selectStyle = (id: string) => { setStylePicked(true); setTemplateId(id); setPanel(null); };
   const briefDisabled = !!pendingBrief || syncingBrief || restoringBrief || adding || submitting || !briefMatches;
@@ -397,7 +399,7 @@ export function QuickCreationAgentPage() {
       <MapSpinner size={14} />正在接回创作简报
     </span></AgentTurn>}
     <BriefConversation session={brief} pending={pendingBrief} error={briefError} templates={templates} disabled={briefDisabled}
-      onRetry={() => void briefFlow.recover().then(result => { if (result) acceptBrief(result.session); })}
+      onRetry={() => void briefFlow.recover().then(continueBrief)}
       onSend={text => void sendToBrief(text)} onPick={selectStyle}
       onScript={() => { if (brief && !briefDisabled) void requestScript(brief); }}
       onGenerate={mode => { if (brief && !briefDisabled) void submit(brief, mode); }} />

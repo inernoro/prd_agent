@@ -5,6 +5,78 @@ import { createRequire } from 'node:module';
 // 布局与阅读回归使用静止背景；动态画布单独由三档演示用例验证。
 test.beforeEach(async ({ page }) => { await page.emulateMedia({ reducedMotion: 'reduce' }); });
 
+for (const resume of ['点重试', '读回已保存回复']) {
+  test(`快速创作${resume}后继续到分镜确认`, async ({ page }) => {
+    const briefId = 'a'.repeat(32);
+    const base = '/api/quick-creation';
+    const briefPath = `${base}/brief/${briefId}`;
+    const brief = {
+      id: briefId, revision: 1, kind: 'video', styleId: 'sketchnote', busy: false,
+      attachments: [], messages: [] as Array<{ id: string; role: string; text: string; startsProduction?: boolean }>,
+      script: [] as Array<{ index: number; visual: string; narration: string }>,
+      brief: { ready: true, title: '需求评审', fields: [], missing: [], summary: ['视频', '需求评审', '视觉笔记'] },
+    };
+    const turns: Array<{ mode: string; turnId: string; context: { revision: number } }> = [];
+    let runRequests = 0;
+    await page.addInitScript(() => {
+      localStorage.setItem('prd-admin-auth', JSON.stringify({ state: {
+        isAuthenticated: true, user: { userId: 'brief-qa', username: 'brief-qa', role: 'ADMIN' },
+        token: 'brief-qa-session', permissions: ['access', 'web-pages.read'], permissionsLoaded: true,
+        menuCatalog: [], menuCatalogLoaded: true,
+      }, version: 0 }));
+    });
+    await page.route('**/api/**', async route => {
+      const request = route.request();
+      const pathname = new URL(request.url()).pathname;
+      let data: unknown = { items: [], total: 0, folders: [], tags: [], teams: [], fragments: [] };
+      if (pathname === '/api/authz/me') data = { effectivePermissions: ['access', 'web-pages.read'], menuCatalog: [], isRoot: false };
+      if (pathname === `${base}/templates`) data = {
+        items: [{ id: 'sketchnote', name: '视觉笔记', nameEn: 'Sketchnote', categoryId: 'presentation', line: '纸面笔记' }],
+        categories: [{ id: 'presentation', name: '知识讲解' }],
+        source: { name: 'Lemo-Opuscar by Lemomo (LemoLab)', url: 'https://example.invalid/', posterLicense: 'CC BY 4.0' },
+      };
+      if (pathname === briefPath) data = brief;
+      if (pathname === `${base}/runs` && request.method() === 'POST') runRequests++;
+      if (pathname === `${briefPath}/messages`) {
+        const turn = request.postDataJSON() as (typeof turns)[number];
+        turns.push(turn);
+        const respond = (event: string, payload: object) => route.fulfill({ contentType: 'text/event-stream',
+          body: `event: ${event}\ndata: ${JSON.stringify(payload)}\n\n` });
+        if (resume === '点重试' && turns.length === 1) {
+          await respond('error', { message: '这次没有收到回复，请重试' });
+          return;
+        }
+        brief.revision++;
+        if (turn.mode === 'message') {
+          brief.messages.push({ id: turn.turnId + '-reply', role: 'agent', text: '正在准备分镜', startsProduction: true });
+          if (resume === '读回已保存回复') {
+            await respond('phase', { message: '正在理解创作要求' });
+            return;
+          }
+        } else {
+          brief.script = [{ index: 1, visual: '纸面上出现标题', narration: '先读目标' }];
+        }
+        await respond('session', { session: brief, start: turn.mode === 'message' });
+        return;
+      }
+      await route.fulfill({ json: { success: true, data, error: null } });
+    });
+
+    await page.goto(`/quick-creation-agent?from=web-pages&brief=${briefId}`);
+    await expect(page.locator('[data-qc=brief-start]')).toBeEnabled();
+    await page.getByRole('textbox', { name: '发给快速创作', exact: true }).fill('可以开始了');
+    await page.getByRole('button', { name: '发给快速创作', exact: true }).click();
+    if (resume === '点重试') {
+      await page.getByRole('button', { name: '重试', exact: true }).click();
+    }
+    await expect(page.locator('[data-qc=script-confirm]')).toBeEnabled();
+    if (resume === '点重试') expect(turns[1]).toEqual(turns[0]);
+    expect(turns.at(-1)).toMatchObject({ mode: 'script', context: { revision: 2 } });
+    expect(turns.filter(turn => turn.mode === 'script')).toHaveLength(1);
+    expect(runRequests).toBe(0);
+  });
+}
+
 test('右侧快捷上传直接提交 ZIP，普通上传仍可搜索并指定首页', async ({ page }) => {
   const { ZipWriter, TextReader, Uint8ArrayWriter } = createRequire(new URL('../../prd-admin/package.json', import.meta.url))('@zip.js/zip.js');
   const zip = new ZipWriter(new Uint8ArrayWriter(), { useWebWorkers: false });

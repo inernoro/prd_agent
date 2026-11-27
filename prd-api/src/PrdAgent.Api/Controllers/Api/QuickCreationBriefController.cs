@@ -76,7 +76,10 @@ public sealed partial class DesignArtifactsController
         if (brief.Messages.Any(message => message.Id == request.TurnId + "-reply"))
         {
             OpenBriefStream();
-            await WriteBriefEventAsync("session", new { session = await ToBriefAsync(brief, ct), start = false });
+            var start = brief.Revision == request.Context.Revision + 1 && BriefReady(brief)
+                && brief.Messages.LastOrDefault() is { StartsProduction: true } lastReply
+                && lastReply.Id == request.TurnId + "-reply";
+            await WriteBriefEventAsync("session", new { session = await ToBriefAsync(brief, ct), start });
             return new EmptyResult();
         }
         if (brief.Revision != request.Context.Revision) return BriefConflict();
@@ -88,10 +91,12 @@ public sealed partial class DesignArtifactsController
             return QuickCreationError("补齐视频创作简报后再查看分镜");
         var wasReady = BriefReady(brief);
         var fields = Builders<QuickCreationBrief>.Update;
-        var turnClaim = await _db.QuickCreationBriefs.UpdateOneAsync(filter & AvailableBrief()
-            & Builders<QuickCreationBrief>.Filter.Eq(row => row.Revision, brief.Revision),
-            fields.Set(row => row.PendingTurnId, request.TurnId).Set(row => row.PendingUntil, DateTime.UtcNow.AddSeconds(110))
-                .Set(row => row.UnsentText, request.Mode == "message" ? text : null), cancellationToken: ct);
+        brief.PendingTurnId = request.TurnId;
+        brief.PendingUntil = DateTime.UtcNow.AddSeconds(110);
+        brief.UnsentText = request.Mode == "message" ? text : null;
+        // Save the accepted inputs with the claim so a failed model call cannot lose attachments on refresh.
+        var turnClaim = await _db.QuickCreationBriefs.ReplaceOneAsync(filter & AvailableBrief()
+            & Builders<QuickCreationBrief>.Filter.Eq(row => row.Revision, brief.Revision), brief, cancellationToken: ct);
         if (turnClaim.ModifiedCount != 1) return BriefConflict();
         var ownedTurn = filter & Builders<QuickCreationBrief>.Filter.Eq(row => row.PendingTurnId, request.TurnId);
 
@@ -159,9 +164,10 @@ public sealed partial class DesignArtifactsController
             var recommendations = (update.Recommendations ?? []).Where(value => value != null
                     && QuickCreationCatalog.Find(value.TemplateId) != null && !string.IsNullOrWhiteSpace(value.Reason) && value.Reason.Length <= 160)
                 .DistinctBy(value => value.TemplateId).Take(3).ToList();
+            var start = request.Mode == "message" && wasReady && BriefReady(brief) && AllowsBriefStart(text, update.StartRequested);
             brief.Messages.Add(new QuickCreationBriefMessage(request.TurnId + "-reply", "agent", reply,
                 resolution?.ActualModel, resolution?.ActualPlatformName, suggestions,
-                recommendations.Count == 3 ? recommendations : null));
+                recommendations.Count == 3 ? recommendations : null, start));
 
             brief.PendingTurnId = null;
             brief.PendingUntil = null;
@@ -172,11 +178,7 @@ public sealed partial class DesignArtifactsController
                 return new EmptyResult();
             }
 
-            await WriteBriefEventAsync("session", new
-            {
-                session = await ToBriefAsync(brief, deadline.Token),
-                start = request.Mode == "message" && wasReady && BriefReady(brief) && AllowsBriefStart(text, update.StartRequested),
-            });
+            await WriteBriefEventAsync("session", new { session = await ToBriefAsync(brief, deadline.Token), start });
         }
         catch (Exception error) when (error is JsonException or TimeoutException or OperationCanceledException
             or HttpRequestException or MongoException or InvalidOperationException or DesignRunInputException)

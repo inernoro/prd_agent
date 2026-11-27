@@ -81,9 +81,11 @@ export function useQuickCreationBrief(briefId: string | null, onRestore: (sessio
       if (!completed && !issue) {
         // The server can finish saving even when the event stream ended early.
         const saved = await getQuickCreationBrief(turn.id, controller.signal);
-        if (saved.success && saved.data.messages.some(message => message.id === turn.turnId + '-reply'))
-          completed = { session: saved.data, start: false };
-        else if (saved.success && saved.data.busy && !controller.signal.aborted) {
+        const reply = saved.success && saved.data.messages.find(message => message.id === turn.turnId + '-reply');
+        if (saved.success && reply) {
+          completed = { session: saved.data, start: reply === saved.data.messages.at(-1) && !!reply.startsProduction
+            && saved.data.revision === turn.context.revision + 1 && saved.data.brief.ready };
+        } else if (saved.success && saved.data.busy && !controller.signal.aborted) {
           setRestoreCount(count => count + 1);
           return null;
         }
