@@ -42,12 +42,13 @@ on:
         type: boolean
         default: false
       quick_creation_brief_admission:
-        description: '明确选择一条无稿件视频生产路径并等待成片。每次运行最多创建一条'
+        description: '确认或跳过时创建一条视频。survey 只评估 10 段对话，不创建成品'
         type: choice
         options:
           - none
           - confirm
           - skip
+          - survey
         default: none
       quick_creation_retry_film_id:
         description: '可选的本账号旧视频任务编号，复用该任务稿件和风格完成重试验收'

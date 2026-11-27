@@ -10,13 +10,14 @@ const commit = process.env.E2E_EXPECTED_COMMIT;
 const generate = process.env.E2E_QC_GENERATE === 'true';
 const verifyBrief = process.env.E2E_QC_BRIEF === 'true';
 const briefAdmission = process.env.E2E_QC_BRIEF_ADMISSION || 'none';
+const survey = briefAdmission === 'survey';
 const retryFilmId = process.env.E2E_QC_RETRY_FILM || '';
 const existingWebId = process.env.E2E_QC_EXISTING_WEB || '';
 assert.equal(origin.origin, 'https://dsn-1400e277-v6-codex-prd-agent.miduo.org');
 assert.match(commit, /^[a-f0-9]{40}$/);
 assert.ok(process.env.E2E_USER && process.env.E2E_PASSWORD && process.env.RUNNER_TEMP);
-assert.ok(['none', 'confirm', 'skip'].includes(briefAdmission));
-if (briefAdmission !== 'none') assert.ok(verifyBrief && !generate, 'Run one explicit fileless production path separately from fixed manuscript generation');
+assert.ok(['none', 'confirm', 'skip', 'survey'].includes(briefAdmission));
+if (briefAdmission !== 'none') assert.ok(verifyBrief && !generate, 'Run one brief acceptance mode separately from fixed manuscript generation');
 if (generate || briefAdmission !== 'none') assert.equal(process.env.GITHUB_RUN_ATTEMPT, '1', 'Review original tasks before repeating paid jobs');
 if (retryFilmId) assert.match(retryFilmId, /^[a-f0-9]{32}$/);
 if (existingWebId) assert.match(existingWebId, /^[a-f0-9]{32}$/);
@@ -195,6 +196,106 @@ async function verifyBriefJourney(page, api) {
   }
 }
 
+async function verifyBriefSurvey(page, api) {
+  const cases = [
+    ['promo', '我想做一个宣传片', 'clarify'],
+    ['onboarding', '给新同事做个培训短片', 'clarify'],
+    ['style-unknown', '不知道选什么风格', 'clarify'],
+    ['start-incomplete', '可以开始了', 'hold'],
+    ['start-variant', '开工吧！', 'hold'],
+    ['negated', '先别开始，等我把产品资料补齐再说。', 'hold'],
+    ['question', '我只是想问，可以开始了吗？', 'hold'],
+    ['quotation', '片头台词用「可以开始了」，先聊脚本，不要生成。', 'hold'],
+    ['recommended-video', '做视频给新产品经理讲需求评审。只讲三个习惯：找目标、定边界、写可操作的验收条件。请推荐三个易懂的教学风格和各自的理由。', 'recommend'],
+    ['recommended-web', '我要做一个给客服组看的网页，说明交接顺序：先写待跟进客户，再列问题状态，最后标明负责人。请推荐三个适合清晰阅读的风格并说理由。', 'recommend'],
+  ];
+  receipt.dialogueSurvey = [];
+  let generationRequests = 0;
+  let scriptRequests = 0;
+  const mutationPaths = /\/api\/quick-creation\/(?:runs|brief\/[^/]+\/messages)$/;
+  const allowDialogueOnly = async route => {
+    const request = route.request();
+    if (request.method() !== 'POST') return route.continue();
+    const path = new URL(request.url()).pathname;
+    if (path === base + '/runs') {
+      generationRequests++;
+      return route.abort();
+    }
+    if (request.postDataJSON()?.mode === 'script') {
+      scriptRequests++;
+      return route.abort();
+    }
+    return route.continue();
+  };
+  await page.route(mutationPaths, allowDialogueOnly);
+  try {
+    for (const [id, opening, expected] of cases) {
+      const row = { id, opening, expected };
+      const before = { generationRequests, scriptRequests };
+      const start = Date.now();
+      receipt.dialogueSurvey.push(row);
+      try {
+        await page.goto(new URL('/web-pages', origin).href);
+        await page.locator('[data-tour-id=webpages-generate-primary]').click();
+        await page.locator('[data-qc-ready=compose][data-output=web]').waitFor();
+        await page.getByRole('textbox', { name: '发给快速创作', exact: true }).fill(opening);
+        const [response] = await Promise.all([
+          page.waitForResponse(item => new URL(item.url()).pathname.endsWith('/messages') && item.request().method() === 'POST'),
+          page.getByRole('button', { name: '发给快速创作', exact: true }).click(),
+        ]);
+        assert.equal(response.status(), 200);
+        const briefId = new URL(page.url()).searchParams.get('brief');
+        assert.match(briefId, /^[a-f0-9]{32}$/);
+        row.briefId = briefId;
+        const deadline = Date.now() + 110_000;
+        let session;
+        do {
+          session = await data(await api(`${base}/brief/${briefId}`), `read dialogue ${id}`);
+          if (session.revision > 0 && !session.busy) break;
+          await delay(1000);
+        } while (Date.now() < deadline);
+        const reply = session.messages.at(-1);
+        assert.equal(reply?.role, 'agent');
+        row.model = reply.model;
+        row.platform = reply.platform;
+        row.reply = reply.text;
+        row.quickReplies = reply.quickReplies ?? [];
+        row.recommendations = reply.recommendations ?? [];
+        row.clarifyingQuestions = (reply.text.match(/[？?]/g) ?? []).length;
+        row.ready = session.brief.ready;
+        row.wrongStart = !!reply.startsProduction || scriptRequests > before.scriptRequests || generationRequests > before.generationRequests;
+        assert.ok(row.model && row.platform);
+        assert.equal(row.wrongStart, false);
+        if (expected === 'clarify') {
+          assert.equal(row.clarifyingQuestions, 1);
+          assert.ok(row.quickReplies.length >= 2 && row.quickReplies.length <= 4);
+        }
+        if (expected === 'hold') assert.equal(row.ready, false);
+        if (expected === 'recommend') {
+          assert.equal(row.recommendations.length, 3);
+          assert.equal(new Set(row.recommendations.map(style => style.templateId)).size, 3);
+        }
+        row.outcome = 'pass';
+      } catch (error) {
+        row.outcome = 'failed';
+        const details = String(error.message).slice(0, 280);
+        receipt.failures.push({ kind: 'dialogue-survey', code: id, details });
+        await page.screenshot({ path: join(out, `20-survey-${id}-failure.png`) }).catch(() => {});
+      } finally {
+        row.elapsedMs = Date.now() - start;
+        await writeFile(join(out, 'result.json'), JSON.stringify(receipt, null, 2));
+      }
+      if (generationRequests > 0 || scriptRequests > 0) break;
+    }
+    assert.equal(receipt.dialogueSurvey.length, cases.length);
+    assert.equal(generationRequests, 0);
+    assert.equal(scriptRequests, 0);
+    receipt.cases.push('ten openings recorded for human review of follow-up and recommendation quality, with no production request');
+  } finally {
+    await page.unroute(mutationPaths, allowDialogueOnly);
+  }
+}
+
 async function verifyBriefOutput(page, api, action, briefId, brief) {
   const [response] = await Promise.all([
     page.waitForResponse(match(base + '/runs', 'POST')),
@@ -338,7 +439,8 @@ try {
   const original = await data(sample, 'sample document');
   assert.equal(original.name, '需求评审的三个习惯.md');
   assert.equal(original.status, 'ready');
-  assert.ok(original.excerpt.includes('习惯三：最后对验收'));
+  receipt.fixedSourceSha256 = sha256(original.excerpt);
+  assert.equal(receipt.fixedSourceSha256, 'ae2105b8889429e1444ebb3922e82b67cd707b63a10747d45824c1145cb5fcf1');
   await page.locator('[data-qc=submit]:enabled').waitFor();
   await page.screenshot({ path: join(out, '03-desktop-source.png') });
   receipt.cases.push('fixed V6 sample loaded and eligible');
@@ -507,7 +609,8 @@ try {
   if (verifyBrief) {
     try {
       await verifyHostingEntry(page);
-      await verifyBriefJourney(page, api);
+      if (survey) await verifyBriefSurvey(page, api);
+      else await verifyBriefJourney(page, api);
     } catch (error) {
       await page.screenshot({ path: join(out, '13-brief-failure.png') }).catch(() => {});
       receipt.failures.push({ kind: 'brief', code: 'journey', details: String(error.message).slice(0, 280) });
