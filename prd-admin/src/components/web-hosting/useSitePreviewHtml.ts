@@ -53,7 +53,7 @@ async function loadSrcDoc(site: SitePreviewHtmlSite): Promise<CacheEntry> {
     try {
       const res = site.shareAccess
         ? await getShareSiteContent(site.shareAccess.token, site.id, site.shareAccess.password)
-        : await getSiteContent(site.id);
+        : await getSiteContent(site.id, { preview: true });
       if (res.success && res.data?.html) {
         const html = res.data.html;
         // 打包型 SPA（入口是外链 module 脚本）必须留在直链：srcDoc 的不透明源会让模块脚本
