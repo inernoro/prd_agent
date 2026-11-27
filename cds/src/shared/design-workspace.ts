@@ -316,6 +316,7 @@ export type DesignRequirement = {
 export type DesignIntake = {
   acceptancePolicy?: typeof designAcceptancePolicy;
   handoffPolicy?: typeof designHandoffPolicy;
+  handoffCaseLimit?: number;
   protocolVersion: 1;
   projectId: string;
   permissions: { write: boolean; feedback?: boolean; frameworkPublish?: boolean; implementation?: boolean };

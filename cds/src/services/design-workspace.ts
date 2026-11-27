@@ -1,4 +1,4 @@
-import { designHandoffFailureMessages, designHandoffPolicy, type DesignHandoffCaseResult, type DesignHandoffReceipt, type DesignHandoffState } from '../shared/design-handoff.js';
+import { designHandoffCaseLimit, designHandoffFailureMessages, designHandoffPolicy, type DesignHandoffCaseResult, type DesignHandoffReceipt, type DesignHandoffState } from '../shared/design-handoff.js';
 import type { DesignHandoffExecutor } from './design-handoff-browser.js';
 import { randomUUID } from 'node:crypto';
 import type {
@@ -753,7 +753,7 @@ export class DesignWorkspaceService {
       protocolVersion: 1, projectId, permissions: { write: canWrite, feedback: canLeaveFeedback(actor), frameworkPublish: canWrite,
         ...(canManageImplementation(actor) ? { implementation: true } : {}) },
       keyFormat: 'module/draft', intents: ['create', 'revise'], acceptancePolicy: designAcceptancePolicy,
-      ...(this.deps.handoff ? { handoffPolicy: designHandoffPolicy } : {}),
+      ...(this.deps.handoff ? { handoffPolicy: designHandoffPolicy, handoffCaseLimit: designHandoffCaseLimit } : {}),
       requirements: visibleRequirements(state),
       ...(state.systems.size ? { systems: structuredClone([...state.systems.values()]) } : {}),
       designs: [...state.designs.values()].map(entry => {
