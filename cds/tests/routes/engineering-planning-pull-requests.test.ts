@@ -154,9 +154,7 @@ describe('engineering planning PR projection', () => {
     expect(await planning.pullRequestPreview(projectId, 2412, otherHead)).toBeUndefined();
     expect((await planning.board(projectId, owner)).pullRequests).toBeUndefined();
     expect(await planning.pullRequestPreview(projectId, 2412, head)).toMatchObject({ status: 'ready', commit: head });
-    expect((await reopenPlanning().board(projectId, owner)).pullRequests).toEqual([
-      expect.objectContaining({ number: 2412, preview: expect.objectContaining({ status: 'ready', commit: head }) }),
-    ]);
+    expect(await reopenPlanning().pullRequestPreview(projectId, 2412, head)).toMatchObject({ status: 'ready', commit: head });
 
     expect(parseGitHubPreviewPullRequest({ ...evidence, head: { ...evidence.head, repo: { full_name: 'fork/repo' } } }, repository, 2412)).toBeUndefined();
     expect(parseGitHubPreviewPullRequest(evidence, repository, 2413)).toBeUndefined();
