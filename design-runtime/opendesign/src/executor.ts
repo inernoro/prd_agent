@@ -611,6 +611,10 @@ export class DesignTaskExecutor {
           fs.writeFileSync(deliveryFile, JSON.stringify({
             master: '<film-name>.mp4', timedCaptions: '<film-name>.srt or subtitles_<language>.srt',
             previewIfMasterHasBurnedCaptions: { file: '<film-name>.preview.mp4', captions: 'off', audio: 'same encoded audio stream as master' },
+            resumableProject: {
+              treatment: 'TREATMENT.md', narration: 'voice/out/<line-id>.wav',
+              independentScenes: { order: 'scenes/plan.json', orderFormat: [1, 2, 3], clip: 'scenes/<scene-number>.mp4' },
+            },
           }), { flag: 'wx', mode: 0o644 });
           this.chownForEngine(deliveryFile);
           attachments.push(deliveryPath);
