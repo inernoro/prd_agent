@@ -333,7 +333,10 @@ public sealed partial class DesignArtifactsController
             ModelType = ModelTypes.Chat,
             Stream = true, TimeoutSeconds = 90,
             RequestBody = new JsonObject { ["messages"] = messages, ["max_tokens"] = 4800 },
-            Context = new GatewayRequestContext { UserId = brief.UserId, SessionId = brief.Id, RequestId = turnId, LogicalRequestId = turnId },
+            Context = new GatewayRequestContext
+            {
+                UserId = brief.UserId, SessionId = brief.Id, RequestId = Guid.NewGuid().ToString("N"), LogicalRequestId = turnId,
+            },
         };
     }
 

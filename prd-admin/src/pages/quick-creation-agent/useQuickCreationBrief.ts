@@ -83,6 +83,10 @@ export function useQuickCreationBrief(briefId: string | null, onRestore: (sessio
         const saved = await getQuickCreationBrief(turn.id, controller.signal);
         if (saved.success && saved.data.messages.some(message => message.id === turn.turnId + '-reply'))
           completed = { session: saved.data, start: false };
+        else if (saved.success && saved.data.busy && !controller.signal.aborted) {
+          setRestoreCount(count => count + 1);
+          return null;
+        }
       }
       if (controller.signal.aborted) return null;
       if (completed) {

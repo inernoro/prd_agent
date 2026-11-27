@@ -46,7 +46,8 @@ export function streamQuickCreationBrief(id: string, body: {
 }, signal: AbortSignal, onEvent: (event: QcBriefEvent) => void) {
   return connectSse({
     url: resolveApiUrl(`${base}/brief/${encodeURIComponent(id)}/messages`), method: 'POST', body, signal,
-    headers: { 'Idempotency-Key': body.turnId, 'X-Client': 'admin' },
+    // A retry is a new transport attempt for the same durable conversation turn.
+    headers: { 'Idempotency-Key': crypto.randomUUID(), 'X-Client': 'admin' },
     onEvent(event) {
       if (event.event && event.data) onEvent({ name: event.event, ...JSON.parse(event.data) } as QcBriefEvent);
     },
