@@ -217,8 +217,23 @@ async function verifyBriefJourney(page, api) {
   const sendButton = page.getByRole('button', { name: '发给快速创作', exact: true });
   async function send(text) {
     await page.getByRole('textbox', { name: '发给快速创作', exact: true }).fill(text);
-    await sendButton.click();
-    await sendButton.waitFor();
+    const [response] = await Promise.all([
+      page.waitForResponse(candidate => {
+        const url = new URL(candidate.url());
+        return url.origin === origin.origin && url.pathname.startsWith(`${base}/brief/`)
+          && url.pathname.endsWith('/messages') && candidate.request().method() === 'POST'
+          && candidate.request().postDataJSON().text === text;
+      }, { timeout: 105_000 }),
+      sendButton.click(),
+    ]);
+    assert.ok(response.ok(), `Brief message HTTP ${response.status()}`);
+    assert.equal(await response.finished(), null, 'The current brief reply must finish streaming');
+    const briefId = new URL(page.url()).searchParams.get('brief');
+    assert.match(briefId, /^[a-f0-9]{32}$/);
+    const saved = await data(await api(`${base}/brief/${briefId}`), 'read completed brief turn');
+    assert.equal(saved.busy, false, 'The current brief turn must be saved');
+    assert.equal(saved.messages.findLast(message => message.role === 'user')?.text, text);
+    return saved;
   }
   try {
     await send('可以开始了');
@@ -227,32 +242,26 @@ async function verifyBriefJourney(page, api) {
     assert.equal(await page.locator('[data-qc=submit]').isEnabled(), false);
     await page.screenshot({ path: join(out, '11-brief-missing.png') });
 
-    await send('我要做一个 1 分钟的手绘培训视频，给刚加入产品团队的新同事。主题是需求评审的三个习惯：先读目标确认解决谁的什么问题，再明确哪些事这次不做，最后核对能操作的验收条件。请推荐三种适合这份内容的风格。');
-    await page.locator('[data-qc=rec-style]').nth(2).waitFor();
-    const secondStyle = await page.locator('[data-qc=rec-style]').nth(1).getAttribute('data-style');
-    assert.ok(secondStyle);
-    const briefId = new URL(page.url()).searchParams.get('brief');
-    assert.match(briefId, /^[a-f0-9]{32}$/);
-    const beforePick = await data(await api(`${base}/brief/${briefId}`), 'read ready brief');
-    assert.equal(beforePick.brief.ready, true);
+    const beforePick = await send('我要做一个 1 分钟的手绘培训视频，给刚加入产品团队的新同事。主题是需求评审的三个习惯：先读目标确认解决谁的什么问题，再明确哪些事这次不做，最后核对能操作的验收条件。请推荐三种适合这份内容的风格。');
+    assert.equal(beforePick.brief.ready, true, 'The model must complete the brief for the supplied topic');
     assert.equal(beforePick.kind, 'video');
-    assert.ok(beforePick.messages.some(message => message.role === 'agent' && message.model && message.platform));
+    const reply = beforePick.messages.at(-1);
+    assert.ok(reply?.model && reply.platform);
+    assert.equal(reply.recommendations?.length, 3);
+    const briefId = beforePick.id;
+    const secondStyle = reply.recommendations[1].templateId;
+    const activeRecommendation = page.locator(`[data-qc=rec-style][data-style="${secondStyle}"] [data-qc=rec-use]`);
+    await activeRecommendation.waitFor();
     await page.screenshot({ path: join(out, '12-brief-recommendations.png') });
 
     const catalog = await data(await api(base + '/templates'), 'read catalog for the selected style');
     const selectedName = catalog.items.find(item => item.id === secondStyle)?.name;
     assert.ok(selectedName);
-    await send('第二个');
+    const picked = await send('第二个');
+    assert.ok(picked.revision > beforePick.revision);
+    assert.equal(picked.styleId, secondStyle);
     await page.waitForFunction(name => document.querySelector('[data-qc=style-chip]')?.getAttribute('aria-label')?.includes(name),
       selectedName, { timeout: 105_000 });
-    const startedAt = Date.now();
-    let picked;
-    while (Date.now() - startedAt < 105_000) {
-      picked = await data(await api(`${base}/brief/${briefId}`), 'read selected style');
-      if (picked.revision > beforePick.revision) break;
-      await delay(1000);
-    }
-    assert.equal(picked?.styleId, secondStyle);
     await page.locator('[data-qc=brief-start]:enabled').click();
     await page.locator('[data-qc=script-draft] [data-qc=script-confirm]').waitFor({ timeout: 105_000 });
     const planned = await data(await api(`${base}/brief/${briefId}`), 'read rendered script');
