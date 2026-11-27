@@ -314,8 +314,9 @@ async function verifyPreview(page, view, row) {
       row.captionsBurnedIn = view.captionsBurnedIn === true;
       row.subtitleFreePreview = view.hasSubtitleFreePreview === true;
       const toggle = page.locator('[data-qc=captions-toggle]');
-      if (row.captionsBurnedIn && !row.subtitleFreePreview) {
-        assert.equal(await toggle.isDisabled(), true);
+      if (row.captionsBurnedIn && await toggle.isDisabled()) {
+        assert.equal(await toggle.getAttribute('aria-label'), '字幕已印在画面上');
+        assert.equal(await page.locator('[data-qc=caption]').count(), 0);
         row.captionSeek = 'burned-in-only';
       } else {
         const overlay = page.locator('[data-qc=caption]');
@@ -396,18 +397,23 @@ async function verifyExistingVideo(page, api) {
   }
   if (film.hasSubtitleFreePreview) {
     const alternative = await api(`${film.media.url}?preview=true`, { timeout: 90_000 });
-    assert.equal(alternative.status(), 200);
-    const alternateBytes = await alternative.body();
-    const alternatePath = join(process.env.RUNNER_TEMP, 'watercolor-preview.mp4');
-    await writeFile(alternatePath, alternateBytes);
-    const packetDigest = async (file, stream) => (await runProcess('ffmpeg', ['-v', 'error', '-i', file, '-map', `0:${stream}:0`,
-      '-c', 'copy', '-f', 'hash', '-hash', 'sha256', '-'])).stdout.trim();
-    row.alternate = {
-      sha256: digest(alternateBytes), identicalFile: bytes.equals(alternateBytes),
-      sameAudioPackets: await packetDigest(media, 'a') === await packetDigest(alternatePath, 'a'),
-      sameVideoPackets: await packetDigest(media, 'v') === await packetDigest(alternatePath, 'v'),
-    };
-    if (row.alternate.sameVideoPackets) receipt.failures.push({ id: film.id, kind: 'video', code: 'stamped_captions_in_alternate' });
+    if (alternative.status() === 404) {
+      assert.equal(row.captionSeek, 'burned-in-only');
+      row.alternate = { rejectedIdenticalPreview: true, retainedMasterForPlayback: true };
+    } else {
+      assert.equal(alternative.status(), 200);
+      const alternateBytes = await alternative.body();
+      const alternatePath = join(process.env.RUNNER_TEMP, 'watercolor-preview.mp4');
+      await writeFile(alternatePath, alternateBytes);
+      const packetDigest = async (file, stream) => (await runProcess('ffmpeg', ['-v', 'error', '-i', file, '-map', `0:${stream}:0`,
+        '-c', 'copy', '-f', 'hash', '-hash', 'sha256', '-'])).stdout.trim();
+      row.alternate = {
+        sha256: digest(alternateBytes), identicalFile: bytes.equals(alternateBytes),
+        sameAudioPackets: await packetDigest(media, 'a') === await packetDigest(alternatePath, 'a'),
+        sameVideoPackets: await packetDigest(media, 'v') === await packetDigest(alternatePath, 'v'),
+      };
+      if (row.alternate.sameVideoPackets) receipt.failures.push({ id: film.id, kind: 'video', code: 'stamped_captions_in_alternate' });
+    }
   }
   await Promise.all([
     page.waitForFunction(siteId => [...document.querySelectorAll('[data-hosted-site-id]')]
