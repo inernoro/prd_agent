@@ -62,6 +62,7 @@ for (const [from, to] of Object.entries(config.stubs ?? {})) {
   overrides.set(real, file);
 }
 const draftRoot = posix(draft) + '/';
+const productOf = new Map([...overrides].map(([real, file]) => [posix(file), real]));
 const added = Object.entries(config.added ?? {}).map(([from, to]) => [posix(path.join(web, from)), path.join(draft, to)]);
 const shell = path.join(web, config.shellFile ?? 'src/components/layout/AppShell.tsx');
 
@@ -78,11 +79,18 @@ const result = await build({
     name: 'cds-design-overrides', enforce: 'pre',
     async resolveId(source, importer, options) {
       if (source.endsWith('?real')) return this.resolve(source.slice(0, -5), importer, { ...options, skipSelf: true });
-      /* 稿件新增的正式文件按正式路径引用（别名先于插件生效，这里可能已是绝对路径） */
-      const wanted = posix(source.startsWith('@/') ? path.join(web, 'src', source.slice(2)) : source);
+      /* 改动副本可以是正式文件的原样拷贝：它里面的相对导入（./design-ui、../../../../src/shared/…）按它在正式代码里的位置解析，
+       * 新增文件按 added 里登记的正式位置解析；这样副本和正式文件的差异就只有设计改动 */
+      const asProduct = importer && (productOf.get(posix(importer))
+        ?? added.map(([prefix, target]) => posix(importer) === posix(target) ? prefix
+          : posix(importer).startsWith(posix(target) + '/') ? prefix + posix(importer).slice(posix(target).length + 1) : undefined).find(Boolean));
+      /* 稿件新增的正式文件按正式路径引用：别名（别名先于插件生效，这里可能已是绝对路径）或相对路径（按导入方的正式位置算） */
+      const base = asProduct ?? importer;
+      const wanted = posix(source.startsWith('@/') ? path.join(web, 'src', source.slice(2))
+        : source.startsWith('.') && base ? path.resolve(path.dirname(base), source) : source);
       for (const [prefix, target] of added) {
-        /* 键是单个文件：整条引用（不带或带扩展名）对上就指到那个文件 */
-        if (/\.[cm]?[jt]sx?$/.test(prefix)) {
+        /* 键是单个文件（有扩展名）：整条引用（不带或带扩展名）对上就指到那个文件 */
+        if (/\.[A-Za-z0-9]+$/.test(path.posix.basename(prefix))) {
           if ([wanted, wanted + '.ts', wanted + '.tsx'].includes(prefix) && existsSync(target)) return target;
           continue;
         }
@@ -91,10 +99,10 @@ const result = await build({
         if (!name) continue;
         for (const ext of ['', '.tsx', '.ts']) { const file = path.join(target, name + ext); if (existsSync(file) && !existsSync(wanted + ext)) return file; }
       }
-      /* 改动副本放在稿件目录里，里面的裸包导入（react、devicon/... 等）按正式前端的依赖解析 */
-      if (importer && posix(importer).startsWith(draftRoot) && !/^[./\\]|^@\//.test(source) && !/^[A-Za-z]:/.test(source))
+      /* 稿件目录里的裸包导入（react、devicon/... 等）按正式前端的依赖解析 */
+      if (!asProduct && importer && posix(importer).startsWith(draftRoot) && !/^[./\\]|^@\//.test(source) && !/^[A-Za-z]:/.test(source))
         return this.resolve(source, path.join(web, 'src', '__draft_import__.ts'), { ...options, skipSelf: true });
-      const resolved = await this.resolve(source, importer, { ...options, skipSelf: true });
+      const resolved = await this.resolve(source, asProduct ?? importer, { ...options, skipSelf: true });
       if (!resolved) return null;
       const target = overrides.get(posix(resolved.id.split('?')[0]));
       return target && posix(importer ?? '') !== posix(target) ? target : resolved;
