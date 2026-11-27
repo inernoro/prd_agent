@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { chromium } from '@playwright/test';
@@ -11,12 +11,14 @@ const generate = process.env.E2E_QC_GENERATE === 'true';
 const verifyBrief = process.env.E2E_QC_BRIEF === 'true';
 const retryFilmId = process.env.E2E_QC_RETRY_FILM || '';
 const existingWebId = process.env.E2E_QC_EXISTING_WEB || '';
+const existingFilmId = process.env.E2E_QC_EXISTING_FILM || '';
 assert.equal(origin.origin, 'https://dsn-1400e277-v6-codex-prd-agent.miduo.org');
 assert.match(commit, /^[a-f0-9]{40}$/);
 assert.ok(process.env.E2E_USER && process.env.E2E_PASSWORD && process.env.RUNNER_TEMP);
 if (generate) assert.equal(process.env.GITHUB_RUN_ATTEMPT, '1', 'Review original tasks before repeating paid jobs');
 if (retryFilmId) assert.match(retryFilmId, /^[a-f0-9]{32}$/);
 if (existingWebId) assert.match(existingWebId, /^[a-f0-9]{32}$/);
+if (existingFilmId) assert.match(existingFilmId, /^[a-f0-9]{32}$/);
 const out = join(process.env.RUNNER_TEMP, 'dsn-1400e277-evidence');
 await mkdir(out, { recursive: true });
 const receipt = { design: 'DSN-1400E277', version: 8, commit, origin: origin.origin, cases: [], runs: [], failures: [] };
@@ -356,6 +358,104 @@ async function verifyV9Player(page, view, row) {
   await page.screenshot({ path: join(out, `07-v9-${view.status}.png`) });
 }
 
+async function verifyExistingBrowserFilm(page, api) {
+  const row = { id: existingFilmId, kind: 'video', templateId: 'watercolor' };
+  receipt.runs.push(row);
+  assert.equal(receipt.version, 9);
+  const deadline = Date.now() + 40 * 60_000;
+  let view;
+  while (Date.now() < deadline) {
+    view = await data(await api(`${base}/runs/${existingFilmId}`), 'read original V9 film');
+    if (row.currentStatus !== view.status) {
+      row.currentStatus = view.status;
+      console.log(`Existing V9 film ${view.id} is ${view.status}`);
+    }
+    if (view.status === 'failed') throw new Error(`Original task failed: ${view.failure?.code ?? view.failure?.message ?? 'unknown'}`);
+    if (view.status === 'trial-ready' || view.status === 'done') break;
+    await delay(15_000);
+  }
+  assert.ok(view?.bundleUrl, 'The original V9 task did not return a browser film bundle before the deadline');
+  assert.equal(view.templateId, 'watercolor');
+  assert.equal(digest(view.attachments[0].excerpt), '940ba09667ffdbabd5693a800e977ff4d287100309af306479c9ccd86667428b');
+  const bundle = await data(await api(view.bundleUrl), 'read exact committed browser film');
+  assert.ok(bundle.aac && bundle.opus);
+  row.durationSec = bundle.durationSec;
+  row.scenes = bundle.scenes.length;
+  row.captionCount = bundle.captions.length;
+  row.captionTexts = bundle.captions.map(cue => cue.text);
+  row.sceneSha256 = bundle.scenes.map(scene => digest(Buffer.from(scene.code, 'base64')));
+  await openV9Run(page, view);
+  await verifyV9Player(page, view, row);
+  const player = page.frameLocator('[data-qc=browser-player] iframe');
+  const signatures = [];
+  for (const percent of [.16, .45, .75]) {
+    await player.locator('audio').evaluate((audio, time) => new Promise(resolve => {
+      audio.addEventListener('seeked', () => setTimeout(resolve, 200), { once: true });
+      audio.currentTime = time;
+    }), row.durationSec * percent);
+    signatures.push(digest(await player.locator('canvas').evaluate(canvas => canvas.toDataURL())));
+    await page.screenshot({ path: join(out, `24-watercolor-${Math.round(percent * 100)}.png`) });
+  }
+  assert.ok(new Set(signatures).size > 1, 'Actual canvas frames should change across the film');
+  if (view.status === 'trial-ready') {
+    assert.equal(view.trial.scenes, 2);
+    assert.equal(bundle.scenes.length, 2);
+    assert.ok(row.durationSec >= 12 && row.durationSec <= 45);
+    await page.locator('[data-qc=trial-approve]').waitFor();
+    receipt.cases.push('original ADR V9 two-scene trial played in the cloud and is waiting for approval');
+    return;
+  }
+  assert.equal(view.status, 'done');
+  assert.ok(Math.abs(row.durationSec - view.targetDurationSec) <= view.targetDurationSec * .15);
+  const path = `${base}/runs/${view.id}/publish`;
+  if (!view.publish?.siteId) {
+    const [response] = await Promise.all([
+      page.waitForResponse(match(path, 'POST')),
+      page.locator('[data-qc=publish]').click(),
+    ]);
+    const published = await data(response, 'publish exact existing V9 browser film');
+    assert.ok(published.publish.siteId);
+    row.siteId = published.publish.siteId;
+  } else row.siteId = view.publish.siteId;
+  await page.locator('[data-qc=published]').waitFor();
+  await page.screenshot({ path: join(out, '25-v9-published.png') });
+  try {
+    const native = page.locator('[data-qc=export-start]:enabled');
+    await native.or(page.locator('[data-qc=export-unsupported]')).waitFor();
+    if (await native.count()) {
+      await native.click();
+      await page.getByRole('button', { name: '取消导出' }).click();
+      await native.waitFor();
+      await native.click();
+      const link = page.getByRole('link', { name: '下载文件' });
+      await link.waitFor({ timeout: 25 * 60_000 });
+      const [file] = await Promise.all([page.waitForEvent('download'), link.click()]);
+      assert.match(file.suggestedFilename(), /\.(mp4|webm)$/);
+      assert.ok(await file.path());
+      row.browserExport = 'pass';
+    }
+  } catch (error) {
+    receipt.failures.push({ id: view.id, code: 'native_browser_export', details: String(error.message).slice(0, 360) });
+  }
+  const cloud = await page.context().newPage();
+  await cloud.addInitScript(() => Object.defineProperty(globalThis, 'VideoEncoder', { configurable: true, value: undefined }));
+  await cloud.goto(new URL(`/quick-creation-agent?run=${encodeURIComponent(view.id)}`, origin).href);
+  await cloud.locator('[data-qc=export-unsupported]').waitFor();
+  await cloud.getByRole('button', { name: '请服务器导出' }).click();
+  await cloud.locator('[data-qc=cloud-export][data-state="queued"], [data-qc=cloud-export][data-state="running"], [data-qc=cloud-export][data-state="done"]').waitFor();
+  await cloud.reload();
+  const cloudButton = cloud.getByRole('button', { name: '下载云端导出的 MP4' });
+  await cloudButton.or(cloud.getByRole('button', { name: '重试服务器导出' })).waitFor({ timeout: 50 * 60_000 });
+  assert.ok(await cloudButton.isVisible(), 'Cloud export ended in the retry state');
+  const [download] = await Promise.all([cloud.waitForEvent('download'), cloudButton.click()]);
+  const exported = await readFile(await download.path());
+  assert.equal(exported.toString('ascii', 4, 8), 'ftyp');
+  row.cloudExport = 'pass';
+  row.cloudExportBytes = exported.length;
+  await cloud.close();
+  receipt.cases.push('original ADR V9 title, time axis, publication, and cloud export from an unsupported browser verified');
+}
+
 async function verifyPreview(page, view, row) {
   await page.goto(new URL(`/quick-creation-agent?run=${encodeURIComponent(view.id)}`, origin).href);
   await page.locator(`[data-run-id="${view.id}"] [data-qc=done-card]`).waitFor();
@@ -457,7 +557,14 @@ try {
   } finally {
     await phone.close();
   }
-  if (!generate && !verifyBrief) {
+  if (existingFilmId) {
+    try { await verifyExistingBrowserFilm(page, api); }
+    catch (error) {
+      await page.screenshot({ path: join(out, '26-v9-existing-film-failure.png') }).catch(() => {});
+      receipt.failures.push({ kind: 'video', code: 'existing_browser_film', details: String(error.message).slice(0, 400) });
+    }
+  }
+  if (!generate && !verifyBrief && !existingFilmId) {
     try { await verifyMaterialsBeforeGeneration(page, api, original); }
     catch (error) {
       await page.screenshot({ path: join(out, '15-pre-submit-failure.png') }).catch(() => {});

@@ -45,6 +45,10 @@ on:
         description: '可选的本账号旧视频任务编号，复用该任务稿件和风格完成重试验收'
         required: false
         default: ''
+      quick_creation_existing_film_id:
+        description: '复验该账号的 V9 试看或正式成片，不重复创建生成任务'
+        required: false
+        default: ''
       quick_creation_existing_web_id:
         description: '可选的本账号已发布网页任务编号，复验托管结果而不重复生成'
         required: false
@@ -283,6 +287,7 @@ jobs:
           E2E_QC_BRIEF: ${{ inputs.quick_creation_brief }}
           E2E_QC_RETRY_FILM: ${{ inputs.quick_creation_retry_film_id }}
           E2E_QC_EXISTING_WEB: ${{ inputs.quick_creation_existing_web_id }}
+          E2E_QC_EXISTING_FILM: ${{ inputs.quick_creation_existing_film_id }}
           E2E_USER: ${{ secrets.E2E_USER }}
           E2E_PASSWORD: ${{ secrets.E2E_PASSWORD }}
         run: node e2e/quick-creation-v6-acceptance.mjs
