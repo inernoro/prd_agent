@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { setTimeout as delay } from 'node:timers/promises';
 
 import { launch, loadConfig, createMobileContext, stepClick, stepShot, writeManifest } from
@@ -72,6 +73,53 @@ async function enter(page, mobile) {
   assert.equal(new URL(page.url()).searchParams.get('from'), 'web-pages');
   await page.getByRole('button', { name: '返回网页托管', exact: true }).waitFor();
   return composer;
+}
+
+async function verifyExistingFilm(page, id) {
+  assert.match(id, /^[a-f0-9]{32}$/);
+  await page.getByRole('button', { name: /^我的作品，共/ }).click();
+  const row = page.locator(`[data-qc=works] button[data-run-id="${id}"]`);
+  await row.click();
+  assert.equal(new URL(page.url()).searchParams.get('run'), id);
+  const video = page.locator('[data-qc=film]');
+  await video.waitFor();
+  await page.waitForFunction(() => document.querySelector('[data-qc=film]')?.readyState >= 2);
+  const duration = await video.evaluate(element => element.duration);
+  assert.ok(duration > 10);
+  const frameTimes = [6, 17, 29, 42, Math.floor(duration) - 1].filter(time => time < duration);
+  for (const time of frameTimes) {
+    await video.evaluate((element, seek) => {
+      element.pause();
+      return new Promise(resolve => {
+        element.addEventListener('seeked', () => resolve(), { once: true });
+        element.currentTime = seek;
+      });
+    }, time);
+    await video.screenshot({ path: join(out, `retained-film-${time}s.png`), scale: 'css' });
+  }
+  const result = await page.request.get(new URL(`/api/design-artifacts/runs/${id}/film.mp4`, origin).href,
+    { headers: { Authorization: `Bearer ${desktopToken}`, 'X-Client': 'admin' }, timeout: 75_000 });
+  assert.ok(result.ok());
+  const filmFile = join(process.env.RUNNER_TEMP, 'retained-v8-proof.mp4');
+  let probe;
+  try {
+    await writeFile(filmFile, await result.body());
+    probe = JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-show_entries',
+      'stream=codec_name,codec_type,width,height:format=duration', '-of', 'json', filmFile], { encoding: 'utf8' }));
+  } finally {
+    await rm(filmFile, { force: true });
+  }
+  await page.locator('[data-qc=open-hosting]').click();
+  let siteId;
+  await page.waitForURL(url => {
+    siteId = url.searchParams.get('focusSite');
+    return url.pathname === '/web-pages' && Boolean(siteId);
+  });
+  assert.match(siteId, /^[a-f0-9]{32}$/);
+  await page.locator(`[data-hosted-site-id="${siteId}"]`).first().waitFor();
+  const proof = { id, commit, duration, frameTimes, siteId, streams: probe.streams };
+  await writeFile(join(out, 'retained-film-review.json'), JSON.stringify(proof, null, 2));
+  await page.screenshot({ path: join(out, 'retained-film-hosting.png'), scale: 'css' });
 }
 
 async function verifyWebHandoff(page) {
@@ -167,6 +215,8 @@ try {
   themeSupport = { supportsLight: true, verifiedBy: 'skin settings then real landing' };
   if (verifyUserRequests) {
     await verifyWebHandoff(page);
+  } else if (process.env.E2E_QC_POLL_ID) {
+    await verifyExistingFilm(page, process.env.E2E_QC_POLL_ID);
   } else {
     await page.screenshot({ path: join(out, 'desktop-light-compose-css.png'), scale: 'css' });
     await stepShot(page, out, 3, 'desktop-web-compose', '快速创作：桌面入口默认选中网页，空稿时快捷生成禁用',
@@ -218,6 +268,6 @@ try {
   }
   verdict = 'conditional';
 } finally {
-  if (!verifyUserRequests) writeManifest(out, { target: 'MAP 快速创作 V8 入口及手机输入框', verdict, commit, themeSupport });
+  if (!verifyUserRequests && !process.env.E2E_QC_POLL_ID) writeManifest(out, { target: 'MAP 快速创作 V8 入口及手机输入框', verdict, commit, themeSupport });
   await browser.close();
 }
