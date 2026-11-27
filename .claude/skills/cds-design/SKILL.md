@@ -42,7 +42,7 @@ description: CDS 设计（精准技能）。用户说「/cds-design」、「发�
 按 `cds/reference/design-loop.md` 第一到第五节做，顺序固定：
 
 1. **找到稿件**：读设计接入清单，按 `designKey`（`<模块>/<稿件>`）匹配。匹配到就同稿续版，没有就新建（`cdscli design scaffold`）。
-2. **从 CDS 读上下文**：未关闭的评论、实施反馈、验收结果、实施基线。用户没说的不靠猜。
+2. **从 CDS 读上下文**：未关闭的评论、实施反馈、验收结果、实施基线。续版先读原稿「记录 → 反馈和资料」，包括已结案的业务变更。将已确认的实施行为沿用到原型和验收项，交付说明引用原反馈编号。需要改动已确认的行为时，先在原线程澄清并记录结论。
 3. **出稿**：
    - 原型用 `prototype-build.mjs` 在正式代码上构建（见第二节），新稿件从 `cdscli design scaffold` 开始，它会生成 `prototype.json` 和入口；
    - `design.json` 写 `goals`（每个目标写「怎么算做到」和它的验收项）、验收项（带 `slots`）、画面清单（真实页面的 `impl` 地址）、演示数据（`demoData`）；
@@ -53,7 +53,7 @@ description: CDS 设计（精准技能）。用户说「/cds-design」、「发�
    - G-11 回执给出缺项字段和规则编号。按业务依据补齐后重新预检，随后用同一稿件身份发布。
 5. **私有发布**：`cdscli --workspace-credential design publish --private`，回读核对版本和来源提交。
 6. **登记**：`release.mjs register --workspace-credential --dir design/<目录> --commit <来源提交>`。用自检通过的主机和项目核对稿件地址。使用已通过默认 CLI 自检的环境授权时，在同一环境省略该标志。
-7. **程序交接检查**：`cdscli --workspace-credential design handoff <稿件编号> --version <版号>`。记录固定版本回执，失败的入口和关键交互在同稿修正后重验。设计库封面由 CDS 从原型生成，交付包省略封面截图。
+7. **程序交接检查**：`cdscli --workspace-credential design handoff <稿件编号> --version <版号>`。按接入清单的 `handoffCaseLimit` 编排场景。记录固定版本回执，平台中断时重跑本版缺项，稿件的入口或关键交互失败时在同稿修正。设计库封面由 CDS 从原型生成，交付包省略封面截图。
 8. **交接**：在实施反馈线程回复，指向 `交接清单.md`，请实现方按验收项编号逐条回复。交接只走 CDS，不让用户转述。
 
 ## 四、交给实现方
