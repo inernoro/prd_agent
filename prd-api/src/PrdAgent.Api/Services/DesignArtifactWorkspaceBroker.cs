@@ -192,6 +192,12 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
             if (run.QuickCreation is { } webInput)
                 package = package with { Files = [.. package.Files, QuickCreationCatalog.FreezeWorkspaceGuide(webInput)] };
         }
+        if (run.QuickCreation?.BriefUserRequests is { Length: > 0 } userRequests)
+        {
+            var briefFile = DesignArtifactWorkspaceContract.ToFile(
+                QuickCreationInput.BriefUserRequestsPath, "text/plain", Encoding.UTF8.GetBytes(userRequests));
+            package = package with { Files = [.. package.Files, briefFile] };
+        }
         var bytes = DesignArtifactWorkspaceContract.ValidateInputPackageSize(package, MaxInputBytes);
         var inputSha256 = Sha256Hex(bytes);
         var inputAssetKey = _storage.TryBuildContentAddressedKey(

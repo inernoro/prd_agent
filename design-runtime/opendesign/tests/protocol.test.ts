@@ -301,6 +301,10 @@ describe('POST /v1/tasks', () => {
       return parseWorkspacePackage(bytes, task.transfer).files;
     };
     expect(parse(files).map(file => file.bytes)).toEqual([source, secondSource, guide, reference]);
+    const userRequests = Buffer.from('只展示第二部分\n\n不要出现联系方式');
+    const brief = original('brief/user-requests.txt', 'text/plain', userRequests);
+    expect(parse([...files, brief]).map(file => file.bytes)).toEqual([source, secondSource, guide, reference, userRequests]);
+    expect(() => parse([...files, { ...brief, mediaType: 'text/markdown' }])).toThrow('optional reference images');
     expect(() => parse([files[0], files[1], files[3]])).toThrow('one original STYLE.md');
     expect(() => parse([...files, original('brief/task.json', 'application/json', Buffer.from('{}'))])).toThrow('optional reference images');
   });

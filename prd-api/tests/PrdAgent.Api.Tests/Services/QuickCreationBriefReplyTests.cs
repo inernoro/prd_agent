@@ -1,5 +1,6 @@
 using System.Text.Json;
 using PrdAgent.Api.Controllers.Api;
+using PrdAgent.Core.Models;
 using Xunit;
 
 namespace PrdAgent.Api.Tests.Services;
@@ -20,6 +21,22 @@ public sealed class QuickCreationBriefReplyTests
         Assert.Equal("video", brief.Kind);
         Assert.Equal(new[] { "新产品发布", "团队招募" }, brief.QuickReplies);
         Assert.False(brief.StartRequested);
+    }
+
+    [Fact]
+    public void FreezeBriefUserRequests_UsesOnlyVerbatimUserRequestsInOrder()
+    {
+        QuickCreationBriefMessage[] messages =
+        [
+            new("selection", "user", "只展示第二部分\n保留标题原文"),
+            new("reply", "agent", "助手的理解回复"),
+            new("constraint", "user", "不要出现联系方式"),
+            new("confirmation", "user", "可以开始了。"),
+        ];
+
+        Assert.Equal("只展示第二部分\n保留标题原文\n\n不要出现联系方式",
+            DesignArtifactsController.FreezeBriefUserRequests(messages));
+        Assert.Empty(DesignArtifactsController.FreezeBriefUserRequests([]));
     }
 
     [Fact]

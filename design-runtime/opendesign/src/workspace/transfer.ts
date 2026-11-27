@@ -323,7 +323,10 @@ function validateQuickCreationFilmFiles(files: ParsedWorkspacePackage['files']):
   const guideIndex = files.findIndex(file =>
     file.mediaType === 'text/markdown' && /^styles\/[a-z0-9-]+\/STYLE\.md$/.test(file.path));
   const sources = files.slice(0, guideIndex);
-  const references = files.slice(guideIndex + 1);
+  const lastFile = files.at(-1);
+  // MAP appends the frozen user requests after original sources, style and references.
+  const hasBrief = lastFile?.path === 'brief/user-requests.txt' && lastFile.mediaType === 'text/plain';
+  const references = files.slice(guideIndex + 1, hasBrief ? -1 : undefined);
   if (guideIndex < 1 || !sources.every((file, index) =>
     file.path === `source-${index + 1}.md` && file.mediaType === 'text/markdown')
     || !references.every(file =>

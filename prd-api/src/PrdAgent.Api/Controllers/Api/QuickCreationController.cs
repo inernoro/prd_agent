@@ -237,11 +237,14 @@ public sealed partial class DesignArtifactsController
         {
             TemplateId = template.Id, StyleSha256 = QuickCreationCatalog.Hash(guide), Ask = ask, AttachmentIds = ids,
             BriefId = brief?.Id, BriefRevision = brief?.Revision, BriefContentSource = brief == null ? null : brief.SourceTitle == null ? "chat" : "doc",
+            BriefUserRequests = brief == null ? null : FreezeBriefUserRequests(brief.Messages),
             FilmTimeoutSeconds = film ? Math.Clamp(_configuration.GetValue<int?>("DesignRuntime:QuickCreation:FilmTimeoutSeconds") ?? 7200, 3300, 7200) : null,
         };
         var instruction = film
             ? $"用原版 Lemo-Opuscar 技能把附件稿件做成代码视频。风格：{template.Name}（{template.Id}）。完整读取随任务提供的 {template.PromptRef}，按原样说明执行。使用中文配音和同步字幕，交付可播放的 MP4。"
             : $"把附件稿件做成可阅读的网页。完整读取 {template.PromptRef}，按「{template.Name}」借鉴配色、字体与版式。正文以稿件为准。";
+        if (input.BriefUserRequests is { Length: > 0 })
+            instruction += $" 另请读取 {QuickCreationInput.BriefUserRequestsPath}，里面按顺序保留用户对作品的原话。";
         return await CreateRunCoreAsync(new CreateDesignArtifactRunRequest
         {
             ArtifactType = film ? DesignArtifactTypes.CodeFilm : DesignArtifactTypes.WebPage,
@@ -554,6 +557,11 @@ public sealed partial class DesignArtifactsController
 
     private BadRequestObjectResult QuickCreationError(string message) =>
         BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, message));
+
+    internal static string FreezeBriefUserRequests(IEnumerable<QuickCreationBriefMessage> messages) =>
+        string.Join("\n\n", messages
+            .Where(message => message.Role == "user" && !AllowsBriefStart(message.Text, true))
+            .Select(message => message.Text));
 
     private async Task<string> SaveBriefManuscriptAsync(QuickCreationBrief brief, CancellationToken ct)
     {
