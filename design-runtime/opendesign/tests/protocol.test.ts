@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { codeFilmDefaultAnswers, parseFilmCaptions, readFilmCaptionSidecar } from '../src/engine/code-film.js';
 import { FilmRecoveryStore } from '../src/engine/film-recovery.js';
+import { FilmProjectCheckpointStore, filmProjectInputHash } from '../src/engine/film-project-checkpoint.js';
 import { normalizeTaskRequest } from '../src/protocol.js';
 import { sha256 } from '../src/workspace/primitives.js';
 import { MAP_DESIGN_WORKSPACE_SCHEMA, parseWorkspacePackage } from '../src/workspace/transfer.js';
@@ -331,6 +332,83 @@ describe('POST /v1/tasks', () => {
       fs.rmSync(sidecar);
       fs.symlinkSync(separate, sidecar);
       expect(readFilmCaptionSidecar(film, 14)).toEqual({ captions, captionsBurnedIn: false });
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('restores a completed narration clip only for matching project owner and original inputs', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'film-project-'));
+    try {
+      const work = path.join(directory, 'work');
+      const next = path.join(directory, 'next');
+      fs.mkdirSync(next);
+      const project = path.join(work, 'review');
+      const voice = path.join(project, 'voice', 'out');
+      fs.mkdirSync(voice, { recursive: true });
+      fs.writeFileSync(path.join(project, 'TREATMENT.md'), '# Review');
+      const clip = Buffer.alloc(46);
+      clip.write('RIFF');
+      clip.writeUInt32LE(38, 4);
+      clip.write('WAVE', 8);
+      clip.write('fmt ', 12);
+      clip.writeUInt32LE(16, 16);
+      clip.writeUInt16LE(1, 20);
+      clip.writeUInt16LE(1, 22);
+      clip.writeUInt32LE(24000, 24);
+      clip.writeUInt32LE(48000, 28);
+      clip.writeUInt16LE(2, 32);
+      clip.writeUInt16LE(16, 34);
+      clip.write('data', 36);
+      clip.writeUInt32LE(2, 40);
+      fs.writeFileSync(path.join(voice, 'v01.wav'), clip);
+      fs.writeFileSync(path.join(voice, 'v02.wav'), clip.subarray(0, 20));
+      fs.symlinkSync('v01.wav', path.join(voice, 'external.wav'));
+      fs.writeFileSync(path.join(project, '.env'), 'not a checkpoint file');
+      const store = new FilmProjectCheckpointStore(path.join(directory, 'checkpoints'));
+      const hash = filmProjectInputHash('original', [{ path: 'source-1.md', sha256: 'source' }]);
+      expect(store.capture('first', 'owner', hash, work)).toBe(true);
+      fs.rmSync(work, { recursive: true });
+      expect(store.inspect('first')).toEqual({ completedScenes: 0, narrationClips: 1 });
+      expect(store.restore('first', 'someone-else', hash, next)).toBeUndefined();
+      expect(store.restore('first', 'owner', 'changed-input', next)).toBeUndefined();
+      const restored = store.restore('first', 'owner', hash, next);
+      expect(restored?.protectedMedia).toEqual([{ absolute: path.join(next, 'review', 'voice', 'out', 'v01.wav'), sha: sha256(clip), size: 46 }]);
+      expect(fs.readFileSync(restored!.protectedMedia[0].absolute)).toEqual(clip);
+      expect(fs.readdirSync(path.dirname(restored!.protectedMedia[0].absolute))).toEqual(['v01.wav']);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('identifies one missing scene from the saved order and requires a completed movie for retry', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'film-scene-'));
+    try {
+      const work = path.join(directory, 'work');
+      const next = path.join(directory, 'next');
+      fs.mkdirSync(next);
+      const project = path.join(work, 'review');
+      const scenes = path.join(project, 'scenes');
+      fs.mkdirSync(scenes, { recursive: true });
+      fs.writeFileSync(path.join(project, 'TREATMENT.md'), '# Review');
+      fs.writeFileSync(path.join(scenes, 'plan.json'), '[1,2,3,4,5,6]');
+      const box = (tag: string) => {
+        const value = Buffer.alloc(12);
+        value.writeUInt32BE(value.length);
+        value.write(tag, 4);
+        return value;
+      };
+      const movie = Buffer.concat([box('ftyp'), box('mdat'), box('moov')]);
+      for (const index of [1, 2, 3, 5, 6]) fs.writeFileSync(path.join(scenes, `${index}.mp4`), movie);
+      fs.writeFileSync(path.join(scenes, '4.mp4'), movie.subarray(0, 24));
+      const store = new FilmProjectCheckpointStore(path.join(directory, 'checkpoints'));
+      expect(store.capture('first', 'owner', 'inputs', work)).toBe(true);
+      expect(store.inspect('first')).toEqual({ completedScenes: 5, narrationClips: 0, incompleteScene: 4 });
+      const restored = store.restore('first', 'owner', 'inputs', next)!;
+      expect(FilmProjectCheckpointStore.hasCompletedScene(restored.root, 4)).toBe(false);
+      fs.writeFileSync(path.join(restored.root, 'scenes', '4.mp4'), movie);
+      expect(FilmProjectCheckpointStore.hasCompletedScene(restored.root, 4)).toBe(true);
+      expect(restored.protectedMedia.map(file => file.sha)).toEqual(Array(5).fill(sha256(movie)));
     } finally {
       fs.rmSync(directory, { recursive: true, force: true });
     }

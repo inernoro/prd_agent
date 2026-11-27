@@ -32,9 +32,10 @@ import {
 } from './artifact/public-package.js';
 import { runtimeDiagnosticPreview } from './diagnostics.js';
 import { OpenDesignClient, signalForDeadline, type OpenDesignRunOutcome } from './engine/client.js';
-import { codeFilmDefaultAnswers, collectCodeFilm, readCodeFilmMetadata, registerCodeFilmSkill, verifyCodeFilmInput } from './engine/code-film.js';
+import { codeFilmDefaultAnswers, collectCodeFilm, collectCodeFilmMetadata, registerCodeFilmSkill, verifyCodeFilmInput } from './engine/code-film.js';
 import { observeCodeFilmWork } from './engine/code-film-timing.js';
 import type { FilmRecoveryStore } from './engine/film-recovery.js';
+import { FilmProjectCheckpointStore, filmProjectInputHash } from './engine/film-project-checkpoint.js';
 import type { EngineDaemon } from './engine/daemon.js';
 import { startEgressRelay, type EgressRelay, type EgressRelayOptions } from './engine/egress-relay.js';
 import { registerPresentationSkill } from './engine/presentation-skill.js';
@@ -175,6 +176,7 @@ export interface ExecutorOptions {
   /** 浏览器检查在独立子进程执行；测试注入确定性 runner。 */
   browserQualityRunner?: BrowserQualityRunner;
   filmRecovery?: FilmRecoveryStore;
+  filmProjects?: FilmProjectCheckpointStore;
   log?: (message: string) => void;
 }
 
@@ -183,6 +185,8 @@ export interface DesignTaskInput {
   transfer: WorkspaceTransferRequest;
   previewUrl?: string;
   codeFilm?: boolean;
+  resumeFilmFrom?: string;
+  retryFilmScene?: number;
   model: OpenDesignModelAuthority;
   timeoutSeconds: number;
   /** 交给 OpenDesign 的第一轮指令：MAP 的任务信封（map-design-artifact-command-v2）序列化文本。 */
@@ -413,6 +417,29 @@ export class DesignTaskExecutor {
     if (!transferToken || transferToken.length > 8192) {
       throw new AgentWorkspaceRuntimeError('workspace_transfer_invalid', 'workspace transfer token is missing');
     }
+    const filmInputHash = task.codeFilm ? filmProjectInputHash(instruction, prepared.inputFiles) : undefined;
+    const restoredFilm = task.resumeFilmFrom && filmInputHash
+      ? this.options.filmProjects?.restore(task.resumeFilmFrom, model.userId, filmInputHash, workspaceDir)
+      : undefined;
+    const filmCheckpointPath = 'brief/film-checkpoint.json';
+    if (task.resumeFilmFrom) {
+      if (!restoredFilm) throw new AgentWorkspaceRuntimeError('code_film_checkpoint_unavailable', 'The original project checkpoint is unavailable');
+      if (task.retryFilmScene !== undefined && task.retryFilmScene !== restoredFilm.incompleteScene)
+        throw new AgentWorkspaceRuntimeError('code_film_checkpoint_unavailable', 'The saved scene plan does not match the requested retry');
+      this.chownForEngine(restoredFilm.root);
+      const checkpointFile = path.join(workspaceDir, filmCheckpointPath);
+      fs.mkdirSync(path.dirname(checkpointFile), { recursive: true });
+      fs.writeFileSync(checkpointFile, JSON.stringify({
+        action: task.retryFilmScene === undefined ? 'resume' : 'retry-scene',
+        projectPath: path.basename(restoredFilm.root),
+        scene: task.retryFilmScene,
+        retainedMedia: restoredFilm.protectedMedia.map(file => ({ path: path.relative(restoredFilm.root, file.absolute), sha256: file.sha })),
+      }), { flag: 'wx', mode: 0o644 });
+      this.chownForEngine(checkpointFile);
+      onStage('code_film_workspace_restored', {
+        previousTaskId: task.resumeFilmFrom, completedScenes: restoredFilm.completedScenes, narrationClips: restoredFilm.narrationClips,
+      });
+    }
     const designContext = collectDesignTaskContext(workspaceDir);
     const browserEvidenceDir = path.join(
       path.dirname(this.options.paths.outputDir),
@@ -559,27 +586,65 @@ export class DesignTaskExecutor {
           daemon.freeze();
           try {
             verifyCodeFilmInput(dataDir, workspaceDir, inputs);
-            return collectCodeFilm(workspaceDir, transfer.maxOutputBytes);
+            const film = collectCodeFilm(workspaceDir, transfer.maxOutputBytes);
+            if (film && restoredFilm && (path.dirname(film.source) !== restoredFilm.root
+              || (task.retryFilmScene !== undefined && !FilmProjectCheckpointStore.hasCompletedScene(restoredFilm.root, task.retryFilmScene))
+              || restoredFilm.protectedMedia.some(file => fs.realpathSync(file.absolute) !== file.absolute
+                || sha256(readRegularFileNoFollow(file.absolute, file.size)) !== file.sha))) {
+              throw new AgentWorkspaceRuntimeError('code_film_checkpoint_changed', 'The resumed run modified already completed media');
+            }
+            return film;
           } finally {
             daemon.thaw();
           }
         };
         onStage('open_design_run_starting', { projectId });
         const assistantMessageId = randomUUID();
-        const firstRunId = await startFilmTurn(instruction, assistantMessageId, inputs.map(input => input.path));
+        const attachments = inputs.map(input => input.path);
+        if (restoredFilm) attachments.push(filmCheckpointPath);
+        if (transfer.allowedOutputPaths.includes('film-preview.mp4')) {
+          const deliveryPath = 'brief/film-delivery.json';
+          const deliveryFile = path.join(workspaceDir, deliveryPath);
+          fs.mkdirSync(path.dirname(deliveryFile), { recursive: true });
+          // The user's command, skill and style stay byte-for-byte identical.
+          // This separate delivery descriptor is about the player's media formats.
+          fs.writeFileSync(deliveryFile, JSON.stringify({
+            master: '<film-name>.mp4', timedCaptions: '<film-name>.srt or subtitles_<language>.srt',
+            previewIfMasterHasBurnedCaptions: { file: '<film-name>.preview.mp4', captions: 'off', audio: 'same encoded audio stream as master' },
+          }), { flag: 'wx', mode: 0o644 });
+          this.chownForEngine(deliveryFile);
+          attachments.push(deliveryPath);
+        }
+        const firstRunId = await startFilmTurn(instruction, assistantMessageId, attachments);
         onStage('code_film_input_verified', { ...proof, runId: firstRunId, instructionSha256: sha256(instruction) });
-        const retainFilm = (film: WorkspacePackageFile) => {
+        const retainFilm = (film: WorkspacePackageFile): boolean => {
           try {
             if (this.options.filmRecovery?.retain(sessionId, film)) {
               onStage('code_film_retained', { sha256: film.sha256, bytes: film.size });
+              return true;
             }
           } catch {
             this.options.log?.(`[code-film] failed to retain task ${sessionId}`);
           }
+          return false;
         };
         this.captureInterruptedFilm = () => {
-          const film = getFilm();
-          if (film) retainFilm(film.film);
+          try {
+            const film = getFilm();
+            if (film && retainFilm(film.film)) return;
+          } catch {
+            // A partial final render must not prevent retaining its source and finished clips.
+          }
+          if (!filmInputHash) return;
+          daemon.freeze();
+          try {
+            verifyCodeFilmInput(dataDir, workspaceDir, inputs);
+            if (this.options.filmProjects?.capture(sessionId, model.userId, filmInputHash, workspaceDir)) {
+              onStage('code_film_workspace_retained');
+            }
+          } finally {
+            daemon.thaw();
+          }
         };
         let finalRunId = firstRunId;
         const startedAt = performance.now();
@@ -609,7 +674,11 @@ export class DesignTaskExecutor {
           retainFilm(film.film);
           this.captureInterruptedFilm = undefined;
           const outputs = [film.film];
-          if (transfer.allowedOutputPaths.includes('film.json')) outputs.push(readCodeFilmMetadata(film.source));
+          if (transfer.allowedOutputPaths.includes('film.json')) {
+            const limit = transfer.allowedOutputPaths.includes('film-preview.mp4')
+              ? Math.floor(transfer.maxOutputBytes * 0.75) - film.film.size - 512 * 1024 : 0;
+            outputs.push(...collectCodeFilmMetadata(film.source, limit));
+          }
           return await this.commitOutputs(task, prepared, outputs, finalRunId, executionDeadline, signal, onStage);
         } catch (error) {
           this.retainInterruptedFilm();

@@ -128,12 +128,13 @@ export interface QcFailure {
   stageKey: string;
   /** 视频：第几幕；网页：第几节 */
   unitIndex?: number;
+  completedScenes?: number;
   /** 一句话说明，先说结果 */
   message: string;
   /** 已经保存下来的东西 */
   saved: string[];
   /** 可用的恢复动作 */
-  actions: Array<'retry-unit' | 'retry-step' | 'skip-unit' | 'requeue'>;
+  actions: Array<'retry-unit' | 'retry-step' | 'skip-unit' | 'requeue' | 'resume'>;
 }
 
 export type PublishStatus = 'none' | 'publishing' | 'failed' | 'done';
@@ -173,6 +174,7 @@ export interface QcRun {
   keyPoints?: QcKeyPoint[];
   captions?: Array<{ fromSec: number; toSec: number; text: string }>;
   captionsBurnedIn?: boolean;
+  hasSubtitleFreePreview?: boolean;
   voice?: string;
   /** 成片媒体（视频产出完成后才有）：播放器直接播放它，字幕与重点随 currentTime 切换 */
   media?: { url: string; mime: string };

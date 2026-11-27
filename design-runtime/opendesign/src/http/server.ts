@@ -15,6 +15,7 @@ import { AgentWorkspaceRuntimeError } from '../errors.js';
 import { normalizeTaskRequest } from '../protocol.js';
 import type { TaskManager } from '../tasks.js';
 import type { FilmRecoveryStore } from '../engine/film-recovery.js';
+import type { FilmProjectCheckpointStore } from '../engine/film-project-checkpoint.js';
 import { sha256 } from '../workspace/primitives.js';
 
 const MAX_REQUEST_BODY_BYTES = 256 * 1024;
@@ -25,6 +26,7 @@ export interface ServerContext extends CapabilitiesContext {
   llmgwBaseUrl: string;
   tasks: TaskManager;
   filmRecovery?: FilmRecoveryStore;
+  filmProjects?: FilmProjectCheckpointStore;
 }
 
 function sendJson(res: http.ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}): void {
@@ -104,7 +106,7 @@ async function handle(context: ServerContext, req: http.IncomingMessage, res: ht
     return;
   }
 
-  const taskMatch = /^\/v1\/tasks(?:\/([a-zA-Z0-9][a-zA-Z0-9_-]{0,127})(?:\/(events|cancel|film-recovery))?)?$/.exec(url.pathname);
+  const taskMatch = /^\/v1\/tasks(?:\/([a-zA-Z0-9][a-zA-Z0-9_-]{0,127})(?:\/(events|cancel|film-recovery|film-project))?)?$/.exec(url.pathname);
   if (!taskMatch) {
     sendError(res, 404, { code: 'not_found', message: `没有这个接口：${method} ${url.pathname}` });
     return;
@@ -197,6 +199,17 @@ async function handle(context: ServerContext, req: http.IncomingMessage, res: ht
       'X-Content-Sha256': sha256(bytes),
     });
     res.end(bytes);
+    return;
+  }
+
+  if (action === 'film-project' && method === 'GET') {
+    const checkpoint = context.filmProjects?.inspect(taskId);
+    if (!checkpoint) {
+      sendError(res, 404, { code: 'checkpoint_not_retained', message: '没有可用的影片项目检查点' });
+      return;
+    }
+    res.setHeader('Cache-Control', 'no-store');
+    sendJson(res, 200, { checkpoint });
     return;
   }
 

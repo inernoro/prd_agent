@@ -106,6 +106,15 @@ export function normalizeTaskRequest(body: unknown, trustedLlmGwBaseUrl = 'http:
   const codeFilm = envelope.schemaVersion === 'map-code-film-command-v1';
   if (codeFilm && (envelope.runId !== taskId || typeof envelope.command !== 'string'
       || !envelope.command.trim() || envelope.command.length > 4_000)) invalid('invalid code film envelope');
+  const resumeFilmFrom = envelope.resumeFilmFrom;
+  if (resumeFilmFrom !== undefined && resumeFilmFrom !== null
+      && (!codeFilm || typeof resumeFilmFrom !== 'string' || !SESSION_ID_RE.test(resumeFilmFrom) || resumeFilmFrom === taskId)) {
+    invalid('invalid code film checkpoint identity');
+  }
+  const retryFilmScene = envelope.retryFilmScene;
+  if (retryFilmScene !== undefined && retryFilmScene !== null
+      && (typeof resumeFilmFrom !== 'string' || typeof retryFilmScene !== 'number' || !Number.isInteger(retryFilmScene)
+        || retryFilmScene < 1 || retryFilmScene > 100)) invalid('invalid code film retry scene');
   const transfer = normalizeWorkspaceTransfer(transferFields, codeFilm);
   let previewUrl: string | undefined;
   if (rawPreviewUrl !== undefined && rawPreviewUrl !== null) {
@@ -146,6 +155,8 @@ export function normalizeTaskRequest(body: unknown, trustedLlmGwBaseUrl = 'http:
     },
     timeoutSeconds,
     ...(codeFilm ? { codeFilm } : {}),
+    ...(typeof resumeFilmFrom === 'string' ? { resumeFilmFrom } : {}),
+    ...(typeof retryFilmScene === 'number' ? { retryFilmScene } : {}),
     instruction,
   }));
   return {
@@ -157,6 +168,8 @@ export function normalizeTaskRequest(body: unknown, trustedLlmGwBaseUrl = 'http:
     model,
     timeoutSeconds: Number(timeoutSeconds),
     ...(codeFilm ? { codeFilm } : {}),
+    ...(typeof resumeFilmFrom === 'string' ? { resumeFilmFrom } : {}),
+    ...(typeof retryFilmScene === 'number' ? { retryFilmScene } : {}),
     instruction,
   };
 }

@@ -55,7 +55,7 @@ export function streamQuickCreationBrief(id: string, body: {
 }
 
 /** 按任务当前支持的恢复动作提交，原稿与要求保存在原任务中。 */
-export function retryQuickCreationRun(runId: string, input: { action: 'retry-unit' | 'retry-step' | 'skip-unit' | 'requeue'; unitIndex?: number }) {
+export function retryQuickCreationRun(runId: string, input: { action: 'retry-unit' | 'retry-step' | 'skip-unit' | 'requeue' | 'resume'; unitIndex?: number }) {
   return apiRequest<QcRun>(`${base}/runs/${encodeURIComponent(runId)}/retry`, { method: 'POST', body: input });
 }
 
@@ -68,8 +68,8 @@ export function addKnowledgeAttachment(entryId: string, storeId?: string) {
   return apiRequest<QcAttachment>(`${base}/attachments/knowledge`, { method: 'POST', body: { entryId, storeId } });
 }
 
-export async function readQuickCreationFilm(runId: string) {
-  const file = await apiDownload(`/api/design-artifacts/runs/${encodeURIComponent(runId)}/film.mp4`, 'film.mp4');
+export async function readQuickCreationFilm(runId: string, subtitleFreePreview = false) {
+  const file = await apiDownload(`/api/design-artifacts/runs/${encodeURIComponent(runId)}/film.mp4${subtitleFreePreview ? '?preview=true' : ''}`, 'film.mp4');
   if (file.contentType.split(';')[0] !== 'video/mp4') {
     throw new Error('成片暂时无法读取');
   }

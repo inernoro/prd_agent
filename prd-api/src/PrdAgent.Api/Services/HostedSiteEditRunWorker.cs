@@ -199,7 +199,8 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         }
         await using var taskExecutionAttempt = await TaskExecutionAttempt.AcquireAsync(_taskExecutions, run.TaskPermitId, run.Id);
         if (taskExecutionAttempt.ShouldSkip) return;
-        if (run.ArtifactType == DesignArtifactTypes.CodeFilm && codeFilmSlot != null && run.CodeFilmRuntimeSlot == null)
+        if (run.ArtifactType == DesignArtifactTypes.CodeFilm && codeFilmSlot != null
+            && run.CodeFilmRuntimeSlot == null && run.ResumeFilmFromRunId == null)
         {
             var slot = codeFilmSlot.AbsoluteUri;
             var now = DateTime.UtcNow;

@@ -192,7 +192,7 @@ public sealed partial class DesignArtifactsController : ControllerBase
     private async Task<IActionResult> CreateRunCoreAsync(
         CreateDesignArtifactRunRequest request, QuickCreationInput? quickCreation = null,
         List<DesignReferenceImage>? quickImages = null, DesignArtifactDesignDirection? quickDirection = null,
-        string? retryOfRunId = null)
+        string? retryOfRunId = null, DesignArtifactRun? resumeFilm = null, int? retryFilmScene = null)
     {
         var userId = this.GetRequiredUserId();
         var taskPermitId = TaskExecutionContext.Current?.PermitId;
@@ -337,9 +337,10 @@ public sealed partial class DesignArtifactsController : ControllerBase
         DesignArtifactLlmRequestPolicy requestPolicy;
         try
         {
-            requestPolicy = await DesignArtifactModelSelection.CaptureForWebPageAsync(_configuration,
+            requestPolicy = resumeFilm?.LlmRequestPolicy ?? await DesignArtifactModelSelection.CaptureForWebPageAsync(_configuration,
                 _modelResolver, request.ModelOptionId, DesignArtifactOperations.Generate, CancellationToken.None);
-            if (isCodeFilm && _configuration["DesignRuntime:OpenDesign:CodeFilmReasoningEffort"] is { Length: > 0 } effort)
+            if (isCodeFilm && resumeFilm?.LlmRequestPolicy == null
+                && _configuration["DesignRuntime:OpenDesign:CodeFilmReasoningEffort"] is { Length: > 0 } effort)
             {
                 if (effort is not ("low" or "medium"))
                     throw new InvalidOperationException("代码视频推理档位须为 low 或 medium");
@@ -378,6 +379,9 @@ public sealed partial class DesignArtifactsController : ControllerBase
             ReferenceImages = quickImages,
             QuickCreation = quickCreation,
             RetryOfRunId = retryOfRunId,
+            ResumeFilmFromRunId = resumeFilm?.Id,
+            RetryFilmSceneIndex = retryFilmScene,
+            CodeFilmRuntimeSlot = resumeFilm?.CodeFilmRuntimeSlot,
             DesignDirection = designDirection,
             InputAuthority = snapshots.Count > 0 || uploadedSources.Count > 0
                 ? DesignArtifactInputAuthorities.MixedUserAndServerKnowledge
@@ -791,7 +795,7 @@ public sealed partial class DesignArtifactsController : ControllerBase
         string runId,
         [FromServices] IDesignArtifactWorkspaceBroker workspace,
         [FromServices] OpenDesignServiceArtifactExecutor recovery,
-        CancellationToken ct)
+        CancellationToken ct, [FromQuery] bool preview = false)
     {
         if (!CodeFilmEnabled()) return NotFound();
         var branchScope = DeploymentScope.CurrentDurable;
@@ -800,9 +804,10 @@ public sealed partial class DesignArtifactsController : ControllerBase
             .FirstOrDefaultAsync(ct);
         if (run == null && QuickCreationEnabled()) run = await FindSharedQuickRunAsync(runId, ct);
         if (run?.ArtifactType != DesignArtifactTypes.CodeFilm || run.Status == RunStatuses.Cancelled) return NotFound();
+        if (preview && run.QuickCreationMedia?.HasSubtitleFreePreview != true) return NotFound();
         try
         {
-            var bytes = await ReadCodeFilmAsync(run, workspace, recovery, ct);
+            var bytes = await ReadCodeFilmAsync(run, workspace, recovery, ct, preview);
             if (bytes == null) return NotFound();
             Response.Headers.CacheControl = "private, no-store";
             return File(bytes, "video/mp4", enableRangeProcessing: true);
@@ -860,12 +865,13 @@ public sealed partial class DesignArtifactsController : ControllerBase
         || (error is OperationCanceledException && !ct.IsCancellationRequested);
 
     private static async Task<byte[]?> ReadCodeFilmAsync(DesignArtifactRun run, IDesignArtifactWorkspaceBroker workspace,
-        OpenDesignServiceArtifactExecutor recovery, CancellationToken ct)
+        OpenDesignServiceArtifactExecutor recovery, CancellationToken ct, bool preview = false)
     {
         if (string.IsNullOrWhiteSpace(run.WorkspaceResultAssetKey))
-            return await recovery.ReadRetainedFilmAsync(run.Id, ct, run.CodeFilmRuntimeSlot);
+            return preview ? null : await recovery.ReadRetainedFilmAsync(run.Id, ct, run.CodeFilmRuntimeSlot);
         var package = await workspace.ReadCommittedCodeFilmAsync(run, ct);
-        return Convert.FromBase64String(package.Files.Single(file => file.Path == "film.mp4").ContentBase64);
+        var file = package.Files.SingleOrDefault(file => file.Path == (preview ? "film-preview.mp4" : "film.mp4"));
+        return file == null ? null : Convert.FromBase64String(file.ContentBase64);
     }
 
     [HttpPost("runs/{runId}/cancel")]

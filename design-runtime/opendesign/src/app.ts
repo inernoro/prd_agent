@@ -9,6 +9,7 @@ import { OpenDesignDaemon, type EngineDaemon } from './engine/daemon.js';
 import type { EgressRelay, EgressRelayOptions } from './engine/egress-relay.js';
 import { EngineLifecycle } from './engine/lifecycle.js';
 import { FilmRecoveryStore } from './engine/film-recovery.js';
+import { FilmProjectCheckpointStore } from './engine/film-project-checkpoint.js';
 import { runEngineSelfCheck, type EngineSelfCheck } from './engine/self-check.js';
 import { DesignTaskExecutor } from './executor.js';
 import { SubprocessBrowserQualityRunner, type BrowserQualityRunner } from './quality/browser-runner.js';
@@ -38,6 +39,7 @@ export interface DesignRuntime {
 export async function createDesignRuntime(config: ServiceConfig, overrides: DesignRuntimeOverrides = {}): Promise<DesignRuntime> {
   const log = overrides.log ?? ((line: string) => console.log(line));
   const filmRecovery = new FilmRecoveryStore(path.join(path.dirname(config.outputDir), 'film-recovery'));
+  const filmProjects = new FilmProjectCheckpointStore(path.join(filmRecovery.directory, 'projects'));
   const daemon = overrides.daemon ?? new OpenDesignDaemon({
     command: config.odCommand,
     cwd: config.odCwd,
@@ -83,6 +85,7 @@ export async function createDesignRuntime(config: ServiceConfig, overrides: Desi
     engineGid: config.engineGid,
     startRelay: overrides.startRelay,
     filmRecovery,
+    filmProjects,
     log,
     browserQualityRunner: overrides.browserQualityRunner
       ?? new SubprocessBrowserQualityRunner(config.engineUid, config.engineGid, config.engineHome),
@@ -110,6 +113,7 @@ export async function createDesignRuntime(config: ServiceConfig, overrides: Desi
     lifecycle,
     tasks,
     filmRecovery,
+    filmProjects,
   });
   return {
     server,

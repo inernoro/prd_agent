@@ -82,6 +82,8 @@ public class DesignArtifactRun : PrdAgent.Core.Interfaces.ITaskAuthorizedRun
     public DateTime? QuickCreationPublishedAt { get; set; }
     public QuickCreationMedia? QuickCreationMedia { get; set; }
     public string? RetryOfRunId { get; set; }
+    public string? ResumeFilmFromRunId { get; set; }
+    public int? RetryFilmSceneIndex { get; set; }
     /// <summary>仅由服务端新任务创建点写入；旧记录缺失时必须保持未准入。</summary>
     [System.Text.Json.Serialization.JsonIgnore]
     public string? TaskPermitId { get; set; }

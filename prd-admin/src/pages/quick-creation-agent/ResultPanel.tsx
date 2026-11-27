@@ -58,6 +58,25 @@ export function ProgressPreview({ run, template }: { run: QcRun; template: QcTem
       </div>
     );
   }
+  if (run.status === 'failed' && run.failure?.stageKey === 'scene' && run.failure.unitIndex && run.failure.completedScenes) {
+    const { unitIndex, completedScenes } = run.failure;
+    return (
+      <div className="h-full overflow-y-auto p-4 lg:p-5" data-qc="storyboard-preview">
+        <p className="text-sm text-token-secondary">分镜 · {completedScenes} / {completedScenes + 1} 幕已完成</p>
+        <ol className="grid grid-cols-3 gap-2.5 xl:grid-cols-6">
+          {Array.from({ length: completedScenes + 1 }, (_, offset) => {
+            const index = offset + 1;
+            const failed = index === unitIndex;
+            return <li key={index} data-scene={index} data-scene-status={failed ? 'failed' : 'ready'}
+              className={cn('rounded-lg border p-2 text-sm', failed ? 'border-[color:var(--accent-fg-error)] bg-[var(--semantic-danger-soft)]' : 'border-token-subtle')}>
+              <div className="font-medium text-token-primary">第 {index} 幕</div>
+              <div className="text-xs text-token-secondary">{failed ? '没有完成' : '已保存'}</div>
+            </li>;
+          })}
+        </ol>
+      </div>
+    );
+  }
   const scenes = run.scenes ?? [];
   const focus = scenes.find(s => s.status === 'failed') ?? scenes.find(s => s.status === 'voicing') ?? scenes.find(s => s.status === 'drawing')
     ?? [...scenes].reverse().find(s => s.status !== 'waiting');
@@ -139,13 +158,14 @@ export function VideoPlayer({ run, template }: { run: QcRun; template: QcTemplat
   const [mediaUrl, setMediaUrl] = useState<string | null>(null);
   const [filmAttempt, setFilmAttempt] = useState(0);
   const mediaAvailable = !!run.media;
+  const subtitleFreePreview = run.hasSubtitleFreePreview === true;
   useEffect(() => {
     setMediaUrl(null);
     setBlocked(null);
     if (!mediaAvailable) return;
     let active = true;
     let objectUrl: string | null = null;
-    void readQuickCreationFilm(run.id).then(blob => {
+    void readQuickCreationFilm(run.id, subtitleFreePreview).then(blob => {
       if (!active) return;
       objectUrl = URL.createObjectURL(blob);
       setMediaUrl(objectUrl);
@@ -156,13 +176,13 @@ export function VideoPlayer({ run, template }: { run: QcRun; template: QcTemplat
       active = false;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [run.id, mediaAvailable, filmAttempt]);
+  }, [run.id, mediaAvailable, filmAttempt, subtitleFreePreview]);
   const media = mediaUrl ? { url: mediaUrl } : null;
   const current = useMemo(() => [...scenes].reverse().find(s => t >= s.startSec) ?? scenes[0], [scenes, t]);
   const currentCaption = run.captions?.find(caption => caption.fromSec <= t && t < caption.toSec)?.text;
-  const hasCaptions = !run.captionsBurnedIn && Boolean(run.captions?.length);
-  const captionAction = run.captionsBurnedIn ? '字幕已印在画面上'
-    : !hasCaptions ? '本片没有可切换的字幕轨' : captions ? '关闭字幕' : '打开字幕';
+  const hasCaptions = (!run.captionsBurnedIn || subtitleFreePreview) && Boolean(run.captions?.length);
+  const captionAction = hasCaptions ? (captions ? '关闭字幕' : '打开字幕')
+    : run.captionsBurnedIn ? '字幕已印在画面上' : '本片没有可切换的字幕轨';
 
   const seek = (sec: number) => {
     const el = video.current;

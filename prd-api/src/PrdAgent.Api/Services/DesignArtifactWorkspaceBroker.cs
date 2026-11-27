@@ -287,7 +287,7 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
             package.BaseRevision,
             MaxInputBytes,
             ResultLimit(run),
-            isCodeFilm ? run.QuickCreation == null ? ["film.mp4"] : ["film.mp4", "film.json"] : AllowedOutputPaths,
+            isCodeFilm ? run.QuickCreation == null ? ["film.mp4"] : ["film.mp4", "film.json", "film-preview.mp4"] : AllowedOutputPaths,
             isCodeFilm ? MaxCodeFilmOutputBytes : MaxPublicOutputBytes);
     }
 
@@ -1593,22 +1593,22 @@ public static class DesignArtifactWorkspaceContract
 
         if (isCodeFilm)
         {
-            if (package.Files.Count is < 1 or > 2 || package.Files[0] is not
+            if (package.Files.Count is < 1 or > 3 || package.Files[0] is not
                 { Path: "film.mp4", MediaType: "video/mp4" } film)
                 throw new InvalidOperationException("影片任务必须返回一份 MP4 成片");
-            byte[] video;
-            try
+            ValidateCodeFilmFile(film);
+            if (package.Files.Count >= 2)
             {
-                video = Convert.FromBase64String(film.ContentBase64);
+                var metadata = ParseQuickCreationMedia(package.Files[1]);
+                if (metadata.HasSubtitleFreePreview != (package.Files.Count == 3))
+                    throw new InvalidOperationException("成片字幕摘要与播放文件不一致");
+                if (metadata.HasSubtitleFreePreview)
+                {
+                    if (package.Files[2] is not { Path: "film-preview.mp4", MediaType: "video/mp4" } preview)
+                        throw new InvalidOperationException("字幕预览文件格式不正确");
+                    ValidateCodeFilmFile(preview);
+                }
             }
-            catch (FormatException)
-            {
-                throw new InvalidOperationException("影片文件编码不正确");
-            }
-            if (video.Length < 32 || !video.AsSpan(4, 4).SequenceEqual("ftyp"u8)
-                || video.LongLength != film.Size || !string.Equals(HashBytes(video), film.Sha256, StringComparison.Ordinal))
-                throw new InvalidOperationException("影片文件不完整或不是 MP4");
-            if (package.Files.Count == 2) ParseQuickCreationMedia(package.Files[1]);
             return new ParsedDesignWorkspaceResult(string.Empty, package.Files);
         }
 
@@ -1651,6 +1651,16 @@ public static class DesignArtifactWorkspaceContract
             verifiedFiles.Values.OrderBy(file => file.Path, StringComparer.Ordinal).ToArray());
     }
 
+    private static void ValidateCodeFilmFile(DesignWorkspaceFile film)
+    {
+        byte[] video;
+        try { video = Convert.FromBase64String(film.ContentBase64); }
+        catch (FormatException) { throw new InvalidOperationException("影片文件编码不正确"); }
+        if (video.Length < 32 || !video.AsSpan(4, 4).SequenceEqual("ftyp"u8)
+            || video.LongLength != film.Size || !string.Equals(HashBytes(video), film.Sha256, StringComparison.Ordinal))
+            throw new InvalidOperationException("影片文件不完整或不是 MP4");
+    }
+
     internal static QuickCreationMedia ParseQuickCreationMedia(DesignWorkspaceFile file)
     {
         if (file is not { Path: "film.json", MediaType: "application/json", Size: > 0 and <= 256 * 1024 }
@@ -1663,6 +1673,7 @@ public static class DesignArtifactWorkspaceContract
                 throw new InvalidOperationException("成片的音轨或字幕摘要校验失败");
             var media = JsonSerializer.Deserialize<QuickCreationMedia>(bytes, JsonOptions);
             if (media is not { HasAudio: true, DurationSec: > 0 and <= 7200, Captions.Count: <= 500 }
+                || (media.HasSubtitleFreePreview && (!media.CaptionsBurnedIn || media.Captions.Count == 0))
                 || media.Captions.Any(cue => !double.IsFinite(cue.FromSec) || !double.IsFinite(cue.ToSec)
                     || cue.FromSec < 0 || cue.ToSec <= cue.FromSec || cue.ToSec > media.DurationSec
                     || cue.Text is not { Length: > 0 and <= 300 }))

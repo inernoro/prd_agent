@@ -172,22 +172,57 @@ export function readFilmCaptionSidecar(file: string, durationSec: number) {
   return { captions: [], captionsBurnedIn: false };
 }
 
-/** Reads the finished file and adjacent caption output. Does not compose or modify the film. */
-export function readCodeFilmMetadata(file: string): WorkspacePackageFile {
+function probeCodeFilm(file: string) {
   const probe = JSON.parse(execFileSync('ffprobe', [
-    '-v', 'error', '-show_entries', 'format=duration:stream=codec_type',
+    '-v', 'error', '-protocol_whitelist', 'file,pipe',
+    '-show_entries', 'format=duration:stream=codec_type,start_time,width,height',
     '-of', 'json', file,
   ], { encoding: 'utf8', timeout: 8000, maxBuffer: 64 * 1024 })) as {
     format?: { duration?: string };
-    streams?: { codec_type?: string }[];
+    streams?: { codec_type?: string; start_time?: string; width?: number; height?: number }[];
   };
   const durationSec = Number(probe.format?.duration);
-  const hasAudio = probe.streams?.some(stream => stream.codec_type === 'audio') === true;
+  const audio = probe.streams?.find(stream => stream.codec_type === 'audio');
+  const video = probe.streams?.find(stream => stream.codec_type === 'video');
   if (!Number.isFinite(durationSec) || durationSec <= 0 || durationSec > 7200
-      || !probe.streams?.some(stream => stream.codec_type === 'video') || !hasAudio) {
+      || !video || !audio) {
     throw new AgentWorkspaceRuntimeError('design_output_invalid', 'The completed file must contain playable video and audio');
   }
-  const captions = readFilmCaptionSidecar(file, durationSec);
-  const bytes = Buffer.from(JSON.stringify({ durationSec, hasAudio, ...captions }), 'utf8');
-  return { path: 'film.json', mediaType: 'application/json', size: bytes.length, sha256: sha256(bytes), contentBase64: bytes.toString('base64') };
+  return { durationSec, audio, video };
+}
+
+function audioPacketDigest(file: string): string {
+  return execFileSync('ffmpeg', ['-v', 'error', '-nostdin', '-protocol_whitelist', 'file,pipe', '-i', file,
+    '-map', '0:a:0', '-c', 'copy', '-f', 'hash', '-hash', 'sha256', '-'], {
+    encoding: 'utf8', timeout: 8000, maxBuffer: 8 * 1024,
+  }).trim();
+}
+
+export function collectCodeFilmMetadata(file: string, previewLimit: number): WorkspacePackageFile[] {
+  const main = probeCodeFilm(file);
+  const captionTrack = readFilmCaptionSidecar(file, main.durationSec);
+  const previewPath = file.slice(0, -4) + '.preview.mp4';
+  let preview: WorkspacePackageFile | undefined;
+  if (captionTrack.captionsBurnedIn && previewLimit > 0 && fs.lstatSync(previewPath, { throwIfNoEntry: false })?.isFile()
+      && fs.realpathSync(previewPath) === previewPath) {
+    try {
+      const bytes = readRegularFileNoFollow(previewPath, previewLimit);
+      const alternate = probeCodeFilm(previewPath);
+      const digest = audioPacketDigest(file);
+      if (Math.abs(main.durationSec - alternate.durationSec) <= 0.06
+          && Math.abs(Number(main.audio.start_time) - Number(alternate.audio.start_time)) <= 0.035
+          && main.video.width === alternate.video.width && main.video.height === alternate.video.height
+          && /^SHA256=[0-9a-f]{64}$/i.test(digest) && digest === audioPacketDigest(previewPath)) {
+        preview = { path: 'film-preview.mp4', mediaType: 'video/mp4', size: bytes.length,
+          sha256: sha256(bytes), contentBase64: bytes.toString('base64') };
+      }
+    } catch {
+      // Play the verified original if the optional clean preview cannot be read.
+    }
+  }
+  const bytes = Buffer.from(JSON.stringify({ durationSec: main.durationSec, hasAudio: true,
+    ...captionTrack, hasSubtitleFreePreview: preview !== undefined }), 'utf8');
+  const metadata = { path: 'film.json', mediaType: 'application/json', size: bytes.length,
+    sha256: sha256(bytes), contentBase64: bytes.toString('base64') };
+  return preview ? [metadata, preview] : [metadata];
 }

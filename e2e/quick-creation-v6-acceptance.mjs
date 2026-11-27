@@ -160,8 +160,24 @@ async function verifyPreview(page, view, row) {
     const caption = view.captions?.find(cue => cue.toSec - cue.fromSec >= 0.25 && cue.toSec <= view.durationSec + 0.1);
     if (caption) {
       await video.evaluate((element, second) => { element.currentTime = second; }, (caption.fromSec + caption.toSec) / 2);
-      await page.waitForFunction(expected => document.querySelector('[data-qc=caption]')?.textContent === expected, caption.text);
-      row.captionSeek = 'pass';
+      row.captionsBurnedIn = view.captionsBurnedIn === true;
+      row.subtitleFreePreview = view.hasSubtitleFreePreview === true;
+      const toggle = page.locator('[data-qc=captions-toggle]');
+      if (row.captionsBurnedIn && !row.subtitleFreePreview) {
+        assert.equal(await toggle.isDisabled(), true);
+        row.captionSeek = 'burned-in-only';
+      } else {
+        const overlay = page.locator('[data-qc=caption]');
+        await page.waitForFunction(expected => document.querySelector('[data-qc=caption]')?.textContent === expected, caption.text);
+        await page.screenshot({ path: join(out, '07-video-captions-on.png') });
+        await toggle.click();
+        assert.equal(await toggle.getAttribute('aria-pressed'), 'false');
+        await overlay.waitFor({ state: 'hidden' });
+        await page.screenshot({ path: join(out, '07-video-captions-off.png') });
+        await toggle.click();
+        await overlay.waitFor({ state: 'visible' });
+        row.captionSeek = 'pass';
+      }
     }
   } else {
     const frame = page.frameLocator('[data-qc=web-preview] iframe');
@@ -364,7 +380,7 @@ try {
           await page.locator('[data-qc=published]').waitFor();
           row.siteId = a.publish.siteId;
           await page.screenshot({ path: join(out, `08-${view.kind}-published.png`) });
-          if (view.kind === 'video' && !row.captionSeek) {
+          if (view.kind === 'video' && row.captionSeek !== 'pass') {
             receipt.failures.push({ id, kind: view.kind, code: 'no_timed_caption_verified' });
           }
         } catch (error) {

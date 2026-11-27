@@ -120,6 +120,43 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
         return bytes;
     }
 
+    internal async Task<FilmProjectCheckpointSummary?> ReadFilmProjectAsync(DesignArtifactRun run, CancellationToken ct)
+    {
+        var transport = OpenDesignTransportResolver.ResolveForCodeFilmSlot(_configuration, run.CodeFilmRuntimeSlot);
+        if (transport.Transport != OpenDesignTransport.Service || transport.Problem != null
+            || transport.BaseUrl == null || transport.ApiKey == null) return null;
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeout.CancelAfter(ProbeTimeout);
+        using var request = new HttpRequestMessage(HttpMethod.Get,
+            Endpoint(transport, $"v1/tasks/{Uri.EscapeDataString(run.Id)}/film-project"));
+        Authorize(request, transport);
+        try
+        {
+            using var response = await CreateClient().SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
+            if (response.StatusCode == HttpStatusCode.NotFound) return null;
+            response.EnsureSuccessStatusCode();
+            await using var stream = await response.Content.ReadAsStreamAsync(timeout.Token);
+            var buffer = new byte[4096];
+            var size = await stream.ReadAtLeastAsync(buffer, buffer.Length, throwIfEndOfStream: false, cancellationToken: timeout.Token);
+            if (size == buffer.Length) return null;
+            var checkpoint = JsonNode.Parse(buffer.AsSpan(0, size))?["checkpoint"];
+            var scenes = checkpoint?["completedScenes"]?.GetValue<int>() ?? 0;
+            var voice = checkpoint?["narrationClips"]?.GetValue<int>() ?? 0;
+            if (scenes is < 0 or > 160 || voice is < 0 or > 160 || scenes + voice == 0) return null;
+            var incompleteScene = checkpoint?["incompleteScene"]?.GetValue<int>();
+            return new FilmProjectCheckpointSummary(scenes, voice,
+                incompleteScene >= 1 && incompleteScene <= scenes + 1 && scenes < 100 ? incompleteScene : null);
+        }
+        catch (Exception error) when (error is HttpRequestException or IOException or JsonException or FormatException or InvalidOperationException
+            || (error is OperationCanceledException && !ct.IsCancellationRequested))
+        {
+            _logger.LogWarning(error, "暂时无法确认原视频项目的检查点 run={RunId}", run.Id);
+            return null;
+        }
+    }
+
+    internal sealed record FilmProjectCheckpointSummary(int CompletedScenes, int NarrationClips, int? IncompleteScene);
+
     // ───────────────────────── 能力探针 ─────────────────────────
 
     public async Task<DesignArtifactProviderProbeResult> ProbeAsync(string userId, CancellationToken ct)
@@ -575,7 +612,9 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
             },
             ["timeoutSeconds"] = timeoutSeconds,
             ["envelope"] = run.ArtifactType == DesignArtifactTypes.CodeFilm
-                ? new JsonObject { ["schemaVersion"] = "map-code-film-command-v1", ["runId"] = run.Id, ["command"] = run.Instruction }
+                ? new JsonObject { ["schemaVersion"] = "map-code-film-command-v1", ["runId"] = run.Id,
+                    ["command"] = run.Instruction, ["resumeFilmFrom"] = run.ResumeFilmFromRunId,
+                    ["retryFilmScene"] = run.RetryFilmSceneIndex }
                 : JsonNode.Parse(DesignArtifactPromptBuilder.BuildRemoteEnvelope(run)),
         };
 

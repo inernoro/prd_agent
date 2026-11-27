@@ -115,9 +115,10 @@ export function QueueCard({ run }: { run: QcRun }) {
 }
 
 const ACTION_LABEL = (failure: QcFailure) => ({
-  'retry-unit': `重试${failure.unitIndex ? `第 ${failure.unitIndex} ${failure.stageKey === 'voice' ? '幕' : '节'}` : '这一步'}`,
+  'retry-unit': `重试${failure.unitIndex ? `第 ${failure.unitIndex} ${failure.stageKey === 'voice' || failure.stageKey === 'scene' ? '幕' : '节'}` : '这一步'}`,
   'retry-step': '重试这一步',
   'skip-unit': '跳过这一幕的旁白，继续合成',
+  resume: '重新排队，从这里继续',
   requeue: '用原稿重新排队',
 }) as const;
 

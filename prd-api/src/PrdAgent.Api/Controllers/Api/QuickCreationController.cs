@@ -356,29 +356,42 @@ public sealed partial class DesignArtifactsController
     }
 
     [HttpPost("/api/quick-creation/runs/{runId}/retry")]
-    public async Task<IActionResult> RetryQuickCreationRun(string runId, [FromBody] QuickCreationRetryRequest request, CancellationToken ct)
+    public async Task<IActionResult> RetryQuickCreationRun(string runId, [FromBody] QuickCreationRetryRequest request,
+        [FromServices] OpenDesignServiceArtifactExecutor recovery, CancellationToken ct)
     {
         if (!QuickCreationEnabled()) return NotFound();
         var run = await FindOwnedQuickRunAsync(runId, ct);
         if (run?.QuickCreation == null) return NotFound();
-        if (run.Status != RunStatuses.Error || request.Action != "requeue")
+        var resume = request.Action is "resume" or "retry-unit";
+        var retryFilmScene = request.Action == "retry-unit" ? request.UnitIndex : null;
+        if (run.Status != RunStatuses.Error || (!resume && request.Action != "requeue")
+            || (request.Action == "retry-unit" && retryFilmScene is not (>= 1 and <= 100))
+            || (resume && run.ArtifactType != DesignArtifactTypes.CodeFilm))
             return Conflict(ApiResponse<object>.Fail("RUN_RETRY_NOT_AVAILABLE", "这条任务目前无法按该操作恢复，原稿仍保留"));
         if (QuickCreationCatalog.Find(run.QuickCreation.TemplateId) is not { } template
             || run.QuickCreation.StyleSha256 != template.GuideSha256)
             return Conflict(ApiResponse<object>.Fail("STYLE_CHANGED", "原风格版本已变化，请先回看原稿再新建"));
 
-        // 使用原稿重新排队，保留旧任务。只有执行器提供了保全检查点时才能承诺从某一幕续做。
         await using var lease = await VideoAssetMutationLease.AcquireAsync(_db, "quick-creation-retry:" + run.Id, ct);
+        var resumeFrom = resume ? run.Id : null;
         var already = await _db.DesignArtifactRuns.Find(row => row.UserId == run.UserId
-                && row.QuickCreation != null && row.RetryOfRunId == run.Id && row.DeploymentSlug == DeploymentScope.Current)
+                && row.QuickCreation != null && row.RetryOfRunId == run.Id && row.DeploymentSlug == DeploymentScope.Current
+                && row.ResumeFilmFromRunId == resumeFrom && row.RetryFilmSceneIndex == retryFilmScene)
             .SortByDescending(row => row.CreatedAt).FirstOrDefaultAsync(ct);
         if (already != null) return Accepted(ApiResponse<object>.Ok(await ToQuickRunAsync(already, ct)));
+        if (resume)
+        {
+            var checkpoint = await recovery.ReadFilmProjectAsync(run, ct);
+            if (checkpoint == null || (retryFilmScene.HasValue && checkpoint.IncompleteScene != retryFilmScene))
+                return Conflict(ApiResponse<object>.Fail("FILM_CHECKPOINT_UNAVAILABLE", "暂时取不到对应的分镜或配音。稍后重试，或用原稿重新排队"));
+        }
         return await CreateRunCoreAsync(new CreateDesignArtifactRunRequest
         {
             ArtifactType = run.ArtifactType, Instruction = run.Instruction, Title = run.Title,
             AttachmentIds = run.UploadedSources?.Select(item => item.AttachmentId).ToList(),
             DestinationTeamId = run.DestinationTeamId,
-        }, run.QuickCreation, run.ReferenceImages, run.DesignDirection, retryOfRunId: run.Id);
+        }, run.QuickCreation, run.ReferenceImages, run.DesignDirection, retryOfRunId: run.Id, resumeFilm: resume ? run : null,
+            retryFilmScene: retryFilmScene);
     }
 
     private FilterDefinition<DesignArtifactRun> QuickCreationScope()
@@ -461,18 +474,34 @@ public sealed partial class DesignArtifactsController
             };
         }
         var stageStatus = status switch { "done" => "done", "failed" => "failed", "running" => "running", _ => "pending" };
+        var checkpoint = includePrivate && run.Status == RunStatuses.Error && run.ArtifactType == DesignArtifactTypes.CodeFilm
+            ? await HttpContext.RequestServices.GetRequiredService<OpenDesignServiceArtifactExecutor>().ReadFilmProjectAsync(run, ct)
+            : null;
+        var saved = new List<string> { "稿件", "创作要求", "所选风格" };
+        if (checkpoint is { CompletedScenes: > 0 }) saved.Add($"已完成的 {checkpoint.CompletedScenes} 幕");
+        if (checkpoint is { NarrationClips: > 0 }) saved.Add($"已生成的 {checkpoint.NarrationClips} 段配音");
+        var timedOut = run.RuntimeFailure?.Code == "open_design_run_timeout";
+        var incompleteScene = timedOut ? null : checkpoint?.IncompleteScene;
         object? failure = status == "failed" ? new
         {
-            stageKey = run.PhaseCode,
+            stageKey = incompleteScene.HasValue ? "scene" : run.PhaseCode,
+            unitIndex = incompleteScene,
+            completedScenes = checkpoint?.CompletedScenes,
             message = run.Status == RunStatuses.Cancelled ? "任务已停止，稿件和要求仍可回看"
-                : run.RuntimeFailure?.Code == "open_design_run_timeout" ? "生成超时，已停止"
+                : timedOut ? "生成超时，已停止"
+                : run.RuntimeFailure?.Code == "code_film_checkpoint_unavailable" ? "没能取回上次保留的分镜或配音"
+                : run.RuntimeFailure?.Code == "code_film_checkpoint_changed" ? "这次恢复改动了已完成的部分，原检查点仍保留"
+                : incompleteScene.HasValue ? $"第 {incompleteScene} 幕没有完成"
                 : "这次没有生成完，原稿和要求已保存",
-            saved = new[] { "稿件", "创作要求", "所选风格" },
-            actions = run.Status == RunStatuses.Error ? new[] { "requeue" } : Array.Empty<string>(),
+            saved,
+            actions = run.Status != RunStatuses.Error ? Array.Empty<string>()
+                : incompleteScene.HasValue ? new[] { "retry-unit", "requeue" }
+                : checkpoint != null ? new[] { "resume", "requeue" } : new[] { "requeue" },
         } : null;
         return new
         {
             run.Id, run.Title, kind = QuickKind(run), templateId = input.TemplateId,
+            recoveryFromRunId = includePrivate ? run.ResumeFilmFromRunId : null,
             contentSource = includePrivate ? input.BriefContentSource : null,
             ask = includePrivate ? input.Ask : string.Empty,
             briefUserRequests = includePrivate ? input.BriefUserRequests : null,
@@ -483,6 +512,7 @@ public sealed partial class DesignArtifactsController
             durationSec = run.QuickCreationMedia?.DurationSec,
             captions = run.QuickCreationMedia?.Captions,
             captionsBurnedIn = run.QuickCreationMedia?.CaptionsBurnedIn,
+            hasSubtitleFreePreview = run.QuickCreationMedia?.HasSubtitleFreePreview,
             stages = new[] { new { key = run.PhaseCode, label = run.Phase, status = stageStatus, run.Progress } },
             media = run.ArtifactType == DesignArtifactTypes.CodeFilm && status == "done"
                 ? new { url = $"/api/design-artifacts/runs/{run.Id}/film.mp4", mime = "video/mp4" } : null,
@@ -587,4 +617,4 @@ public sealed partial class DesignArtifactsController
 public sealed record QuickCreationTextRequest(string? Name, string? Text);
 public sealed record QuickCreationRunRequest(string? Kind, string? TemplateId, string? Ask, List<string>? AttachmentIds, string? Title,
     string? DestinationTeamId = null, string? BriefId = null, int? BriefRevision = null, string? BriefMode = null);
-public sealed record QuickCreationRetryRequest(string? Action);
+public sealed record QuickCreationRetryRequest(string? Action, int? UnitIndex = null);
