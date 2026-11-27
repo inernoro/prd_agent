@@ -823,6 +823,11 @@ for (const width of [1440, 375]) {
       const pathname = new URL(route.request().url()).pathname;
       let data: unknown = { items: [], total: 0, folders: [], tags: [], teams: [] };
       if (pathname === '/api/authz/me') data = { effectivePermissions: ['access', 'web-pages.read'], menuCatalog: [], isRoot: false };
+      if (pathname === '/api/changelog/current-week') {
+        const date = '2026-11-27';
+        data = { weekStart: date, weekEnd: date, fetchedAt: date, dataSourceAvailable: true,
+          source: 'local', totalDays: 0, totalEntries: 0, daysOffset: 0, hasMore: false, fragments: [] };
+      }
       if (pathname.endsWith('/api/quick-creation/templates')) data = {
         items: [{
           id: 'sketchnote', name: '视觉笔记', nameEn: 'Sketchnote', categoryId: 'presentation',
