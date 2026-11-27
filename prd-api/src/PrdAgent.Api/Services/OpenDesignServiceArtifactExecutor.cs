@@ -137,7 +137,7 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
             response.EnsureSuccessStatusCode();
             await using var stream = await response.Content.ReadAsStreamAsync(timeout.Token);
             var buffer = new byte[4096];
-            var size = await stream.ReadAtLeastAsync(buffer, buffer.Length, throwIfEndOfStream: false, cancellationToken: timeout.Token);
+            var size = await stream.ReadAtLeastAsync(buffer, buffer.Length, false, timeout.Token);
             if (size == buffer.Length) return null;
             var checkpoint = JsonNode.Parse(buffer.AsSpan(0, size))?["checkpoint"];
             var scenes = checkpoint?["completedScenes"]?.GetValue<int>() ?? 0;
