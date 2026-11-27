@@ -58,6 +58,13 @@
    "tag": "design/DSN-1400E277/v8",
    "committedAt": "2026-11-27T08:33:07+00:00",
    "subject": "style(design): 快速创作手机输入框做减法（未发布到 CDS）"
+  },
+  {
+   "version": 9,
+   "commit": "f2a55d367d690a105de3019c3ed5264e96376f46",
+   "tag": "design/DSN-1400E277/v9",
+   "committedAt": "2026-11-27T22:43:56+00:00",
+   "subject": "fix(design): 交接场景并到 24 个以内（CDS 每稿上限）"
   }
  ]
 }
