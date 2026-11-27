@@ -374,7 +374,7 @@ export function QuickCreationAgentPage() {
       </UserTurn>
       <AgentTurn status={agentStatus}>
         <p className="m-0 flex items-center gap-1.5 text-[12.5px] text-token-secondary" data-qc="saved-notice">
-          <Check size={14} className="shrink-0 text-[color:var(--accent-fg-success)]" aria-hidden />稿件和要求已保存。{run.status === 'queued' || run.status === 'running' ? '一支通常要 30–60 分钟，在后台进行，离开页面也会继续，完成后会通知你。' : ''}
+          <Check size={14} className="shrink-0 text-[color:var(--accent-fg-success)]" aria-hidden />稿件和要求已保存。{run.status === 'queued' || run.status === 'running' ? '任务会在后台继续，稍后可以从「我的作品」回看。' : ''}
         </p>
         {run.status === 'queued' && <QueueCard run={run} />}
         {run.status !== 'queued' && <RunProgress run={run} />}
@@ -490,8 +490,8 @@ export function QuickCreationAgentPage() {
       nextHint = run.publish.status === 'done' ? '已发布，网页托管里能找到它；改了稿件可以用同一份资料再做一个。' : '满意的话在左边发布到网页托管；发布只上传，不会重新生成。';
       body = run.kind === 'video' ? <VideoPlayer run={run} template={runTemplate} /> : <WebPreview run={run} template={runTemplate} />;
     } else {
-      previewTitle = run.kind === 'video' ? '分镜' : '页面';
-      previewNote = run.status === 'queued' ? '轮到后会自动开始' : run.status === 'failed' ? run.failure?.message ?? '没有完成' : liveStage?.detail ?? '正在生成';
+      previewTitle = run.kind === 'video' ? run.scenes?.length ? '分镜' : '视频进度' : '页面';
+      previewNote = run.status === 'queued' ? '轮到后会自动开始' : run.status === 'failed' ? run.failure?.message ?? '没有完成' : liveStage?.detail || liveStage?.label || '正在生成';
       nextHint = run.status === 'failed' ? '可回看原稿与要求并重新排队。' : '执行器有可预览的结果时会显示在这里。';
       body = run.kind === 'web' && run.previewHtml
         ? <WebPreview run={run} template={runTemplate} /> : <ProgressPreview run={run} template={runTemplate} />;
