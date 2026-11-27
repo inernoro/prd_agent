@@ -187,8 +187,10 @@ try {
     await verifyPreview(page, film, row);
     if (publishedCheck) {
       const captionToggle = page.locator('[data-qc=captions-toggle]');
-      assert.equal(await captionToggle.getAttribute('aria-label'), '本片没有可切换的字幕轨');
       assert.equal(await captionToggle.isEnabled(), false);
+      if (await captionToggle.getAttribute('aria-label') !== '本片没有可切换的字幕轨') {
+        receipt.failures.push({ id: film.id, kind: 'video', code: 'caption_control_label' });
+      }
       await verifyHosting(page, row);
       const web = await data(await api(`${base}/runs/${existingWebId}`), 'read completed webpage');
       assert.equal(web.kind, 'web');
