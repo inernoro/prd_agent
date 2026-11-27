@@ -23,7 +23,7 @@ if (retryFilmId) assert.match(retryFilmId, /^[a-f0-9]{32}$/);
 if (existingWebId) assert.match(existingWebId, /^[a-f0-9]{32}$/);
 const out = join(process.env.RUNNER_TEMP, 'dsn-1400e277-evidence');
 await mkdir(out, { recursive: true });
-const receipt = { design: 'DSN-1400E277', version: 7, commit, origin: origin.origin, cases: [], runs: [], failures: [] };
+const receipt = { design: 'DSN-1400E277', version: 8, commit, origin: origin.origin, cases: [], runs: [], failures: [] };
 const base = '/api/quick-creation';
 const sha256 = text => createHash('sha256').update(text).digest('hex');
 
@@ -80,13 +80,37 @@ async function verifyHostingEntry(page, mobile = false) {
     .or(page.getByRole('button', { name: /^网页(?:托管)?$/ }).filter({ visible: true })).first();
   await hosting.click();
   const generate = mobile
-    ? page.getByRole('button', { name: '生成网页', exact: true }).filter({ visible: true })
+    ? page.getByRole('button', { name: '生成', exact: true }).filter({ visible: true })
     : page.locator('[data-tour-id=webpages-generate-primary]');
+  if (!mobile) {
+    assert.equal((await generate.innerText()).trim(), '生成');
+    assert.equal(await page.locator('.web-hosting-toolbar-actions').getByRole('button', { name: '合集', exact: true }).count(), 0);
+  }
   await generate.click();
   await page.locator('[data-qc-ready=compose][data-output=web]').waitFor();
   assert.equal(new URL(page.url()).searchParams.get('from'), 'web-pages');
   await page.getByRole('button', { name: '返回网页托管', exact: true }).waitFor();
   await page.screenshot({ path: join(out, `10-${mobile ? 'phone' : 'desktop'}-hosting-entry.png`) });
+  if (mobile) {
+    const tools = page.locator('[data-qc=composer-tools]');
+    const plusButton = tools.locator('[data-qc=composer-plus]');
+    const plusMenu = page.locator('[data-qc=plus-menu]');
+    await plusButton.click();
+    await plusMenu.waitFor();
+    assert.deepEqual(await plusMenu.getByRole('button').allTextContents(), ['上传稿件或图片', '从知识库选择']);
+    await page.screenshot({ path: join(out, '10-phone-plus.png') });
+    await page.keyboard.press('Escape');
+    await plusMenu.waitFor({ state: 'hidden' });
+    await tools.locator('[data-qc=style-chip]').click();
+    const style = page.locator('[data-qc=style-popover]');
+    const output = style.getByRole('radiogroup', { name: '选择产出' });
+    assert.equal(await output.getByRole('radio', { name: '网页', exact: true }).getAttribute('aria-checked'), 'true');
+    await page.screenshot({ path: join(out, '10-phone-style.png') });
+    await page.keyboard.press('Escape');
+    await style.waitFor({ state: 'hidden' });
+    assert.equal(await page.locator('[data-qc=block-reason]').count(), 0);
+    assert.equal(await tools.locator('[data-qc=brief-send]').isEnabled(), false);
+  }
   receipt.cases.push(`${mobile ? 'mobile' : 'desktop'} hosting generate button opens quick creation with webpage selected`);
 }
 
