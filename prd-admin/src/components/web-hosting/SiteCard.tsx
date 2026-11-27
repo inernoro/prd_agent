@@ -69,6 +69,7 @@ export interface SiteShareStats {
 
 export interface SiteCardProps {
   site: HostedSite;
+  pauseLivePreview?: boolean;
   size?: SiteCardSize;
   selected: boolean;
   selectionMode?: boolean;
@@ -181,6 +182,7 @@ export function buildCardActionLayers(args: {
  */
 export function SiteCard({
   site,
+  pauseLivePreview,
   size = 'medium',
   selected,
   selectionMode = false,
@@ -364,7 +366,7 @@ export function SiteCard({
               className="absolute inset-0 h-full w-full"
             />
           ) : (
-            <SitePreview site={site} url={site.siteUrl} className="h-full w-full" />
+            <SitePreview site={site} url={site.siteUrl} className="h-full w-full" paused={pauseLivePreview} />
           )}
 
           <div data-site-card-badges className="absolute left-2 top-2 z-20 inline-flex items-center gap-1" onClick={event => event.stopPropagation()}>

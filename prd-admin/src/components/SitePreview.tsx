@@ -50,6 +50,7 @@ export function SitePreview({
   className,
   style,
   decorative = false,
+  paused = false,
 }: {
   url: string;
   /**
@@ -60,6 +61,8 @@ export function SitePreview({
   className?: string;
   style?: React.CSSProperties;
   decorative?: boolean;
+  /** 搜索框聚焦时保留占位，避免托管页面脚本抢走输入焦点。 */
+  paused?: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [loaded, setLoaded] = useState(false);
@@ -71,9 +74,10 @@ export function SitePreview({
   const [attempt, setAttempt] = useState(0);
   const iframeWidth = 1280;
   const iframeHeight = 800;
+  const active = inView && !paused;
 
   // 只有进入视口才去取正文，和 iframe 懒挂同一个开关，列表不会一次性打几十个接口
-  const { srcDoc, error: htmlError, loading: htmlLoading } = useSitePreviewHtml(site ?? null, inView);
+  const { srcDoc, error: htmlError, loading: htmlLoading } = useSitePreviewHtml(site ?? null, active);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -85,6 +89,13 @@ export function SitePreview({
 
   // 懒挂：进入视口（含预加载边距）才挂载 iframe，离开视口卸载，避免离屏卡片下载整页
   useEffect(() => {
+    if (paused) {
+      setInView(false);
+      setLoaded(false);
+      setRevealed(false);
+      setAttempt(0);
+      return;
+    }
     const el = containerRef.current;
     if (!el) return;
     const io = new IntersectionObserver(
@@ -101,7 +112,7 @@ export function SitePreview({
     );
     io.observe(el);
     return () => io.disconnect();
-  }, []);
+  }, [paused]);
 
   // 加载超时自愈：在视口内且未加载完、且未耗尽重挂次数时起一个退避超时兜底，
   // 到点仍未 onLoad（多为新上传对象 CDN 传播中导致 iframe 一直 pending）就重挂重试。
@@ -117,22 +128,22 @@ export function SitePreview({
   // srcDoc 路径不需要这套：内容已经在手里，不存在「传播中」。
   useEffect(() => {
     if (srcDoc) return;
-    if (!inView || loaded || attempt >= MAX_RETRIES) return;
+    if (!active || loaded || attempt >= MAX_RETRIES) return;
     const delay = RETRY_DELAYS_MS[attempt] ?? RETRY_DELAYS_MS[RETRY_DELAYS_MS.length - 1];
     const timer = setTimeout(() => setAttempt((a) => a + 1), delay);
     return () => clearTimeout(timer);
-  }, [inView, loaded, attempt, srcDoc]);
+  }, [active, loaded, attempt, srcDoc]);
 
   // 首绘窗口：进入视口后给 iframe 一段时间自己画，到点即淡入，不再等 load 事件。
   // 重挂（attempt 变化）会重开一次窗口，但**不回退 revealed**——已经显示出来的画面不该再被
   // 占位符盖回去（那会造成「闪回地球」的倒退感）。
   useEffect(() => {
-    if (!inView) return;
+    if (!active) return;
     const timer = setTimeout(() => setRevealed(true), FIRST_PAINT_MS);
     return () => clearTimeout(timer);
-  }, [inView, attempt]);
+  }, [active, attempt]);
 
-  const visible = inView && (loaded || revealed);
+  const visible = active && (loaded || revealed);
 
   const scale = containerW / iframeWidth;
   // 首次（attempt=0）用原始 URL 命中 CDN 缓存；重试时追加 _r 强制绕过 pending/缓存重新拉取
@@ -162,7 +173,7 @@ export function SitePreview({
         }}
       >
         <LayoutTemplate size={22} style={{ color: 'var(--text-tertiary)' }} />
-        {htmlError && !srcDoc && (
+        {active && htmlError && !srcDoc && (
           <span
             className="inline-flex items-center gap-1"
             style={{
@@ -175,11 +186,11 @@ export function SitePreview({
             <AlertTriangle size={10} /> 取不到正文 · 显示占位
           </span>
         )}
-        {htmlLoading && !srcDoc && (
+        {active && htmlLoading && !srcDoc && (
           <span className="site-preview-shimmer pointer-events-none absolute inset-0" aria-hidden />
         )}
       </div>
-      {inView && (
+      {active && (
         <iframe
           key={srcDoc ? 'srcdoc' : `direct-${attempt}`}
           src={srcDoc ? undefined : src}
