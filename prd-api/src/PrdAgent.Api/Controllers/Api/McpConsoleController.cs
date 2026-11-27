@@ -101,7 +101,7 @@ public class McpConsoleController : ControllerBase
                 //（海鲜市场：闸门在接口自己身上）恒为可用，拿权限位去判会把「其实签得出来」的显示成灰的；
                 // 而 document-store 有真实权限位、且等价于文档空间的读写权限，签发要查，这里就得跟着灰。
                 //
-                // 读与写要分开报：只有 web-pages.read 的人，整张卡是可用的，但写入那一档签不出来。
+                // 分档模块需要独立返回写入可用状态。
                 // 合成一个 Any() 会让向导把写入勾选框也点亮，勾了之后在后端交集校验那里才失败 ——
                 // 用户在最后一步才知道自己不该勾，这是把系统本来就知道的事推给他去撞。
                 availableToMe = ScopeAvailable(cap.ReadScope ?? cap.WriteScope, ownedPermissions),
@@ -128,46 +128,51 @@ public class McpConsoleController : ControllerBase
         foreach (var loggedKeyId in tally.ByKey.Keys) usageKeyIds.Add(loggedKeyId);
         var usageByKey = await _usage.GetTodayUsageAsync(usageKeyIds, ct);
 
-        var clients = keys.Select(k => new
+        var clients = keys.Select(k =>
         {
-            keyId = k.Id,
-            name = k.Name,
-            keyPrefix = k.KeyPrefix,
-            // 自动模式的清单是现算的，不是库里存的那份（存的是空）。面板必须显示「它此刻真拿得到什么」，
-            // 否则一把自动模式的钥匙在界面上会是「零个能力」，而它实际什么都调得动。
-            // 「已停用 / 过了宽限期」的那些要显示成零个 —— 这一行下面就写着 isActive=false，
-            // 旁边却列一串它根本调不动的能力，是同一行自己说两种话。
-            scopes = McpCapabilityCatalog.EffectiveScopesForKey(k, ownedPermissions, nowUtc),
-            scopeMode = k.ScopeMode == AgentApiKeyScopeMode.Auto ? "auto" : "manual",
-            webPublicExposureAllowed = k.WebPublicExposureAllowed,
-            mcpLiteraryImageModelMode = k.McpLiteraryImageModelMode == McpLiteraryImageModelMode.Fixed
-                ? "fixed"
-                : "follow-user-panel",
-            mcpLiteraryImageModelPublicId = k.McpLiteraryImageModelPublicId,
-            // 手动模式才有「你有、但没开给它」这件事 —— 自动模式按定义不会缺。
-            // 这正是「用户知道、钥匙没权限」：平台新上一块能力、或者他当初没勾，都落在这里。
-            // 用不了的钥匙也不谈「你还能再给它什么」—— 那句话的前提是它还能用。
-            missingCapabilities = k.ScopeMode == AgentApiKeyScopeMode.Auto
-                                  || !AgentApiKey.IsUsableAt(k, nowUtc, out _)
-                ? new List<object>()
-                : MissingCapabilitiesOf(k, ownedPermissions),
-            isActive = AgentApiKey.IsUsableAt(k, nowUtc, out _),
-            // 这份名单一开始就把 RevokedAt 非空的滤掉了（见上面的 allKeys.Where），
-            // 所以出现在这里而又不可用的，只可能是「停用」或「过了宽限期」——两种都还救得回来。
-            // 界面上原本一律写「已作废」，那是不可逆的意思，会让用户白白重接一台。
-            unusableReason = AgentApiKey.IsUsableAt(k, nowUtc, out _)
-                ? (string?)null
-                : !k.IsActive ? "disabled" : "expired",
-            expiresAt = k.ExpiresAt,
-            lastUsedAt = k.LastUsedAt,
-            todayCalls = tally.ByKey.TryGetValue(k.Id, out var keyCalls) ? keyCalls : 0,
-            dailyImageQuota = k.McpDailyImageQuota ?? McpUsageService.DefaultDailyImageQuota,
-            dailyWriteQuota = k.McpDailyWriteQuota ?? McpUsageService.DefaultDailyWriteQuota,
-            rateLimitPerMin = k.McpRateLimitPerMin ?? McpUsageService.DefaultRateLimitPerMin,
-            // 已用数读闸门那份计数器，不再由日志推算：两边口径必须是同一个，
-            // 否则面板显示还剩很多、智能体那边却已经被挡（或反过来）。
-            todayImages = usageByKey.TryGetValue(k.Id, out var u1) ? u1.Images : 0,
-            todayWrites = usageByKey.TryGetValue(k.Id, out var u2) ? u2.Writes : 0,
+            var scopes = McpCapabilityCatalog.EffectiveScopesForKey(k, ownedPermissions, nowUtc);
+            return new
+            {
+                keyId = k.Id,
+                name = k.Name,
+                keyPrefix = k.KeyPrefix,
+                // 自动模式的清单是现算的，不是库里存的那份（存的是空）。面板必须显示「它此刻真拿得到什么」，
+                // 否则一把自动模式的钥匙在界面上会是「零个能力」，而它实际什么都调得动。
+                // 「已停用 / 过了宽限期」的那些要显示成零个 —— 这一行下面就写着 isActive=false，
+                // 旁边却列一串它根本调不动的能力，是同一行自己说两种话。
+                scopes,
+                scopeMode = k.ScopeMode == AgentApiKeyScopeMode.Auto ? "auto" : "manual",
+                webPublicExposureAllowed = scopes
+                    .Contains(McpCapabilityCatalog.ScopeWebPagesWrite, StringComparer.OrdinalIgnoreCase),
+                mcpLiteraryImageModelMode = k.McpLiteraryImageModelMode == McpLiteraryImageModelMode.Fixed
+                    ? "fixed"
+                    : "follow-user-panel",
+                mcpLiteraryImageModelPublicId = k.McpLiteraryImageModelPublicId,
+                // 手动模式才有「你有、但没开给它」这件事 —— 自动模式按定义不会缺。
+                // 这正是「用户知道、钥匙没权限」：平台新上一块能力、或者他当初没勾，都落在这里。
+                // 用不了的钥匙也不谈「你还能再给它什么」—— 那句话的前提是它还能用。
+                missingCapabilities = k.ScopeMode == AgentApiKeyScopeMode.Auto
+                                      || !AgentApiKey.IsUsableAt(k, nowUtc, out _)
+                    ? new List<object>()
+                    : MissingCapabilitiesOf(k, ownedPermissions),
+                isActive = AgentApiKey.IsUsableAt(k, nowUtc, out _),
+                // 这份名单一开始就把 RevokedAt 非空的滤掉了（见上面的 allKeys.Where），
+                // 所以出现在这里而又不可用的，只可能是「停用」或「过了宽限期」——两种都还救得回来。
+                // 界面上原本一律写「已作废」，那是不可逆的意思，会让用户白白重接一台。
+                unusableReason = AgentApiKey.IsUsableAt(k, nowUtc, out _)
+                    ? (string?)null
+                    : !k.IsActive ? "disabled" : "expired",
+                expiresAt = k.ExpiresAt,
+                lastUsedAt = k.LastUsedAt,
+                todayCalls = tally.ByKey.TryGetValue(k.Id, out var keyCalls) ? keyCalls : 0,
+                dailyImageQuota = k.McpDailyImageQuota ?? McpUsageService.DefaultDailyImageQuota,
+                dailyWriteQuota = k.McpDailyWriteQuota ?? McpUsageService.DefaultDailyWriteQuota,
+                rateLimitPerMin = k.McpRateLimitPerMin ?? McpUsageService.DefaultRateLimitPerMin,
+                // 已用数读闸门那份计数器，不再由日志推算：两边口径必须是同一个，
+                // 否则面板显示还剩很多、智能体那边却已经被挡（或反过来）。
+                todayImages = usageByKey.TryGetValue(k.Id, out var u1) ? u1.Images : 0,
+                todayWrites = usageByKey.TryGetValue(k.Id, out var u2) ? u2.Writes : 0,
+            };
         }).ToList();
 
         return Ok(ApiResponse<object>.Ok(new
@@ -408,7 +413,7 @@ public class McpConsoleController : ControllerBase
     private static List<object> MissingCapabilitiesOf(AgentApiKey key, IReadOnlyList<string> ownedPermissions)
     {
         // held 必须取**有效**清单，不能读库里存的那份原始 scope。
-        // 权限被回收之后两者会分叉：一把存着 web-pages:write 的手动钥匙，主人被降成只读时，
+        // 权限被回收之后两者会分叉：一把存着写入 scope 的手动钥匙，主人失去该模块权限时，
         // 有效清单里那条 write 已经被剥掉（鉴权也不会认），可原始清单里它还在 ——
         // 而 ScopeSatisfies 认 write 蕴含 read，于是这里会判「读档也满足了」，
         // 把 Web 整块从「还能给它什么」里漏掉：那一行同时显示「一块能力都没有」和「没有缺的」。

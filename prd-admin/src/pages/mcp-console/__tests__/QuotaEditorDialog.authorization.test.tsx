@@ -33,15 +33,13 @@ async function render(value: McpClientDto = client, open = true, capabilities: M
     client={value} open={open} onOpenChange={onOpenChange} onSaved={onSaved} capabilities={capabilities} onRevoke={() => {}}
   />));
 }
-function checkbox() {
-  const input = container.querySelector<HTMLInputElement>('input[aria-describedby="mcp-web-public-exposure-hint"]');
-  expect(input).not.toBeNull();
-  return input!;
+function saveButton() {
+  const button = [...container.querySelectorAll('button')].find((item) => ['保存设置', '保存中…'].includes(item.textContent ?? ''));
+  expect(button).toBeDefined();
+  return button!;
 }
 async function save() {
-  const button = [...container.querySelectorAll('button')].find((item) => item.textContent === '保存设置');
-  expect(button).toBeDefined();
-  await act(async () => button!.click());
+  await act(async () => saveButton().click());
 }
 beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -51,7 +49,7 @@ beforeEach(() => {
 });
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); });
 
-describe('客户端独立公开发布授权', () => {
+describe('保存与读回', () => {
   it.each(['write', 'refresh'] as const)('在%s阶段取消并打开另一客户端后，旧保存不能关闭新编辑器', async (stage) => {
     let finish!: () => void;
     if (stage === 'write') {
@@ -60,117 +58,27 @@ describe('客户端独立公开发布授权', () => {
       }));
     } else onSaved.mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve; }));
     await render();
-    await act(async () => checkbox().click());
     await save();
     const cancel = [...container.querySelectorAll('button')].find((item) => item.textContent === '取消');
     await act(async () => cancel!.click());
     await render(client, false);
     await render({ ...client, keyId: 'another-client', name: '另一台客户端' }, true);
-    expect(checkbox().checked).toBe(false);
-    expect(checkbox().disabled).toBe(false);
+    expect(saveButton().disabled).toBe(false);
     onOpenChange.mockClear();
     await act(async () => finish());
     expect(onOpenChange).not.toHaveBeenCalled();
     expect(toast.success).not.toHaveBeenCalled();
-    expect(checkbox().checked).toBe(false);
   });
   it('列表读回完成前保留保存中状态，避免立即重开读到旧授权', async () => {
     let finishRefresh!: () => void;
     onSaved.mockImplementationOnce(() => new Promise<void>((resolve) => { finishRefresh = resolve; }));
     await render();
-    await act(async () => checkbox().click());
     await save();
     expect(onSaved).toHaveBeenCalledOnce();
     expect(onOpenChange).not.toHaveBeenCalled();
-    expect(checkbox().disabled).toBe(true);
+    expect(saveButton().disabled).toBe(true);
     await act(async () => finishRefresh());
     expect(onOpenChange).toHaveBeenCalledWith(false);
-  });
-  it('自动模式和存量缺省字段均保持关闭，普通设置保存不提交授权字段', async () => {
-    await render();
-    expect(checkbox().checked).toBe(false);
-    expect(checkbox().disabled).toBe(false);
-    expect(container.textContent).toContain('默认关闭，自动授权不会开启');
-    expect(container.textContent).toContain('已有分享链接请在网页托管中撤销');
-    await save();
-    expect(updateAgentApiKey).toHaveBeenCalledOnce();
-    expect(vi.mocked(updateAgentApiKey).mock.calls[0][0]).not.toHaveProperty('webPublicExposureAllowed');
-  });
-  it('主动勾选并保存才提交 true，同时保留配额和模型设置', async () => {
-    await render();
-    await act(async () => checkbox().click());
-    expect(updateAgentApiKey).not.toHaveBeenCalled();
-    await save();
-    expect(updateAgentApiKey).toHaveBeenCalledWith(expect.objectContaining({
-      id: 'client-auto', webPublicExposureAllowed: true,
-      mcpDailyImageQuota: 50, mcpDailyWriteQuota: 200, mcpRateLimitPerMin: 60,
-    }));
-    expect(vi.mocked(updateAgentApiKey).mock.calls[0][0]).not.toHaveProperty('mcpLiteraryImageModelMode');
-    expect(toast.success).toHaveBeenCalledWith('客户端设置已更新');
-    expect(onSaved).toHaveBeenCalledOnce();
-    expect(onOpenChange).toHaveBeenCalledWith(false);
-  });
-  it('取消发布授权不受未改动的失效模型配置阻挡', async () => {
-    await render({ ...client, webPublicExposureAllowed: true,
-      mcpLiteraryImageModelMode: 'fixed', mcpLiteraryImageModelPublicId: 'retired-model' });
-    await act(async () => checkbox().click());
-    await save();
-    const input = vi.mocked(updateAgentApiKey).mock.calls[0][0];
-    expect(input.webPublicExposureAllowed).toBe(false);
-    expect(input).not.toHaveProperty('mcpLiteraryImageModelMode');
-    expect(input).not.toHaveProperty('mcpLiteraryImageModelPublicId');
-    expect(toast.success).toHaveBeenCalled();
-  });
-  it('没有有效网页写权限时禁止开启授权', async () => {
-    await render({ ...client, scopes: ['web-pages:read'], webPublicExposureAllowed: false });
-    expect(checkbox().disabled).toBe(true);
-    expect(container.textContent).toContain('需先授予网页托管写入权限');
-    await act(async () => checkbox().click());
-    expect(checkbox().checked).toBe(false);
-    await save();
-    expect(vi.mocked(updateAgentApiKey).mock.calls[0][0]).not.toHaveProperty('webPublicExposureAllowed');
-  });
-  it('网页写权限的大小写遵循服务端 scope 匹配约定', async () => {
-    await render({ ...client, scopes: ['WEB-PAGES:WRITE'] });
-    expect(checkbox().disabled).toBe(false);
-    await act(async () => checkbox().click());
-    await save();
-    expect(updateAgentApiKey).toHaveBeenCalledWith(expect.objectContaining({ webPublicExposureAllowed: true }));
-  });
-  it('写权限被回收后仍允许取消已有公开授权', async () => {
-    await render({ ...client, scopes: [], webPublicExposureAllowed: true });
-    expect(checkbox().checked).toBe(true);
-    expect(checkbox().disabled).toBe(false);
-    await act(async () => checkbox().click());
-    await save();
-    expect(updateAgentApiKey).toHaveBeenCalledWith(expect.objectContaining({ webPublicExposureAllowed: false }));
-  });
-  it('保留已授权状态时不重新提交授权字段', async () => {
-    await render({ ...client, webPublicExposureAllowed: true });
-    expect(checkbox().checked).toBe(true);
-    await save();
-    expect(vi.mocked(updateAgentApiKey).mock.calls[0][0]).not.toHaveProperty('webPublicExposureAllowed');
-  });
-  it('取消后重开恢复服务端状态，不残留未保存勾选', async () => {
-    await render();
-    await act(async () => checkbox().click());
-    expect(checkbox().checked).toBe(true);
-    const cancel = [...container.querySelectorAll('button')].find((item) => item.textContent === '取消');
-    await act(async () => cancel!.click());
-    await render(client, false); await render(client, true);
-    expect(checkbox().checked).toBe(false);
-    expect(updateAgentApiKey).not.toHaveBeenCalled();
-  });
-  it('服务端拒绝授权时保留设置，不宣称成功', async () => {
-    vi.mocked(updateAgentApiKey).mockResolvedValue({
-      success: false, data: null, error: { code: 'PERMISSION_DENIED', message: '请使用用户登录态修改公开授权' },
-    });
-    await render();
-    await act(async () => checkbox().click());
-    await save();
-    expect(checkbox().checked).toBe(true);
-    expect(toast.error).toHaveBeenCalledWith('保存失败', '请使用用户登录态修改公开授权');
-    expect(onSaved).not.toHaveBeenCalled(); expect(onOpenChange).not.toHaveBeenCalled();
   });
 });
 
@@ -223,35 +131,21 @@ describe('派生发布权限不进入普通授权清单', () => {
 });
 
 
-const web: McpCapabilityDto = { ...tasks, key: 'web', title: '网页托管', readScope: 'web-pages:read', writeScope: 'web-pages:write' };
-describe('发布授权跟随当前编辑权限', () => {
-  it('同次保存新增网页写权限和独立发布授权', async () => {
-    await render({ ...client, scopeMode: 'manual', scopes: ['web-pages:read'] }, true, [web]);
-    expect(checkbox().disabled).toBe(true);
+const web: McpCapabilityDto = { ...tasks, key: 'web', title: '网页托管', readScope: null, writeScope: 'web-pages:write' };
+
+describe('网页托管使用一个授权', () => {
+  it.each(['write', 'none'] as const)('保存网页托管授权 %s', async (level) => {
+    const scopes = level === 'write' ? [] : ['web-pages:write'];
+    await render({ ...client, scopeMode: 'manual', scopes }, true, [web]);
     const access = container.querySelector<HTMLSelectElement>('[aria-label="网页托管访问权限"]')!;
-    await act(async () => { access.value = 'write'; access.dispatchEvent(new Event('change', { bubbles: true })); });
-    expect(checkbox().disabled).toBe(false);
-    await act(async () => checkbox().click());
+    expect([...access.options].map(option => option.text)).toEqual(['未开放', '完整权限']);
+    await act(async () => { access.value = level; access.dispatchEvent(new Event('change', { bubbles: true })); });
     await save();
-    expect(updateAgentApiKey).toHaveBeenCalledWith(expect.objectContaining({
-      mcpCapabilityAccess: { web: 'write' }, webPublicExposureAllowed: true,
-    }));
-  });
-  it('删除编辑中的网页写权限时取消尚未保存的发布授权', async () => {
-    await render({ ...client, scopeMode: 'manual', scopes: ['web-pages:read', 'web-pages:write'] }, true, [web]);
-    await act(async () => checkbox().click());
-    expect(checkbox().checked).toBe(true);
-    const access = container.querySelector<HTMLSelectElement>('[aria-label="网页托管访问权限"]')!;
-    await act(async () => { access.value = 'read'; access.dispatchEvent(new Event('change', { bubbles: true })); });
-    expect(checkbox().checked).toBe(false);
-    expect(checkbox().disabled).toBe(true);
-    await save();
-    expect(vi.mocked(updateAgentApiKey).mock.calls[0][0].mcpCapabilityAccess).toEqual({ web: 'read' });
-    expect(vi.mocked(updateAgentApiKey).mock.calls[0][0]).not.toHaveProperty('scopes');
-    expect(vi.mocked(updateAgentApiKey).mock.calls[0][0]).not.toHaveProperty('webPublicExposureAllowed');
+    const request = vi.mocked(updateAgentApiKey).mock.calls[0][0];
+    expect(request.mcpCapabilityAccess).toEqual({ web: level });
+    expect(request).not.toHaveProperty('webPublicExposureAllowed');
   });
 });
-
 
 describe('有效权限不覆盖存储配置', () => {
   it('账号权限被收回时只提交实际编辑的能力', async () => {

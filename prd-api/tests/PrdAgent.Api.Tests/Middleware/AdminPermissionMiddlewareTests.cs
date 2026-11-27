@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Security.Claims;
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc.Routing;
 using Microsoft.AspNetCore.Authorization;
@@ -10,6 +11,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using PrdAgent.Api.Controllers.Api;
 using PrdAgent.Api.Middleware;
+using PrdAgent.Api.Mcp;
 using PrdAgent.Api.Services;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Security;
@@ -21,6 +23,41 @@ namespace PrdAgent.Api.Tests.Middleware;
 
 public class AdminPermissionMiddlewareTests
 {
+    [Theory]
+    [InlineData("POST", "/api/web-pages/batch-delete", false, true, true)]
+    [InlineData("DELETE", "/api/web-pages/s", false, true, true)]
+    [InlineData("DELETE", "/api/web-pages/s", false, false, false)]
+    [InlineData("PUT", "/api/design-artifacts/generation-settings", false, true, false)]
+    [InlineData("PUT", "/api/design-artifacts/generation-settings", true, true, true)]
+    public async Task AgentWebHostingPermissionGrantsSiteManagementWithinItsModule(
+        string method, string path, bool ownerHasDesignWrite, bool hasWebScope, bool allowed)
+    {
+        var scanner = new Mock<IAdminControllerScanner>();
+        scanner.Setup(x => x.GetRequiredPermission(path, method)).Returns(AdminPermissionCatalog.WebPagesWrite);
+        var permissionService = new Mock<IAdminPermissionService>();
+        permissionService.Setup(x => x.GetEffectivePermissionsAsync("owner", false, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(ownerHasDesignWrite
+                ? [AdminPermissionCatalog.Access, AdminPermissionCatalog.WebPagesWrite]
+                : [AdminPermissionCatalog.Access, AdminPermissionCatalog.WebPagesRead]);
+        var claims = new List<Claim> { new("authType", "agent-apikey"), new("boundUserId", "owner") };
+        if (hasWebScope) claims.Add(new("scope", McpCapabilityCatalog.ScopeWebPagesWrite));
+        var context = new DefaultHttpContext { User = new ClaimsPrincipal(new ClaimsIdentity(claims, "ApiKey")) };
+        context.Request.Method = method;
+        context.Request.Path = path;
+        var forwarded = false;
+        var middleware = new AdminPermissionMiddleware(ctx =>
+        {
+            forwarded = true;
+            Assert.Equal("owner", ctx.User.FindFirst("sub")?.Value);
+            return Task.CompletedTask;
+        }, NullLogger<AdminPermissionMiddleware>.Instance, scanner.Object);
+
+        await middleware.Invoke(context, permissionService.Object);
+
+        Assert.Equal(allowed, forwarded);
+        Assert.Equal(allowed ? 200 : 403, context.Response.StatusCode);
+    }
+
     /// <summary>
     /// 放行清单与控制器路由是两份判据，漏一条不会红、只会让那条路在 run 票据校验前先 401
     /// （判据与接线纪律 形状 3）。这里反射控制器的真实路由逐条比对，让「新增端点忘了登记」当场判红。

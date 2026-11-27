@@ -34,6 +34,8 @@ public class McpDestructiveActionsTests
     /// <summary>这一轮 review 点名的那几条真实路由。</summary>
     [Theory]
     [InlineData("DELETE", "/api/web-pages/abc123")]
+    [InlineData("DELETE", "/api/open/web-pages/pages/abc123/extra")]
+    [InlineData("DELETE", "/api/open/web-pages/pages/")]
     [InlineData("DELETE", "/api/document-store/stores/s1")]
     [InlineData("POST", "/api/web-pages/batch-delete")]
     [InlineData("POST", "/api/web-pages/batch-delete/")]
@@ -57,6 +59,7 @@ public class McpDestructiveActionsTests
     [InlineData("POST", "/api/projects/batch-delete-preview")]
     // 内置的「网页托管发布」走的是这条 —— 最后一段是 pages，不该被公开发布那半句误伤
     [InlineData("POST", "/api/open/web-pages/pages")]
+    [InlineData("DELETE", "/api/open/web-pages/pages/s1")]
     // 分享链按工具说明只对本人与团队可见，不是公开发布
     [InlineData("POST", "/api/open/web-pages/pages/s1/share")]
     // 撤回是把东西收回来，本来就该放行

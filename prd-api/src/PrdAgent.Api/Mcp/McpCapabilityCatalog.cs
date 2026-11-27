@@ -68,7 +68,7 @@ public static class McpCapabilityCatalog
     public const string ScopeLiteraryUse = "literary-agent:use";
     public const string ScopeWebPagesRead = "web-pages:read";
     public const string ScopeWebPagesWrite = "web-pages:write";
-    // 不在普通 scope 白名单中：只能由独立的用户授权字段派生，不能靠传 scopes 或自动模式自授。
+    // 旧客户端和持久化记录可能仍返回这个派生标识。
     public const string ScopeWebPagesPublish = "web-pages:publish";
     public const string ScopeMarketplaceRead = "marketplace.skills:read";
     public const string ScopeMarketplaceWrite = "marketplace.skills:write";
@@ -120,11 +120,8 @@ public static class McpCapabilityCatalog
         {
             Key = "web",
             Title = "网页托管",
-            Summary = "托管 HTML、原始 ZIP 和图片；对外分享及已对外站点更新，需在客户端设置中单独开启对外发布授权。",
-            ReadScope = ScopeWebPagesRead,
+            Summary = "上传、编辑、删除、发布和分享账号有权操作的网页。",
             WriteScope = ScopeWebPagesWrite,
-            WriteNeedsApproval = true,
-            WriteImpliesRead = true,   // /api/open/web-pages 的列表端点是 [RequireScope(read, write)]
         },
         new()
         {
@@ -196,6 +193,9 @@ public static class McpCapabilityCatalog
     public static bool IsIssuancePermissionChecked(string scope) =>
         PermissionCheckedScopes.Contains(scope) || IssuanceOnlyPermissionCheckedScopes.Contains(scope);
 
+    public static string NormalizeScope(string scope) =>
+        string.Equals(scope, ScopeWebPagesRead, StringComparison.OrdinalIgnoreCase) ? ScopeWebPagesWrite : scope;
+
     /// <summary>
     /// 自动模式的密钥此刻拿得到哪些 scope —— 平台开放的全部可授予 scope 里，主人当前权限允许的那些。
     ///
@@ -233,6 +233,8 @@ public static class McpCapabilityCatalog
             : (storedScopes ?? Enumerable.Empty<string>())
                 .Where(s => !string.IsNullOrWhiteSpace(s))
                 .Where(s => !string.Equals(s, ScopeWebPagesPublish, StringComparison.OrdinalIgnoreCase))
+                .Select(NormalizeScope)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
                 .Where(s => !PermissionCheckedScopes.Contains(s) || PermissionsAllowScope(ownedPermissions, s))
                 .ToList();
 
@@ -254,14 +256,11 @@ public static class McpCapabilityCatalog
         DateTime nowUtc)
     {
         if (!AgentApiKey.IsUsableAt(key, nowUtc, out _)) return Array.Empty<string>();
-        var scopes = EffectiveScopesFor(key.ScopeMode, key.Scopes, ownedPermissions).ToList();
-        if (key.WebPublicExposureAllowed && scopes.Contains(ScopeWebPagesWrite, StringComparer.OrdinalIgnoreCase))
-            scopes.Add(ScopeWebPagesPublish);
-        return scopes;
+        return EffectiveScopesFor(key.ScopeMode, key.Scopes, ownedPermissions);
     }
 
     public static McpCapability? ByScope(string scope) =>
-        All.FirstOrDefault(c => c.AllScopes().Contains(scope, StringComparer.OrdinalIgnoreCase));
+        All.FirstOrDefault(c => c.AllScopes().Contains(NormalizeScope(scope), StringComparer.OrdinalIgnoreCase));
 
     /// <summary>归属某块能力的内置工具（按 scope 反查，不另维护清单）。</summary>
     public static IReadOnlyList<McpToolDef> ToolsOf(McpCapability capability)
@@ -297,6 +296,10 @@ public static class McpCapabilityCatalog
             string.Equals(p, AdminPermissionCatalog.Access, StringComparison.OrdinalIgnoreCase));
         if (!hasAccess) return false;
 
+        if (string.Equals(NormalizeScope(scope), ScopeWebPagesWrite, StringComparison.OrdinalIgnoreCase))
+            return ownedPermissions.Any(p => string.Equals(p, AdminPermissionCatalog.WebPagesRead, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(p, AdminPermissionCatalog.WebPagesWrite, StringComparison.OrdinalIgnoreCase));
+
         foreach (var owned in ownedPermissions)
         {
             if (string.Equals(owned, required, StringComparison.OrdinalIgnoreCase)) return true;
@@ -314,8 +317,9 @@ public static class McpCapabilityCatalog
     /// </summary>
     public static bool ScopeSatisfies(IReadOnlyCollection<string> owned, string required)
     {
+        required = NormalizeScope(required);
         foreach (var s in owned)
-            if (string.Equals(s, required, StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(NormalizeScope(s), required, StringComparison.OrdinalIgnoreCase))
                 return true;
 
         // 写蕴含读只在那块能力的真实闸门也蕴含时才成立（见 McpCapability.WriteImpliesRead）。

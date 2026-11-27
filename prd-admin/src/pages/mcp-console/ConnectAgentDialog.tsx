@@ -8,7 +8,6 @@ import {
   RotateCcw,
   Settings2,
   ShieldAlert,
-  X,
 } from 'lucide-react';
 import { Dialog } from '@/components/ui/Dialog';
 import { createAgentApiKey, getMcpVisibleTools } from '@/services';
@@ -54,7 +53,7 @@ function withTimeout<T>(task: Promise<T>, ms: number): Promise<T | null> {
  *   - 没动过高级设置 → 自动档，钥匙不存清单，平台以后新上一块能力它自动就有；
  *   - 动过 → 手动档，按当时那份清单钉死，平台新增的不会自动进来（面板会告诉用户「你还能给它什么」）。
  *
- * 站点删除仍不开放；可见性和分享操作走受控开放接口，遵循对象权限和资料确认。
+ * 网页托管权限包含站点的上传、更新、删除和分享。
  * 连接配置与技能包在同一屏交付，避免只接了工具却没有操作指引。
  */
 export function ConnectAgentDialog({
@@ -499,7 +498,7 @@ function ScopeDisclosure({
         </button>
       </div>
 
-      {/* 折叠态：告知可用能力与站点删除边界 */}
+      {/* 折叠态：告知可用能力 */}
       {!open && (
         <div className="flex flex-wrap gap-1.5">
           {granted.map((cap) => {
@@ -518,17 +517,6 @@ function ScopeDisclosure({
               </span>
             );
           })}
-          <span
-            className="flex h-[23px] items-center gap-1.5 rounded-full px-2.5 text-[11px]"
-            style={{
-              background: 'var(--semantic-neutral-soft)',
-              border: '1px solid var(--semantic-neutral-border)',
-              color: 'var(--text-muted)',
-            }}
-          >
-            <X size={11} aria-hidden />
-            站点删除不开放
-          </span>
         </div>
       )}
 
@@ -675,7 +663,7 @@ function ScopeDisclosure({
       )}
 
       <p className="text-[11px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
-        站点删除不开放。对外发布需在客户端设置中单独开启，分享仍需权限和资料确认；生图每天有额度上限。
+        网页托管权限包含上传、更新、公开、分享和删除。生图每天有额度上限。
       </p>
     </div>
   );

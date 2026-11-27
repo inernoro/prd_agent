@@ -17,6 +17,7 @@ export function changeCapabilityAccess(scopes: string[], cap: McpCapabilityDto, 
 
 /** 任务台 use 包含新增、建议和同步，不是只读权限。 */
 export function accessLabel(cap: Pick<McpCapabilityDto, 'key' | 'writeScope'>, level: AccessLevel): string {
+  if (cap.key === 'web' && level === 'write') return '完整权限';
   if (level === 'none') return '未开放';
   if (cap.key === 'tasks') return level === 'read' ? '使用任务台' : '管理任务台';
   return level === 'read' ? (cap.writeScope ? '只读' : '可查询') : '可执行';

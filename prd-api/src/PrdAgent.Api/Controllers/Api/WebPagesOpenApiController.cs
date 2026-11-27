@@ -13,21 +13,20 @@ namespace PrdAgent.Api.Controllers.Api;
 /// <summary>
 /// 网页托管开放接口 —— 供外部智能体（MCP 连接器）把写好的一页 HTML 直接托管出来。
 ///
-/// 鉴权：Authorization: Bearer sk-ak-xxxx（AgentApiKey）+ scope web-pages:read / web-pages:write。
+/// 鉴权：Authorization: Bearer sk-ak-xxxx（AgentApiKey），使用统一网页托管 scope。
 ///
 /// 为什么单独建：WebPagesController 走 JWT + GetRequiredUserId()（只读 sub），sk-ak 没有 sub 会 401。
 /// 这里走 ApiKey + RequireScope + boundUserId，业务落盘复用 IHostedSiteService（与人工上传同一条路径）。
 ///
 /// MCP 负责操作描述与元数据；原始文件通过受同一密钥权限和用量约束的 multipart 入口上传。
-/// 不提供站点删除；对外分享及可见性修改必须明确确认，且沿用私有资料核查。
+/// 站点和分享操作复用网页托管业务服务的对象权限和私有资料核查。
 /// </summary>
 [ApiController]
 [Route("api/open/web-pages")]
 [Authorize(AuthenticationSchemes = "ApiKey")]
 public partial class WebPagesOpenApiController : ControllerBase
 {
-    public const string ScopeRead = "web-pages:read";
-    public const string ScopeWrite = "web-pages:write";
+    public const string ScopeWrite = McpCapabilityCatalog.ScopeWebPagesWrite;
 
     /// <summary>
     /// 单页 HTML 上限 4MB —— 再大的东西不该由一次工具调用塞过来。
@@ -37,8 +36,6 @@ public partial class WebPagesOpenApiController : ControllerBase
     /// 都是字节。工具描述里写着 4MB，这里就得是 4MB。
     /// </summary>
     private const int MaxHtmlBytes = 4 * 1024 * 1024;
-
-
 
     private readonly IHostedSiteService _sites;
     private readonly MongoDbContext _db;
@@ -78,7 +75,6 @@ public partial class WebPagesOpenApiController : ControllerBase
         public string? Description { get; set; }
         public string? Folder { get; set; }
         public List<string>? Tags { get; set; }
-        public bool ConfirmedExposure { get; set; }
         /// <summary>幂等键：智能体重试时不会重复建站。</summary>
         public string? ClientRequestId { get; set; }
     }
@@ -160,7 +156,7 @@ public partial class WebPagesOpenApiController : ControllerBase
 
     /// <summary>列出我托管的站点（最新在前）。</summary>
     [HttpGet("pages")]
-    [RequireScope(ScopeRead, ScopeWrite)]
+    [RequireScope(ScopeWrite)]
     public async Task<IActionResult> ListPages([FromQuery] string? keyword, [FromQuery] int limit, CancellationToken ct)
     {
         var userId = GetBoundUserId();
@@ -192,7 +188,6 @@ public partial class WebPagesOpenApiController : ControllerBase
         public string? Title { get; set; }
         public string? Description { get; set; }
         public string? Visibility { get; set; }
-        public bool ConfirmedExposure { get; set; }
         public string? ConfirmedPrivateSourceFingerprint { get; set; }
         /// <summary>有效期天数，0 表示永久，1-365 表示天数；默认 7。</summary>
         public int? ExpiresInDays { get; set; }
@@ -200,7 +195,7 @@ public partial class WebPagesOpenApiController : ControllerBase
 
     /// <summary>
     /// 给某个站点建一条分享链接。
-    /// 默认 owner-only；明确确认后可设公开或登录可见，0 天表示永久。
+    /// 默认 owner-only；可设公开或登录可见，0 天表示永久。
     /// </summary>
     [HttpPost("pages/{siteId}/share")]
     [RequireScope(ScopeWrite)]
@@ -215,15 +210,13 @@ public partial class WebPagesOpenApiController : ControllerBase
         if (site == null || !await _sites.CanCreateShareAsync([siteId], userId, CancellationToken.None))
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "站点不存在或无分享权限"));
 
-        var settingsError = ValidateShareSettings(req?.Visibility, req?.ExpiresInDays, req?.ConfirmedExposure ?? false);
+        var settingsError = ValidateShareSettings(req?.Visibility, req?.ExpiresInDays);
         if (settingsError != null)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, settingsError));
         var visibility = NormalizeShareVisibility(req?.Visibility) ?? "owner-only";
         var days = req?.ExpiresInDays ?? 7;
         if (IsExternalVisibility(visibility))
         {
-            var grantError = RequireWebExposureGrant();
-            if (grantError != null) return grantError;
             var refusal = await EnforcePrivateSourcesAsync([site],
                 PrdAgent.Api.Services.HostedSitePrivateSourceActions.ShareCreate,
                 req?.ConfirmedPrivateSourceFingerprint);

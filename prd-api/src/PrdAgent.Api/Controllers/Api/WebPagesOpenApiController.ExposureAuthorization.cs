@@ -1,40 +1,14 @@
-using Microsoft.AspNetCore.Mvc;
 using MongoDB.Bson;
 using MongoDB.Driver;
-using PrdAgent.Api.Extensions;
-using PrdAgent.Api.Mcp;
 using PrdAgent.Core.Models;
 
 namespace PrdAgent.Api.Controllers.Api;
 
 public partial class WebPagesOpenApiController
 {
-    private bool HasWebExposureGrant => User.HasClaim("scope", McpCapabilityCatalog.ScopeWebPagesPublish);
-
-    private IActionResult? RequireWebExposureGrant()
-    {
-        if (HasWebExposureGrant) return null;
-        var response = ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED,
-            "此客户端缺少网页对外发布授权，本次操作未提交。若要委托这台客户端对外发布，请由账号本人在智能体接入台授权。");
-        response.Data = new { requiredScope = McpCapabilityCatalog.ScopeWebPagesPublish,
-            clientSettingsUrl = Request.ResolveAbsoluteUrl("/mcp-console") };
-        return StatusCode(403, response);
-    }
-
     private static bool IsExternallyAccessibleShare(WebPageShareLink share, string? proposedVisibility = null)
         => string.Equals(share.Purpose, "visit", StringComparison.OrdinalIgnoreCase)
             || (proposedVisibility ?? share.Visibility) != "owner-only";
-
-    private async Task<IActionResult?> CheckSiteExposureAsync(HostedSite site, bool confirmedExposure, CancellationToken ct = default)
-    {
-        if (HasWebExposureGrant && confirmedExposure) return null;
-        if (!await IsSiteExternallyAccessibleAsync(site, ct)) return null;
-        if (RequireWebExposureGrant() is { } grantError) return grantError;
-        var response = ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
-            "此网页已有对外访问入口。请先确认用户同意更新对外内容，再传 confirmedExposure=true。");
-        response.Data = new { siteId = site.Id, requiresExposureConfirmation = true };
-        return BadRequest(response);
-    }
 
     private async Task<bool> IsSiteExternallyAccessibleAsync(HostedSite site, CancellationToken ct)
     {

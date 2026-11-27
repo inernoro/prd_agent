@@ -21,15 +21,13 @@ public partial class WebPagesOpenApiController
     /// <summary>MCP 取得受限上传凭证；原文件由客户端直接 multipart 上传，不经过模型转写。</summary>
     [HttpGet("upload-info")]
     [RequireScope(ScopeWrite)]
-    public async Task<IActionResult> GetUploadInfo([FromQuery] string? siteId = null, [FromQuery] bool confirmedExposure = false)
+    public async Task<IActionResult> GetUploadInfo([FromQuery] string? siteId = null)
     {
         if (siteId != null)
         {
             var site = await _sites.GetByIdAsync(siteId, GetBoundUserId(), CancellationToken.None);
             if (site == null || !await _sites.CanEditSiteAsync(site, GetBoundUserId(), CancellationToken.None))
                 return MissingSite();
-            var grantError = await CheckSiteExposureAsync(site, confirmedExposure);
-            if (grantError != null) return grantError;
         }
         var apiKey = PrdAgent.Api.Authentication.ApiKeyCredentialHeaders.Read(Request) ?? string.Empty;
         if (!apiKey.StartsWith("sk-ak-", StringComparison.Ordinal))
@@ -56,9 +54,7 @@ public partial class WebPagesOpenApiController
             supportedExtensions = new[] { ".html", ".htm", ".zip", ".md", ".markdown", ".pdf", ".mp4", ".m4v", ".webm", ".mov", ".ogg", ".ogv" }
                 .Concat(WebPagesController.ImageExtensions).OrderBy(x => x, StringComparer.Ordinal).ToList(),
             fields = siteId == null ? new[] { "file", "title", "description", "folder", "tags", "uploadId", "clientRequestId" }
-                : new[] { "file", "uploadId", "clientRequestId", "confirmedExposure" },
-            requiredAdditionalFormFields = siteId != null && confirmedExposure
-                ? new Dictionary<string, string> { ["confirmedExposure"] = "true" } : null,
+                : new[] { "file", "uploadId", "clientRequestId" },
             instruction = "将原始文件作为 file 字段上传，直传文件最多 29 MiB；更大的文件请使用网页托管的分片上传。不要把 ZIP 重写成单页，不要把文件转为 base64。凭证仅用于本次指定上传路径，十分钟内有效；原密钥撤销或权限变化后立即失效。上传成功后读回 siteId 和文件清单核验。",
         }));
     }
@@ -77,12 +73,11 @@ public partial class WebPagesOpenApiController
     [RequestSizeLimit(MaxUploadRequestSize)]
     [RequestFormLimits(MultipartBodyLengthLimit = MaxDirectUploadFileBytes)]
     public Task<IActionResult> ReuploadFile(string siteId, IFormFile file,
-        [FromForm] string? uploadId, [FromForm] string? clientRequestId, [FromForm] bool confirmedExposure = false)
-        => StoreUploadedFileAsync(file, siteId, null, null, null, null, uploadId, clientRequestId, confirmedExposure);
+        [FromForm] string? uploadId, [FromForm] string? clientRequestId)
+        => StoreUploadedFileAsync(file, siteId, null, null, null, null, uploadId, clientRequestId);
 
     private async Task<IActionResult> StoreUploadedFileAsync(IFormFile? file, string? siteId,
-        string? title, string? description, string? folder, string? tags, string? uploadId, string? clientRequestId,
-        bool confirmedExposure = false)
+        string? title, string? description, string? folder, string? tags, string? uploadId, string? clientRequestId)
     {
         if (file == null || file.Length == 0)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请在 file 字段上传原始文件"));
@@ -98,8 +93,6 @@ public partial class WebPagesOpenApiController
         {
             var target = await _sites.GetByIdAsync(siteId, userId, CancellationToken.None);
             if (target == null || !await _sites.CanEditSiteAsync(target, userId, CancellationToken.None)) return MissingSite();
-            var grantError = await CheckSiteExposureAsync(target, confirmedExposure);
-            if (grantError != null) return grantError;
             if (sourceRef != null && target.LastReuploadRef == sourceRef)
                 return Ok(ApiResponse<object>.Ok(SiteDto(target, deduplicated: true)));
         }
@@ -173,13 +166,13 @@ public partial class WebPagesOpenApiController
             SHA256.HashData(Encoding.UTF8.GetBytes(GetBoundUserId() + ":" + id))).ToLowerInvariant();
 
     [HttpGet("upload-progress/{uploadId}")]
-    [RequireScope(ScopeRead, ScopeWrite)]
+    [RequireScope(ScopeWrite)]
     public async Task<IActionResult> GetUploadProgress(string uploadId)
         => Ok(ApiResponse<object>.Ok(new { progress = _uploadProgress == null ? null
             : await _uploadProgress.GetAsync(ScopedUploadId(uploadId)!, CancellationToken.None) }));
 
     [HttpGet("pages/{siteId}")]
-    [RequireScope(ScopeRead, ScopeWrite)]
+    [RequireScope(ScopeWrite)]
     public async Task<IActionResult> GetPage(string siteId, [FromQuery] int offset = 0, [FromQuery] int limit = 200)
     {
         if (offset < 0 || limit is < 1 or > 1000)
@@ -189,7 +182,7 @@ public partial class WebPagesOpenApiController
     }
 
     [HttpGet("pages/{siteId}/content")]
-    [RequireScope(ScopeRead, ScopeWrite)]
+    [RequireScope(ScopeWrite)]
     public async Task<IActionResult> GetPageContent(string siteId)
     {
         try
@@ -210,37 +203,31 @@ public partial class WebPagesOpenApiController
         if (error != null) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, error));
         var target = await _sites.GetByIdAsync(siteId, GetBoundUserId(), CancellationToken.None);
         if (target == null || !await _sites.CanEditSiteAsync(target, GetBoundUserId(), CancellationToken.None)) return MissingSite();
-        if (request.Title != null || request.Description != null)
-        {
-            var grantError = await CheckSiteExposureAsync(target, request.ConfirmedExposure);
-            if (grantError != null) return grantError;
-        }
         var site = await _sites.UpdateAsync(siteId, GetBoundUserId(), request.Title, request.Description,
             request.Tags, request.Folder, null, CancellationToken.None);
         return site == null ? MissingSite() : Ok(ApiResponse<object>.Ok(SiteDto(site)));
     }
 
     [HttpGet("pages/{siteId}/settings")]
-    [RequireScope(ScopeRead, ScopeWrite)]
+    [RequireScope(ScopeWrite)]
     public async Task<IActionResult> GetPageSettings(string siteId, CancellationToken ct)
     {
         var userId = GetBoundUserId();
         var site = await _sites.GetByIdAsync(siteId, userId, ct);
         if (site == null || !await _sites.CanEditSiteAsync(site, userId, ct)) return MissingSite();
         var externalAccess = await IsSiteExternallyAccessibleAsync(site, ct);
-        var canWrite = User.HasClaim("scope", ScopeWrite);
         return Ok(ApiResponse<object>.Ok(new
         {
             siteId, title = site.Title, visibility = site.Visibility, site.CommentsEnabled, externalAccess,
-            canWrite, canPublish = HasWebExposureGrant, canSetVisibility = canWrite && _sites.CanSetVisibility(site, userId),
-            canUpdateContent = canWrite && (!externalAccess || HasWebExposureGrant),
-            requiresExposureConfirmation = externalAccess,
+            canWrite = true, canPublish = true, canSetVisibility = _sites.CanSetVisibility(site, userId),
+            canUpdateContent = true,
+            requiresExposureConfirmation = false,
             clientSettingsUrl = Request.ResolveAbsoluteUrl("/mcp-console"),
         }));
     }
 
     [HttpGet("organization")]
-    [RequireScope(ScopeRead, ScopeWrite)]
+    [RequireScope(ScopeWrite)]
     public async Task<IActionResult> GetPageOrganization([FromQuery] int limit = 50, CancellationToken ct = default)
     {
         var userId = GetBoundUserId();
@@ -263,7 +250,6 @@ public partial class WebPagesOpenApiController
     public sealed class PageCommentsRequest
     {
         public bool? Enabled { get; set; }
-        public bool ConfirmedExposure { get; set; }
     }
 
     [HttpPatch("pages/{siteId}/comments-enabled")]
@@ -277,8 +263,6 @@ public partial class WebPagesOpenApiController
         {
             var site = await _sites.GetByIdAsync(siteId, userId, ct);
             if (site == null || !await _sites.CanEditSiteAsync(site, userId, ct)) return MissingSite();
-            var grantError = await CheckSiteExposureAsync(site, request.ConfirmedExposure, ct);
-            if (grantError != null) return grantError;
         }
         var updated = await _sites.SetCommentsEnabledAsync(siteId, userId, enabled, ct);
         return updated == null ? MissingSite() : Ok(ApiResponse<object>.Ok(new { siteId, updated.CommentsEnabled }));
@@ -287,7 +271,6 @@ public partial class WebPagesOpenApiController
     public class VisibilityRequest
     {
         public string? Visibility { get; set; }
-        public bool ConfirmedExposure { get; set; }
         public string? ConfirmedPrivateSourceFingerprint { get; set; }
     }
 
@@ -298,13 +281,6 @@ public partial class WebPagesOpenApiController
         var visibility = request.Visibility?.Trim().ToLowerInvariant();
         if (visibility is not "private" and not "public")
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "visibility 只能是 private 或 public"));
-        if (visibility == "public" && !request.ConfirmedExposure)
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "公开网页前，请明确确认用户要求公开，再传 confirmedExposure=true"));
-        if (visibility == "public")
-        {
-            var grantError = RequireWebExposureGrant();
-            if (grantError != null) return grantError;
-        }
         var fingerprintError = ValidatePrivateSourceFingerprint(request.ConfirmedPrivateSourceFingerprint);
         if (fingerprintError != null) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, fingerprintError));
         var userId = GetBoundUserId();
@@ -334,7 +310,7 @@ public partial class WebPagesOpenApiController
     }
 
     [HttpGet("shares")]
-    [RequireScope(ScopeRead, ScopeWrite)]
+    [RequireScope(ScopeWrite)]
     public async Task<IActionResult> ListPageShares([FromQuery] string? siteId = null)
     {
         var items = await _sites.ListSharesAsync(GetBoundUserId(), CancellationToken.None, includeRevoked: true, siteId: siteId);
@@ -350,7 +326,7 @@ public partial class WebPagesOpenApiController
     [RequireScope(ScopeWrite)]
     public async Task<IActionResult> UpdatePageShare(string shareId, [FromBody] ShareSettingsRequest request)
     {
-        var error = ValidateShareSettings(request.Visibility, request.ExpiresInDays, request.ConfirmedExposure)
+        var error = ValidateShareSettings(request.Visibility, request.ExpiresInDays)
             ?? ValidatePrivateSourceFingerprint(request.ConfirmedPrivateSourceFingerprint);
         if (error != null) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, error));
         var userId = GetBoundUserId();
@@ -359,13 +335,6 @@ public partial class WebPagesOpenApiController
         if (share == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "分享不存在或无权操作"));
         var visibility = NormalizeShareVisibility(request.Visibility);
         var external = IsExternallyAccessibleShare(share, visibility);
-        if (external)
-        {
-            var grantError = RequireWebExposureGrant();
-            if (grantError != null) return grantError;
-        }
-        if (external && request.ExpiresInDays != null && !request.ConfirmedExposure)
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "修改对外分享有效期前，请确认用户意图并传 confirmedExposure=true"));
         // 放宽范围或延续对外暴露时，均重新核查当前线上内容引用的私有资料。
         if (!share.IsRevoked && external
             && (visibility != null && visibility != share.Visibility || request.ExpiresInDays != null))
@@ -382,7 +351,6 @@ public partial class WebPagesOpenApiController
     public sealed class RenewPageShareRequest
     {
         public int ExtendDays { get; set; }
-        public bool ConfirmedExposure { get; set; }
         public string? ConfirmedPrivateSourceFingerprint { get; set; }
     }
 
@@ -400,10 +368,6 @@ public partial class WebPagesOpenApiController
         if (share == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "分享不存在或无权操作"));
         if (!share.IsRevoked && IsExternallyAccessibleShare(share))
         {
-            var grantError = RequireWebExposureGrant();
-            if (grantError != null) return grantError;
-            if (!request.ConfirmedExposure)
-                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "延长对外分享前，请确认用户意图并传 confirmedExposure=true"));
             var refusal = await EnforceSharePrivateSourcesAsync(share, request.ConfirmedPrivateSourceFingerprint);
             if (refusal != null) return refusal;
         }
@@ -425,16 +389,37 @@ public partial class WebPagesOpenApiController
             : NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "分享链接不存在或无权操作"));
     }
 
+    [HttpDelete("pages/{siteId}")]
+    [RequireScope(ScopeWrite)]
+    public async Task<IActionResult> DeletePage(string siteId, CancellationToken ct)
+    {
+        try
+        {
+            var deleted = await _sites.DeleteAsync(siteId, GetBoundUserId(), ct);
+            return deleted
+                ? Ok(ApiResponse<object>.Ok(new { deleted = true, cleanupPending = false }))
+                : MissingSite();
+        }
+        catch (HostedSiteDeletionPendingException ex)
+        {
+            return StatusCode(StatusCodes.Status202Accepted, ApiResponse<object>.Ok(new
+            {
+                deleted = false,
+                cleanupPending = true,
+                retryAutomatic = true,
+                attemptCount = ex.AttemptCount,
+            }));
+        }
+    }
+
     internal static string? NormalizeShareVisibility(string? visibility) => visibility?.Trim().ToLowerInvariant();
     internal static bool IsExternalVisibility(string? visibility) => visibility is "public" or "logged-in";
-    internal static string? ValidateShareSettings(string? visibility, int? days, bool confirmedExposure)
+    internal static string? ValidateShareSettings(string? visibility, int? days)
     {
         var normalized = NormalizeShareVisibility(visibility);
         if (normalized != null && normalized is not "owner-only" and not "logged-in" and not "public")
             return "visibility 只能是 owner-only、logged-in 或 public";
         if (days is < 0 or > 365) return "expiresInDays 必须在 0（永久）到 365 天之间";
-        if (IsExternalVisibility(normalized) && !confirmedExposure)
-            return "对外分享前，请明确确认用户要求该范围，再传 confirmedExposure=true";
         return null;
     }
 

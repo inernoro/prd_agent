@@ -197,7 +197,7 @@ public class McpGatewayController : ControllerBase
     internal static bool DynamicToolVisible(AgentOpenEndpoint e, HashSet<string> scopes, string? boundUserId)
     {
         if (!e.IsActive) return false;
-        // 收不回来的动作，这一版一律不给智能体 —— 见 IsDestructiveEndpoint。
+        // 通用登记接口与托管内置工具采用不同的注册路径。
         if (IsDestructiveEndpoint(e)) return false;
         var reqScopes = e.RequiredScopes ?? new List<string>();
         if (!reqScopes.Any(scopes.Contains)) return false;
@@ -206,29 +206,7 @@ public class McpGatewayController : ControllerBase
         return true;
     }
 
-    /// <summary>
-    /// 这条登记接口做的是不是「收不回来」的事。
-    ///
-    /// 接入向导底部对用户白纸黑字写着：删除和公开发布这类收不回来的动作，这一版一律不开放给智能体，
-    /// 不管你怎么勾。内置工具那边靠「压根没登记这类工具」来兑现，而登记表这条路是敞开的 ——
-    /// <c>AgentOpenEndpointsController</c> 的 AllowedMethods 明确收 DELETE，一旦有人登记一条，
-    /// 它就会跟着普通 <c>agent.*</c> scope 一起出现在 tools/list 里、也能被 tools/call 打到。
-    /// 那等于用户在向导里读到的承诺，从另一扇门被绕过去了。
-    ///
-    /// 破坏性动作要开放，需要的是它自己那一档 scope + 一次显式确认（计划里的第二阶段），
-    /// 在那份契约落地之前，列举和调用两处都不给。判据只此一处，两处共用同一个函数 ——
-    /// 各写一份的话，早晚出现「列表里看不见、直接按名字调却能打通」。
-    /// </summary>
-    /// <remarks>
-    /// 判据本身在 <see cref="McpDestructiveActions"/> —— 直连普通业务控制器那条路
-    /// （AgentApiKey 走 [Authorize] + AdminPermissionMiddleware 的 scope 授权）
-    /// 要用同一处判据，只在网关挡住等于只锁了正门。
-    ///
-    /// **必须连路径一起看，只传方法不够**：<c>AgentOpenEndpointsController</c> 收任意 POST 路径，
-    /// 所以有人能登记一条 <c>POST /api/web-pages/batch-delete</c> —— 方法是 POST，
-    /// 只认 DELETE 的判据放它过去，它照样出现在 tools/list、也照样能被 tools/call 打到。
-    /// 上一版这里只转调了 <c>IsDestructiveMethod</c>，等于「共用了那个类，没共用那条判据」。
-    /// </remarks>
+    /// <summary>动态登记接口在工具列举和调用时使用同一个方法与路径判据。</summary>
     internal static bool IsDestructiveEndpoint(AgentOpenEndpoint e)
         => McpDestructiveActions.IsDestructiveRequest(e.HttpMethod, e.Path);
 
@@ -397,7 +375,7 @@ public class McpGatewayController : ControllerBase
         // 不在白名单、还是这类动作压根不开放。
         if (IsDestructiveEndpoint(match))
             return await DeniedAsync(id, log,
-                "这个接口做的是删除类、收不回来的动作，这一版不开放给智能体 —— 请在网页里自己操作。", ct);
+                "这个登记接口不开放该操作，请使用 MAP 对应页面或内置工具。", ct);
         var ms = match.RequiredScopes ?? new List<string>();
         if (!ms.Any(scopes.Contains))
             return await DeniedAsync(id, log, "权限不足：当前密钥未授权此工具所需 scope。", ct);

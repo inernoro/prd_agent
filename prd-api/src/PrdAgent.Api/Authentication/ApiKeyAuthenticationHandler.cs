@@ -151,7 +151,7 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<ApiKeyAuthentic
 
             // 被剥掉的那几个要留痕：权限回收之后智能体会突然少几个工具，
             // 日志里没有这一行的话，排障时只看得到「它就是调不动」。
-            foreach (var dropped in storedScopes.Except(declaredScopes, StringComparer.OrdinalIgnoreCase))
+            foreach (var dropped in storedScopes.Select(McpCapabilityCatalog.NormalizeScope).Except(declaredScopes, StringComparer.OrdinalIgnoreCase))
             {
                 Logger.LogWarning("AgentApiKey {KeyId} 携带的 scope {Scope} 已失效：主人 {UserId} 当前没有对应权限位，本次请求按未授权处理",
                     key.Id, dropped, key.OwnerUserId);

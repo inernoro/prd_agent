@@ -82,7 +82,7 @@ public sealed class McpWebHostingCompletionTests
         var bytes = Zip(("index.html", "updated"));
         using var input = new MemoryStream(bytes);
         var response = await Controller(sites.Object).ReuploadFile("existing", new FormFile(input, 0, input.Length, "file", "new.zip"),
-            null, null, confirmedExposure: true);
+            null, null);
         Body(response).GetProperty("siteId").GetString().ShouldBe("existing");
         sites.VerifyAll();
         sites.VerifyNoOtherCalls();
@@ -175,7 +175,7 @@ public sealed class McpWebHostingCompletionTests
         sites.Setup(x => x.CreateShareWithReuseInfoAsync("u", "Tester", "s", null, "single", "Demo", null, null,
             0, CancellationToken.None, "share", false, "public", false, null)).ReturnsAsync((share, false));
         var controller = Controller(sites.Object, gate.Object, UsersDb());
-        var response = await controller.CreateShare("s", new() { Visibility = "public", ExpiresInDays = 0, ConfirmedExposure = true }, CancellationToken.None);
+        var response = await controller.CreateShare("s", new() { Visibility = "public", ExpiresInDays = 0 }, CancellationToken.None);
         var data = Body(response);
         data.GetProperty("expiresAt").ValueKind.ShouldBe(JsonValueKind.Null);
         data.GetProperty("visibility").GetString().ShouldBe("public");
@@ -185,15 +185,14 @@ public sealed class McpWebHostingCompletionTests
     }
 
     [Theory]
-    [InlineData("public", 0, true, true)]
-    [InlineData("logged-in", 365, true, true)]
-    [InlineData("owner-only", 0, false, true)]
-    [InlineData("public", 0, false, false)]
-    [InlineData("owner-only", -1, false, false)]
-    [InlineData("public", 366, true, false)]
-    [InlineData("invalid", 7, true, false)]
-    public void 分享设置_不静默改写范围和永久时间(string visibility, int days, bool confirmed, bool allowed)
-        => (WebPagesOpenApiController.ValidateShareSettings(visibility, days, confirmed) == null).ShouldBe(allowed);
+    [InlineData("public", 0, true)]
+    [InlineData("logged-in", 365, true)]
+    [InlineData("owner-only", 0, true)]
+    [InlineData("owner-only", -1, false)]
+    [InlineData("public", 366, false)]
+    [InlineData("invalid", 7, false)]
+    public void 分享设置_不静默改写范围和永久时间(string visibility, int days, bool allowed)
+        => (WebPagesOpenApiController.ValidateShareSettings(visibility, days) == null).ShouldBe(allowed);
 
     [Fact]
     public async Task 公开前必须通过创建者权限_不能靠能读网页就改可见性()
@@ -203,7 +202,7 @@ public sealed class McpWebHostingCompletionTests
         var site = new HostedSite { Id = "s", OwnerUserId = "other" };
         sites.Setup(x => x.GetByIdAsync("s", "u", It.IsAny<CancellationToken>())).ReturnsAsync(site);
         sites.Setup(x => x.CanSetVisibility(site, "u")).Returns(false);
-        var response = await Controller(sites.Object, gate.Object).SetPageVisibility("s", new() { Visibility = "public", ConfirmedExposure = true });
+        var response = await Controller(sites.Object, gate.Object).SetPageVisibility("s", new() { Visibility = "public" });
         response.ShouldBeOfType<NotFoundObjectResult>();
         gate.VerifyNoOtherCalls();
         sites.Verify(x => x.SetVisibilityAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
@@ -220,7 +219,7 @@ public sealed class McpWebHostingCompletionTests
         var report = new HostedSitePrivateSourceReport([new("s", "e", "Private document", "store", "Private", "owner-only")], "psc1:fingerprint", new Dictionary<string, string>());
         gate.Setup(x => x.EnforceForSitesAsync(It.IsAny<IReadOnlyList<HostedSite>>(), HostedSitePrivateSourceActions.SitePublic,
             "u", null, CancellationToken.None)).ReturnsAsync(new HostedSitePrivateSourceDecision(HostedSitePrivateSourceVerdict.ConfirmationRequired, report));
-        var response = await Controller(sites.Object, gate.Object).SetPageVisibility("s", new() { Visibility = "public", ConfirmedExposure = true });
+        var response = await Controller(sites.Object, gate.Object).SetPageVisibility("s", new() { Visibility = "public" });
         var conflict = response.ShouldBeOfType<ConflictObjectResult>();
         var payload = JsonSerializer.SerializeToElement(conflict.Value, new JsonSerializerOptions(JsonSerializerDefaults.Web));
         payload.GetProperty("data").GetProperty("fingerprint").GetString().ShouldBe("psc1:fingerprint");
@@ -243,7 +242,7 @@ public sealed class McpWebHostingCompletionTests
         IHostedSitePrivateSourceGate? gate = null, MongoDbContext? db = null)
     {
         var context = new DefaultHttpContext { User = new ClaimsPrincipal(new ClaimsIdentity(
-            [new("boundUserId", "u"), new("agentApiKeyId", "k"), new("scope", McpCapabilityCatalog.ScopeWebPagesPublish)], "ApiKey")) };
+            [new("boundUserId", "u"), new("agentApiKeyId", "k"), new("scope", McpCapabilityCatalog.ScopeWebPagesWrite)], "ApiKey")) };
         context.Request.Scheme = "https"; context.Request.Host = new HostString("map.example");
         return new WebPagesOpenApiController(sites, db!, gate) { ControllerContext = new ControllerContext { HttpContext = context } };
     }

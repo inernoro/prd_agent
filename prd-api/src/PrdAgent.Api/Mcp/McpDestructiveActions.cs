@@ -3,26 +3,7 @@ using System;
 namespace PrdAgent.Api.Mcp;
 
 /// <summary>
-/// 智能体一律不许做的动作 —— 收不回来的那些。
-///
-/// 删除站点与未受控的公开发布仍不开放；网页托管的受控可见性与分享设置由专用开放接口
-/// 执行明确确认及私有资料核查，不借此放松其它模块的发布门。
-/// 兑现这句话需要两道门，因为一把 AgentApiKey 有两条路能打到平台：
-/// <list type="number">
-/// <item>走网关 <c>/api/mcp</c> —— 登记表里的 DELETE 在列举与调用两处都被挡；</item>
-/// <item>拿同一把 <c>sk-ak</c> 直连普通业务控制器 —— 它们大多只有 <c>[Authorize]</c>，
-/// 而默认策略接受 ApiKey scheme；<c>AdminPermissionMiddleware</c> 再把 scope
-/// <c>a:b</c> 认成 admin 权限 <c>a.b</c>。于是持 <c>web-pages:write</c> 的钥匙
-/// 能直接调 <c>DELETE /api/web-pages/&#123;id&#125;</c>，把主人的站点删掉。</item>
-/// </list>
-///
-/// 判据放在这里而不是网关里，是因为**只在网关挡住等于只锁了正门**。两条路共用这一处，
-/// 不各写各的 —— 那是判据分裂的现成温床（本 PR 里已经栽过好几次）。
-///
-/// 已知边界（与 <c>https://github.com/inernoro/prd_agent/blob/853023509128fb785541408fd88591db860ce9bf/doc/debt.platform.md</c> #18 同一条）：这里认的是**方法与路径命名**，
-/// 不是语义。一个把删除做成 <c>POST /things/&#123;id&#125;/archive</c> 的接口照样过得去，
-/// 而一个只是「按 id 取消订阅」的 DELETE 会被一起关在门外。要认得准，
-/// 需要登记表补一个破坏性标记 + 一档独立 scope + 一次显式确认。
+/// 识别未注册为内置网页托管工具的破坏性操作，供 MCP 网关和权限中间件使用。
 /// </summary>
 public static class McpDestructiveActions
 {
@@ -52,7 +33,7 @@ public static class McpDestructiveActions
     ///
     /// 内置工具没有一条路径落在这里：网页托管发布走的是
     /// <c>POST /api/open/web-pages/pages</c>（最后一段是 pages），分享链走 <c>/share</c>
-    /// 且其开放接口执行范围确认、对象权限和私有资料核查；它们不受这条按路径动词的闸影响。
+    /// 且其开放接口执行对象权限和私有资料核查；它们不受这条按路径动词的闸影响。
     /// </summary>
     private static bool IsPublicPublishSegment(string last)
         => string.Equals(last, "publish", StringComparison.OrdinalIgnoreCase)
@@ -85,11 +66,14 @@ public static class McpDestructiveActions
     public static bool IsCuratedOpenApiPath(string? path)
         => path != null && path.StartsWith("/api/open/", StringComparison.OrdinalIgnoreCase);
 
-    /// <summary>这一次请求要不要挡下来。</summary>
+    internal static bool IsHostedSiteManagementPath(string path)
+        => path.Equals("/api/web-pages", StringComparison.OrdinalIgnoreCase)
+           || path.StartsWith("/api/web-pages/", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>这一次请求是否命中通用操作限制。</summary>
     public static bool IsDestructiveRequest(string? httpMethod, string? path)
     {
-        if (IsDestructiveMethod(httpMethod)) return true;
-        if (string.IsNullOrWhiteSpace(path)) return false;
+        if (string.IsNullOrWhiteSpace(path)) return IsDestructiveMethod(httpMethod);
 
         // 顺序要紧：先摘查询串与锚点，再去尾斜杠。反过来写的话
         // `/api/web-pages/batch-delete/?dry=1` 的最后一段会被切成 `?dry=1`，
@@ -99,10 +83,15 @@ public static class McpDestructiveActions
         if (cut >= 0) normalized = normalized[..cut];
         normalized = normalized.TrimEnd('/');
 
-        // 网页后台写接口没有独立的对外发布闸。Agent 只能走已收口的 /api/open/web-pages，
-        // 防止改用普通后台的 visibility、share 或重传接口绕过独立授权。
-        if ((normalized.Equals("/api/web-pages", StringComparison.OrdinalIgnoreCase)
-                || normalized.StartsWith("/api/web-pages/", StringComparison.OrdinalIgnoreCase))
+        if (IsDestructiveMethod(httpMethod))
+        {
+            const string hostedPage = "/api/open/web-pages/pages/";
+            return !normalized.StartsWith(hostedPage, StringComparison.OrdinalIgnoreCase)
+                || normalized[hostedPage.Length..].IndexOfAny(new[] { '/', '\\' }) >= 0;
+        }
+
+        // 网关使用已注册的网页托管工具。原生管理 API 在权限中间件中应用站点模块授权。
+        if (IsHostedSiteManagementPath(normalized)
             && !string.Equals(httpMethod, "GET", StringComparison.OrdinalIgnoreCase)
             && !string.Equals(httpMethod, "HEAD", StringComparison.OrdinalIgnoreCase)
             && !string.Equals(httpMethod, "OPTIONS", StringComparison.OrdinalIgnoreCase))

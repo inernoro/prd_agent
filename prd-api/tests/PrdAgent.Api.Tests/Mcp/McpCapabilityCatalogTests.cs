@@ -215,17 +215,17 @@ public class McpCapabilityCatalogTests
     }
 
     [Fact]
-    public void PermissionsAllowScope_ReadDoesNotImplyWrite()
+    public void PermissionsAllowScope_WebModulePermissionGrantsItsUnifiedScope()
     {
         var owned = new[] { "access", "web-pages.read" };
-        McpCapabilityCatalog.PermissionsAllowScope(owned, McpCapabilityCatalog.ScopeWebPagesWrite).ShouldBeFalse();
+        McpCapabilityCatalog.PermissionsAllowScope(owned, McpCapabilityCatalog.ScopeWebPagesWrite).ShouldBeTrue();
     }
 
     [Fact]
     public void ScopeSatisfies_WriteImpliesRead_OnlyWhereTheRealGateAlsoImplies()
     {
         // 判据要跟真实闸门一致，不能按 `:write` / `:read` 的字面规律一刀切：
-        //   知识库 / 网页托管的读端点是 [RequireScope(read, write)]  → 写能读
+        //   知识库写入蕴含读取，网页托管的旧读权限作为统一权限的别名
         //   海鲜市场的读端点是 [RequireScope(read)] 精确匹配          → 写不能读（放行只会列出一批 403 的工具）
         var web = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { McpCapabilityCatalog.ScopeWebPagesWrite };
         McpCapabilityCatalog.ScopeSatisfies(web, McpCapabilityCatalog.ScopeWebPagesRead).ShouldBeTrue();

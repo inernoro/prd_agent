@@ -79,6 +79,21 @@ public sealed class AdminPermissionMiddleware
         return false;
     }
 
+    // 历史 .write 权限也用于设计创作。由网页托管 .read 升级的凭证只获得托管管理权。
+    private static async Task<bool> AllowsSharedWebWriteAsync(HttpContext context, string permission, string path,
+        IAdminPermissionService permissionService)
+    {
+        if (permission != AdminPermissionCatalog.WebPagesWrite || McpDestructiveActions.IsHostedSiteManagementPath(path))
+            return true;
+
+        var owner = context.User.FindFirst("boundUserId")?.Value;
+        if (string.IsNullOrEmpty(owner)) return false;
+        var permissions = await permissionService.GetEffectivePermissionsAsync(owner,
+            owner == AdminPermissionCatalog.RootUserId, context.RequestAborted);
+        return permissions.Contains(AdminPermissionCatalog.Super, StringComparer.OrdinalIgnoreCase)
+            || permissions.Contains(AdminPermissionCatalog.WebPagesWrite, StringComparer.OrdinalIgnoreCase);
+    }
+
     internal static bool HasDefectShareScopeGrant(
         IEnumerable<string> scopes,
         string requiredPermission,
@@ -142,22 +157,17 @@ public sealed class AdminPermissionMiddleware
         var path = context.Request.Path.Value ?? string.Empty;
         var method = context.Request.Method;
 
-        // 收不回来的动作，一律不给智能体。这道门有两个维度，缺一个都出过事：
+        // 普通接口的破坏性操作由共用判据拦截。
         //
         // 【位置】必须排在「这条路要不要 admin 权限」**之前**。上一版写在下面的 isAgentKey
         // 分支里，而那整段在 `required == null` 早退之后 —— 没有 [AdminController] 标记的
         // 控制器扫描器给不出 required，请求在门开之前就走掉了。
         //
-        // 【范围】开放层（/api/open/）豁免。它要挡的是**普通业务控制器**：
-        // DELETE /api/web-pages/{id} 这类只挂 [Authorize]、从没为 API key 设计过，
-        // 却因为默认策略收 ApiKey scheme、middleware 又把 scope a:b 认成 admin 权限 a.b
-        // 而被打通的路。开放层不是这种 —— 那八个控制器每一个都显式写着
-        // [Authorize(AuthenticationSchemes = "ApiKey")] + [RequireScope]，本来就是给 sk-ak
-        // 走的受控接口，各自的 scope 就是它的门。不豁免的后果上一版真发生了：
-        // llmgw/tutorial/publisher.py 的教程发布与它的回滚一起 403（见 IsCuratedOpenApiPath）。
+        // 开放层和网页托管管理接口分别执行各自的 scope 与对象权限检查。
         var isAgentKey = string.Equals(context.User?.FindFirst("authType")?.Value, "agent-apikey", StringComparison.Ordinal);
         if (isAgentKey
             && !McpDestructiveActions.IsCuratedOpenApiPath(path)
+            && !McpDestructiveActions.IsHostedSiteManagementPath(path)
             && McpDestructiveActions.IsDestructiveRequest(method, path))
         {
             var dip = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
@@ -166,7 +176,7 @@ public sealed class AdminPermissionMiddleware
             context.Response.StatusCode = StatusCodes.Status403Forbidden;
             context.Response.ContentType = "application/json; charset=utf-8";
             var blocked = ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED,
-                "删除、公开发布这类收不回来的动作不开放给智能体密钥。要做请在界面上操作。");
+                "当前智能体密钥无法调用此操作，请从 MAP 对应页面操作。");
             await context.Response.WriteAsync(JsonSerializer.Serialize(blocked, _jsonOptions));
             return;
         }
@@ -201,7 +211,9 @@ public sealed class AdminPermissionMiddleware
         // scope "a:b"（冒号）精确满足 admin 权限 "a.b"（点分），不跨资源泄漏。
         if (isAgentKey)
         {
-            if (HasScopeGrant(context, required) || HasDefectShareScopeGrant(context, required, path, method))
+            if ((HasScopeGrant(context, required)
+                    && await AllowsSharedWebWriteAsync(context, required, path, permissionService))
+                || HasDefectShareScopeGrant(context, required, path, method))
             {
                 // 仅在通过 scope 门禁后，才把 owner 身份(sub)注入到本次请求的 principal，
                 // 让 scope 门禁内的 AdminController（如 document-store）的 GetRequiredUserId() 可用。
