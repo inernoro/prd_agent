@@ -1,8 +1,10 @@
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc;
+using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Api.Services;
@@ -201,9 +203,14 @@ public sealed partial class DesignArtifactsController
     private FilterDefinition<QuickCreationBrief> OwnedBrief(string id)
     {
         var userId = this.GetRequiredUserId();
-        var deployment = DeploymentScope.Current;
-        return Builders<QuickCreationBrief>.Filter.Where(brief =>
-            brief.Id == id && brief.UserId == userId && brief.DeploymentSlug == deployment);
+        var scope = DeploymentScope.CurrentDurable;
+        var filter = Builders<QuickCreationBrief>.Filter;
+        var deployment = filter.Eq(brief => brief.DeploymentSlug, scope);
+        // Drafts can be reopened after a deployment of the same branch, including older revision-scoped drafts.
+        if (scope != null)
+            deployment |= filter.Regex(brief => brief.DeploymentSlug,
+                new BsonRegularExpression($"^{Regex.Escape(scope + "::revision::")}"));
+        return filter.Eq(brief => brief.Id, id) & filter.Eq(brief => brief.UserId, userId) & deployment;
     }
 
     private static FilterDefinition<QuickCreationBrief> AvailableBrief()
