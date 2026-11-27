@@ -161,6 +161,7 @@ export function VideoPlayer({ run, template }: { run: QcRun; template: QcTemplat
   const current = useMemo(() => [...scenes].reverse().find(s => t >= s.startSec) ?? scenes[0], [scenes, t]);
   const currentCaption = run.captions?.find(caption => caption.fromSec <= t && t < caption.toSec)?.text ?? current?.caption;
   const hasCaptions = Boolean(run.captions?.length || scenes.length);
+  const captionAction = !hasCaptions ? '本片没有可切换的字幕轨' : captions ? '关闭字幕' : '打开字幕';
 
   const seek = (sec: number) => {
     const el = video.current;
@@ -221,7 +222,8 @@ export function VideoPlayer({ run, template }: { run: QcRun; template: QcTemplat
           <span className="flex-1 sm:hidden" />
           {/* 手机用系统音量键，窄屏不占位置 */}
           <button type="button" aria-label={muted ? '取消静音' : '静音'} aria-pressed={muted} onClick={() => setMuted(v => !v)} className="qc-icon-btn hidden sm:inline-flex">{muted ? <VolumeX size={16} /> : <Volume2 size={16} />}</button>
-          <button type="button" aria-label={captions ? '关闭字幕' : '打开字幕'} aria-pressed={captions} disabled={!hasCaptions} data-qc="captions-toggle" onClick={() => setCaptions(v => !v)} className={cn('qc-icon-btn', captions && 'text-token-primary')}><Captions size={16} /></button>
+          <button type="button" aria-label={captionAction} title={captionAction} aria-pressed={hasCaptions ? captions : undefined} disabled={!hasCaptions}
+            data-qc="captions-toggle" onClick={() => setCaptions(v => !v)} className={cn('qc-icon-btn', hasCaptions && captions && 'text-token-primary')}><Captions size={16} /></button>
           <button type="button" aria-label="全屏" onClick={fullscreen} className="qc-icon-btn"><Maximize size={16} /></button>
         </div>
       </div>
