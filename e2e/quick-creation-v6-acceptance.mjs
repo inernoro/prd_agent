@@ -68,6 +68,22 @@ async function openWorkbench(page, { mobile = false } = {}) {
   return accessToken;
 }
 
+async function verifyHostingEntry(page, mobile = false) {
+  if (mobile) await page.getByRole('button', { name: '打开导航菜单', exact: true }).click();
+  const hosting = page.locator('nav a[href="/web-pages"]:visible, nav button[title^="网页"]:visible')
+    .or(page.getByRole('button', { name: /^网页(?:托管)?$/ }).filter({ visible: true })).first();
+  await hosting.click();
+  const generate = mobile
+    ? page.getByRole('button', { name: '生成网页', exact: true }).filter({ visible: true })
+    : page.locator('[data-tour-id=webpages-generate-primary]');
+  await generate.click();
+  await page.locator('[data-qc-ready=compose][data-output=web]').waitFor();
+  assert.equal(new URL(page.url()).searchParams.get('from'), 'web-pages');
+  await page.getByRole('button', { name: '返回网页托管', exact: true }).waitFor();
+  await page.screenshot({ path: join(out, `10-${mobile ? 'phone' : 'desktop'}-hosting-entry.png`) });
+  receipt.cases.push(`${mobile ? 'mobile' : 'desktop'} hosting generate button opens quick creation with webpage selected`);
+}
+
 async function verifyPreview(page, view, row) {
   await page.goto(new URL(`/quick-creation-agent?run=${encodeURIComponent(view.id)}`, origin).href);
   await page.locator(`[data-run-id="${view.id}"] [data-qc=done-card]`).waitFor();
@@ -107,6 +123,7 @@ try {
     timeout: 20_000,
     ...options,
   });
+  await verifyHostingEntry(page);
   await page.screenshot({ path: join(out, '01-desktop-compose.png') });
   assert.equal(await page.locator('[data-qc=submit]').isEnabled(), false);
   assert.ok(await page.locator('[data-qc=block-reason]').isVisible());
@@ -116,6 +133,7 @@ try {
   await popover.getByRole('textbox').fill('水墨');
   await popover.getByRole('radio', { name: /中国水墨/ }).click();
   assert.match(await chip.getAttribute('aria-label'), /中国水墨/);
+  await page.getByRole('radiogroup', { name: '选择产出' }).getByRole('radio', { name: '视频', exact: true }).click();
   await page.getByRole('radiogroup', { name: '选择产出' }).getByRole('radio', { name: '网页', exact: true }).click();
   assert.match(await chip.getAttribute('aria-label'), /中国水墨/);
   assert.equal(await page.locator('[data-qc-ready="compose"]').getAttribute('data-output'), 'web');
@@ -138,6 +156,7 @@ try {
   phone.setDefaultTimeout(55_000);
   try {
     await openWorkbench(phone, { mobile: true });
+    await verifyHostingEntry(phone, true);
     const phoneWidth = await phone.evaluate(() => ({ viewport: innerWidth, scroll: document.documentElement.scrollWidth }));
     assert.equal(phoneWidth.viewport, 375);
     assert.equal(phoneWidth.scroll, phoneWidth.viewport);

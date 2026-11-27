@@ -8,6 +8,7 @@ import { useCallback, useEffect, useRef, useState, type ClipboardEvent, type Rea
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { BookOpen, Check, ChevronLeft, ChevronRight, CircleCheck, ExternalLink, FileText, Globe, LayoutList, Paperclip, Plus, Send, Upload, Video } from 'lucide-react';
 import { toast } from '@/lib/toast';
+import { TEAM_ID_PATTERN } from '@/lib/designArtifactLaunch';
 import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
 import { MapSpinner } from '@/components/ui/VideoLoader';
@@ -49,6 +50,9 @@ export function QuickCreationAgentPage() {
   const [params, setParams] = useSearchParams();
   const runId = params.get('run');
   const view = params.get('view');
+  const fromHosting = params.get('from') === 'web-pages';
+  const requestedTeam = params.get('destTeam');
+  const destinationTeamId = fromHosting && requestedTeam && TEAM_ID_PATTERN.test(requestedTeam) ? requestedTeam : undefined;
 
   const [templates, setTemplates] = useState<QcTemplate[]>([]);
   const [categories, setCategories] = useState<QcTemplateCategory[]>([]);
@@ -58,7 +62,7 @@ export function QuickCreationAgentPage() {
   const [runError, setRunError] = useState<string | null>(null);
   const [reconnecting, setReconnecting] = useState(false);
 
-  const [kind, setKind] = useState<OutputKind>('video');
+  const [kind, setKind] = useState<OutputKind>(fromHosting ? 'web' : 'video');
   const [templateId, setTemplateId] = useState<string>('');
   const [attachments, setAttachments] = useState<QcAttachment[]>([]);
   const [ask, setAsk] = useState('');
@@ -147,8 +151,14 @@ export function QuickCreationAgentPage() {
     return () => { controller.abort(); window.clearTimeout(timer); };
   }, [isLive, runId]);
 
-  const openRun = (id: string) => setParams({ run: id });
-  const startNew = () => { setParams({}); setAsk(''); setAttachments([]); setPane('chat'); };
+  const showPage = (target: Record<string, string>, replace = false) => {
+    const query = new URLSearchParams(target);
+    if (fromHosting) query.set('from', 'web-pages');
+    if (destinationTeamId) query.set('destTeam', destinationTeamId);
+    setParams(query, { replace });
+  };
+  const openRun = (id: string) => showPage({ run: id });
+  const startNew = () => { showPage({}); setKind(fromHosting ? 'web' : 'video'); setAsk(''); setAttachments([]); setPane('chat'); };
 
   /* ---------- 附件 ---------- */
   const addFile = async (file: File) => {
@@ -215,6 +225,7 @@ export function QuickCreationAgentPage() {
     const res = await createQuickCreationRun({
       kind, templateId: template.id, ask: ask.trim(),
       attachmentIds: attachments.filter(a => a.status === 'ready').map(a => a.id), title: draftTitle,
+      destinationTeamId: kind === 'web' ? destinationTeamId : undefined,
     });
     setSubmitting(false);
     if (!res.success) { toast.error('没有提交成功', `${res.error?.message || '请稍后重试'}，稿件仍在输入框里`); return; }
@@ -225,7 +236,7 @@ export function QuickCreationAgentPage() {
   const onRecover = async (action: QcFailure['actions'][number]) => {
     if (!run) return;
     const res = await retryQuickCreationRun(run.id, { action, unitIndex: run.failure?.unitIndex });
-    if (res.success) { setRun(res.data); setParams({ run: res.data.id }, { replace: true }); }
+    if (res.success) { setRun(res.data); showPage({ run: res.data.id }, true); }
     else toast.error('没有重新开始', res.error?.message || '请稍后再试');
   };
   const onPublish = async () => {
@@ -239,7 +250,7 @@ export function QuickCreationAgentPage() {
   const badge = run && view !== 'works' ? runBadge(run) : null;
   const header = (
     <header className="flex min-h-14 shrink-0 items-center gap-2 border-b border-token-subtle px-2 py-2 md:gap-3 md:px-5">
-      <button type="button" aria-label="返回百宝箱" onClick={() => navigate('/ai-toolbox')} className="qc-icon-btn"><ChevronLeft size={18} /></button>
+      <button type="button" aria-label={fromHosting ? '返回网页托管' : '返回百宝箱'} onClick={() => navigate(fromHosting ? '/web-pages' : '/ai-toolbox')} className="qc-icon-btn"><ChevronLeft size={18} /></button>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <span className="text-[11px] text-token-muted">快速创作</span>
@@ -252,7 +263,7 @@ export function QuickCreationAgentPage() {
       </div>
       {badge && <span className="hidden md:inline-flex"><Badge variant={badge.variant}>{badge.label}</Badge></span>}
       {view !== 'works' && (
-        <Button variant="ghost" size="sm" className="max-md:min-h-11" onClick={() => setParams({ view: 'works' })} aria-label={`我的作品，共 ${works.length} 个`}>
+        <Button variant="ghost" size="sm" className="max-md:min-h-11" onClick={() => showPage({ view: 'works' })} aria-label={`我的作品，共 ${works.length} 个`}>
           <LayoutList size={15} /><span className="hidden sm:inline">我的作品</span> {works.length}
         </Button>
       )}
@@ -357,6 +368,7 @@ export function QuickCreationAgentPage() {
           </Button>
         </div>
       </div>
+      {fromHosting && <Button variant="ghost" size="sm" onClick={() => navigate('/web-pages?legacyCreate=1')}>参考网页或制作网页 PPT</Button>}
       {blockReason
         ? <p className="m-0 px-2 pt-1.5 text-[11.5px] text-token-muted" data-qc="block-reason">{blockReason}</p>
         : <p className="m-0 hidden px-2 pt-1.5 text-[11.5px] text-token-muted lg:block">Ctrl / Command + Enter 也可以生成 · 任务在后台继续</p>}
@@ -431,14 +443,14 @@ export function QuickCreationAgentPage() {
       {run.status === 'queued' || run.status === 'running' ? (
         <>
           <span className="min-w-0 flex-1">可以离开，稍后从「我的作品」查看结果。</span>
-          <Button size="sm" variant="secondary" className="max-md:min-h-11" data-qc="leave" onClick={() => setParams({ view: 'works' })}>离开，稍后回来</Button>
+          <Button size="sm" variant="secondary" className="max-md:min-h-11" data-qc="leave" onClick={() => showPage({ view: 'works' })}>离开，稍后回来</Button>
         </>
       ) : run.status === 'failed' ? (
         <span className="min-w-0 flex-1">已完成的部分都已保存，可以现在处理，也可以稍后在「我的作品」里继续。</span>
       ) : (
         <>
           <span className="min-w-0 flex-1">想换个模板或产出？用同一份稿件再做一个。</span>
-          <Button size="sm" variant="secondary" className="max-md:min-h-11" data-qc="redo-other" onClick={() => { setAttachments(run.attachments.filter(a => a.status === 'ready')); setAsk(run.ask); setKind(run.kind === 'video' ? 'web' : 'video'); setTemplateId(run.templateId); setParams({}); setPane('chat'); }}>
+          <Button size="sm" variant="secondary" className="max-md:min-h-11" data-qc="redo-other" onClick={() => { setAttachments(run.attachments.filter(a => a.status === 'ready')); setAsk(run.ask); setKind(run.kind === 'video' ? 'web' : 'video'); setTemplateId(run.templateId); showPage({}); setPane('chat'); }}>
             用这份稿件做{run.kind === 'video' ? '网页' : '视频'}
           </Button>
         </>
@@ -476,11 +488,11 @@ export function QuickCreationAgentPage() {
     previewNote = `${assetScope === 'mine' ? '我' : '团队'}生成过的视频与网页，可回看、打开原任务或把风格带回输入框`;
     nextHint = '';
     body = <AssetLibrary assets={assets} loading={assetsLoading} scope={assetScope} onScopeChange={setAssetScope} templates={templates} currentStyleId={run ? undefined : template?.id}
-      onOpen={a => setParams({ run: a.runId })}
+      onOpen={a => openRun(a.runId)}
       onUseStyle={a => {
         const name = templates.find(t => t.id === a.templateId)?.name ?? '';
         setTemplateId(a.templateId); setRightTab('select');
-        if (run) { setParams({}); setPane('chat'); }
+        if (run) { showPage({}); setPane('chat'); }
         toast.info(`已换成「${name}」风格`, run ? '放进稿件后即可用这个风格生成' : '输入框里的风格已同步');
       }}
       onOpenHosting={a => navigate(`/web-pages?focusSite=${encodeURIComponent(a.siteId ?? '')}`)} />;

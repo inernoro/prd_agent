@@ -224,4 +224,5 @@ export interface CreateRunInput {
   ask: string;
   attachmentIds: string[];
   title?: string;
+  destinationTeamId?: string;
 }

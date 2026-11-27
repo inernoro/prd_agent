@@ -209,6 +209,7 @@ public sealed partial class DesignArtifactsController
             Instruction = ask.Length == 0 ? instruction : instruction + "\n\n用户要求：\n" + ask,
             Title = request.Title ?? Path.GetFileNameWithoutExtension(byId[sourceIds[0]].FileName),
             AttachmentIds = sourceIds,
+            DestinationTeamId = film ? null : request.DestinationTeamId,
         }, input, images, film ? null : QuickCreationCatalog.FreezeWebDirection(template));
     }
 
@@ -333,6 +334,7 @@ public sealed partial class DesignArtifactsController
         {
             ArtifactType = run.ArtifactType, Instruction = run.Instruction, Title = run.Title,
             AttachmentIds = run.UploadedSources?.Select(item => item.AttachmentId).ToList(),
+            DestinationTeamId = run.DestinationTeamId,
         }, run.QuickCreation, run.ReferenceImages, run.DesignDirection, retryOfRunId: run.Id);
     }
 
@@ -515,5 +517,6 @@ public sealed partial class DesignArtifactsController
 }
 
 public sealed record QuickCreationTextRequest(string? Name, string? Text);
-public sealed record QuickCreationRunRequest(string? Kind, string? TemplateId, string? Ask, List<string>? AttachmentIds, string? Title);
+public sealed record QuickCreationRunRequest(string? Kind, string? TemplateId, string? Ask, List<string>? AttachmentIds, string? Title,
+    string? DestinationTeamId = null);
 public sealed record QuickCreationRetryRequest(string? Action);
