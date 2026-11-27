@@ -831,6 +831,34 @@ for (const theme of ['light', 'dark'] as const) {
   });
 }
 
+test('单篇分享未加入合集时隐藏阅读工具栏的合集入口', async ({ page }) => {
+  const token = 'standalone-review';
+  const site = { id: 'standalone', title: '单篇网页', siteUrl: 'https://hosting.example/standalone/index.html', entryFile: 'index.html', viewerIsOwner: true };
+  const contextsPath = `/api/web-pages/${site.id}/collection-contexts`;
+  await page.addInitScript(() => {
+    localStorage.setItem('prd-admin-auth', JSON.stringify({ state: {
+      isAuthenticated: true, user: { userId: 'author', username: 'author' },
+      token: 'author-session', permissions: [], permissionsLoaded: true,
+      menuCatalog: [], menuCatalogLoaded: true,
+    }, version: 0 }));
+  });
+  await page.route('https://hosting.example/**', route => route.fulfill({ contentType: 'text/html; charset=utf-8', body: '<!doctype html><h1>单篇正文</h1>' }));
+  await page.route('**/api/**', route => {
+    const { pathname } = new URL(route.request().url());
+    let data: unknown = { items: [] };
+    if (pathname === `/api/web-pages/shares/view/${token}`) {
+      data = { title: site.title, shareType: 'single', sites: [site], createdBy: 'author', createdAt: '2026-11-26T12:00:00Z' };
+    }
+    if (pathname === contextsPath) data = { items: [], total: 0, totalContexts: 0, page: 1, pageSize: 20 };
+    return route.fulfill({ json: { success: true, data, error: null } });
+  });
+  const contexts = page.waitForResponse(response => new URL(response.url()).pathname === contextsPath);
+  await page.goto(`/s/wp/${token}`);
+  expect((await contexts).ok()).toBe(true);
+  await expect(page.frameLocator('iframe[title="单篇网页"]').getByRole('heading', { name: '单篇正文' })).toBeVisible();
+  await expect(page.locator('.review-reader-toolbar .related-trigger')).toHaveCount(0);
+});
+
 async function mockVideoCollectionShare(page: Page) {
   await page.addInitScript(() => {
     localStorage.setItem('prd-admin-auth', JSON.stringify({ state: {

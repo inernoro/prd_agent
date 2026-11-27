@@ -10,7 +10,7 @@ import { useIsMobile } from '@/hooks/useBreakpoint';
 import { HOSTED_SITE_PERMISSIONS_CHANGED, getRelatedCandidates, getRelatedDocuments, previewRelatedPermissions, saveRelatedDocuments, syncRelatedPermissions,
   type BodyReference, type DiscussionReference, type RelatedSummary, type RelatedDocument, type RelatedDocuments, type RelatedDocumentSource, type RelatedPermissionPreview, type RelatedSyncResult } from '@/services/real/relatedDocuments';
 import { updateSite } from '@/services/real/webPages';
-import { previewCollectionPermissions, syncCollectionPermissions, type CollectionMember } from '@/services/real/hostedCollections';
+import { getCollectionContexts, previewCollectionPermissions, syncCollectionPermissions, type CollectionMember } from '@/services/real/hostedCollections';
 import { RelatedDocumentContent } from './RelatedDocumentContent';
 import { CollectionContextPanel } from './CollectionContextPanel';
 import './RelatedDocumentsBar.css';
@@ -30,6 +30,7 @@ export default function RelatedDocumentsBar({ siteId, source, onNavigate, onRefe
   const [data, setData] = useState<RelatedDocuments | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
+  const [hasCollection, setHasCollection] = useState(false);
   const [badgeOpen, setOpen] = useState(false);
   const [pinned, setPinned] = useState(false);
   const [tagTarget, setTagTarget] = useState<RelatedDocument | null>(null);
@@ -47,9 +48,10 @@ export default function RelatedDocumentsBar({ siteId, source, onNavigate, onRefe
   const token = source?.token;
   const password = source?.password;
   const collectionsEnabled = collectionNavigation && !token;
+  const checkCollectionPresence = collectionsEnabled && variant === 'toolbar';
   const open = badgeOpen || !!menuAnchor;
   const hasBadge = !!summary?.count;
-  const active = !collectionsEnabled && (variant !== 'badge' || open);
+  const active = checkCollectionPresence || (!collectionsEnabled && (variant !== 'badge' || open));
   const close = useCallback(() => { setOpen(false); setPinned(false); onMenuClose?.(); }, [onMenuClose]);
   const measureAvailableHeight = useCallback(() => {
     const bounds = (menuAnchor ?? anchor.current)?.getBoundingClientRect();
@@ -72,14 +74,22 @@ export default function RelatedDocumentsBar({ siteId, source, onNavigate, onRefe
   }, [open, close, menuAnchor]);
   const refresh = useCallback(async () => {
     const current = ++generation.current;
+    if (checkCollectionPresence) {
+      const result = await getCollectionContexts(siteId);
+      if (current !== generation.current || !result.success) return;
+      const present = result.data.totalContexts > 0;
+      setHasCollection(present);
+      if (!present) { setOpen(false); setPinned(false); }
+      return;
+    }
     const result = await getRelatedDocuments(siteId, { token, password });
     if (current !== generation.current) return;
     setLoading(false);
     if (result.success) { setData(result.data); setError(''); window.dispatchEvent(new Event('hosted-relations-changed')); }
     else { setData(null); setError(result.error?.message || '关联文档加载失败'); }
-  }, [siteId, token, password]);
+  }, [siteId, token, password, checkCollectionPresence]);
   const invalidate = useCallback(() => { generation.current++; }, []);
-  useLayoutEffect(() => { setData(null); setLoading(true); setOpen(false); setPinned(false); }, [siteId, token, password, authToken]);
+  useLayoutEffect(() => { setData(null); setLoading(true); setHasCollection(false); setOpen(false); setPinned(false); }, [siteId, token, password, authToken]);
   useEffect(() => {
     if (active) void refresh();
     return () => { invalidate(); clearTimeout(closeTimer.current); };
@@ -89,9 +99,15 @@ export default function RelatedDocumentsBar({ siteId, source, onNavigate, onRefe
     const revalidate = () => { if (document.visibilityState === 'visible') void refresh(); };
     window.addEventListener('focus', revalidate);
     window.addEventListener('hosted-comments-changed', revalidate);
+    if (checkCollectionPresence) window.addEventListener('hosted-collections-changed', revalidate);
     document.addEventListener('visibilitychange', revalidate);
-    return () => { window.removeEventListener('focus', revalidate); window.removeEventListener('hosted-comments-changed', revalidate); document.removeEventListener('visibilitychange', revalidate); };
-  }, [refresh, active]);
+    return () => {
+      window.removeEventListener('focus', revalidate);
+      window.removeEventListener('hosted-comments-changed', revalidate);
+      window.removeEventListener('hosted-collections-changed', revalidate);
+      document.removeEventListener('visibilitychange', revalidate);
+    };
+  }, [refresh, active, checkCollectionPresence]);
   const keepOpen = () => clearTimeout(closeTimer.current);
   const leave = () => { keepOpen(); if (!pinned && !menuAnchor) closeTimer.current = setTimeout(close, 240); };
   const openPanel = (pin: boolean) => {
@@ -104,9 +120,9 @@ export default function RelatedDocumentsBar({ siteId, source, onNavigate, onRefe
   const openPermissions = (next = data) => { setData(next); close(); setPermissions(true); };
   if (variant === 'badge' && !hasBadge && !menuAnchor && !manage && !permissions && !tagTarget && !collectionEditor) return null;
   const compact = variant !== 'bar';
-  const relatedItems = data?.items.filter(item => item.id !== siteId && (!membersOnly || item.isManual !== false)) ?? [];
+  const relatedItems = data?.items.filter(item => item.id !== siteId && (!(membersOnly || collectionNavigation) || item.isManual !== false)) ?? [];
   const relatedCount = relatedItems.length;
-  if (variant === 'toolbar' && !collectionNavigation && (loading || relatedCount === 0)) return null;
+  if (variant === 'toolbar' && (checkCollectionPresence ? !hasCollection : !membersOnly && (loading || relatedCount === 0))) return null;
   const main = data?.items.find(item => item.isMain);
   const warn = variant === 'toolbar' && data?.canManage && data.hasPermissionDifferences;
   const surfaceName = collectionNavigation ? '合集' : '关联文档';

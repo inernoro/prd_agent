@@ -62,6 +62,27 @@ beforeEach(() => {
 afterEach(() => { act(() => root.unmount()); container.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('顶部关联文档', () => {
+  it('单篇网页没有合集时隐藏顶部入口，加入合集后才显示', async () => {
+    await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="toolbar" collectionNavigation />));
+    expect(getCollectionContexts).toHaveBeenCalledWith('a');
+    expect(container.querySelector('.related-trigger')).toBeNull();
+    const context = { ...makeContext('one', 0), memberCount: 1 };
+    vi.mocked(getCollectionContexts).mockResolvedValue({
+      success: true, data: { items: [context], total: 1, totalContexts: 1, page: 1, pageSize: 20 }, error: null,
+    });
+    await act(async () => window.dispatchEvent(new Event('hosted-collections-changed')));
+    expect(container.querySelector('[aria-label="合集"][aria-expanded="false"]')).not.toBeNull();
+  });
+  it('单篇分享没有可读合集成员时隐藏顶部入口，单成员合集分享保留入口', async () => {
+    vi.mocked(getRelatedDocuments).mockResolvedValue({
+      success: true, data: { ...data, items: [data.items[0], { ...data.items[1], isManual: false }] }, error: null,
+    });
+    const single = { token: 'single' };
+    await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="toolbar" collectionNavigation source={single} />));
+    expect(container.querySelector('.related-trigger')).toBeNull();
+    await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="toolbar" collectionNavigation membersOnly source={{ token: 'collection' }} />));
+    expect(container.querySelector('[aria-label="合集"][aria-expanded="false"]')).not.toBeNull();
+  });
   it('文档未入合集时从更多直接进入统一创建面板', async () => {
     vi.mocked(getRelatedDocuments).mockResolvedValue({ success: true, data: { ...data, version: 0, items: [data.items[0]] }, error: null });
     await act(async () => root.render(<RelatedDocumentsBar siteId="a" variant="badge" collectionNavigation summary={{ count: 0, isMain: false, titles: [] }} />));
