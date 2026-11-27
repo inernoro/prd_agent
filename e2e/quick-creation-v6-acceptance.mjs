@@ -310,7 +310,7 @@ async function verifyV9Duration(page) {
   const chip = page.locator('[data-qc=style-chip]');
   await chip.getByText(/约 3 分钟/).waitFor();
   await chip.click();
-  await page.locator('[data-qc=duration-basis]').getByText(/约 13 幕/).waitFor();
+  await page.locator('[data-qc=duration-basis]').filter({ hasText: /约 13 幕/ }).waitFor();
   assert.equal(await page.locator('[data-qc=trial-toggle]').getAttribute('aria-checked'), 'true');
   await page.locator('[data-qc=duration-option][data-value="60"]').click();
   await page.locator('[data-qc=trial-toggle][aria-checked="false"]').waitFor();

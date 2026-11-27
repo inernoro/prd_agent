@@ -70,7 +70,7 @@ function CloudExport({ run }: { run: QcRun }) {
   };
   return <div className="space-y-2" data-qc="cloud-export" data-state={state}>
     {active ? <p className="m-0 text-xs text-token-secondary" role="status">
-      {state === 'queued' ? `已交给服务器导出，前面还有 ${ahead} 个${estimatedMinutes ? `，预计约 ${estimatedMinutes} 分钟后可以下载` : }。` : '服务器正在合成，可以稍后回来下载。'}
+      {state === 'queued' ? `已交给服务器导出，前面还有 ${ahead} 个${estimatedMinutes ? `，预计约 ${estimatedMinutes} 分钟后可以下载` : ''}。` : '服务器正在合成，可以稍后回来下载。'}
     </p> : <Button size="sm" variant="secondary" disabled={busy} onClick={() => void (state === 'done' ? download() : queue())}>
       {state === 'done' ? '下载云端导出的 MP4' : state === 'failed' ? '重试服务器导出' : '请服务器导出'}
     </Button>}
