@@ -11,6 +11,7 @@ const generate = process.env.E2E_QC_GENERATE === 'true';
 const retryFilmId = process.env.E2E_QC_RETRY_FILM || '';
 const existingWebId = process.env.E2E_QC_EXISTING_WEB || '';
 const auditFilmId = process.env.E2E_QC_AUDIT_FILM || '';
+const publishedCheck = process.env.E2E_QC_PUBLISHED_CHECK === 'true';
 assert.equal(origin.origin, 'https://dsn-1400e277-v6-codex-prd-agent.miduo.org');
 assert.match(commit, /^[a-f0-9]{40}$/);
 assert.ok(process.env.E2E_USER && process.env.E2E_PASSWORD && process.env.RUNNER_TEMP);
@@ -21,6 +22,7 @@ if (auditFilmId) {
   assert.match(auditFilmId, /^[a-f0-9]{32}$/);
   assert.equal(generate, false, 'Evidence mode must read a finished film without starting a task');
 }
+if (publishedCheck) assert.ok(auditFilmId && existingWebId && !generate);
 const out = join(process.env.RUNNER_TEMP, 'dsn-1400e277-evidence');
 await mkdir(out, { recursive: true });
 const receipt = { design: 'DSN-1400E277', version: 6, commit, origin: origin.origin, cases: [], runs: [], failures: [] };
@@ -100,6 +102,16 @@ async function verifyPreview(page, view, row) {
   row.preview = 'pass';
 }
 
+async function verifyHosting(page, row) {
+  assert.match(row.siteId, /^[a-f0-9]{32}$/);
+  const target = `[data-hosted-site-id="${row.siteId}"]`;
+  await page.locator('[data-qc=open-hosting]').click();
+  await page.waitForFunction(selector => location.pathname === '/web-pages'
+    && document.querySelector(selector)?.style.outlineWidth === '2px', target);
+  await page.screenshot({ path: join(out, `09-${row.kind}-hosting-focus.png`) });
+  row.hostingHighlighted = true;
+}
+
 const browser = await chromium.launch();
 try {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
@@ -148,6 +160,15 @@ try {
     assert.equal(phoneWidth.scroll, phoneWidth.viewport);
     await phone.screenshot({ path: join(out, '04-phone-compose.png') });
     receipt.cases.push('distinct touch context and no 375px page overflow');
+    if (publishedCheck) {
+      await phone.goto(new URL(`/quick-creation-agent?run=${auditFilmId}`, origin).href);
+      await phone.getByRole('tab', { name: /^预览/ }).click();
+      await phone.locator('[data-qc=film]').waitFor();
+      await phone.waitForFunction(() => document.querySelector('[data-qc=film]')?.readyState >= 2);
+      assert.equal(await phone.evaluate(() => document.documentElement.scrollWidth), 375);
+      await phone.screenshot({ path: join(out, '05-phone-playback.png') });
+      receipt.cases.push('published film playable at 375px without page overflow');
+    }
   } catch (error) {
     await phone.screenshot({ path: join(out, '04-phone-failure.png') }).catch(() => {});
     receipt.failures.push({ kind: 'mobile', code: 'navigation', details: String(error.message).slice(0, 250) });
@@ -164,22 +185,38 @@ try {
       siteId: film.publish.siteId, captionCount: film.captions?.length ?? 0 };
     receipt.runs.push(row);
     await verifyPreview(page, film, row);
-    const media = await api(film.media.url, { timeout: 60_000 });
-    assert.equal(media.status(), 200);
-    assert.equal(media.headers()['content-type'].split(';')[0], 'video/mp4');
-    const bytes = await media.body();
-    assert.equal(bytes.toString('ascii', 4, 8), 'ftyp');
-    assert.ok(bytes.length < 128 * 1024 * 1024);
-    await writeFile(join(process.env.RUNNER_TEMP, 'existing-v6-film.mp4'), bytes);
-    const video = page.locator('[data-qc=film]');
-    for (const second of [4, 10, 18, 25, 33, 40, 44, 49].filter(value => value < film.durationSec)) {
-      await video.evaluate((element, seconds) => new Promise(resolve => {
-        element.addEventListener('seeked', resolve, { once: true });
-        element.currentTime = seconds;
-      }), second);
-      await video.screenshot({ path: join(out, `film-${String(second).padStart(2, '0')}s.png`) });
+    if (publishedCheck) {
+      const captionToggle = page.locator('[data-qc=captions-toggle]');
+      assert.equal(await captionToggle.getAttribute('aria-label'), '本片没有可切换的字幕轨');
+      assert.equal(await captionToggle.isEnabled(), false);
+      await verifyHosting(page, row);
+      const web = await data(await api(`${base}/runs/${existingWebId}`), 'read completed webpage');
+      assert.equal(web.kind, 'web');
+      assert.equal(web.status, 'done');
+      assert.equal(web.publish.status, 'done');
+      const webRow = { id: web.id, kind: 'web', currentStatus: web.status, siteId: web.publish.siteId };
+      receipt.runs.push(webRow);
+      await verifyPreview(page, web, webRow);
+      await verifyHosting(page, webRow);
+      receipt.cases.push('both existing publications opened in hosting and highlighted the exact record');
+    } else {
+      const media = await api(film.media.url, { timeout: 60_000 });
+      assert.equal(media.status(), 200);
+      assert.equal(media.headers()['content-type'].split(';')[0], 'video/mp4');
+      const bytes = await media.body();
+      assert.equal(bytes.toString('ascii', 4, 8), 'ftyp');
+      assert.ok(bytes.length < 128 * 1024 * 1024);
+      await writeFile(join(process.env.RUNNER_TEMP, 'existing-v6-film.mp4'), bytes);
+      const video = page.locator('[data-qc=film]');
+      for (const second of [4, 10, 18, 25, 33, 40, 44, 49].filter(value => value < film.durationSec)) {
+        await video.evaluate((element, seconds) => new Promise(resolve => {
+          element.addEventListener('seeked', resolve, { once: true });
+          element.currentTime = seconds;
+        }), second);
+        await video.screenshot({ path: join(out, `film-${String(second).padStart(2, '0')}s.png`) });
+      }
+      receipt.cases.push('existing published film decoded and rendered in the cloud player at eight points');
     }
-    receipt.cases.push('existing published film decoded and rendered in the cloud player at eight points');
   }
   if (generate) {
     const filmInput = { kind: 'video', templateId: 'sketchnote', ask: '', attachmentIds: [original.id], title: '需求评审的三个习惯' };

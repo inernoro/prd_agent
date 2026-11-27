@@ -48,6 +48,10 @@ on:
       quick_creation_film_audit_id:
         description: '可选的已发布视频任务编号，只检查既有成片和配音字幕'
         default: ''
+      quick_creation_published_check:
+        description: '只验已有成品播放、字幕按钮和定位到网页托管'
+        type: boolean
+        default: false
       perf_ref:
         description: '隔离性能回归的候选提交或 ref；留空跳过，不接受 URL'
         required: false
@@ -282,11 +286,12 @@ jobs:
           E2E_QC_RETRY_FILM: ${{ inputs.quick_creation_retry_film_id }}
           E2E_QC_EXISTING_WEB: ${{ inputs.quick_creation_existing_web_id }}
           E2E_QC_AUDIT_FILM: ${{ inputs.quick_creation_film_audit_id }}
+          E2E_QC_PUBLISHED_CHECK: ${{ inputs.quick_creation_published_check }}
           E2E_USER: ${{ secrets.E2E_USER }}
           E2E_PASSWORD: ${{ secrets.E2E_PASSWORD }}
         run: node e2e/quick-creation-v6-acceptance.mjs
       - name: Independently measure the finished film narration
-        if: inputs.quick_creation_film_audit_id != ''
+        if: inputs.quick_creation_film_audit_id != '' && !inputs.quick_creation_published_check
         timeout-minutes: 10
         run: |
           python3 -m venv "$RUNNER_TEMP/qc-speech-audit"
