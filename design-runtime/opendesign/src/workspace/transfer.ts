@@ -308,15 +308,30 @@ export function parseWorkspacePackage(bytes: Buffer, transfer: WorkspaceTransfer
       : 'application/octet-stream';
     return { path: relativePath, bytes: content, sha256: expectedSha, mediaType };
   });
-  if (transfer.allowedOutputPaths.length === 1 && transfer.allowedOutputPaths[0] === 'film.mp4') {
-    if (files.length !== 1 || files[0].mediaType !== 'text/markdown'
-        || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,100}\.md$/.test(files[0].path)) {
-      throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'a code film requires one original Markdown file');
-    }
-  } else {
+  if (!transfer.allowedOutputPaths.includes('film.mp4')) {
     validateDesignTaskContract(runId, transfer.baseRevision, files);
+  } else if (transfer.allowedOutputPaths.includes('film.json')) {
+    validateQuickCreationFilmFiles(files);
+  } else if (files.length !== 1 || files[0].mediaType !== 'text/markdown'
+      || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,100}\.md$/.test(files[0].path)) {
+    throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'a code film requires one original Markdown file');
   }
   return { runId, files };
+}
+
+function validateQuickCreationFilmFiles(files: ParsedWorkspacePackage['files']): void {
+  const guideIndex = files.findIndex(file =>
+    file.mediaType === 'text/markdown' && /^styles\/[a-z0-9-]+\/STYLE\.md$/.test(file.path));
+  const sources = files.slice(0, guideIndex);
+  const references = files.slice(guideIndex + 1);
+  if (guideIndex < 1 || !sources.every((file, index) =>
+    file.path === `source-${index + 1}.md` && file.mediaType === 'text/markdown')
+    || !references.every(file =>
+      /^reference\/screenshot-[0-9]+\.(png|jpg|webp)$/.test(file.path)
+      && ['image/png', 'image/jpeg', 'image/webp'].includes(file.mediaType))) {
+    throw new AgentWorkspaceRuntimeError('workspace_package_invalid',
+      'a quick creation film requires the original Markdown sources, one original STYLE.md and optional reference images');
+  }
 }
 
 export const PREVIEW_CHECK_INTERVAL_MS = 8_000;

@@ -272,6 +272,39 @@ describe('POST /v1/tasks', () => {
     expect(() => normalizeTaskRequest({ ...filmRequest, envelope: request.envelope })).toThrow('index.html');
   });
 
+  it('accepts a quick creation film package with original sources, style and image references', async () => {
+    const pkg = buildPackage([]);
+    map = await startFakeMap(pkg);
+    const source = Buffer.from('# ADR 原文\r\n  保留空白\n');
+    const secondSource = Buffer.from('第二份稿件\n');
+    const guide = Buffer.from('# Sketchnote STYLE.md\n');
+    const reference = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+    const original = (filePath: string, mediaType: string, bytes: Buffer) => ({
+      path: filePath, mediaType, sha256: sha256(bytes), size: bytes.length, contentBase64: bytes.toString('base64'),
+    });
+    const files = [
+      original('source-1.md', 'text/markdown', source),
+      original('source-2.md', 'text/markdown', secondSource),
+      original('styles/sketchnote/STYLE.md', 'text/markdown', guide),
+      original('reference/screenshot-01.png', 'image/png', reference),
+    ];
+    const request = taskRequest(map, pkg);
+    const parse = (inputs: typeof files) => {
+      const bytes = Buffer.from(JSON.stringify({
+        schemaVersion: MAP_DESIGN_WORKSPACE_SCHEMA, runId: pkg.runId, baseRevision: pkg.baseRevision, files: inputs,
+      }));
+      const task = normalizeTaskRequest({
+        ...request,
+        envelope: { schemaVersion: 'map-code-film-command-v1', runId: pkg.runId, command: '制作视频' },
+        transfer: { ...(request.transfer as object), inputSha256: sha256(bytes), allowedOutputPaths: ['film.mp4', 'film.json'] },
+      });
+      return parseWorkspacePackage(bytes, task.transfer).files;
+    };
+    expect(parse(files).map(file => file.bytes)).toEqual([source, secondSource, guide, reference]);
+    expect(() => parse([files[0], files[1], files[3]])).toThrow('one original STYLE.md');
+    expect(() => parse([...files, original('brief/task.json', 'application/json', Buffer.from('{}'))])).toThrow('optional reference images');
+  });
+
   it('keeps real caption timing, clips it to measured duration and ignores malformed cues', () => {
     const captions = parseFilmCaptions('1\n00:00:01,000 --> 00:00:03,600\n<i>架构决定</i>\n\n'
       + '2\n00:00:06,000 --> 00:00:08,000\n超出成片\n\n不合法的字幕', 3);
