@@ -114,7 +114,8 @@ if (command === 'check') {
       fail(`CDS 上 V${version} 的来源提交是 ${String(delivered.sourceCommit ?? '').slice(0, 10)}，不是 ${full.slice(0, 10)}：登记的必须是发布的那一份`, 1);
     }
     const rel = path.relative(root, dir).split(path.sep).join('/');
-    const tracked = git(['ls-tree', '-r', '--name-only', full, '--', rel], root).split('\n').filter(Boolean).map(name => name.slice(rel.length + 1));
+    /* 中文文件名：关掉 git 的路径转义，按 NUL 分隔 */
+    const tracked = git(['-c', 'core.quotePath=false', 'ls-tree', '-r', '-z', '--name-only', full, '--', rel], root).split('\0').filter(Boolean).map(name => name.slice(rel.length + 1));
     const remote = new Map(((delivered.delivery ?? {}).files ?? []).map(file => [file.path, file.sha256]));
     const bad = [];
     for (const name of tracked) {
