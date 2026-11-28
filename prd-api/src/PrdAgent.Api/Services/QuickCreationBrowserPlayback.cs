@@ -9,7 +9,10 @@ namespace PrdAgent.Api.Services;
 
 internal static class QuickCreationBrowserPlayback
 {
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    internal static readonly JsonSerializerOptions CompactJsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+    };
 
     internal static byte[] Validate(DesignWorkspaceFile file, QuickCreationMedia metadata)
     {
@@ -54,7 +57,11 @@ internal static class QuickCreationBrowserPlayback
     internal static string RenderSandbox(byte[] bundle)
     {
         using var document = JsonDocument.Parse(bundle);
-        return Sandbox.Replace("__MAP_FILM_DATA__", JsonSerializer.Serialize(document.RootElement, JsonOptions), StringComparison.Ordinal);
+        // JSON is inert inside the HTML script element. Escape each less-than sign to
+        // prevent supplied captions from ending the element or inserting markup.
+        var data = JsonSerializer.Serialize(document.RootElement, CompactJsonOptions)
+            .Replace("<", "\\u003c", StringComparison.Ordinal);
+        return Sandbox.Replace("__MAP_FILM_DATA__", data, StringComparison.Ordinal);
     }
 
     internal static byte[] BuildPublishedZip(string title, byte[] bundle)

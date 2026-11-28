@@ -6,6 +6,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { codeFilmDefaultAnswers, parseFilmCaptions, readFilmCaptionSidecar } from '../src/engine/code-film.js';
+import { MAX_BROWSER_FILM_EXPORT_REQUEST_BYTES, parseBrowserFilmExport } from '../src/engine/browser-film-export.js';
 import { FilmRecoveryStore } from '../src/engine/film-recovery.js';
 import { FilmProjectCheckpointStore, filmProjectInputHash } from '../src/engine/film-project-checkpoint.js';
 import { normalizeTaskRequest } from '../src/protocol.js';
@@ -386,6 +387,55 @@ describe('POST /v1/tasks', () => {
     } finally {
       fs.rmSync(directory, { recursive: true, force: true });
     }
+  });
+
+  it('keeps partially written browser scenes editable and protects completed scene/audio pairs', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'browser-film-checkpoint-'));
+    try {
+      const work = path.join(directory, 'work');
+      const next = path.join(directory, 'next');
+      const root = path.join(work, 'review');
+      const scenes = path.join(root, 'scenes');
+      const voice = path.join(root, 'voice', 'out');
+      fs.mkdirSync(next);
+      fs.mkdirSync(scenes, { recursive: true });
+      fs.mkdirSync(voice, { recursive: true });
+      fs.writeFileSync(path.join(root, 'TREATMENT.md'), '# Review');
+      fs.writeFileSync(path.join(root, 'browser-film.json'), '{"scenes":[1,2,3]}');
+      const finished = 'export async function prepare(canvas) {} export function renderFrame(canvas, seconds) {}';
+      const partial = 'export async function prepare(';
+      fs.writeFileSync(path.join(scenes, '1.mjs'), finished);
+      fs.writeFileSync(path.join(scenes, '2.mjs'), partial);
+      fs.writeFileSync(path.join(scenes, '3.mjs'), finished);
+      const clip = Buffer.alloc(46);
+      clip.write('RIFF');
+      clip.writeUInt32LE(38, 4);
+      clip.write('WAVEfmt ', 8);
+      clip.writeUInt32LE(16, 16);
+      clip.write('data', 36);
+      clip.writeUInt32LE(2, 40);
+      fs.writeFileSync(path.join(voice, '1.wav'), clip);
+      fs.writeFileSync(path.join(voice, '2.wav'), clip);
+      const store = new FilmProjectCheckpointStore(path.join(directory, 'checkpoints'));
+      expect(store.capture('first', 'owner', 'inputs', work)).toBe(true);
+      expect(store.inspect('first')).toEqual({ completedScenes: 1, narrationClips: 2 });
+      const restored = store.restore('first', 'owner', 'inputs', next)!;
+      expect(restored.protectedMedia.filter(asset => asset.absolute.endsWith('.mjs'))
+        .map(asset => path.basename(asset.absolute))).toEqual(['1.mjs']);
+      const draft = path.join(restored.root, 'scenes', '2.mjs');
+      expect(fs.readFileSync(draft, 'utf8')).toBe(partial);
+      fs.writeFileSync(draft, finished);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('accepts the export request for a large committed playback bundle', () => {
+    const payload = { html: '<!doctype html>' + 'a'.repeat(35 * 1024 * 1024),
+      aac: 'A'.repeat(13 * 1024 * 1024), durationSec: 600 };
+    expect(Buffer.byteLength(JSON.stringify(payload))).toBeLessThan(MAX_BROWSER_FILM_EXPORT_REQUEST_BYTES);
+    expect(parseBrowserFilmExport(payload)).toEqual(payload);
+    expect(() => parseBrowserFilmExport({ ...payload, durationSec: 691 })).toThrow('input is invalid');
   });
 
   it('identifies one missing scene and keeps all completed clips beyond the former 16 MiB checkpoint ceiling', () => {

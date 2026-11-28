@@ -12,7 +12,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { pipeline } from 'node:stream/promises';
-import { parseBrowserFilmExport, runBrowserFilmExport, type ExportIsolation } from '../engine/browser-film-export.js';
+import { MAX_BROWSER_FILM_EXPORT_REQUEST_BYTES, parseBrowserFilmExport, runBrowserFilmExport, type ExportIsolation } from '../engine/browser-film-export.js';
 
 import { describeCapabilities, type CapabilitiesContext } from '../capabilities.js';
 import { renderCondition } from '../conditions.js';
@@ -146,7 +146,7 @@ async function handle(context: ServerContext, req: http.IncomingMessage, res: ht
     const controller = new AbortController();
     res.once('close', () => controller.abort());
     try {
-      const payload = parseBrowserFilmExport(await readJsonBody(req, 34 * 1024 * 1024));
+      const payload = parseBrowserFilmExport(await readJsonBody(req, MAX_BROWSER_FILM_EXPORT_REQUEST_BYTES));
       work = fs.mkdtempSync(path.join(os.tmpdir(), 'map-browser-export-'));
       const output = await runBrowserFilmExport(payload, work, context.exportIsolation,
         AbortSignal.any([controller.signal, AbortSignal.timeout(45 * 60 * 1000)]));

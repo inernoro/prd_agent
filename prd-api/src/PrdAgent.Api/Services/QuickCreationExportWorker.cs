@@ -131,7 +131,8 @@ public sealed class QuickCreationExportWorker(IServiceScopeFactory scopes, IHttp
         using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(transport.BaseUrl, "/v1/film-exports"))
         {
             Content = JsonContent.Create(new { html = QuickCreationBrowserPlayback.RenderSandbox(bytes),
-                aac = bundle.RootElement.GetProperty("aac").GetString(), durationSec = run.QuickCreationMedia!.DurationSec }),
+                aac = bundle.RootElement.GetProperty("aac").GetString(), durationSec = run.QuickCreationMedia!.DurationSec },
+                options: QuickCreationBrowserPlayback.CompactJsonOptions),
         };
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", transport.ApiKey);
         using var client = http.CreateClient(OpenDesignTransportServiceCollectionExtensions.ServiceHttpClientName);

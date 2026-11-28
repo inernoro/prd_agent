@@ -9,6 +9,12 @@ import { resolveBrowserExecutablePath } from '../quality/browser-runner.js';
 
 const exec = promisify(execFile);
 const fps = 24;
+const MiB = 1024 * 1024;
+// The 80 MiB wire workspace package wraps the playback bundle in Base64.
+// Decoded playback JSON is under 60 MiB. The export also sends AAC separately.
+const MaxPlaybackHtmlBytes = 64 * MiB;
+const MaxExportAacChars = 16 * MiB;
+export const MAX_BROWSER_FILM_EXPORT_REQUEST_BYTES = MaxPlaybackHtmlBytes + MaxExportAacChars + 2 * MiB;
 export interface BrowserFilmExportRequest {
   html: string;
   aac: string;
@@ -19,7 +25,7 @@ export interface ExportIsolation { uid: number; gid: number; home: string }
 export function parseBrowserFilmExport(value: unknown): BrowserFilmExportRequest {
   const request = value as Partial<BrowserFilmExportRequest> | null;
   if (request == null || typeof request.html !== 'string' || !request.html.startsWith('<!doctype html>')
-      || request.html.length > 22 * 1024 * 1024 || typeof request.aac !== 'string' || request.aac.length > 12 * 1024 * 1024
+      || Buffer.byteLength(request.html) > MaxPlaybackHtmlBytes || typeof request.aac !== 'string' || request.aac.length > MaxExportAacChars
       || !/^[A-Za-z0-9+/=]+$/.test(request.aac) || typeof request.durationSec !== 'number'
       || !Number.isFinite(request.durationSec) || request.durationSec <= 0 || request.durationSec > 690) {
     throw new Error('Browser film export input is invalid');

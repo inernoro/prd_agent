@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFile } from 'node:child_process';
+import { execFile, spawnSync } from 'node:child_process';
 import { promisify } from 'node:util';
 import { AgentWorkspaceRuntimeError } from '../errors.js';
 import { readRegularFileNoFollow } from '../workspace/output-preflight.js';
@@ -12,6 +12,14 @@ import { parseFilmCaptions } from './code-film.js';
 const exec = promisify(execFile);
 const MiB = 1024 * 1024;
 const unsafeAnimation = /\b(?:Date\.now|performance\.now|Math\.random|requestAnimationFrame|fetch|XMLHttpRequest|WebSocket|localStorage|sessionStorage|indexedDB|importScripts)\b/;
+
+export function isValidBrowserSceneProgram(code: Buffer): boolean {
+  if (code.length === 0 || code.length > 2 * MiB || unsafeAnimation.test(code.toString('utf8'))) return false;
+  // 检查模块语法，不加载或执行用户产出的模块。
+  return spawnSync(process.execPath, ['--input-type=module', '--check'], {
+    input: code, timeout: 2000, env: {}, stdio: ['pipe', 'ignore', 'ignore'],
+  }).status === 0;
+}
 
 export function makeBrowserFilmContract(target: number, scenes: number, trial: boolean) {
   return {
@@ -39,6 +47,18 @@ function regular(file: string, maxBytes: number) {
   return readRegularFileNoFollow(file, maxBytes);
 }
 
+export function parseBrowserFilmSceneIndexes(text: string): number[] | undefined {
+  try {
+    const manifest = JSON.parse(text) as { scenes?: unknown } | null;
+    const scenes = manifest?.scenes;
+    if (Array.isArray(scenes) && scenes.length > 0 && scenes.length <= 40
+        && scenes.every((value, index) => value === index + 1)) return scenes;
+  } catch {
+    // A partially written manifest cannot certify completed scenes.
+  }
+  return undefined;
+}
+
 export function findBrowserFilm(workspace: string): { root: string; indexes: number[] } | undefined {
   const roots = fs.readdirSync(workspace, { withFileTypes: true })
     .filter(entry => entry.isDirectory() && /^[a-z0-9][a-z0-9-]{0,79}$/.test(entry.name))
@@ -47,10 +67,9 @@ export function findBrowserFilm(workspace: string): { root: string; indexes: num
   if (!roots.length) return undefined;
   if (roots.length !== 1) invalid('Provide one browser film project');
   const root = roots[0];
-  const plan = JSON.parse(regular(path.join(root, 'browser-film.json'), 8 * 1024).toString('utf8')) as { scenes?: unknown };
-  if (!Array.isArray(plan.scenes) || !plan.scenes.length || plan.scenes.length > 40
-    || !plan.scenes.every((value, index) => value === index + 1)) invalid('Browser film scene order is invalid');
-  return { root, indexes: plan.scenes as number[] };
+  const indexes = parseBrowserFilmSceneIndexes(regular(path.join(root, 'browser-film.json'), 8 * 1024).toString('utf8'));
+  if (!indexes) invalid('Browser film scene order is invalid');
+  return { root, indexes };
 }
 
 function file(path: string, mediaType: string, bytes: Buffer): WorkspacePackageFile {
@@ -69,7 +88,7 @@ export async function packageBrowserFilm(project: { root: string; indexes: numbe
     const concat: string[] = [];
     for (const index of project.indexes) {
       const code = regular(path.join(project.root, 'scenes', `${index}.mjs`), 2 * MiB);
-      if (!code.length || unsafeAnimation.test(code.toString('utf8'))) invalid(`Scene ${index} uses an unsupported animation API`);
+      if (!isValidBrowserSceneProgram(code)) invalid(`Scene ${index} has invalid browser animation code`);
       const wav = regular(path.join(project.root, 'voice', 'out', `${index}.wav`), 16 * MiB);
       if (wav.toString('ascii', 0, 4) !== 'RIFF' || wav.toString('ascii', 8, 12) !== 'WAVE') invalid(`Scene ${index} has no valid narration`);
       const input = path.join(scratch, `${index}.wav`);

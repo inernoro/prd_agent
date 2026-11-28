@@ -4,6 +4,7 @@ import path from 'node:path';
 import { readRegularFileNoFollow } from '../workspace/output-preflight.js';
 import { sha256 } from '../workspace/primitives.js';
 import { hasCompletedMovie } from './film-recovery.js';
+import { isValidBrowserSceneProgram, parseBrowserFilmSceneIndexes } from './browser-film.js';
 
 const MIB = 1024 * 1024;
 // A project retains separate scene encodes and uncompressed narration. Its
@@ -41,7 +42,6 @@ function isSceneProgram(relative: string): boolean {
 }
 
 function isCompletedAsset(relative: string, bytes: Buffer): boolean {
-  if (isSceneProgram(relative)) return bytes.length > 0;
   if (isSceneVideo(relative)) return hasCompletedMovie(bytes);
   if (!isNarration(relative) || bytes.length <= 44 || bytes.toString('ascii', 0, 4) !== 'RIFF'
     || bytes.toString('ascii', 8, 12) !== 'WAVE' || bytes.readUInt32LE(4) + 8 !== bytes.length) return false;
@@ -65,9 +65,20 @@ function decode(file: CheckpointFile): Buffer {
   return bytes;
 }
 
-function summarize(checkpoint: ProjectCheckpoint) {
-  const saved = checkpoint.files.filter(file => (isNarration(file.path) || isSceneVideo(file.path) || isSceneProgram(file.path))
+function completedAssets(checkpoint: ProjectCheckpoint): CheckpointFile[] {
+  const saved = checkpoint.files.filter(file => (isNarration(file.path) || isSceneVideo(file.path))
     && isCompletedAsset(file.path, decode(file)));
+  const manifest = checkpoint.files.find(file => file.path === 'browser-film.json');
+  const indexes = manifest ? parseBrowserFilmSceneIndexes(decode(manifest).toString('utf8')) : undefined;
+  if (!indexes) return saved;
+  const finishedPaths = new Set(saved.map(file => file.path));
+  const declaredPaths = new Set(indexes.filter(index => finishedPaths.has(`voice/out/${index}.wav`))
+    .map(index => `scenes/${index}.mjs`));
+  return saved.concat(checkpoint.files.filter(file => declaredPaths.has(file.path)
+    && isValidBrowserSceneProgram(decode(file))));
+}
+
+function summarize(checkpoint: ProjectCheckpoint, saved = completedAssets(checkpoint)) {
   const plan = checkpoint.files.find(file => file.path === 'scenes/plan.json');
   const indexes = new Set(saved.filter(file => isSceneVideo(file.path)).map(file => Number(path.parse(file.path).name)));
   let incompleteScene: number | undefined;
@@ -166,6 +177,8 @@ export class FilmProjectCheckpointStore {
     if (!checkpoint || checkpoint.owner !== owner || checkpoint.inputHash !== inputHash || !SLUG.test(checkpoint.project)) return undefined;
     const root = path.join(workspace, checkpoint.project);
     const protectedMedia: Array<{ absolute: string; sha: string; size: number }> = [];
+    const completed = completedAssets(checkpoint);
+    const completedPaths = new Set(completed.map(file => file.path));
     fs.mkdirSync(root, { mode: 0o755 });
     for (const file of checkpoint.files) {
       if (file.path.split('/').some(segment => !FILE_SEGMENT.test(segment))) throw new Error('Invalid film checkpoint path');
@@ -173,9 +186,9 @@ export class FilmProjectCheckpointStore {
       const bytes = decode(file);
       fs.mkdirSync(path.dirname(destination), { recursive: true, mode: 0o755 });
       fs.writeFileSync(destination, bytes, { flag: 'wx', mode: 0o644 });
-      if (isCompletedAsset(file.path, bytes)) protectedMedia.push({ absolute: destination, sha: file.sha, size: bytes.length });
+      if (completedPaths.has(file.path)) protectedMedia.push({ absolute: destination, sha: file.sha, size: bytes.length });
     }
-    return { root, protectedMedia, ...summarize(checkpoint) };
+    return { root, protectedMedia, ...summarize(checkpoint, completed) };
   }
 
   static hasCompletedScene(root: string, index: number): boolean {
