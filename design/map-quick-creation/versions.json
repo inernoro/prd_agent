@@ -65,6 +65,13 @@
    "tag": "design/DSN-1400E277/v9",
    "committedAt": "2026-11-27T22:43:56+00:00",
    "subject": "fix(design): 交接场景并到 24 个以内（CDS 每稿上限）"
+  },
+  {
+   "version": 10,
+   "commit": "f6c77f152231d51fd55e0f12b7819eb00b9cd846",
+   "tag": "design/DSN-1400E277/v10",
+   "committedAt": "2026-11-28T12:16:00+00:00",
+   "subject": "style(design): 快速创作 V10 改用网页托管的深邃配色、理顺字重（未发布到 CDS）"
   }
  ]
 }
