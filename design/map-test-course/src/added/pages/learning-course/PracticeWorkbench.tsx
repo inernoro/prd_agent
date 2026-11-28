@@ -42,7 +42,7 @@ function CodeView({ practice, findings, decisions, selected, onSelect, showFixes
           <button key={f.path} type="button" className="lc-file" aria-current={i === fileIdx} onClick={() => setFileIdx(i)} data-qc-touch-exempt>{f.path}</button>
         ))}
         <span className="flex-1" />
-        <span className="text-[11.5px] lc-ink3 shrink-0">{findings.length ? `${findings.length} 处标注` : '等待检查'}</span>
+        <span className="t-meta lc-ink3 shrink-0">{findings.length ? `${findings.length} 处标注` : '等待检查'}</span>
       </div>
       <div ref={box} className="lc-scroll flex-1 lc-code" data-lc="code-view" style={{ overflowX: 'auto' }}>
         {rows.map((r, i) => {
@@ -85,25 +85,25 @@ function VisualView({ practice, findings, decisions, selected, onSelect, showFix
     })
   );
   return (
-    <div className="flex flex-col h-full min-h-0 p-4 gap-3 lc-grid-bg" data-lc="visual-view">
+    <div className="flex flex-col h-full min-h-0 p-4 gap-3" data-lc="visual-view">
       <div className="flex items-center gap-2 flex-wrap shrink-0">
         <span className="lc-kicker">被检物</span>
         <div className="flex gap-1" role="group" aria-label="对照方式">
           <button type="button" className="lc-tool" aria-pressed={mode === 'side'} onClick={() => setMode('side')}><Columns2 size={14} />并排</button>
           <button type="button" className="lc-tool" aria-pressed={mode === 'overlay'} onClick={() => setMode('overlay')}><Layers size={14} />叠加</button>
         </div>
-        <span className="text-[12px] lc-ink3">{s.viewport} · {s.theme} · 同一份演示数据</span>
+        <span className="t-meta lc-ink3">{s.viewport} · {s.theme} · 同一份演示数据</span>
       </div>
       {mode === 'side' ? (
         <div className="grid gap-3 flex-1 min-h-0 content-start" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))' }}>
           <figure className="flex flex-col gap-1.5">
             <figcaption className="lc-kicker">基线（上一版）</figcaption>
-            <img src={s.baselineUrl} alt="基线截图" className="w-full rounded-[10px]" style={{ boxShadow: '0 0 0 1px var(--lc-line)' }} />
+            <img src={s.baselineUrl} alt="基线截图" className="w-full rounded-[8px]" style={{ boxShadow: '0 0 0 1px var(--line-2)' }} />
           </figure>
           <figure className="flex flex-col gap-1.5">
             <figcaption className="lc-kicker">实际（本次改动）</figcaption>
             <div className="relative">
-              <img src={s.actualUrl} alt="实际截图" className="w-full rounded-[10px] block" style={{ boxShadow: '0 0 0 1px var(--lc-line)' }} />
+              <img src={s.actualUrl} alt="实际截图" className="w-full rounded-[8px] block" style={{ boxShadow: '0 0 0 1px var(--line-2)' }} />
               {regions}
             </div>
           </figure>
@@ -111,11 +111,11 @@ function VisualView({ practice, findings, decisions, selected, onSelect, showFix
       ) : (
         <div className="flex flex-col gap-2 flex-1 min-h-0">
           <div className="relative max-w-[720px] w-full">
-            <img src={s.baselineUrl} alt="基线截图" className="w-full rounded-[10px] block" style={{ boxShadow: '0 0 0 1px var(--lc-line)' }} />
-            <img src={s.actualUrl} alt="实际截图" className="w-full rounded-[10px] absolute inset-0" style={{ opacity: mix / 100 }} />
+            <img src={s.baselineUrl} alt="基线截图" className="w-full rounded-[8px] block" style={{ boxShadow: '0 0 0 1px var(--line-2)' }} />
+            <img src={s.actualUrl} alt="实际截图" className="w-full rounded-[8px] absolute inset-0" style={{ opacity: mix / 100 }} />
             {regions}
           </div>
-          <label className="flex items-center gap-3 text-[12px] lc-ink2 max-w-[720px]">
+          <label className="flex items-center gap-3 t-meta lc-ink2 max-w-[720px]">
             基线<input type="range" min={0} max={100} value={mix} onChange={e => setMix(Number(e.target.value))} className="flex-1" style={{ minHeight: 44 }} />实际
           </label>
         </div>

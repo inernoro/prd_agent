@@ -88,6 +88,18 @@ for (const screen of design.screens) {
         primaries: [...document.querySelectorAll('.map-btn-primary')].filter(visible).map(b => b.textContent.trim()),
         vars: ['--text-primary', '--text-secondary', '--text-muted', '--bg-base'].map(v => style.getPropertyValue(v).trim()),
         wipBadge: /试运行/.test(document.body.innerText),
+        type: (() => {
+          const sizes = new Set(), weights = new Set(), sans = new Set();
+          if (!root) return { sizes: [], weights: [], sans: [] };
+          const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+          while (w.nextNode()) {
+            const n = w.currentNode; if (!n.textContent.trim()) continue;
+            const el = n.parentElement; const r = el.getBoundingClientRect(); if (!r.width || r.bottom < 0 || r.top > innerHeight) continue;
+            const cs = getComputedStyle(el); sizes.add(cs.fontSize); weights.add(cs.fontWeight);
+            if (!/mono|Menlo|Consolas/i.test(cs.fontFamily)) sans.add(cs.fontSize);
+          }
+          return { sizes: [...sizes], weights: [...weights], sans: [...sans] };
+        })(),
       };
     });
     const toRgb = (value, base) => {
@@ -101,7 +113,7 @@ for (const screen of design.screens) {
     const bg = toRgb(m.vars[3]);
     const contrast = bg ? m.vars.slice(0, 3).map(v => { const c = toRgb(v, bg); return c ? Number(ratio(c, bg).toFixed(2)) : null; }) : [];
     if (shots) await page.screenshot({ path: path.join(shots, `${screen.id}-${theme}.png`) });
-    screens.push({ id: screen.id, theme, viewport: screen.viewport, errors, overflow: m.overflow, small: m.small, contrast, inShell: m.inShell, emojiInText: emoji.test(m.text), primaries: m.primaries, wipBadge: m.wipBadge, text: m.text });
+    screens.push({ id: screen.id, theme, viewport: screen.viewport, errors, overflow: m.overflow, small: m.small, contrast, inShell: m.inShell, emojiInText: emoji.test(m.text), primaries: m.primaries, wipBadge: m.wipBadge, text: m.text, type: m.type });
     await ctx.close();
   }
 }
@@ -171,7 +183,7 @@ await flow('A-20', 'lesson-pdf', 'light', async f => {
 await flow('A-08', 'practice-review', 'light', async f => {
   const t = await f.evaluate(() => document.body.innerText);
   const stages = await f.$$eval('[data-stage]', els => els.map(e => e.dataset.stageStatus).join(','));
-  return { pass: /已用 /.test(t) && /预计还需约/.test(t) && /预计时间依据/.test(t) && stages.includes('running'), note: `阶段 ${stages}；有「已用 / 预计还需约 / 依据」` };
+  return { pass: /已用 /.test(t) && /预计还需约/.test(t) && /依据/.test(t) && stages.includes('running'), note: `阶段 ${stages}；有「已用 / 预计还需约 / 依据」` };
 });
 await flow('A-22', 'practice-review', 'dark', async f => {
   const flags = await f.$$eval('[data-finding-row]', els => els.map(e => e.querySelector('.lc-ln')?.textContent).join(','));
@@ -211,7 +223,7 @@ await flow('A-26', 'practice-deliver', 'light', async f => {
 await flow('A-27', 'practice-deliver', 'dark', async f => {
   await f.click('[data-lc=submit-delivery]');
   await f.waitForSelector('[data-lc-ready=practice-done]');
-  const xp = await f.evaluate(() => document.body.innerText.match(/\+\d+ 经验/)?.[0]);
+  const xp = await f.evaluate(() => document.body.innerText.match(/获得 \d+ 经验/)?.[0]);
   await f.click('[data-lc=back-course]');
   await f.waitForSelector('[data-practice=p-review]');
   const st = await f.$eval('[data-practice=p-review]', el => el.dataset.status);
@@ -240,9 +252,9 @@ await flow('A-31', 'practice-brief', 'light', async (f, page) => {
   await f.waitForSelector('[data-practice=p-review]');
   const card = await f.$eval('[data-practice=p-review]', el => ({ st: el.dataset.status, t: el.textContent }));
   const btn = await f.evaluate(() => document.querySelector('[data-lc=start-practice]')?.textContent.trim());
-  await f.click('[data-practice=p-review]');
+  await f.click('[data-lc=start-practice]');
   await f.waitForSelector('[data-lc=agent-run], [data-lc-ready=practice-triage]', { timeout: 8000 });
-  return { pass: card.st === 'doing' && /进行中/.test(card.t) && btn === '接着做', note: `路线上练习支线 ${card.st}「${card.t}」；底部按钮「${btn}」；点回去仍是同一次评审` };
+  return { pass: card.st === 'doing' && /进行中/.test(card.t) && btn === '接着做', note: `练习选项 ${card.st}「${card.t}」；底部按钮「${btn}」；点回去仍是同一次评审` };
 });
 await flow('A-38', 'lesson-video', 'light', async f => {
   const def = await f.$eval('[role=radio][aria-checked=true]', el => el.dataset.pick);
@@ -276,6 +288,10 @@ const measure = {
   'A-07': { pass: navOk && every(S('center'), s => s.wipBadge) && every(S('lesson-video'), s => s.wipBadge), note: 'navRegistry 有课程与练习两条路由；课程数据 wip: true，课程卡与课程页顶栏显示「试运行」' },
   'A-10': { pass: svcOk && pagesUseSuccess >= 3, note: `learningCourses.ts 全部经 apiRequest（无裸 fetch）；${pagesUseSuccess} 个页面文件按 res.success 分支、错误取 res.error?.message` },
 };
+const SCALE = new Set(['12px', '14px', '16px', '20px', '28px']);
+const typeBad = screens.filter(s => s.type.sizes.length > 6 || s.type.weights.some(w => !['400', '600'].includes(w)) || s.type.sans.some(x => !SCALE.has(x)));
+const maxSizes = Math.max(...screens.map(s => s.type.sizes.length));
+measure['A-41'] = { pass: typeBad.length === 0, note: typeBad.length ? typeBad.map(s => `${s.id}/${s.theme}：字号 ${s.type.sizes.join('、')}；字重 ${s.type.weights.join('、')}`).join('；') : `${screens.length} 次打开：正文字号全部落在 12 / 14 / 16 / 20 / 28，代码 13；每屏最多 ${maxSizes} 种字号；字重只有 400 / 600` };
 for (const [id, r] of Object.entries(flows)) measure[id] = r;
 const errorsTotal = screens.reduce((n, s) => n + s.errors.length, 0);
 const primaryNote = [...new Set(screens.filter(s => s.viewport === 'desktop').map(s => `${s.id}：${s.primaries.join('、') || '无'}`))].join('；');

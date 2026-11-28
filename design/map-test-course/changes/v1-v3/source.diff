@@ -70,7 +70,7 @@ diff --git a/src/added/pages/learning-course/ArticleLesson.tsx b/src/added/pages
 -    case 'h2': return <h2 id={block.id} data-toc={block.id}>{block.text}</h2>;
 -    case 'p': return <p>{block.text}</p>;
 -    case 'list': return <ul>{block.items.map(item => <li key={item}>{item}</li>)}</ul>;
-+    case 'h2': return <h2 id={block.id} data-toc={block.id}><span className="lc-h-no">{String(no).padStart(2, '0')}</span>{block.text.replace(/^[一二三四五六七八九十]+、/, '')}</h2>;
++    case 'h2': return <h2 id={block.id} data-toc={block.id} data-no={no}>{block.text.replace(/^[一二三四五六七八九十]+、/, '')}</h2>;
 +    case 'p': return <p className={first ? 'lc-lede' : undefined}>{block.text}</p>;
 +    case 'list': return <ul>{block.items.map(x => <li key={x}>{x}</li>)}</ul>;
      case 'code': return <figure><pre className="lc-mono"><code>{block.code}</code></pre>{block.caption && <figcaption>{block.caption}</figcaption>}</figure>;
@@ -85,7 +85,7 @@ diff --git a/src/added/pages/learning-course/ArticleLesson.tsx b/src/added/pages
 -        </div>
 -      );
 +      const Icon = NOTE_ICON[block.tone];
-+      return <div className="lc-note" data-tone={block.tone}><div className="flex items-center gap-2 font-semibold text-[14px]" style={{ color: 'var(--lc-ink)' }}><Icon size={15} />{block.title}</div><div className="text-[14px] mt-1">{block.text}</div></div>;
++      return <div className="lc-note" data-tone={block.tone}><div className="flex items-center gap-2 t-strong"><Icon size={16} />{block.title}</div><div className="mt-1 t-mute">{block.text}</div></div>;
      }
    }
  }
@@ -148,14 +148,14 @@ diff --git a/src/added/pages/learning-course/ArticleLesson.tsx b/src/added/pages
 +  );
 +  const companion = (
 +    <div className="flex flex-col gap-0.5">
-+      {toc.map((t, i) => (
++      {toc.map(t => (
 +        <button key={t.id} type="button" className="lc-toc" aria-current={active === t.id} onClick={() => {
 +          const target = box.current?.querySelector<HTMLElement>(`[data-toc="${t.id}"]`);
 +          if (target && box.current) box.current.scrollTo({ top: target.offsetTop - 12, behavior: 'smooth' });
-+        }}><span className="lc-mono">{String(i + 1).padStart(2, '0')}</span>{t.text.replace(/^[一二三四五六七八九十]+、/, '')}</button>
++        }}>{t.text.replace(/^[一二三四五六七八九十]+、/, '')}</button>
 +      ))}
 +      <div className="px-3 pt-3">
-+        <div className="flex justify-between text-[11.5px] lc-ink3 mb-1.5"><span>已读</span><span className="lc-mono">{finished ? 100 : pct}%</span></div>
++        <div className="flex justify-between t-meta lc-ink3 mb-1.5"><span>已读</span><span className="lc-num">{finished ? 100 : pct}%</span></div>
 +        <div className="lc-meter" style={{ borderRadius: 4 }}><span style={{ width: `${finished ? 100 : pct}%` }} /></div>
        </div>
 -      {toc.length > 1 && (
@@ -178,41 +178,24 @@ diff --git a/src/added/pages/learning-course/CourseMetro.tsx b/src/added/pages/l
 new file mode 100644
 --- /dev/null
 +++ b/src/added/pages/learning-course/CourseMetro.tsx
-@@ -0,0 +1,38 @@
-+import { Check } from 'lucide-react';
-+import { SKILL_REGISTRY } from './registry';
-+import type { Course, Lesson, PracticeSummary } from './types';
+@@ -0,0 +1,21 @@
++import type { Course, Lesson } from './types';
 +
-+/* 课程路线：五站是五课，站下的菱形支线是练习。一眼看到学到哪、下一站在哪、哪里能下车练手。 */
-+export function CourseMetro({ course, activeId, onLesson, onPractice }: {
-+  course: Course;
-+  activeId: string;
-+  onLesson: (l: Lesson) => void;
-+  onPractice: (p: PracticeSummary) => void;
-+}) {
++/* 课程路线：五课是一条线上的五站，已学实心、当前站强调色，轨道填到当前站。练习入口在右侧伴读栏。 */
++export function CourseMetro({ course, activeId, onLesson }: { course: Course; activeId: string; onLesson: (l: Lesson) => void }) {
 +  const n = course.lessons.length;
 +  const activeIdx = Math.max(0, course.lessons.findIndex(l => l.id === activeId));
 +  const reached = Math.max(activeIdx, course.lessons.reduce((m, l, i) => (l.status === 'done' ? i : m), -1));
-+  const branchesOf = (lesson: Lesson) => course.practices.filter(p => p.lessonIds[0] === lesson.id);
 +  const half = 50 / n;
 +  return (
 +    <nav className="lc-metro" style={{ ['--n' as string]: n }} aria-label="课程路线" data-tour-id="course-lessons">
 +      <span className="lc-metro-rail" style={{ left: `${half}%`, right: `${half}%` }} aria-hidden />
 +      <span className="lc-metro-fill" style={{ left: `${half}%`, width: `${(reached / n) * 100}%` }} aria-hidden />
 +      {course.lessons.map(lesson => (
-+        <div key={lesson.id} className="flex flex-col items-center gap-2">
-+          <button type="button" className="lc-station" data-status={lesson.status} aria-current={lesson.id === activeId} data-lc="lesson-row" data-lesson={lesson.id} onClick={() => onLesson(lesson)}>
-+            <span className="lc-station-dot">{lesson.status === 'done' ? <Check size={17} strokeWidth={2.6} /> : String(lesson.index).padStart(2, '0')}</span>
-+            <span className="lc-station-name">{lesson.title.split('：')[0]}</span>
-+          </button>
-+          <div className="flex flex-col items-center gap-1.5" data-tour-id="course-practices">
-+            {branchesOf(lesson).map(p => (
-+              <button key={p.id} type="button" className="lc-branch" data-lc="practice-card" data-practice={p.id} data-status={p.status} onClick={() => onPractice(p)} title={p.title} data-qc-touch-exempt>
-+                练习 · {SKILL_REGISTRY[p.skill].label}{p.status === 'done' ? ' · 已完成' : p.status === 'doing' ? ' · 进行中' : ''}
-+              </button>
-+            ))}
-+          </div>
-+        </div>
++        <button key={lesson.id} type="button" className="lc-station" data-status={lesson.status} aria-current={lesson.id === activeId} data-lc="lesson-row" data-lesson={lesson.id} onClick={() => onLesson(lesson)}>
++          <span className="lc-station-dot" />
++          <span>{lesson.index}. {lesson.title.split('：')[0]}</span>
++        </button>
 +      ))}
 +    </nav>
 +  );
@@ -220,7 +203,7 @@ new file mode 100644
 diff --git a/src/added/pages/learning-course/CourseShelf.tsx b/src/added/pages/learning-course/CourseShelf.tsx
 --- a/src/added/pages/learning-course/CourseShelf.tsx
 +++ b/src/added/pages/learning-course/CourseShelf.tsx
-@@ -1,65 +1,59 @@
+@@ -1,65 +1,45 @@
  import { useEffect, useState } from 'react';
  import { useNavigate } from 'react-router-dom';
 -import { ArrowRight, Clock, FlaskConical, Layers } from 'lucide-react';
@@ -230,7 +213,7 @@ diff --git a/src/added/pages/learning-course/CourseShelf.tsx b/src/added/pages/l
  import './learningCourse.css';
  
 -/* 学习中心的「课程」区：系统化的课程与短教程分开放，课程卡给出进度和下一课。 */
-+/* 学习中心的「课程」区：每门课是一张横幅，迷你路线标出学到哪一站、下一站是哪。 */
++/* 学习中心的「课程」区：每门课一张卡，路线标出学到哪、下一课是哪。 */
  export function CourseShelf() {
    const navigate = useNavigate();
    const [items, setItems] = useState<CourseSummary[] | null>(null);
@@ -244,7 +227,7 @@ diff --git a/src/added/pages/learning-course/CourseShelf.tsx b/src/added/pages/l
 -  if (error) return <div className="text-[12.5px] lc-muted">课程暂时没加载出来（{error}），稍后刷新即可，短教程不受影响。</div>;
 -  if (!items || items.length === 0) return null;
 -
-+  if (error) return <div className="text-[12.5px]" style={{ color: 'var(--text-muted)' }}>课程暂时没加载出来（{error}），稍后刷新即可，短教程不受影响。</div>;
++  if (error) return <div className="t-meta" style={{ color: 'var(--text-muted)' }}>课程暂时没加载出来（{error}），稍后刷新即可，短教程不受影响。</div>;
 +  if (!items?.length) return null;
    return (
 -    <section className="flex flex-col gap-3" data-tour-id="learning-courses" data-lc-ready="center" aria-label="课程">
@@ -252,12 +235,7 @@ diff --git a/src/added/pages/learning-course/CourseShelf.tsx b/src/added/pages/l
 -        <Layers size={15} style={{ color: 'var(--accent-primary)' }} />
 -        <span className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>课程</span>
 -        <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>成体系地学一项技能：视频、PDF 教材、图文，配练习 · {items.length} 门</span>
-+    <section className="lc-root flex flex-col gap-3" data-tour-id="learning-courses" data-lc-ready="center" aria-label="课程">
-+      <div className="flex items-baseline gap-3">
-+        <span className="lc-kicker" style={{ color: 'var(--lc-hi)' }}>课程</span>
-+        <span className="text-[14px] font-semibold">成体系地学一项技能</span>
-+        <span className="text-[12px] lc-ink3">视频、PDF 教材、图文任选，配动手练习</span>
-       </div>
+-      </div>
 -      <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 560px), 1fr))' }}>
 -        {items.map(c => {
 -          const pct = Math.round((c.progress.lessonsDone / c.lessonCount) * 100);
@@ -287,39 +265,32 @@ diff --git a/src/added/pages/learning-course/CourseShelf.tsx b/src/added/pages/l
 -                  <span className="text-[12px] font-semibold inline-flex items-center gap-1 shrink-0" style={{ color: 'var(--text-primary)' }}>
 -                    {started ? '继续' : '开始'}{c.progress.nextLessonTitle ? `：${c.progress.nextLessonTitle}` : ''}<ArrowRight size={13} />
 -                  </span>
+-                </span>
++    <section className="lc-root flex flex-col gap-3" data-tour-id="learning-courses" data-lc-ready="center" aria-label="课程">
++      <div className="flex items-baseline gap-3"><h2 className="t-strong">课程</h2><span className="t-meta t-mute">成体系地学一项技能，视频、PDF 教材、图文任选，配动手练习</span></div>
 +      {items.map(c => {
 +        const nextIdx = c.progress.nextLessonId ? Number(c.progress.nextLessonId.replace(/\D/g, '')) - 1 : c.lessonCount;
 +        return (
 +          <button key={c.id} type="button" className="lc-banner" data-lc="course-card"
 +            onClick={() => navigate(`/learning-center/courses/${encodeURIComponent(c.id)}${c.progress.nextLessonId ? `?lesson=${encodeURIComponent(c.progress.nextLessonId)}` : ''}`)}>
-+            <span className="lc-banner-orb" aria-hidden />
-+            <span className="flex items-start gap-4 flex-wrap relative">
-+              <span className="min-w-0 flex-1" style={{ minWidth: 240 }}>
-+                <span className="flex items-center gap-2.5">
-+                  <span className="text-[20px] font-bold" style={{ letterSpacing: '-0.01em' }}>{c.title}</span>
-+                  {c.wip && <span className="lc-tag">试运行</span>}
-                 </span>
-+                <span className="block text-[12.5px] lc-ink2 mt-1 leading-relaxed">{c.subtitle}</span>
++            <span className="flex items-end justify-between gap-4 flex-wrap">
++              <span className="min-w-0">
++                <span className="flex items-center gap-3"><span className="t-title t-strong">{c.title}</span>{c.wip && <span className="t-meta t-mute px-2 rounded-[6px]" style={{ border: '1px solid var(--line-2)' }}>试运行</span>}</span>
++                <span className="block t-mute mt-1">{c.subtitle}</span>
                </span>
 -            </button>
 -          );
 -        })}
 -      </div>
-+              <span className="flex items-center gap-5">
-+                <span className="lc-stat"><b>{c.lessonCount}</b>课</span>
-+                <span className="lc-stat">约<b>{c.minutes}</b>分钟</span>
-+                <span className="lc-stat">练习<b>{c.progress.practicesDone}</b>次完成</span>
-+              </span>
++              <span className="t-meta t-mute lc-num">{c.lessonCount} 课 · 约 {c.minutes} 分钟 · 练习完成 {c.progress.practicesDone} 次</span>
 +            </span>
-+            <span className="lc-mini-metro relative" style={{ ['--n' as string]: c.lessonCount }}>
++            <span className="lc-mini-metro" style={{ ['--n' as string]: c.lessonCount }}>
 +              {Array.from({ length: c.lessonCount }, (_, i) => (
-+                <span key={i} className="lc-mini-stop" data-done={i < c.progress.lessonsDone} data-next={i === nextIdx}>
-+                  <i>{i + 1}</i>{c.lessonShortTitles[i] ?? `第 ${i + 1} 课`}
-+                </span>
++                <span key={i} className="lc-mini-stop" data-done={i < c.progress.lessonsDone} data-next={i === nextIdx}><i />{c.lessonShortTitles[i] ?? `第 ${i + 1} 课`}</span>
 +              ))}
 +            </span>
-+            <span className="flex items-center justify-end gap-2 text-[13px] font-semibold relative" style={{ color: 'var(--lc-hi)' }}>
-+              {c.progress.lessonsDone > 0 ? '继续' : '开始'}{c.progress.nextLessonTitle ? `：${c.progress.nextLessonTitle}` : ''}<ArrowRight size={14} />
++            <span className="flex items-center justify-end gap-1.5 t-strong" style={{ color: 'var(--hi)' }}>
++              {c.progress.lessonsDone > 0 ? '继续' : '开始'}{c.progress.nextLessonTitle ? `：${c.progress.nextLessonTitle}` : ''}<ArrowRight size={15} />
 +            </span>
 +          </button>
 +        );
@@ -331,11 +302,10 @@ diff --git a/src/added/pages/learning-course/Desk.tsx b/src/added/pages/learning
 new file mode 100644
 --- /dev/null
 +++ b/src/added/pages/learning-course/Desk.tsx
-@@ -0,0 +1,33 @@
+@@ -0,0 +1,28 @@
 +import type { ReactNode } from 'react';
-+import { Kicker } from './primitives';
 +
-+/* 书桌：左边主舞台（材料本身），右边伴读栏（跟着材料变的导航 + 本课要点 + 练习票）。 */
++/* 书桌：左边主舞台（材料本身），右边伴读栏（本课要点 + 跟着材料变的导航）与练习。 */
 +export function Desk({ head, stage, companionTitle, companionHint, companion, keyPoints, ticket, ready }: {
 +  head: ReactNode; stage: ReactNode; companionTitle: string; companionHint?: string; companion: ReactNode; keyPoints: string[]; ticket: ReactNode; ready: string;
 +}) {
@@ -347,17 +317,13 @@ new file mode 100644
 +      </section>
 +      <aside className="lc-side">
 +        <div className="lc-panel lc-side-panel">
-+          <div className="px-3.5 pt-3 pb-2" style={{ borderBottom: '1px solid var(--lc-line)' }}>
-+            <Kicker>本课要点</Kicker>
-+            <ol className="mt-1.5 flex flex-col gap-1">
-+              {keyPoints.map((k, i) => (
-+                <li key={k} className="grid gap-2 text-[12.5px] leading-relaxed lc-ink2" style={{ gridTemplateColumns: '18px 1fr' }}>
-+                  <span className="lc-mono text-[11px]" style={{ color: 'var(--lc-hi)', paddingTop: 2 }}>{i + 1}</span>{k}
-+                </li>
-+              ))}
-+            </ol>
++          <div className="lc-side-sec" style={{ borderBottom: '1px solid var(--line-2)' }}>
++            <div className="t-strong">本课要点</div>
++            <ul className="mt-2 flex flex-col gap-1.5 t-mute" style={{ listStyle: 'disc', paddingLeft: 18 }}>
++              {keyPoints.map(k => <li key={k}>{k}</li>)}
++            </ul>
 +          </div>
-+          <div className="lc-side-head"><span className="text-[13px] font-semibold">{companionTitle}</span>{companionHint && <span className="text-[11.5px] lc-ink3">{companionHint}</span>}</div>
++          <div className="lc-side-head"><span className="t-strong">{companionTitle}</span>{companionHint && <span className="t-meta t-mute">{companionHint}</span>}</div>
 +          <div className="lc-scroll flex-1 px-2 pb-2 relative">{companion}</div>
 +        </div>
 +        {ticket}
@@ -431,12 +397,12 @@ diff --git a/src/added/pages/learning-course/FindingTicket.tsx b/src/added/pages
 new file mode 100644
 --- /dev/null
 +++ b/src/added/pages/learning-course/FindingTicket.tsx
-@@ -0,0 +1,45 @@
-+import { Check, MapPin, X } from 'lucide-react';
+@@ -0,0 +1,37 @@
++import { Check, X } from 'lucide-react';
 +import { DECISION_REGISTRY, SEVERITY_REGISTRY } from './registry';
 +import type { Decision, Finding, PracticeSkill } from './types';
 +
-+/* 一张工单：证据在前、建议在后；学员盖「采纳」或「驳回」章，驳回要写理由（常用理由一键填入）。 */
++/* 一条意见：证据在前、建议在后；学员决定采纳或驳回，驳回要写理由（常用理由一键填入）。 */
 +export function FindingTicket({ index, finding, skill, decision, reason, feedback, selected, locked, onSelect, onDecide, onReason }: {
 +  index: number; finding: Finding; skill: PracticeSkill; decision?: Decision; reason?: string; feedback?: string;
 +  selected: boolean; locked: boolean; onSelect: () => void; onDecide: (d: Decision) => void; onReason: (t: string) => void;
@@ -445,28 +411,20 @@ new file mode 100644
 +  const words = DECISION_REGISTRY[skill];
 +  const where = finding.location.file ? `${finding.location.file.split('/').pop()}:${finding.location.line}` : '截图标注区';
 +  return (
-+    <article className="lc-work flex flex-col gap-2.5" data-selected={selected} data-lc="finding" data-finding={finding.id}>
-+      {decision && (
-+        <span className="lc-stamp" key={decision} style={{ color: decision === 'accept' ? 'var(--lc-pass)' : 'var(--lc-warn)' }}>{decision === 'accept' ? words.accept.slice(0, 2) : words.reject.slice(0, 2)}</span>
-+      )}
-+      <header className="flex items-center gap-2 pr-16">
-+        <span className="lc-mono text-[11px] lc-ink3">#{index}</span>
-+        <span className="lc-sev" style={{ background: sev.color }}>{finding.severity}</span>
-+        <button type="button" className="inline-flex items-center gap-1 lc-mono text-[11.5px] lc-ink3 hover:underline min-h-[28px]" onClick={onSelect} data-qc-touch-exempt><MapPin size={11} />{where}</button>
++    <article className="lc-work flex flex-col gap-3" data-selected={selected} data-lc="finding" data-finding={finding.id}>
++      <header className="flex items-baseline gap-3 t-meta">
++        <span className="lc-num t-mute">{index}</span>
++        <span className="lc-sev" style={{ color: sev.color }}>{sev.label}</span>
++        <button type="button" className="lc-mono t-mute hover:underline" onClick={onSelect} data-qc-touch-exempt>{where}</button>
++        {decision && <span className="ml-auto t-strong" style={{ color: decision === 'accept' ? 'var(--pass)' : 'var(--warn)' }}>{decision === 'accept' ? '已采纳' : '已驳回'}</span>}
 +      </header>
-+      <h3 className="text-[14px] font-semibold leading-snug">{finding.title}</h3>
-+      <dl className="grid gap-x-3 gap-y-1.5 text-[12.5px] leading-relaxed" style={{ gridTemplateColumns: '40px 1fr' }}>
-+        <dt className="lc-kicker pt-0.5">证据</dt><dd className="lc-ink2">{finding.evidence}</dd>
-+        <dt className="lc-kicker pt-0.5">建议</dt><dd className="lc-ink2">{finding.suggestion}</dd>
-+      </dl>
-+      {feedback && (
-+        <div className="text-[12.5px] leading-relaxed px-3 py-2 rounded-[10px]" style={{ background: 'color-mix(in srgb, var(--lc-warn) 10%, transparent)' }} data-lc="finding-feedback">
-+          <b style={{ color: 'var(--lc-warn)' }}>复测看到：</b>{feedback}
-+        </div>
-+      )}
-+      <div className="lc-stamp-row" role="group" aria-label={`第 ${index} 条的判断`}>
-+        <button type="button" className="lc-stamp-btn" data-kind="accept" aria-pressed={decision === 'accept'} disabled={locked} onClick={() => onDecide('accept')} data-lc="decide-accept"><Check size={15} />{words.accept}</button>
-+        <button type="button" className="lc-stamp-btn" data-kind="reject" aria-pressed={decision === 'reject'} disabled={locked} onClick={() => onDecide('reject')} data-lc="decide-reject"><X size={15} />{words.reject}</button>
++      <h3 className="lc-work-title t-strong">{finding.title}</h3>
++      <p className="t-mute">{finding.evidence}</p>
++      <p><span className="t-mute">建议：</span>{finding.suggestion}</p>
++      {feedback && <p className="pl-3" style={{ borderLeft: '2px solid var(--warn)' }} data-lc="finding-feedback"><span style={{ color: 'var(--warn)' }}>复测看到：</span>{feedback}</p>}
++      <div className="lc-choice-row" role="group" aria-label={`第 ${index} 条的判断`}>
++        <button type="button" className="lc-choice" data-kind="accept" aria-pressed={decision === 'accept'} disabled={locked} onClick={() => onDecide('accept')} data-lc="decide-accept"><Check size={15} />{words.accept}</button>
++        <button type="button" className="lc-choice" data-kind="reject" aria-pressed={decision === 'reject'} disabled={locked} onClick={() => onDecide('reject')} data-lc="decide-reject"><X size={15} />{words.reject}</button>
 +      </div>
 +      {decision === 'reject' && (
 +        <div className="flex flex-col gap-2">
@@ -560,7 +518,7 @@ diff --git a/src/added/pages/learning-course/LearningCoursePage.tsx b/src/added/
    const report = useCallback(async (body: { media: LessonMediaKind; positionSec?: number; page?: number; completed?: boolean }) => {
      if (!course || !lesson) return;
      const res = await saveLessonProgress(course.id, lesson.id, body);
-@@ -62,130 +61,87 @@ export default function LearningCoursePage() {
+@@ -62,130 +61,80 @@ export default function LearningCoursePage() {
        setCourse(c => c && { ...c, lessons: c.lessons.map(l => (l.id === lesson.id ? { ...l, status: 'done' } : l)) });
      }
    }, [course, lesson]);
@@ -578,11 +536,11 @@ diff --git a/src/added/pages/learning-course/LearningCoursePage.tsx b/src/added/
 -          <div className="text-[15px] font-semibold">课程暂时打不开</div>
 -          <div className="text-[13px] lc-secondary">{error}。你的学习进度已保存在服务端，重新加载即可接着学。</div>
 -          <Button variant="primary" onClick={() => void load()}><RefreshCw size={15} />重新加载</Button>
-+      <div className="lc-root h-full min-h-0 flex items-center justify-center lc-grid-bg">
++      <div className="lc-root h-full min-h-0 flex items-center justify-center">
 +        <div className="lc-panel p-6 max-w-md flex flex-col gap-3">
-+          <div className="lc-kicker">课程暂时打不开</div>
-+          <div className="text-[15px] font-semibold">{error}</div>
-+          <div className="text-[13px] lc-ink2">你的学习进度已保存在服务端，重新加载即可接着学。</div>
++          <div className="t-meta t-mute">课程暂时打不开</div>
++          <div className="t-strong">{error}</div>
++          <div className="t-ui lc-ink2">你的学习进度已保存在服务端，重新加载即可接着学。</div>
 +          <Act tone="primary" onClick={() => void load()}><RefreshCw size={15} />重新加载</Act>
          </div>
        </div>
@@ -608,23 +566,17 @@ diff --git a/src/added/pages/learning-course/LearningCoursePage.tsx b/src/added/
 -    />
 +  const head = (
 +    <div className="lc-sheet-head">
-+      <div className="lc-lesson-no" aria-hidden>{String(lesson.index).padStart(2, '0')}</div>
-+      <div className="min-w-0 flex-1 pb-2" style={{ minWidth: 220 }}>
-+        <div className="lc-kicker flex items-center gap-2">
-+          第 {lesson.index} 课 · {lesson.minutes} 分钟
-+          {lesson.status === 'done' && <span className="inline-flex items-center gap-1" style={{ color: 'var(--lc-pass)' }}><CheckCircle2 size={12} />已学完</span>}
-+        </div>
-+        <h2 className="text-[18px] font-bold leading-snug mt-0.5">{lesson.title}</h2>
-+        {!isMobile && <p className="text-[12.5px] lc-ink3 mt-0.5 line-clamp-1">{lesson.summary}</p>}
++      <div className="t-meta t-mute flex items-center gap-2">
++        第 {lesson.index} 课 · {lesson.minutes} 分钟
++        {lesson.status === 'done' && <span className="inline-flex items-center gap-1" style={{ color: 'var(--pass)' }}><CheckCircle2 size={12} />已学完</span>}
 +      </div>
++      <h2 className="t-title mt-1">{lesson.title}</h2>
 +      <div className="lc-ruler" role="group" aria-label="学习材料" data-tour-id="course-media-switch">
 +        {MEDIA_ORDER.map(kind => {
 +          const unit = unitOf(lesson, kind);
-+          const Icon = MEDIA_REGISTRY[kind].icon;
 +          return (
 +            <button key={kind} type="button" className="lc-ruler-tab" aria-pressed={media === kind} disabled={!unit} title={unit ? undefined : lesson.missingReason?.[kind] ?? '本课没有这类材料'} data-lc={`media-${kind}`} onClick={() => pick({ media: kind })}>
-+              <span className="inline-flex items-center gap-1.5"><Icon size={14} />{MEDIA_REGISTRY[kind].label}</span>
-+              <small className="lc-unit">{unit ?? '无'}</small>
++              {MEDIA_REGISTRY[kind].label}<span className="lc-unit t-mute">{unit ?? '无'}</span>
 +            </button>
 +          );
 +        })}
@@ -639,10 +591,7 @@ diff --git a/src/added/pages/learning-course/LearningCoursePage.tsx b/src/added/
 -      {isMobile ? (
 -        <header className="lc-surface lc-topbar shrink-0" style={{ padding: '4px 6px' }} data-qc-touch-exempt>
 -          <Link to="/learning-center" className="lc-crumb shrink-0" aria-label="回到学习中心" data-lc="back-center"><ChevronLeft size={16} /></Link>
-+    <div className={`lc-root h-full min-h-0 flex flex-col gap-3 ${isMobile ? 'lc-mobile lc-scroll' : ''}`} data-lc-ready="course">
-+      <header className="lc-panel lc-head shrink-0">
-+        <div className={`flex gap-4 ${isMobile ? 'flex-col' : 'items-start flex-wrap'}`}>
-           <div className="min-w-0 flex-1">
+-          <div className="min-w-0 flex-1">
 -            <SegmentedTabs
 -              ariaLabel="课程页面切换"
 -              items={[{ key: 'lesson', label: `第 ${lesson.index} 课` }, { key: 'outline', label: `目录与练习 · ${done}/${course.lessons.length}` }]}
@@ -659,13 +608,16 @@ diff --git a/src/added/pages/learning-course/LearningCoursePage.tsx b/src/added/
 -          <div className="flex items-center gap-2 min-w-0">
 -            <h1 className="text-[15px] font-bold truncate">{course.title}</h1>
 -            {course.wip && <span className="text-[11px] px-2 py-0.5 rounded-full shrink-0" style={{ border: '1px solid var(--border-default)', color: 'var(--text-secondary)' }}>试运行</span>}
-+            <div className="flex items-center gap-2.5 flex-wrap">
-+              <Link to="/learning-center" className="lc-link -ml-2" data-lc="back-center" aria-label="回到学习中心"><ChevronLeft size={15} />学习中心</Link>
-+              {!isMobile && <span className="lc-ink3" aria-hidden>/</span>}
-+              <h1 className="lc-title">{course.title}</h1>
-+              {course.wip && <span className="lc-tag">试运行</span>}
++    <div className={`lc-root h-full min-h-0 flex flex-col gap-3 ${isMobile ? 'lc-mobile lc-scroll' : ''}`} data-lc-ready="course">
++      <header className="lc-panel lc-head shrink-0">
++        <Link to="/learning-center" className="lc-link t-meta" data-lc="back-center" aria-label="回到学习中心"><ChevronLeft size={14} />学习中心</Link>
++        <div className={`flex gap-4 ${isMobile ? 'flex-col' : 'items-end justify-between'}`}>
++          <div className="min-w-0">
++            <div className="flex items-center gap-3 flex-wrap">
++              <h1 className="t-display">{course.title}</h1>
++              {course.wip && <span className="t-meta t-mute px-2 rounded-[6px]" style={{ border: '1px solid var(--line-2)' }}>试运行</span>}
 +            </div>
-+            {!isMobile && <p className="text-[12.5px] lc-ink3 mt-0.5">{course.subtitle}</p>}
++            {!isMobile && <p className="t-mute mt-1">{course.subtitle}</p>}
            </div>
 -          <div className="text-[12px] lc-muted truncate hidden sm:block">{course.subtitle}</div>
 -        </div>
@@ -673,18 +625,18 @@ diff --git a/src/added/pages/learning-course/LearningCoursePage.tsx b/src/added/
 -          <div className="flex items-center justify-between text-[12px]">
 -            <span className="lc-secondary">已学 {done}/{course.lessons.length} 课</span>
 -            <span className="lc-muted">练习 {practicesDone}/{course.practices.length}</span>
-+          <div className={`flex items-center gap-5 flex-wrap ${isMobile ? '' : 'pt-1'}`} data-lc="course-progress">
-+            <span className="lc-stat">已学<b>{done}/{course.lessons.length}</b>课</span>
-+            <span className="lc-stat">练习<b>{practicesDone}/{course.practices.length}</b></span>
-+            <span className="lc-stat">约<b>{minutes}</b>分钟</span>
-+            <div className={isMobile ? 'hidden' : 'flex items-center gap-1'}>
++          <div className="flex items-center gap-4 t-meta t-mute lc-num shrink-0" data-lc="course-progress">
++            <span>已学 {done}/{course.lessons.length} 课</span>
++            <span>练习 {practicesDone}/{course.practices.length}</span>
++            <span>约 {minutes} 分钟</span>
++            {!isMobile && <span className="flex items-center">
 +              <Act tone="ghost" disabled={!prev} onClick={() => prev && pick({ lesson: prev.id })} aria-label="上一课"><ArrowLeft size={15} /></Act>
 +              <Act tone="ghost" disabled={!next} onClick={() => next && pick({ lesson: next.id })} aria-label="下一课"><ArrowRight size={15} /></Act>
-+            </div>
++            </span>}
            </div>
 -          <div className="lc-progress-track"><div className="lc-progress-fill" style={{ width: `${(done / course.lessons.length) * 100}%` }} /></div>
          </div>
-+        <CourseMetro course={course} activeId={lesson.id} onLesson={l => pick({ lesson: l.id })} onPractice={openPractice} />
++        <CourseMetro course={course} activeId={lesson.id} onLesson={l => pick({ lesson: l.id })} />
        </header>
 -      )}
 -
@@ -752,7 +704,7 @@ diff --git a/src/added/pages/learning-course/LearningCoursePage.tsx b/src/added/
 diff --git a/src/added/pages/learning-course/LearningPracticePage.tsx b/src/added/pages/learning-course/LearningPracticePage.tsx
 --- a/src/added/pages/learning-course/LearningPracticePage.tsx
 +++ b/src/added/pages/learning-course/LearningPracticePage.tsx
-@@ -1,35 +1,31 @@
+@@ -1,35 +1,30 @@
 -import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 +import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
  import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
@@ -793,12 +745,11 @@ diff --git a/src/added/pages/learning-course/LearningPracticePage.tsx b/src/adde
 -              <span className="lc-step-dot">{state === 'done' ? <Check size={12} /> : i + 1}</span>{s.label}
 -            </span>
 +          <li key={s.key} className="flex items-center">
-+            {i > 0 && <span className="lc-step-line" data-done={i <= at} aria-hidden />}
-+            <span className="lc-step" data-state={state} aria-current={state === 'current' ? 'step' : undefined}><i>{state === 'done' ? <Check size={12} strokeWidth={3} /> : i + 1}</i>{s.label}</span>
++            <span className="lc-step" data-state={state} aria-current={state === 'current' ? 'step' : undefined}><i />{s.label}</span>
            </li>
          );
        })}
-@@ -37,8 +33,9 @@ function Stepper({ current }: { current: StepKey | 'done' }) {
+@@ -37,8 +32,9 @@ function Stepper({ current }: { current: StepKey | 'done' }) {
    );
  }
  
@@ -810,7 +761,7 @@ diff --git a/src/added/pages/learning-course/LearningPracticePage.tsx b/src/adde
  export default function LearningPracticePage() {
    const { courseId = '', practiceId = '' } = useParams();
    const [params, setParams] = useSearchParams();
-@@ -54,31 +51,26 @@ export default function LearningPracticePage() {
+@@ -54,31 +50,26 @@ export default function LearningPracticePage() {
    const [reasons, setReasons] = useState<Record<string, string>>({});
    const [note, setNote] = useState('');
    const [pane, setPane] = useState<'task' | 'bench'>('task');
@@ -848,7 +799,7 @@ diff --git a/src/added/pages/learning-course/LearningPracticePage.tsx b/src/adde
    const running = pr?.run && (pr.run.status === 'queued' || pr.run.status === 'running');
    useEffect(() => {
      if (!running || !pr) return;
-@@ -92,246 +84,186 @@ export default function LearningPracticePage() {
+@@ -92,246 +83,186 @@ export default function LearningPracticePage() {
      setBusy(false);
      if (res.success) { accept(res.data); after?.(res.data); } else setError(res.error?.message ?? '这一步没有完成');
    };
@@ -868,10 +819,10 @@ diff --git a/src/added/pages/learning-course/LearningPracticePage.tsx b/src/adde
 -          <div className="text-[15px] font-semibold">练习暂时打不开</div>
 -          <div className="text-[13px] lc-secondary">{error}。</div>
 -          <Button variant="primary" onClick={() => navigate(`/learning-center/courses/${courseId}`)}>回到课程</Button>
-+      <div className="lc-root h-full min-h-0 flex items-center justify-center lc-grid-bg">
++      <div className="lc-root h-full min-h-0 flex items-center justify-center">
 +        <div className="lc-panel p-6 max-w-md flex flex-col gap-3">
 +          <Kicker>练习暂时打不开</Kicker>
-+          <div className="text-[15px] font-semibold">{error}</div>
++          <div className="t-strong">{error}</div>
 +          <Act tone="primary" onClick={() => navigate(`/learning-center/courses/${courseId}`)}>回到课程</Act>
          </div>
        </div>
@@ -888,7 +839,7 @@ diff --git a/src/added/pages/learning-course/LearningPracticePage.tsx b/src/adde
 +  const retestFailed = step === 'retest' && pr?.retest && !pr.retest.passed && pr.run?.status === 'done';
 +  const accepted = Object.values(pr?.decisions ?? {}).filter(d => d === 'accept').length;
  
--  /* ---------- 右栏：当前这一步 ---------- */
+   /* ---------- 右栏：当前这一步 ---------- */
 -  const panel = (() => {
 -    if (step === 'brief') {
 -      return (
@@ -940,17 +891,7 @@ diff --git a/src/added/pages/learning-course/LearningPracticePage.tsx b/src/adde
 -              ))}
 -            </div>
 -          )}
-+  /* ---------- 控制台：当前这一步 ---------- */
-+  let body: ReactNode = null;
-+  let dock: ReactNode = null;
-+  if (step === 'brief') {
-+    body = (
-+      <div className="flex flex-col gap-4" data-lc-ready="practice-brief">
-+        <p className="text-[14px] leading-relaxed">{practice.scenario}</p>
-+        <div className="lc-work flex flex-col gap-1.5" style={{ animation: 'none' }}>
-+          <div className="flex items-center gap-2 text-[13px] font-semibold"><Target size={15} style={{ color: 'var(--lc-hi)' }} />你要练的判断</div>
-+          <p className="text-[13px] leading-relaxed lc-ink2">{practice.focus}</p>
-         </div>
+-        </div>
 -      );
 -    }
 -
@@ -990,77 +931,37 @@ diff --git a/src/added/pages/learning-course/LearningPracticePage.tsx b/src/adde
 -            <div className="text-[12px] text-center lc-muted" data-lc="undecided-hint" data-remaining={undecided.length}>
 -              {undecided.length > 0 ? `还有 ${undecided.length} 处没判断完（驳回的需要写理由）` : `已判断 ${findings.length}/${findings.length} 处，复测会用同一组输入重跑`}
 -            </div>
--          </div>
--        </div>
--      );
--    }
--
--    if (step === 'retest' && pr.run) {
--      return (
--        <div className="flex flex-col gap-3" data-lc-ready="practice-retest">
--          <AgentRunPanel run={pr.run} title="正在应用修复并复测" />
--          <Summary pr={pr} words={words} />
-+        <div>
-+          <Kicker>交付验收单</Kicker>
-+          <ol className="mt-2 flex flex-col gap-1.5">
-+            {practice.acceptance.map((a, i) => <li key={a} className="grid gap-2 text-[13px] lc-ink2" style={{ gridTemplateColumns: '22px 1fr' }}><span className="lc-mono text-[11px]" style={{ color: 'var(--lc-hi)', paddingTop: 3 }}>□{i + 1}</span>{a}</li>)}
-+          </ol>
-         </div>
--      );
--    }
--
--    if (step === 'deliver') {
--      return (
--        <div className="flex flex-col gap-3" data-lc-ready="practice-deliver">
--          {pr.retest && (
--            <div className="lc-nested p-3 flex flex-col gap-1.5" style={{ borderLeft: '3px solid var(--accent-fg-success)' }} data-lc="retest-passed">
--              <div className="flex items-center gap-2 text-[13.5px] font-semibold"><CheckCircle2 size={15} style={{ color: 'var(--accent-fg-success)' }} />复测通过</div>
--              {pr.retest.checks.map(c => <div key={c.name} className="lc-check lc-secondary"><Check size={14} className="shrink-0 mt-0.5" style={{ color: 'var(--accent-fg-success)' }} />{c.name}{c.message && <span className="lc-muted"> · {c.message}</span>}</div>)}
--            </div>
--          )}
--          <label className="flex flex-col gap-1.5">
--            <span className="text-[13px] font-semibold">交付说明</span>
--            <span className="text-[12px] lc-muted">已按你的判断和复测结果起草，三段式：能做什么 · 怎么证明 · 还没做到什么。可以直接改。</span>
--            <textarea className="lc-input lc-mono" rows={10} value={note} onChange={e => setNote(e.target.value)} disabled={busy} data-lc="delivery-note" style={{ resize: 'vertical', fontSize: 12.5 }} />
--          </label>
--          <Button variant="primary" className="w-full" disabled={busy || !note.trim()} onClick={() => void act(() => submitPracticeDelivery(pr.id, note))} data-lc="submit-delivery">
--            {busy ? <MapSpinner size={15} /> : <Send size={15} />}提交交付
--          </Button>
-+        <div>
-+          <Kicker>流程</Kicker>
-+          <p className="text-[12.5px] leading-relaxed lc-ink3 mt-1.5">{practice.agentLabel}先{words.runLabel}，意见以编号旗标插在左边的{practice.subject.kind === 'code' ? '代码' : '截图'}上。你给每张工单盖「{words.accept}」或「{words.reject}」，然后复测、写交付单。约 {practice.minutes} 分钟。</p>
-         </div>
--      );
--    }
--
--    if (step === 'done' && pr.outcome) {
--      return (
--        <div className="flex flex-col gap-4" data-lc-ready="practice-done">
--          <div className="flex flex-col items-center text-center gap-2 py-3">
--            <span className="lc-nested inline-flex items-center justify-center" style={{ width: 52, height: 52, borderRadius: 999 }}><GraduationCap size={24} style={{ color: 'var(--accent-fg-success)' }} /></span>
--            <div className="text-[16px] font-bold">练习完成</div>
--            <div className="text-[13px] lc-secondary">这次完整走了一遍：检查 → 判断 → 修复 → 复测 → 交付。+{pr.outcome.xp} 经验，已计入学习中心。</div>
++  let body: ReactNode = null;
++  let dock: ReactNode = null;
++  if (step === 'brief') {
++    body = (
++      <div className="flex flex-col gap-6" data-lc-ready="practice-brief">
++        <p>{practice.scenario}</p>
++        <section>
++          <h3 className="t-strong flex items-center gap-2"><Target size={16} style={{ color: 'var(--hi)' }} />你要练的判断</h3>
++          <p className="t-mute mt-1">{practice.focus}</p>
++        </section>
++        <section>
++          <h3 className="t-strong">交付时要满足</h3>
++          <ol className="mt-2 flex flex-col gap-1.5 t-mute" style={{ listStyle: 'decimal', paddingLeft: 20 }}>{practice.acceptance.map(a => <li key={a}>{a}</li>)}</ol>
++        </section>
++        <section>
++          <h3 className="t-strong">怎么进行</h3>
++          <p className="t-mute mt-1">{practice.agentLabel}先{words.runLabel}，意见会标在左边的{practice.subject.kind === 'code' ? '代码' : '截图'}上。你逐条决定「{words.accept}」还是「{words.reject}」，然后复测、写交付说明。约 {practice.minutes} 分钟。</p>
++        </section>
 +      </div>
 +    );
 +    dock = <Act tone="primary" className="w-full" disabled={busy} onClick={() => void start()} data-lc="start-run">{busy ? <Busy /> : <Play size={15} />}让 Agent 开始{words.runLabel}</Act>;
 +  } else if (pr && step === 'review' && pr.run) {
 +    const failed = pr.run.status === 'failed';
 +    body = (
-+      <div className="flex flex-col gap-3" data-lc-ready={failed ? 'practice-review-failed' : 'practice-review'}>
++      <div className="flex flex-col gap-4" data-lc-ready={failed ? 'practice-review-failed' : 'practice-review'}>
 +        <RunConsole run={pr.run} findings={findings} title={failed ? `${practice.agentLabel}的${words.runLabel}停在第 ${pr.run.stages.findIndex(s => s.status === 'failed') + 1} 步` : `${practice.agentLabel}正在${words.runLabel}`} />
 +        {failed && pr.run.failure && (
-+          <div className="lc-work flex flex-col gap-1.5" style={{ borderColor: 'var(--lc-fail)' }} data-lc="run-failed">
-+            <div className="flex items-center gap-2 text-[13.5px] font-semibold"><CircleAlert size={15} style={{ color: 'var(--lc-fail)' }} />这次{words.runLabel}没有完成</div>
-+            <div className="text-[13px] lc-ink2 leading-relaxed">{pr.run.failure.message}</div>
++          <div className="pl-3" style={{ borderLeft: '2px solid var(--fail)' }} data-lc="run-failed">
++            <div className="t-strong flex items-center gap-2"><CircleAlert size={16} style={{ color: 'var(--fail)' }} />这次{words.runLabel}没有完成</div>
++            <p className="t-mute mt-1">{pr.run.failure.message}</p>
            </div>
--          <ol className="flex flex-col gap-0 lc-nested p-3" data-lc="timeline">
--            {pr.outcome.timeline.map(t => (
--              <li key={t.at + t.text} className="flex gap-3 text-[12.5px] min-h-[30px] items-baseline"><span className="lc-mono lc-muted shrink-0">{t.at}</span><span className="lc-secondary">{t.text}</span></li>
--            ))}
--          </ol>
--          <div className="flex flex-col gap-2">
--            <Button variant="primary" className="w-full" onClick={() => navigate(`/learning-center/courses/${courseId}`)} data-lc="back-course"><ArrowRight size={15} />回到课程，换一个练习</Button>
--            <Button variant="ghost" className="w-full" onClick={() => setParams(new URLSearchParams(), { replace: true })}><RotateCcw size={15} />重新做一遍</Button>
 +        )}
 +      </div>
 +    );
@@ -1068,10 +969,10 @@ diff --git a/src/added/pages/learning-course/LearningPracticePage.tsx b/src/adde
 +  } else if (pr && step === 'triage') {
 +    const before = pr.retest && !pr.retest.passed;
 +    body = (
-+      <div className="flex flex-col gap-3" data-lc-ready="practice-triage">
-+        <p className="text-[13px] leading-relaxed lc-ink2" data-lc={before ? 'retest-failed-banner' : undefined}>
-+          {before ? <><b style={{ color: 'var(--lc-warn)' }}>上次复测没通过。</b>{pr.retest!.summary} 看工单里的「复测看到」，改判后再复测。</>
-+            : <>{practice.agentLabel}开了 {findings.length} 张工单。逐张盖章：「{words.accept}」会应用它的修复，「{words.reject}」要写理由。Agent 也会误报，看证据，不看语气。</>}
++      <div className="flex flex-col" data-lc-ready="practice-triage">
++        <p className="t-mute pb-4" data-lc={before ? 'retest-failed-banner' : undefined}>
++          {before ? <><span style={{ color: 'var(--warn)' }}>上次复测没通过。</span>{pr.retest!.summary} 看各条下面的「复测看到」，改判后再复测。</>
++            : <>{practice.agentLabel}报了 {findings.length} 条意见。「{words.accept}」会应用它的修复，「{words.reject}」要写理由。Agent 也会误报，看证据，不看语气。</>}
 +        </p>
 +        {findings.map((f, i) => (
 +          <FindingTicket key={f.id} index={i + 1} finding={f} skill={practice.skill} decision={decisions[f.id]} reason={reasons[f.id]} feedback={feedbackOf(f.id)}
@@ -1083,57 +984,110 @@ diff --git a/src/added/pages/learning-course/LearningPracticePage.tsx b/src/adde
 +      </div>
 +    );
 +    dock = (
-+      <div className="flex flex-col gap-1.5">
++      <div className="flex flex-col gap-2">
 +        <Act tone="primary" className="w-full" disabled={busy || undecided.length > 0} onClick={() => void act(() => submitPracticeDecisions(pr.id, decisions, reasons))} data-lc="submit-decisions">{busy ? <Busy /> : <RefreshCw size={15} />}应用修复并复测</Act>
-+        <div className="text-[12px] text-center lc-ink3" data-lc="undecided-hint" data-remaining={undecided.length}>
-+          {undecided.length > 0 ? `还有 ${undecided.length} 张工单没盖章（驳回的需要写理由）` : `${findings.length} 张都盖好了，复测会用同一组输入重跑`}
-+        </div>
++        <div className="t-meta t-mute text-center" data-lc="undecided-hint" data-remaining={undecided.length}>
++          {undecided.length > 0 ? `还有 ${undecided.length} 条没判断（驳回的需要写理由）` : `${findings.length} 条都判断了，复测会用同一组输入重跑`}
+         </div>
+-      );
+-    }
+-
+-    if (step === 'retest' && pr.run) {
+-      return (
+-        <div className="flex flex-col gap-3" data-lc-ready="practice-retest">
+-          <AgentRunPanel run={pr.run} title="正在应用修复并复测" />
+-          <Summary pr={pr} words={words} />
+-        </div>
+-      );
+-    }
+-
+-    if (step === 'deliver') {
+-      return (
+-        <div className="flex flex-col gap-3" data-lc-ready="practice-deliver">
+-          {pr.retest && (
+-            <div className="lc-nested p-3 flex flex-col gap-1.5" style={{ borderLeft: '3px solid var(--accent-fg-success)' }} data-lc="retest-passed">
+-              <div className="flex items-center gap-2 text-[13.5px] font-semibold"><CheckCircle2 size={15} style={{ color: 'var(--accent-fg-success)' }} />复测通过</div>
+-              {pr.retest.checks.map(c => <div key={c.name} className="lc-check lc-secondary"><Check size={14} className="shrink-0 mt-0.5" style={{ color: 'var(--accent-fg-success)' }} />{c.name}{c.message && <span className="lc-muted"> · {c.message}</span>}</div>)}
 +      </div>
 +    );
 +  } else if (pr && step === 'retest' && pr.run) {
 +    body = (
-+      <div className="flex flex-col gap-3" data-lc-ready={retestFailed ? 'practice-retest-failed' : 'practice-retest'}>
++      <div className="flex flex-col gap-4" data-lc-ready={retestFailed ? 'practice-retest-failed' : 'practice-retest'}>
 +        <RunConsole run={pr.run} title={retestFailed ? '复测没通过' : '正在应用修复并复测'} retest={pr.retest} />
-+        <div className="text-[12.5px] lc-ink3">你的判断：{words.accept} {accepted} 张 · {words.reject} {findings.length - accepted} 张</div>
-+        {retestFailed && <p className="text-[13px] leading-relaxed lc-ink2">{pr.retest!.summary} 回到判断后，判错的那张工单上会写明复测看到了什么；其余判断都保留。</p>}
++        <p className="t-meta t-mute">你的判断：{words.accept} {accepted} 条，{words.reject} {findings.length - accepted} 条</p>
++        {retestFailed && <p className="t-mute">{pr.retest!.summary} 回到判断后，判错的那条下面会写明复测看到了什么，其余判断都保留。</p>}
 +      </div>
 +    );
-+    if (retestFailed) dock = <Act tone="primary" className="w-full" disabled={busy} onClick={() => void act(() => reopenPracticeTriage(pr.id))} data-lc="reopen-triage">{busy ? <Busy /> : <RotateCcw size={15} />}回到判断，看哪张判错了</Act>;
++    if (retestFailed) dock = <Act tone="primary" className="w-full" disabled={busy} onClick={() => void act(() => reopenPracticeTriage(pr.id))} data-lc="reopen-triage">{busy ? <Busy /> : <RotateCcw size={15} />}回到判断，看哪条判错了</Act>;
 +  } else if (pr && step === 'deliver') {
 +    body = (
-+      <div className="flex flex-col gap-3" data-lc-ready="practice-deliver">
++      <div className="flex flex-col gap-5" data-lc-ready="practice-deliver">
 +        {pr.retest && (
-+          <div className="lc-board" data-lc="retest-passed">
-+            {pr.retest.checks.map(c => <div key={c.name}><span className="lc-verdict" style={{ color: 'var(--lc-pass)' }}>PASS</span><span>{c.name}{c.message && <span className="lc-ink3"> · {c.message}</span>}</span></div>)}
-           </div>
++          <section>
++            <h3 className="t-strong flex items-center gap-2"><Check size={16} style={{ color: 'var(--pass)' }} />复测通过</h3>
++            <div className="lc-checks mt-2" data-lc="retest-passed">
++              {pr.retest.checks.map(c => <div key={c.name}><span className="lc-verdict" style={{ color: 'var(--pass)' }}>PASS</span><span>{c.name}{c.message && <span className="t-mute"> · {c.message}</span>}</span></div>)}
+             </div>
+-          )}
+-          <label className="flex flex-col gap-1.5">
+-            <span className="text-[13px] font-semibold">交付说明</span>
+-            <span className="text-[12px] lc-muted">已按你的判断和复测结果起草，三段式：能做什么 · 怎么证明 · 还没做到什么。可以直接改。</span>
+-            <textarea className="lc-input lc-mono" rows={10} value={note} onChange={e => setNote(e.target.value)} disabled={busy} data-lc="delivery-note" style={{ resize: 'vertical', fontSize: 12.5 }} />
+-          </label>
+-          <Button variant="primary" className="w-full" disabled={busy || !note.trim()} onClick={() => void act(() => submitPracticeDelivery(pr.id, note))} data-lc="submit-delivery">
+-            {busy ? <MapSpinner size={15} /> : <Send size={15} />}提交交付
+-          </Button>
+-        </div>
+-      );
+-    }
+-
+-    if (step === 'done' && pr.outcome) {
+-      return (
+-        <div className="flex flex-col gap-4" data-lc-ready="practice-done">
+-          <div className="flex flex-col items-center text-center gap-2 py-3">
+-            <span className="lc-nested inline-flex items-center justify-center" style={{ width: 52, height: 52, borderRadius: 999 }}><GraduationCap size={24} style={{ color: 'var(--accent-fg-success)' }} /></span>
+-            <div className="text-[16px] font-bold">练习完成</div>
+-            <div className="text-[13px] lc-secondary">这次完整走了一遍：检查 → 判断 → 修复 → 复测 → 交付。+{pr.outcome.xp} 经验，已计入学习中心。</div>
+-          </div>
+-          <ol className="flex flex-col gap-0 lc-nested p-3" data-lc="timeline">
+-            {pr.outcome.timeline.map(t => (
+-              <li key={t.at + t.text} className="flex gap-3 text-[12.5px] min-h-[30px] items-baseline"><span className="lc-mono lc-muted shrink-0">{t.at}</span><span className="lc-secondary">{t.text}</span></li>
+-            ))}
++          </section>
 +        )}
-+        <div className="lc-slip">
-+          <div className="flex items-baseline justify-between"><Kicker>交付单</Kicker><span className="lc-mono text-[11px] lc-ink3">{pr.id.toUpperCase()}</span></div>
-+          <p className="text-[12px] lc-ink3 mt-1 mb-2">按你的判断和复测结果起草，三段式：能做什么 · 怎么证明 · 还没做到什么。可以直接改。</p>
++        <label className="flex flex-col gap-2">
++          <span className="t-strong">交付说明</span>
++          <span className="t-meta t-mute">已按你的判断和复测结果起草：能做什么、怎么证明、还没做到什么。可以直接改。</span>
 +          <textarea className="lc-input" rows={11} value={note} onChange={e => setNote(e.target.value)} disabled={busy} data-lc="delivery-note" style={{ resize: 'vertical' }} />
-         </div>
++        </label>
++      </div>
++    );
++    dock = <Act tone="primary" className="w-full" disabled={busy || !note.trim()} onClick={() => void act(() => submitPracticeDelivery(pr.id, note))} data-lc="submit-delivery">{busy ? <Busy /> : <Send size={15} />}提交交付</Act>;
++  } else if (pr && step === 'done' && pr.outcome) {
++    body = (
++      <div className="flex flex-col gap-6" data-lc-ready="practice-done">
++        <section className="flex flex-col items-start gap-2 pt-2">
++          <span className="inline-flex items-center justify-center rounded-full" style={{ width: 40, height: 40, border: '1.5px solid var(--pass)', color: 'var(--pass)' }}><Check size={20} /></span>
++          <h3 className="t-title">练习完成</h3>
++          <p className="t-mute">完整走了一遍：检查、判断、修复、复测、交付。获得 {pr.outcome.xp} 经验，已计入学习中心。</p>
++        </section>
++        <section>
++          <h3 className="t-strong">过程记录</h3>
++          <ol className="lc-log mt-2" data-lc="timeline">
++            {pr.outcome.timeline.map(t => <li key={t.at + t.text} className="lc-log-line" style={{ gridTemplateColumns: '48px 1fr' }}><span>{t.at}</span><span style={{ color: 'var(--ink)' }}>{t.text}</span></li>)}
+           </ol>
+-          <div className="flex flex-col gap-2">
+-            <Button variant="primary" className="w-full" onClick={() => navigate(`/learning-center/courses/${courseId}`)} data-lc="back-course"><ArrowRight size={15} />回到课程，换一个练习</Button>
+-            <Button variant="ghost" className="w-full" onClick={() => setParams(new URLSearchParams(), { replace: true })}><RotateCcw size={15} />重新做一遍</Button>
+-          </div>
+-        </div>
 -      );
 -    }
 -    return null;
 -  })();
 -
 -  const retestFailed = step === 'retest' && pr?.retest && !pr.retest.passed && pr.run?.status === 'done';
-+      </div>
-+    );
-+    dock = <Act tone="primary" className="w-full" disabled={busy || !note.trim()} onClick={() => void act(() => submitPracticeDelivery(pr.id, note))} data-lc="submit-delivery">{busy ? <Busy /> : <Send size={15} />}提交交付</Act>;
-+  } else if (pr && step === 'done' && pr.outcome) {
-+    body = (
-+      <div className="flex flex-col gap-4" data-lc-ready="practice-done">
-+        <div className="lc-cert">
-+          <div className="lc-seal"><span>合格</span><span className="lc-mono" style={{ fontSize: 9, letterSpacing: '0.05em' }}>PASS</span></div>
-+          <div className="text-[17px] font-bold">练习完成</div>
-+          <div className="text-[13px] lc-ink2 mt-1">{practice.title}</div>
-+          <div className="text-[12.5px] lc-ink3 mt-2">检查 → 判断 → 修复 → 复测 → 交付 · <b style={{ color: 'var(--lc-pass)' }}>+{pr.outcome.xp} 经验</b> 已计入学习中心</div>
-+          <div className="lc-mono text-[10.5px] lc-ink3 mt-3">编号 {pr.id.toUpperCase()}</div>
-+        </div>
-+        <ol className="lc-log lc-panel" style={{ background: 'var(--lc-solid)' }} data-lc="timeline">
-+          {pr.outcome.timeline.map(t => <li key={t.at + t.text} className="lc-log-line"><span className="lc-t">{t.at}</span><span className="lc-log-tag" data-tone="ok">·</span><span style={{ color: 'var(--lc-ink)' }}>{t.text}</span></li>)}
-+        </ol>
++        </section>
 +      </div>
 +    );
 +    dock = (
@@ -1149,23 +1103,21 @@ diff --git a/src/added/pages/learning-course/LearningPracticePage.tsx b/src/adde
 -      <header className={`lc-surface lc-topbar shrink-0 ${isMobile ? '' : 'flex-wrap'}`}>
 -        <Link to={`/learning-center/courses/${courseId}`} className="lc-crumb shrink-0" data-lc="back-to-course" aria-label="回到课程"><ChevronLeft size={15} /><span className="hidden sm:inline">自动化测试实践</span></Link>
 -        <span className="lc-muted shrink-0 hidden sm:inline" aria-hidden>/</span>
--        <div className="min-w-0 flex-1 flex items-center gap-2">
++    <div className="lc-root h-full min-h-0 flex flex-col gap-4" data-lc-ready="practice" data-practice-id={practice.id}>
++      <header className="lc-panel shrink-0 flex items-center gap-4 px-4 py-2 flex-wrap">
++        <Link to={`/learning-center/courses/${courseId}`} className="lc-link t-meta" data-lc="back-to-course" aria-label="回到课程"><ChevronLeft size={14} /><span className="max-sm:hidden">自动化测试实践</span></Link>
+         <div className="min-w-0 flex-1 flex items-center gap-2">
 -          <SkillIcon size={16} className="shrink-0" style={{ color: 'var(--accent-primary)' }} />
 -          <h1 className="text-[15px] font-bold truncate">{isMobile ? practice.title : `练习 · ${practice.title}`}</h1>
-+    <div className="lc-root h-full min-h-0 flex flex-col gap-3" data-lc-ready="practice" data-practice-id={practice.id}>
-+      <header className="lc-panel shrink-0 flex items-center gap-3 px-3 py-2 flex-wrap">
-+        <Link to={`/learning-center/courses/${courseId}`} className="lc-link" data-lc="back-to-course" aria-label="回到课程"><ChevronLeft size={15} /><span className="max-sm:hidden">自动化测试实践</span></Link>
-+        <span className="lc-glyph shrink-0"><SkillIcon size={16} /></span>
-+        <div className="min-w-0 flex-1">
-+          <div className="lc-kicker">练习 · {skill.label}</div>
-+          <h1 className="text-[15px] font-bold truncate">{practice.title}</h1>
++          <SkillIcon size={16} className="shrink-0" style={{ color: 'var(--ink-2)' }} />
++          <h1 className="t-strong truncate">练习：{practice.title}</h1>
          </div>
          {isMobile ? (
 -          <span className="text-[12px] lc-secondary shrink-0" data-lc="stepper-compact">
 -            {step === 'done' ? '已完成' : `第 ${PRACTICE_STEPS.findIndex(s => s.key === step) + 1}/${PRACTICE_STEPS.length} 步 · ${PRACTICE_STEPS.find(s => s.key === step)?.label}`}
 -          </span>
 -        ) : <div className="w-full lg:w-auto"><Stepper current={step} /></div>}
-+          <span className="lc-mono text-[12px] lc-ink2" data-lc="stepper-compact">{step === 'done' ? '已完成' : `${PRACTICE_STEPS.findIndex(s => s.key === step) + 1}/${PRACTICE_STEPS.length} · ${PRACTICE_STEPS.find(s => s.key === step)?.label}`}</span>
++          <span className="t-meta t-mute" data-lc="stepper-compact">{step === 'done' ? '已完成' : `第 ${PRACTICE_STEPS.findIndex(s => s.key === step) + 1}/${PRACTICE_STEPS.length} 步 · ${PRACTICE_STEPS.find(s => s.key === step)?.label}`}</span>
 +        ) : <Steps current={step} />}
        </header>
  
@@ -1212,9 +1164,8 @@ diff --git a/src/added/pages/learning-course/LearningPracticePage.tsx b/src/adde
 -              </div>
 -            ) : panel}
 +          <aside className="lc-panel lc-console" aria-label="当前步骤" data-tour-id="practice-step-panel">
-+            <div className="lc-console-head"><Kicker>控制台</Kicker><span className="flex-1" /><span className="text-[12px] lc-ink3">{step === 'done' ? '已完成' : PRACTICE_STEPS.find(s => s.key === step)?.label}</span></div>
-+            <div className="lc-scroll flex-1 p-4">
-+              {error && <div className="text-[12.5px] mb-3 px-3 py-2 rounded-[10px]" style={{ color: 'var(--lc-fail)', background: 'color-mix(in srgb, var(--lc-fail) 9%, transparent)' }} role="alert">{error}。已保存你的进度，可以再试一次。</div>}
++            <div className="lc-scroll flex-1 px-5 py-5">
++              {error && <p className="mb-4 pl-3" style={{ borderLeft: '2px solid var(--fail)', color: 'var(--fail)' }} role="alert">{error}。已保存你的进度，可以再试一次。</p>}
 +              {body}
 +            </div>
 +            {dock && <div className="lc-dock">{dock}</div>}
@@ -1353,7 +1304,7 @@ deleted file mode 100644
 diff --git a/src/added/pages/learning-course/PdfLesson.tsx b/src/added/pages/learning-course/PdfLesson.tsx
 --- a/src/added/pages/learning-course/PdfLesson.tsx
 +++ b/src/added/pages/learning-course/PdfLesson.tsx
-@@ -1,97 +1,84 @@
+@@ -1,97 +1,83 @@
 -import { useEffect, useRef, useState } from 'react';
 +import { useEffect, useRef, useState, type ReactNode } from 'react';
  import { ChevronLeft, ChevronRight, Download, Maximize2, MoveHorizontal } from 'lucide-react';
@@ -1450,12 +1401,12 @@ diff --git a/src/added/pages/learning-course/PdfLesson.tsx b/src/added/pages/lea
 -        )}
 +  const stage = (
 +    <div className="h-full min-h-0 flex flex-col">
-+      <div className="shrink-0 flex items-center gap-1 px-3 py-1.5 flex-wrap" style={{ borderBottom: '1px solid var(--lc-line)' }}>
++      <div className="shrink-0 flex items-center gap-1 px-3 py-1.5 flex-wrap" style={{ borderBottom: '1px solid var(--line-2)' }}>
 +        <button type="button" className="lc-tool" aria-label="上一页" disabled={page <= 1} onClick={() => goTo(page - 1)}><ChevronLeft size={16} /></button>
-+        <span className="lc-mono text-[13px] font-semibold px-1" data-lc="pdf-page">第 {page} / {total} 页</span>
++        <span className="t-strong lc-num px-1" data-lc="pdf-page">第 {page} / {total} 页</span>
 +        <button type="button" className="lc-tool" aria-label="下一页" disabled={page >= total} onClick={() => goTo(page + 1)}><ChevronRight size={16} /></button>
-+        <span className="text-[12px] lc-ink3 px-2">{inLesson(page) ? '本课内容' : `本课在第 ${lo}–${hi} 页`}</span>
-+        {!inLesson(page) && <button type="button" className="lc-tool" style={{ color: 'var(--lc-hi)' }} onClick={() => goTo(lo)}>回到本课</button>}
++        <span className="t-meta lc-ink3 px-2">{inLesson(page) ? '本课内容' : `本课在第 ${lo}–${hi} 页`}</span>
++        {!inLesson(page) && <button type="button" className="lc-tool" style={{ color: 'var(--hi)' }} onClick={() => goTo(lo)}>回到本课</button>}
          <span className="flex-1" />
 -        <div className="lc-media-switch" role="group" aria-label="缩放">
 -          <button type="button" className="lc-media-btn" aria-pressed={fit === 'width'} onClick={() => setFit('width')}><MoveHorizontal size={14} />适合宽度</button>
@@ -1470,7 +1421,7 @@ diff --git a/src/added/pages/learning-course/PdfLesson.tsx b/src/added/pages/lea
 -
 -      <div className="flex gap-3 flex-1 min-h-0">
 -        <div ref={thumbs} className="lc-scroll hidden md:flex flex-col gap-1.5 shrink-0 pr-1 relative" style={{ width: 104 }} aria-label="页面缩略图">
-+      <div ref={box} className="lc-scroll flex-1 lc-grid-bg" data-lc="pdf-pages" style={{ position: 'relative' }}>
++      <div ref={box} className="lc-scroll flex-1" data-lc="pdf-pages" style={{ position: 'relative' }}>
 +        <div className="lc-paper-stack" style={fit === 'page' ? { height: '100%' } : undefined}>
            {pdf.pages.map((p, i) => (
 -            <button key={p.imageUrl} type="button" className="lc-thumb shrink-0" data-thumb={i + 1} aria-current={page === i + 1} data-in-lesson={inLesson(i + 1)} onClick={() => goTo(i + 1)} title={p.title}>
@@ -1485,7 +1436,6 @@ diff --git a/src/added/pages/learning-course/PdfLesson.tsx b/src/added/pages/lea
 -              <img src={p.imageUrl} alt={`第 ${i + 1} 页：${p.title}`} style={fit === 'page' ? { height: '100%', width: 'auto', margin: '0 auto' } : undefined} />
 +            <div key={p.imageUrl} data-page={i + 1} className="lc-page" style={fit === 'page' ? { height: '100%', width: 'auto', maxWidth: '100%' } : undefined}>
 +              <img src={p.imageUrl} alt={`第 ${i + 1} 页：${p.title}`} />
-+              <span className="lc-page-no">{i + 1}{inLesson(i + 1) ? ' · 本课' : ''}</span>
              </div>
            ))}
          </div>
@@ -1497,10 +1447,10 @@ diff --git a/src/added/pages/learning-course/PdfLesson.tsx b/src/added/pages/lea
 +      {pdf.pages.map((p, i) => (
 +        <button key={p.imageUrl} type="button" className="lc-thumb" data-thumb={i + 1} aria-current={page === i + 1} data-in-lesson={inLesson(i + 1)} onClick={() => goTo(i + 1)}>
 +          <img src={p.imageUrl} alt="" loading="lazy" />
-+          <span><span className="lc-mono text-[11px] lc-ink3 block">P{i + 1}{inLesson(i + 1) ? ' · 本课' : ''}</span>{p.title}</span>
++          <span><span className="t-meta t-mute block lc-num">第 {i + 1} 页{inLesson(i + 1) ? ' · 本课' : ''}</span>{p.title}</span>
 +        </button>
 +      ))}
-+      <a className="lc-tool mt-2 justify-start" href={pdf.url} download={`${pdf.title}.pdf`} data-lc="pdf-download"><Download size={14} />下载原文件 <span className="lc-mono lc-ink3">{pdf.sizeLabel}</span></a>
++      <a className="lc-tool mt-2 justify-start" href={pdf.url} download={`${pdf.title}.pdf`} data-lc="pdf-download"><Download size={14} />下载原文件 <span className="t-meta t-mute">{pdf.sizeLabel}</span></a>
 +    </div>
 +  );
 +  return <Desk ready="pdf" head={head} stage={stage} companionTitle={`教材目录 · ${total} 页`} companionHint={`本课 P${lo}${hi > lo ? `–${hi}` : ''}`} companion={companion} keyPoints={keyPoints} ticket={ticket} />;
@@ -1509,44 +1459,35 @@ diff --git a/src/added/pages/learning-course/PracticeTicket.tsx b/src/added/page
 new file mode 100644
 --- /dev/null
 +++ b/src/added/pages/learning-course/PracticeTicket.tsx
-@@ -0,0 +1,44 @@
+@@ -0,0 +1,35 @@
 +import { useState } from 'react';
 +import { ArrowRight, RotateCcw } from 'lucide-react';
-+import { Act, Kicker } from './primitives';
++import { Act } from './primitives';
 +import { SKILL_REGISTRY } from './registry';
 +import type { PracticeSummary } from './types';
 +
-+const STATUS: Record<PracticeSummary['status'], string> = { todo: '未开始', doing: '进行中，可续上', done: '已完成' };
++const STATUS: Record<PracticeSummary['status'], string> = { todo: '未开始', doing: '进行中', done: '已完成' };
 +
-+/* 练习票：三选一，默认选中和本课配套的那个。撕下票根就是开始练习。 */
++/* 练习：三选一，默认选中本课配套的那个。 */
 +export function PracticeTicket({ practices, suggestedId, onStart }: { practices: PracticeSummary[]; suggestedId?: string; onStart: (p: PracticeSummary) => void }) {
 +  const [pick, setPick] = useState(suggestedId ?? practices[0]?.id);
 +  const chosen = practices.find(p => p.id === pick) ?? practices[0];
 +  if (!chosen) return null;
 +  return (
-+    <section className="lc-ticket shrink-0" style={{ ['--cut' as string]: 'calc(100% - 70px)' }} data-tour-id="course-practice-cta" aria-label="选一个练习">
-+      <div className="px-3.5 pt-3 pb-1 flex items-baseline justify-between">
-+        <Kicker>练一练 · 选一个</Kicker>
-+        <span className="text-[11px] lc-ink3">约 10 分钟走完一个闭环</span>
++    <section className="lc-panel shrink-0" data-tour-id="course-practice-cta" aria-label="选一个练习">
++      <div className="lc-side-head"><span className="t-strong">动手练习</span><span className="t-meta t-mute">选一个，约 10 分钟</span></div>
++      <div className="px-2 pb-2" role="radiogroup">
++        {practices.map(p => (
++          <button key={p.id} type="button" role="radio" data-pick={p.id} aria-checked={p.id === chosen.id} className="lc-pick" data-active={p.id === chosen.id} data-lc="practice-card" data-practice={p.id} data-status={p.status} onClick={() => setPick(p.id)}>
++            <span className="lc-pick-dot" />
++            <span className="min-w-0">
++              <span className="block truncate">{p.title}</span>
++              <span className="block t-meta t-mute">{SKILL_REGISTRY[p.skill].label} · {STATUS[p.status]}{p.id === suggestedId ? ' · 本课配套' : ''}</span>
++            </span>
++          </button>
++        ))}
 +      </div>
-+      <div className="px-1.5 pb-2" role="radiogroup">
-+        {practices.map(p => {
-+          const s = SKILL_REGISTRY[p.skill];
-+          const Icon = s.icon;
-+          return (
-+            <button key={p.id} type="button" role="radio" data-pick={p.id} aria-checked={p.id === chosen.id} className="lc-pick" data-active={p.id === chosen.id} onClick={() => setPick(p.id)}>
-+              <span className="lc-glyph"><Icon size={16} /></span>
-+              <span className="min-w-0">
-+                <span className="block text-[13px] font-semibold truncate">{p.title}</span>
-+                <span className="block text-[11.5px] lc-ink3">{s.label} · {p.minutes} 分钟 · {STATUS[p.status]}{p.id === suggestedId ? ' · 本课配套' : ''}</span>
-+              </span>
-+              <span className="lc-mono text-[11px] lc-ink3">{p.id === chosen.id ? '已选' : ''}</span>
-+            </button>
-+          );
-+        })}
-+      </div>
-+      <div className="lc-perf" />
-+      <div className="p-3">
++      <div className="px-4 pb-4">
 +        <Act tone="primary" className="w-full" onClick={() => onStart(chosen)} data-lc="start-practice">
 +          {chosen.status === 'doing' ? <><RotateCcw size={15} />接着做</> : chosen.status === 'done' ? <><RotateCcw size={15} />再做一遍</> : <>开始练习<ArrowRight size={15} /></>}
 +        </Act>
@@ -1569,7 +1510,7 @@ diff --git a/src/added/pages/learning-course/PracticeWorkbench.tsx b/src/added/p
 +          <button key={f.path} type="button" className="lc-file" aria-current={i === fileIdx} onClick={() => setFileIdx(i)} data-qc-touch-exempt>{f.path}</button>
          ))}
 +        <span className="flex-1" />
-+        <span className="text-[11.5px] lc-ink3 shrink-0">{findings.length ? `${findings.length} 处标注` : '等待检查'}</span>
++        <span className="t-meta lc-ink3 shrink-0">{findings.length ? `${findings.length} 处标注` : '等待检查'}</span>
        </div>
 -      <div ref={box} className="lc-scroll flex-1 lc-code lc-mono py-2" data-lc="code-view" style={{ overflowX: 'auto' }}>
 +      <div ref={box} className="lc-scroll flex-1 lc-code" data-lc="code-view" style={{ overflowX: 'auto' }}>
@@ -1602,7 +1543,7 @@ diff --git a/src/added/pages/learning-course/PracticeWorkbench.tsx b/src/added/p
    );
    return (
 -    <div className="flex flex-col h-full min-h-0 p-3 gap-3" data-lc="visual-view">
-+    <div className="flex flex-col h-full min-h-0 p-4 gap-3 lc-grid-bg" data-lc="visual-view">
++    <div className="flex flex-col h-full min-h-0 p-4 gap-3" data-lc="visual-view">
        <div className="flex items-center gap-2 flex-wrap shrink-0">
 -        <div className="lc-media-switch" role="group" aria-label="对照方式">
 -          <button type="button" className="lc-media-btn" aria-pressed={mode === 'side'} onClick={() => setMode('side')}><Columns2 size={14} />并排</button>
@@ -1613,7 +1554,7 @@ diff --git a/src/added/pages/learning-course/PracticeWorkbench.tsx b/src/added/p
 +          <button type="button" className="lc-tool" aria-pressed={mode === 'overlay'} onClick={() => setMode('overlay')}><Layers size={14} />叠加</button>
          </div>
 -        <span className="text-[12px] lc-muted">{s.viewport} · {s.theme} · 同一份演示数据</span>
-+        <span className="text-[12px] lc-ink3">{s.viewport} · {s.theme} · 同一份演示数据</span>
++        <span className="t-meta lc-ink3">{s.viewport} · {s.theme} · 同一份演示数据</span>
        </div>
        {mode === 'side' ? (
          <div className="grid gap-3 flex-1 min-h-0 content-start" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))' }}>
@@ -1621,14 +1562,14 @@ diff --git a/src/added/pages/learning-course/PracticeWorkbench.tsx b/src/added/p
 -            <figcaption className="text-[12px] font-semibold lc-secondary">基线（上一版）</figcaption>
 -            <img src={s.baselineUrl} alt="基线截图" className="w-full rounded-[10px]" style={{ border: '1px solid var(--border-subtle)' }} />
 +            <figcaption className="lc-kicker">基线（上一版）</figcaption>
-+            <img src={s.baselineUrl} alt="基线截图" className="w-full rounded-[10px]" style={{ boxShadow: '0 0 0 1px var(--lc-line)' }} />
++            <img src={s.baselineUrl} alt="基线截图" className="w-full rounded-[8px]" style={{ boxShadow: '0 0 0 1px var(--line-2)' }} />
            </figure>
            <figure className="flex flex-col gap-1.5">
 -            <figcaption className="text-[12px] font-semibold lc-secondary">实际（本次改动）</figcaption>
 +            <figcaption className="lc-kicker">实际（本次改动）</figcaption>
              <div className="relative">
 -              <img src={s.actualUrl} alt="实际截图" className="w-full rounded-[10px] block" style={{ border: '1px solid var(--border-subtle)' }} />
-+              <img src={s.actualUrl} alt="实际截图" className="w-full rounded-[10px] block" style={{ boxShadow: '0 0 0 1px var(--lc-line)' }} />
++              <img src={s.actualUrl} alt="实际截图" className="w-full rounded-[8px] block" style={{ boxShadow: '0 0 0 1px var(--line-2)' }} />
                {regions}
              </div>
            </figure>
@@ -1637,12 +1578,13 @@ diff --git a/src/added/pages/learning-course/PracticeWorkbench.tsx b/src/added/p
          <div className="flex flex-col gap-2 flex-1 min-h-0">
            <div className="relative max-w-[720px] w-full">
 -            <img src={s.baselineUrl} alt="基线截图" className="w-full rounded-[10px] block" style={{ border: '1px solid var(--border-subtle)' }} />
-+            <img src={s.baselineUrl} alt="基线截图" className="w-full rounded-[10px] block" style={{ boxShadow: '0 0 0 1px var(--lc-line)' }} />
-             <img src={s.actualUrl} alt="实际截图" className="w-full rounded-[10px] absolute inset-0" style={{ opacity: mix / 100 }} />
+-            <img src={s.actualUrl} alt="实际截图" className="w-full rounded-[10px] absolute inset-0" style={{ opacity: mix / 100 }} />
++            <img src={s.baselineUrl} alt="基线截图" className="w-full rounded-[8px] block" style={{ boxShadow: '0 0 0 1px var(--line-2)' }} />
++            <img src={s.actualUrl} alt="实际截图" className="w-full rounded-[8px] absolute inset-0" style={{ opacity: mix / 100 }} />
              {regions}
            </div>
 -          <label className="flex items-center gap-3 text-[12px] lc-secondary max-w-[720px]">
-+          <label className="flex items-center gap-3 text-[12px] lc-ink2 max-w-[720px]">
++          <label className="flex items-center gap-3 t-meta lc-ink2 max-w-[720px]">
              基线<input type="range" min={0} max={100} value={mix} onChange={e => setMix(Number(e.target.value))} className="flex-1" style={{ minHeight: 44 }} />实际
            </label>
          </div>
@@ -1659,64 +1601,52 @@ diff --git a/src/added/pages/learning-course/RunConsole.tsx b/src/added/pages/le
 new file mode 100644
 --- /dev/null
 +++ b/src/added/pages/learning-course/RunConsole.tsx
-@@ -0,0 +1,64 @@
-+import { Cpu } from 'lucide-react';
+@@ -0,0 +1,52 @@
 +import { formatDuration } from './registry';
 +import type { AgentRun, Finding, RetestResult } from './types';
 +
 +const TAG = { done: ['OK', 'ok'], running: ['RUN', 'run'], failed: ['FAIL', 'bad'], waiting: ['', ''] } as const;
 +
-+/* Agent 控制台：阶段像日志一样一行行打出来，发现的问题即时插入；跑完后复测给出记分板。
-+ * 主视觉是产物本身（日志与问题），进度与预计时间做配角。模型名来自运行记录（网关返回）。 */
++/* Agent 运行：阶段像日志一样逐行出现，发现的问题即时插入；跑完后复测给出逐项结果。模型名来自运行记录（网关返回）。 */
 +export function RunConsole({ run, title, findings = [], retest }: { run: AgentRun; title: string; findings?: Finding[]; retest?: RetestResult }) {
 +  const live = run.status === 'queued' || run.status === 'running';
 +  const shown = run.stages.filter(s => s.status !== 'waiting');
 +  const pending = run.stages.length - shown.length;
 +  return (
-+    <div className="flex flex-col" data-lc="agent-run" data-run-status={run.status}>
-+      <div className="flex items-center gap-2 flex-wrap pb-2">
-+        <span className="text-[13.5px] font-semibold">{title}</span>
-+        {run.model && <span className="inline-flex items-center gap-1.5 text-[11.5px] lc-ink3 lc-mono" data-lc="run-model"><Cpu size={12} />{run.model.model} · {run.model.platform}</span>}
++    <div className="flex flex-col gap-3" data-lc="agent-run" data-run-status={run.status}>
++      <div>
++        <div className="t-strong">{title}</div>
++        {run.model && <div className="t-meta t-mute lc-mono" data-lc="run-model">{run.model.model} · {run.model.platform}</div>}
 +      </div>
-+      <div className="lc-panel overflow-hidden" style={{ background: 'var(--lc-solid)' }}>
-+        {live && <div className="lc-meter"><span style={{ width: `${run.progress}%` }} /></div>}
-+        <div className="lc-log" aria-live="polite">
-+          {shown.map((s, i) => {
-+            const [tag, tone] = TAG[s.status];
-+            return (
-+              <div key={s.key} className="lc-log-line" data-stage={s.key} data-stage-status={s.status}>
-+                <span className="lc-t">{String(i + 1).padStart(2, '0')}/{String(run.stages.length).padStart(2, '0')}</span>
-+                <span className="lc-log-tag" data-tone={tone}>{tag}</span>
-+                <span style={{ color: 'var(--lc-ink)' }}>{s.label}{s.detail ? <span className="lc-ink3"> · {s.detail}</span> : null}{s.status === 'running' && <span className="lc-caret" />}</span>
-+              </div>
-+            );
-+          })}
-+          {findings.map((f, i) => (
-+            <div key={f.id} className="lc-log-line">
-+              <span className="lc-t">#{i + 1}</span>
-+              <span className="lc-log-tag" data-tone="find">{f.severity}</span>
-+              <span style={{ color: 'var(--lc-ink)' }}>{f.title}</span>
++      {live && <div className="lc-meter"><span style={{ width: `${run.progress}%` }} /></div>}
++      <div className="lc-log" aria-live="polite">
++        {shown.map((s, i) => {
++          const [tag, tone] = TAG[s.status];
++          return (
++            <div key={s.key} className="lc-log-line" data-stage={s.key} data-stage-status={s.status}>
++              <span>{i + 1}/{run.stages.length}</span>
++              <span className="lc-log-tag" data-tone={tone}>{tag}</span>
++              <span style={{ color: 'var(--ink)' }}>{s.label}{s.detail ? <span className="t-mute"> · {s.detail}</span> : null}{s.status === 'running' && <span className="lc-caret" />}</span>
 +            </div>
-+          ))}
-+          {pending > 0 && live && <div className="lc-log-line lc-ink3"><span className="lc-t">…</span><span /><span>还有 {pending} 步</span></div>}
-+        </div>
++          );
++        })}
++        {findings.map((f, i) => (
++          <div key={f.id} className="lc-log-line"><span>#{i + 1}</span><span className="lc-log-tag" data-tone="find">{f.severity}</span><span style={{ color: 'var(--ink)' }}>{f.title}</span></div>
++        ))}
++        {pending > 0 && live && <div className="lc-log-line"><span>…</span><span /><span>还有 {pending} 步</span></div>}
 +      </div>
 +      {live && (
-+        <div className="flex flex-col gap-1 pt-2 text-[12px] lc-ink2">
-+          <div className="flex gap-4 flex-wrap">
-+            <span>{run.status === 'queued' ? '排队中' : <>已用 <b className="lc-mono">{formatDuration(run.elapsedSec)}</b></>}</span>
-+            {run.remainSec != null && <span>预计还需约 <b className="lc-mono">{formatDuration(run.remainSec)}</b></span>}
-+            {findings.length > 0 && <span style={{ color: 'var(--lc-warn)' }}>已发现 {findings.length} 处</span>}
-+          </div>
-+          <span className="text-[11.5px] lc-ink3">预计时间依据：{run.estimateBasis}。可以先离开，回来会接着显示。</span>
++        <div className="t-meta t-mute">
++          {run.status === 'queued' ? '排队中' : `已用 ${formatDuration(run.elapsedSec)}`}{run.remainSec != null ? ` · 预计还需约 ${formatDuration(run.remainSec)}` : ''}{findings.length ? ` · 已发现 ${findings.length} 处` : ''}
++          <br />依据{run.estimateBasis}。可以先离开，回来会接着显示。
 +        </div>
 +      )}
 +      {retest && run.status === 'done' && (
-+        <div className="lc-board mt-3" data-lc="retest-board">
++        <div className="lc-checks" data-lc="retest-board">
 +          {retest.checks.map(c => (
 +            <div key={c.name}>
-+              <span className="lc-verdict" style={{ color: c.status === 'pass' ? 'var(--lc-pass)' : 'var(--lc-fail)' }}>{c.status === 'pass' ? 'PASS' : 'FAIL'}</span>
-+              <span>{c.name}{c.message && <span className="lc-ink3"> · {c.message}</span>}</span>
++              <span className="lc-verdict" style={{ color: c.status === 'pass' ? 'var(--pass)' : 'var(--fail)' }}>{c.status === 'pass' ? 'PASS' : 'FAIL'}</span>
++              <span>{c.name}{c.message && <span className="t-mute"> · {c.message}</span>}</span>
 +            </div>
 +          ))}
 +        </div>
@@ -1812,7 +1742,7 @@ diff --git a/src/added/pages/learning-course/VideoLesson.tsx b/src/added/pages/l
 -              if (at > 1 && at < video.durationSec - 2 && ref.current) { ref.current.currentTime = at; setNow(at); setResumed(at); }
 -            }}
 +  const stage = (
-+    <div className="h-full min-h-0 flex flex-col gap-3 p-4">
++    <div className="h-full min-h-0 flex flex-col gap-4 p-6">
 +      <div className="lc-screen-wrap flex-1 min-h-0 flex items-center justify-center">
 +        <div className="lc-screen" style={{ aspectRatio: '16 / 9', height: '100%', maxWidth: '100%' }}>
 +          <video ref={ref} src={video.url} poster={video.posterUrl} controls playsInline preload="metadata" data-lc="video"
@@ -1833,18 +1763,17 @@ diff --git a/src/added/pages/learning-course/VideoLesson.tsx b/src/added/pages/l
 +      </div>
 +      <div className="shrink-0 flex items-start gap-4 flex-wrap">
 +        <div className="min-w-0 flex-1" style={{ minWidth: 260 }}>
-+          <div className="lc-kicker">{String(chapter + 1).padStart(2, '0')} · {video.chapters[chapter]?.title}</div>
++          <div className="t-meta t-mute">第 {chapter + 1} 章 · {video.chapters[chapter]?.title}</div>
 +          <p className="lc-caption mt-1" key={line} aria-live="polite">{video.transcript[line]?.text}</p>
          </div>
 -
          {resumed != null && (
 -          <div className="flex items-center gap-3 text-[12.5px] lc-secondary" data-lc="resume-note">
--            <span>已从上次看到的 {formatClock(resumed)} 继续</span>
++          <div className="lc-resume" data-lc="resume-note">
+             <span>已从上次看到的 {formatClock(resumed)} 继续</span>
 -            <button type="button" className="inline-flex items-center gap-1.5 min-h-[44px] px-2 rounded-[9px] font-semibold" style={{ color: 'var(--text-primary)' }} onClick={() => { setResumed(null); seek(0); }}>
 -              <RotateCcw size={13} />从头看
 -            </button>
-+          <div className="lc-resume" data-lc="resume-note">
-+            <span>已从上次看到的 <b className="lc-mono">{formatClock(resumed)}</b> 继续</span>
 +            <button type="button" className="lc-tool" onClick={() => { setResumed(null); seek(0); }}><RotateCcw size={13} />从头看</button>
            </div>
          )}
@@ -1883,9 +1812,9 @@ diff --git a/src/added/pages/learning-course/VideoLesson.tsx b/src/added/pages/l
 +        const ch = video.chapters.findIndex(c => c.atSec === cue.atSec);
 +        return (
 +          <div key={cue.atSec}>
-+            {ch >= 0 && <div className="lc-chapter-head" data-active={ch === chapter}><span className="lc-mono">{String(ch + 1).padStart(2, '0')}</span>{video.chapters[ch].title}</div>}
++            {ch >= 0 && <div className="lc-chapter-head" data-active={ch === chapter}>{ch + 1}. {video.chapters[ch].title}</div>}
 +            <button type="button" className="lc-cue" data-line={i} aria-current={i === line} onClick={() => seek(cue.atSec)}>
-+              <span className="lc-cue-time">{formatClock(cue.atSec)}</span><span>{cue.text}</span>
++              <span className="lc-cue-time lc-num">{formatClock(cue.atSec)}</span><span>{cue.text}</span>
 +            </button>
 +          </div>
 +        );
@@ -1898,7 +1827,7 @@ diff --git a/src/added/pages/learning-course/VideoLesson.tsx b/src/added/pages/l
 diff --git a/src/added/pages/learning-course/learningCourse.css b/src/added/pages/learning-course/learningCourse.css
 --- a/src/added/pages/learning-course/learningCourse.css
 +++ b/src/added/pages/learning-course/learningCourse.css
-@@ -1,123 +1,257 @@
+@@ -1,123 +1,202 @@
 -/* 课程与练习页样式：颜色只取 tokens.css 语义变量，深浅主题各自成立。 */
 -.lc-page { --lc-rail: 300px; --lc-gap: 12px; color: var(--text-primary); }
 -.lc-surface { background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: var(--radius-card, 12px); }
@@ -1908,46 +1837,35 @@ diff --git a/src/added/pages/learning-course/learningCourse.css b/src/added/page
 -.lc-eyebrow { font-size: 11px; letter-spacing: 0.08em; color: var(--text-muted); font-weight: 600; }
 -.lc-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 -.lc-scroll { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
-+/* 检验台：课程与练习页的视觉语言（V2）。
-+ * 颜色只取 tokens.css 语义变量，深浅主题各自成立；层次靠 color-mix 从语义色调出浓淡，不写颜色字面量。 */
++/* 课程与练习页样式（V3）。
++ * 排版刻度写死：字号只用 12 / 14 / 16 / 20 / 28（代码 13），字重只用 400 / 600；
++ * 颜色只取 tokens.css 语义变量，强调色只给「当前」与主按钮；层次靠留白与细分隔线，不靠底色和装饰。 */
 +.lc-root {
-+  --lc-ink: var(--text-primary);
-+  --lc-ink-2: var(--text-secondary);
-+  --lc-ink-3: var(--text-muted);
-+  --lc-line: var(--border-subtle);
-+  --lc-line-2: var(--border-default);
-+  --lc-paper: var(--bg-card);
-+  --lc-solid: var(--panel-solid);
-+  --lc-hi: var(--accent-primary);
-+  --lc-hi-soft: color-mix(in srgb, var(--accent-primary) 13%, transparent);
-+  --lc-hi-faint: color-mix(in srgb, var(--accent-primary) 6%, transparent);
-+  --lc-pass: var(--accent-fg-success);
-+  --lc-fail: var(--accent-fg-error);
-+  --lc-warn: var(--accent-fg-warning);
-+  --lc-info: var(--accent-fg-info);
-+  --lc-r: 14px;
-+  --lc-mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
-+  color: var(--lc-ink);
-+  font-feature-settings: 'tnum';
++  --fs-meta: 12px; --fs-ui: 14px; --fs-read: 16px; --fs-title: 20px; --fs-display: 28px; --fs-code: 13px;
++  --lh-meta: 18px; --lh-ui: 22px; --lh-read: 28px; --lh-title: 28px; --lh-display: 36px;
++  --ink: var(--text-primary); --ink-2: var(--text-muted);
++  --line: var(--border-faint); --line-2: var(--border-subtle);
++  --hi: var(--accent-primary);
++  --hi-wash: color-mix(in srgb, var(--accent-primary) 8%, transparent);
++  --pass: var(--accent-fg-success); --fail: var(--accent-fg-error); --warn: var(--accent-fg-warning); --info: var(--accent-fg-info);
++  --mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
++  color: var(--ink); font-size: var(--fs-ui); line-height: var(--lh-ui); font-weight: 400;
 +}
-+.lc-mono { font-family: var(--lc-mono); }
-+.lc-ink2 { color: var(--lc-ink-2); }
-+.lc-ink3 { color: var(--lc-ink-3); }
-+.lc-kicker { font-family: var(--lc-mono); font-size: 10.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--lc-ink-3); }
++.lc-root h1, .lc-root h2, .lc-root h3 { font-weight: 600; }
++.t-meta, .lc-kicker { font-size: var(--fs-meta); line-height: var(--lh-meta); }
++.t-ui { font-size: var(--fs-ui); line-height: var(--lh-ui); }
++.t-read { font-size: var(--fs-read); line-height: var(--lh-read); }
++.t-title { font-size: var(--fs-title); line-height: var(--lh-title); }
++.t-display { font-size: var(--fs-display); line-height: var(--lh-display); letter-spacing: -0.01em; }
++.t-strong { font-weight: 600; }
++.t-mute, .lc-kicker, .lc-ink2, .lc-ink3 { color: var(--ink-2); }
++.lc-mono { font-family: var(--mono); }
++.lc-num { font-variant-numeric: tabular-nums; }
 +.lc-scroll { min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
-+.lc-panel { background: var(--lc-paper); border: 1px solid var(--lc-line); border-radius: var(--lc-r); }
-+.lc-grid-bg { background-image: radial-gradient(var(--lc-line) 1px, transparent 1.3px); background-size: 18px 18px; background-position: -9px -9px; }
-+.lc-link { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 8px; border-radius: 10px; color: var(--lc-ink-2); font-size: 13px; }
-+.lc-link:hover { color: var(--lc-ink); background: var(--lc-hi-faint); }
-+
-+/* ---------- 动作按钮（以 design/Button 为载体，外观自定义） ---------- */
-+.lc-act.map-btn { height: 44px; border-radius: 12px; padding: 0 18px; font-size: 13.5px; font-weight: 650; letter-spacing: 0.01em; border: 1px solid var(--lc-line-2); background: transparent; color: var(--lc-ink); box-shadow: none; transition: transform 140ms ease, background 160ms ease, border-color 160ms ease; }
-+.lc-act.map-btn:hover:not(:disabled) { background: var(--lc-hi-faint); border-color: var(--lc-ink-3); transform: translateY(-1px); }
-+.lc-act.map-btn.button-primary { background: var(--lc-hi); border-color: var(--lc-hi); color: var(--bg-base); }
-+.lc-act.map-btn.button-primary:hover:not(:disabled) { background: var(--lc-hi); filter: brightness(1.06); }
-+.lc-act.map-btn.button-ghost { border-color: transparent; color: var(--lc-ink-2); }
-+.lc-act.map-btn:disabled { opacity: 0.42; }
-+.lc-act .lc-act-key { font-family: var(--lc-mono); font-size: 11px; opacity: 0.7; }
++.lc-panel { background: var(--bg-card); border: 1px solid var(--line-2); border-radius: 12px; }
++.lc-rule { height: 1px; background: var(--line-2); border: 0; }
++.lc-link { display: inline-flex; align-items: center; gap: 4px; min-height: 44px; color: var(--ink-2); }
++.lc-link:hover { color: var(--ink); }
  
 -/* 顶栏 */
 -.lc-topbar { display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 6px 14px; }
@@ -1955,13 +1873,13 @@ diff --git a/src/added/pages/learning-course/learningCourse.css b/src/added/page
 -.lc-crumb:hover { color: var(--text-primary); background: var(--bg-card-hover); }
 -.lc-progress-track { height: 6px; border-radius: 999px; background: var(--nested-block-bg); overflow: hidden; }
 -.lc-progress-fill { height: 100%; border-radius: 999px; background: var(--accent-primary); transition: width 600ms cubic-bezier(.4,0,.2,1); }
-+/* ---------- 课程页：头部与路线 ---------- */
-+.lc-head { position: relative; padding: 12px 20px 6px; overflow: hidden; }
-+.lc-head::after { content: ''; position: absolute; inset: auto 0 0 0; height: 1px; background: linear-gradient(90deg, transparent, var(--lc-line-2), transparent); }
-+.lc-title { font-size: 24px; line-height: 1.2; font-weight: 750; letter-spacing: -0.01em; }
-+.lc-stat { display: inline-flex; align-items: baseline; gap: 5px; font-size: 12px; color: var(--lc-ink-3); }
-+.lc-stat b { font-family: var(--lc-mono); font-size: 15px; color: var(--lc-ink); font-weight: 650; }
-+.lc-tag { display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 6px; font-size: 11px; font-weight: 600; border: 1px dashed var(--lc-line-2); color: var(--lc-ink-2); }
++/* 按钮：以 design/Button 为载体 */
++.lc-act.map-btn { height: 44px; padding: 0 20px; border-radius: 10px; font-size: var(--fs-ui); font-weight: 600; border: 1px solid var(--line-2); background: transparent; color: var(--ink); box-shadow: none; transition: background 150ms ease, border-color 150ms ease; }
++.lc-act.map-btn:hover:not(:disabled) { background: var(--hi-wash); }
++.lc-act.map-btn.button-primary { background: var(--hi); border-color: var(--hi); color: var(--bg-base); }
++.lc-act.map-btn.button-primary:hover:not(:disabled) { background: var(--hi); opacity: 0.92; }
++.lc-act.map-btn.button-ghost { border-color: transparent; color: var(--ink-2); padding: 0 12px; }
++.lc-act.map-btn:disabled { opacity: 0.4; }
  
 -/* 目录栏 */
 -.lc-lesson { display: flex; gap: 10px; align-items: flex-start; width: 100%; text-align: left; min-height: 56px; padding: 10px 10px; border-radius: var(--radius-field, 10px); border: 1px solid transparent; transition: background 160ms ease, border-color 160ms ease; }
@@ -1972,20 +1890,18 @@ diff --git a/src/added/pages/learning-course/learningCourse.css b/src/added/page
 -.lc-lesson[aria-current='true'] .lc-lesson-index { border-color: var(--accent-primary); color: var(--accent-primary); }
 -.lc-practice-card { display: flex; gap: 10px; width: 100%; text-align: left; padding: 12px; min-height: 64px; border-radius: var(--radius-field, 10px); border: 1px solid var(--border-subtle); background: var(--bg-card); transition: border-color 160ms ease, transform 160ms ease; }
 -.lc-practice-card:hover { border-color: var(--border-default); transform: translateY(-1px); }
-+.lc-metro { position: relative; display: grid; grid-template-columns: repeat(var(--n), minmax(120px, 1fr)); padding: 8px 0 2px; }
-+.lc-metro-rail { position: absolute; top: 25px; height: 3px; border-radius: 3px; background: var(--lc-line); }
-+.lc-metro-fill { position: absolute; top: 25px; height: 3px; border-radius: 3px; background: var(--lc-hi); transition: width 700ms cubic-bezier(.4,0,.2,1); }
-+.lc-station { position: relative; display: flex; flex-direction: column; align-items: center; gap: 5px; min-height: 44px; padding: 0 6px 4px; text-align: center; border-radius: 12px; }
-+.lc-station-dot { position: relative; z-index: 1; width: 36px; height: 36px; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center; font-family: var(--lc-mono); font-size: 13px; font-weight: 700; background: var(--lc-solid); border: 2px solid var(--lc-line-2); color: var(--lc-ink-2); transition: transform 200ms ease, border-color 200ms ease; }
-+.lc-station:hover .lc-station-dot { transform: scale(1.06); }
-+.lc-station[data-status='done'] .lc-station-dot { border-color: var(--lc-pass); color: var(--lc-pass); }
-+.lc-station[aria-current='true'] .lc-station-dot { border-color: var(--lc-hi); color: var(--lc-hi); box-shadow: 0 0 0 6px var(--lc-hi-soft); }
-+.lc-station-name { font-size: 12.5px; font-weight: 600; line-height: 1.35; color: var(--lc-ink-2); max-width: 150px; }
-+.lc-station[aria-current='true'] .lc-station-name { color: var(--lc-ink); }
-+.lc-branch { display: inline-flex; align-items: center; gap: 6px; min-height: 26px; padding: 0 10px 0 8px; border-radius: 999px; font-size: 11.5px; color: var(--lc-ink-2); border: 1px solid var(--lc-line); background: var(--lc-solid); }
-+.lc-branch::before { content: ''; width: 8px; height: 8px; transform: rotate(45deg); border-radius: 2px; background: var(--lc-hi); }
-+.lc-branch[data-status='done']::before { background: var(--lc-pass); }
-+.lc-branch:hover { border-color: var(--lc-hi); color: var(--lc-ink); }
++/* ---------- 课程页 ---------- */
++.lc-head { padding: 20px 24px 8px; }
++.lc-metro { position: relative; display: grid; grid-template-columns: repeat(var(--n), minmax(0, 1fr)); margin-top: 16px; }
++.lc-metro-rail, .lc-metro-fill { position: absolute; top: 21px; height: 2px; }
++.lc-metro-rail { background: var(--line-2); }
++.lc-metro-fill { background: var(--hi); transition: width 600ms ease; }
++.lc-station { position: relative; display: flex; flex-direction: column; align-items: center; gap: 8px; min-height: 44px; padding: 16px 4px 8px; color: var(--ink-2); font-size: var(--fs-meta); line-height: var(--lh-meta); }
++.lc-station-dot { position: relative; z-index: 1; width: 12px; height: 12px; border-radius: 99px; background: var(--bg-base); border: 2px solid var(--line-2); transition: transform 200ms ease; }
++.lc-station:hover { color: var(--ink); }
++.lc-station[data-status='done'] .lc-station-dot { background: var(--pass); border-color: var(--pass); }
++.lc-station[aria-current='true'] { color: var(--ink); font-weight: 600; }
++.lc-station[aria-current='true'] .lc-station-dot { background: var(--hi); border-color: var(--hi); transform: scale(1.25); }
  
 -/* 材料切换 */
 -.lc-media-switch { display: inline-flex; gap: 4px; padding: 4px; border-radius: 14px; background: var(--nested-block-bg); border: 1px solid var(--border-subtle); max-width: 100%; overflow-x: auto; scrollbar-width: none; }
@@ -1994,25 +1910,24 @@ diff --git a/src/added/pages/learning-course/learningCourse.css b/src/added/page
 -.lc-media-btn[aria-pressed='true'] { background: var(--bg-elevated); color: var(--text-primary); box-shadow: 0 0 0 1px var(--border-default); }
 -.lc-media-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 -.lc-media-btn .lc-unit { font-weight: 500; font-size: 12px; color: var(--text-muted); }
-+/* ---------- 课程页：书桌（主舞台 + 伴读栏） ---------- */
-+.lc-desk { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 14px; min-height: 0; }
++.lc-desk { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; min-height: 0; }
 +.lc-sheet { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
-+.lc-sheet-head { display: flex; align-items: flex-end; gap: 16px; padding: 14px 18px 0; flex-wrap: wrap; }
-+.lc-lesson-no { font-family: var(--lc-mono); font-size: 40px; line-height: 0.9; font-weight: 700; color: var(--lc-hi); letter-spacing: -0.03em; }
-+.lc-ruler { display: flex; gap: 2px; margin-left: auto; overflow-x: auto; scrollbar-width: none; }
-+.lc-ruler-tab { position: relative; display: flex; flex-direction: column; align-items: flex-start; justify-content: center; min-height: 48px; padding: 0 14px; font-size: 13px; font-weight: 650; color: var(--lc-ink-2); white-space: nowrap; border-radius: 10px 10px 0 0; flex-shrink: 0; }
-+.lc-ruler-tab small { font-family: var(--lc-mono); font-size: 11px; font-weight: 500; color: var(--lc-ink-3); }
-+.lc-ruler-tab::after { content: ''; position: absolute; left: 12px; right: 12px; bottom: 0; height: 3px; border-radius: 3px 3px 0 0; background: transparent; transition: background 200ms ease; }
-+.lc-ruler-tab[aria-pressed='true'] { color: var(--lc-ink); background: var(--lc-hi-faint); }
-+.lc-ruler-tab[aria-pressed='true']::after { background: var(--lc-hi); }
-+.lc-ruler-tab:disabled { cursor: not-allowed; color: var(--lc-ink-3); }
-+.lc-ruler-tab:disabled span { text-decoration: line-through; text-decoration-color: var(--lc-line-2); }
-+.lc-stage { flex: 1; min-height: 0; border-top: 1px solid var(--lc-line); }
-+.lc-side { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
++.lc-sheet-head { padding: 20px 24px 0; }
++.lc-ruler { display: flex; gap: 24px; margin-top: 12px; overflow-x: auto; scrollbar-width: none; }
++.lc-ruler-tab { position: relative; display: inline-flex; align-items: center; gap: 6px; min-height: 44px; color: var(--ink-2); white-space: nowrap; flex-shrink: 0; }
++.lc-ruler-tab .lc-unit { font-size: var(--fs-meta); }
++.lc-ruler-tab::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 2px; background: transparent; }
++.lc-ruler-tab:hover:not(:disabled) { color: var(--ink); }
++.lc-ruler-tab[aria-pressed='true'] { color: var(--ink); font-weight: 600; }
++.lc-ruler-tab[aria-pressed='true']::after { background: var(--hi); }
++.lc-ruler-tab:disabled { opacity: 0.45; cursor: not-allowed; }
++.lc-stage { flex: 1; min-height: 0; border-top: 1px solid var(--line-2); }
++.lc-side { display: flex; flex-direction: column; gap: 16px; min-height: 0; }
 +.lc-side-panel { display: flex; flex-direction: column; min-height: 0; flex: 1; }
-+.lc-side-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px 8px; }
++.lc-side-sec { padding: 16px 16px 12px; }
++.lc-side-head { display: flex; align-items: baseline; justify-content: space-between; padding: 12px 16px 4px; }
  
- /* 视频 */
+-/* 视频 */
 -.lc-video-frame { position: relative; width: 100%; aspect-ratio: 16 / 9; border-radius: var(--radius-card, 12px); overflow: hidden; background: var(--bg-base); border: 1px solid var(--border-subtle); }
 -.lc-video-frame video { width: 100%; height: 100%; display: block; object-fit: contain; background: var(--bg-base); }
 -.lc-chapter { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 12px; border-radius: var(--radius-control, 9px); font-size: 12.5px; border: 1px solid var(--border-subtle); color: var(--text-secondary); white-space: nowrap; flex-shrink: 0; }
@@ -2024,41 +1939,38 @@ diff --git a/src/added/pages/learning-course/learningCourse.css b/src/added/page
 -.lc-timeline { position: relative; height: 6px; border-radius: 999px; background: var(--nested-block-bg); }
 -.lc-timeline-fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 999px; background: var(--accent-primary); }
 -.lc-timeline-mark { position: absolute; top: -3px; width: 2px; height: 12px; background: var(--text-muted); border-radius: 2px; }
-+.lc-screen { position: relative; border-radius: 12px; overflow: hidden; background: var(--bg-base); box-shadow: 0 0 0 1px var(--lc-line); }
++.lc-screen { position: relative; border-radius: 10px; overflow: hidden; background: var(--bg-base); }
 +.lc-screen video { display: block; width: 100%; height: 100%; object-fit: contain; background: var(--bg-base); }
-+.lc-resume { display: inline-flex; align-items: center; gap: 10px; padding: 4px 6px 4px 12px; border-radius: 999px; background: var(--lc-hi-soft); font-size: 12.5px; }
-+.lc-caption { font-size: 15px; line-height: 1.7; color: var(--lc-ink); min-height: 52px; transition: opacity 240ms ease; }
-+.lc-cue { display: grid; grid-template-columns: 44px 1fr; gap: 8px; width: 100%; text-align: left; min-height: 44px; padding: 8px 10px; border-radius: 10px; font-size: 13px; line-height: 1.6; color: var(--lc-ink-2); transition: background 160ms ease, color 160ms ease; }
-+.lc-cue:hover { background: var(--lc-hi-faint); }
-+.lc-cue[aria-current='true'] { color: var(--lc-ink); background: var(--lc-hi-soft); }
-+.lc-cue-time { font-family: var(--lc-mono); font-size: 11px; color: var(--lc-ink-3); padding-top: 2px; }
-+.lc-cue[aria-current='true'] .lc-cue-time { color: var(--lc-hi); }
-+.lc-chapter-head { display: flex; align-items: center; gap: 8px; padding: 12px 10px 4px; font-size: 11.5px; font-weight: 700; color: var(--lc-ink-3); }
-+.lc-chapter-head[data-active='true'] { color: var(--lc-ink); }
-+.lc-chapter-head::after { content: ''; flex: 1; height: 1px; background: var(--lc-line); }
++.lc-caption { font-size: var(--fs-read); line-height: var(--lh-read); color: var(--ink); min-height: 56px; }
++.lc-cue { display: grid; grid-template-columns: 40px 1fr; gap: 8px; width: 100%; text-align: left; min-height: 44px; padding: 8px 8px 8px 10px; border-radius: 8px; color: var(--ink-2); border-left: 2px solid transparent; }
++.lc-cue:hover { color: var(--ink); }
++.lc-cue[aria-current='true'] { color: var(--ink); border-left-color: var(--hi); background: var(--hi-wash); border-radius: 0 8px 8px 0; }
++.lc-cue-time { font-size: var(--fs-meta); color: var(--ink-2); }
++.lc-chapter-head { padding: 16px 10px 4px; font-size: var(--fs-meta); line-height: var(--lh-meta); color: var(--ink-2); }
++.lc-chapter-head[data-active='true'] { color: var(--ink); font-weight: 600; }
++.lc-resume { display: inline-flex; align-items: center; gap: 8px; font-size: var(--fs-meta); color: var(--ink-2); }
  
- /* PDF */
+-/* PDF */
 -.lc-thumb { display: block; width: 100%; padding: 6px; border-radius: var(--radius-field, 10px); border: 1px solid transparent; text-align: center; font-size: 11px; color: var(--text-muted); }
 -.lc-thumb img { width: 100%; border-radius: 4px; border: 1px solid var(--border-subtle); display: block; }
 -.lc-thumb[aria-current='true'] { border-color: var(--accent-primary); color: var(--text-primary); }
 -.lc-thumb[data-in-lesson='true'] { background: var(--nested-block-bg); }
 -.lc-pdf-page { margin: 0 auto; border-radius: 6px; overflow: hidden; border: 1px solid var(--border-subtle); background: var(--bg-elevated); }
 -.lc-pdf-page img { display: block; width: 100%; height: auto; }
-+.lc-paper-stack { display: flex; flex-direction: column; align-items: center; gap: 18px; padding: 20px; }
-+.lc-page { flex: none; width: 100%; max-width: 820px; aspect-ratio: 794 / 1123; border-radius: 4px; overflow: hidden; background: var(--bg-elevated); box-shadow: 0 1px 0 var(--lc-line), 0 10px 30px -18px var(--lc-ink); position: relative; }
++.lc-paper-stack { display: flex; flex-direction: column; align-items: center; gap: 24px; padding: 24px; background: var(--nested-block-bg); min-height: 100%; }
++.lc-page { flex: none; width: 100%; max-width: 760px; aspect-ratio: 794 / 1123; border-radius: 4px; overflow: hidden; background: var(--bg-elevated); border: 1px solid var(--line-2); }
 +.lc-page img { display: block; width: 100%; height: 100%; object-fit: contain; }
-+.lc-page-no { position: absolute; right: 10px; bottom: 8px; font-family: var(--lc-mono); font-size: 11px; padding: 2px 6px; border-radius: 6px; background: var(--lc-solid); color: var(--lc-ink-2); }
-+.lc-thumb { position: relative; display: grid; grid-template-columns: 52px 1fr; gap: 10px; align-items: center; width: 100%; min-height: 44px; padding: 6px; border-radius: 10px; text-align: left; font-size: 12.5px; color: var(--lc-ink-2); }
-+.lc-thumb img { width: 52px; aspect-ratio: 794 / 1123; border-radius: 3px; box-shadow: 0 0 0 1px var(--lc-line); }
-+.lc-thumb:hover { background: var(--lc-hi-faint); }
-+.lc-thumb[aria-current='true'] { background: var(--lc-hi-soft); color: var(--lc-ink); }
-+.lc-thumb[data-in-lesson='true']::before { content: ''; position: absolute; left: -2px; top: 10px; bottom: 10px; width: 3px; border-radius: 3px; background: var(--lc-hi); }
-+.lc-tool { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 44px; min-height: 44px; padding: 0 10px; border-radius: 10px; font-size: 12.5px; font-weight: 600; color: var(--lc-ink-2); }
-+.lc-tool:hover:not(:disabled) { background: var(--lc-hi-faint); color: var(--lc-ink); }
++.lc-thumb { display: grid; grid-template-columns: 40px 1fr; gap: 12px; align-items: center; width: 100%; min-height: 44px; padding: 6px 8px; border-radius: 8px; text-align: left; color: var(--ink-2); border-left: 2px solid transparent; }
++.lc-thumb img { width: 40px; aspect-ratio: 794 / 1123; border-radius: 2px; border: 1px solid var(--line-2); }
++.lc-thumb:hover { color: var(--ink); }
++.lc-thumb[aria-current='true'] { color: var(--ink); background: var(--hi-wash); }
++.lc-thumb[data-in-lesson='true'] { border-left-color: var(--hi); border-radius: 0 8px 8px 0; }
++.lc-tool { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 44px; min-height: 44px; padding: 0 10px; border-radius: 8px; color: var(--ink-2); }
++.lc-tool:hover:not(:disabled) { color: var(--ink); }
 +.lc-tool:disabled { opacity: 0.4; cursor: not-allowed; }
-+.lc-tool[aria-pressed='true'] { color: var(--lc-ink); background: var(--lc-hi-soft); }
++.lc-tool[aria-pressed='true'] { color: var(--ink); font-weight: 600; }
  
- /* 图文 */
+-/* 图文 */
 -.lc-article { max-width: 760px; margin: 0 auto; font-size: 15px; line-height: 1.85; color: var(--text-secondary); }
 -.lc-article h2 { font-size: 19px; line-height: 1.4; color: var(--text-primary); font-weight: 700; margin: 30px 0 10px; scroll-margin-top: 12px; }
 -.lc-article p { margin: 10px 0; }
@@ -2070,80 +1982,24 @@ diff --git a/src/added/pages/learning-course/learningCourse.css b/src/added/page
 -.lc-callout[data-tone='warn'] { border-left-color: var(--accent-fg-warning); }
 -.lc-toc-link { display: flex; align-items: center; min-height: 36px; padding: 0 10px; border-left: 2px solid var(--border-subtle); font-size: 13px; color: var(--text-muted); }
 -.lc-toc-link[aria-current='true'] { border-left-color: var(--accent-primary); color: var(--text-primary); }
-+.lc-article { max-width: 720px; margin: 0 auto; padding: 26px 28px 40px; font-size: 15.5px; line-height: 1.9; color: var(--lc-ink-2); }
-+.lc-article h2 { font-size: 20px; line-height: 1.35; color: var(--lc-ink); font-weight: 750; margin: 34px 0 10px; scroll-margin-top: 16px; display: flex; gap: 10px; align-items: baseline; }
-+.lc-article h2 .lc-h-no { font-family: var(--lc-mono); font-size: 13px; color: var(--lc-hi); }
-+.lc-article p { margin: 12px 0; }
-+.lc-article .lc-lede { font-size: 17px; line-height: 1.8; color: var(--lc-ink); }
-+.lc-article ul { margin: 12px 0; padding: 0; list-style: none; }
-+.lc-article li { position: relative; padding-left: 22px; margin: 6px 0; }
-+.lc-article li::before { content: ''; position: absolute; left: 4px; top: 0.78em; width: 8px; height: 2px; background: var(--lc-hi); }
-+.lc-article pre { margin: 16px 0; padding: 16px 18px; border-radius: 12px; background: var(--lc-solid); border: 1px solid var(--lc-line); color: var(--lc-ink); font-size: 13px; line-height: 1.75; overflow-x: auto; }
-+.lc-article figure img { width: 100%; border-radius: 12px; box-shadow: 0 0 0 1px var(--lc-line); }
-+.lc-article figcaption { font-size: 12.5px; color: var(--lc-ink-3); margin-top: 8px; }
-+.lc-note { margin: 18px 0; padding: 14px 16px 14px 18px; border-radius: 12px; background: var(--lc-hi-faint); border: 1px solid var(--lc-line); position: relative; }
-+.lc-note::before { content: ''; position: absolute; left: 0; top: 14px; bottom: 14px; width: 3px; border-radius: 0 3px 3px 0; background: var(--lc-info); }
-+.lc-note[data-tone='warn']::before { background: var(--lc-warn); }
-+.lc-toc { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 44px; padding: 0 12px; border-radius: 10px; font-size: 13px; color: var(--lc-ink-2); text-align: left; }
-+.lc-toc .lc-mono { font-size: 11px; color: var(--lc-ink-3); }
-+.lc-toc:hover { background: var(--lc-hi-faint); }
-+.lc-toc[aria-current='true'] { color: var(--lc-ink); background: var(--lc-hi-soft); }
-+.lc-toc[aria-current='true'] .lc-mono { color: var(--lc-hi); }
-+.lc-finish { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 56px; margin-top: 28px; padding: 0 16px; border-radius: 12px; border: 1.5px dashed var(--lc-line-2); font-size: 13.5px; color: var(--lc-ink-2); text-align: left; transition: border-color 200ms ease, color 200ms ease; }
-+.lc-finish[data-finished='true'] { border-style: solid; border-color: var(--lc-pass); color: var(--lc-pass); }
-+
-+/* ---------- 票据（练习入口 / 工单） ---------- */
-+.lc-ticket { position: relative; background: var(--lc-solid); border: 1px solid var(--lc-line); border-radius: var(--lc-r);
-+  -webkit-mask: radial-gradient(circle 9px at 0 var(--cut, 50%), transparent 98%, black) left / 51% 100% no-repeat, radial-gradient(circle 9px at 100% var(--cut, 50%), transparent 98%, black) right / 51% 100% no-repeat;
-+  mask: radial-gradient(circle 9px at 0 var(--cut, 50%), transparent 98%, black) left / 51% 100% no-repeat, radial-gradient(circle 9px at 100% var(--cut, 50%), transparent 98%, black) right / 51% 100% no-repeat; }
-+.lc-perf { height: 0; border-top: 1.5px dashed var(--lc-line-2); margin: 0 14px; }
-+.lc-pick { display: grid; grid-template-columns: 34px 1fr auto; gap: 10px; align-items: center; width: 100%; min-height: 52px; padding: 8px 10px; border-radius: 10px; text-align: left; }
-+.lc-pick:hover { background: var(--lc-hi-faint); }
-+.lc-pick[data-active='true'] { background: var(--lc-hi-soft); }
-+.lc-glyph { width: 34px; height: 34px; border-radius: 10px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--lc-line-2); color: var(--lc-hi); }
-+
-+/* ---------- 练习页：检验台 ---------- */
-+.lc-steps { display: flex; align-items: center; gap: 0; }
-+.lc-step { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--lc-ink-3); white-space: nowrap; }
-+.lc-step i { font-style: normal; font-family: var(--lc-mono); font-size: 11px; width: 24px; height: 24px; border-radius: 7px; display: inline-flex; align-items: center; justify-content: center; border: 1.5px solid var(--lc-line-2); }
-+.lc-step[data-state='current'] { color: var(--lc-ink); font-weight: 650; }
-+.lc-step[data-state='current'] i { border-color: var(--lc-hi); background: var(--lc-hi); color: var(--bg-base); }
-+.lc-step[data-state='done'] i { border-color: var(--lc-pass); color: var(--lc-pass); }
-+.lc-step-line { width: 28px; height: 2px; margin: 0 8px; border-radius: 2px; background: var(--lc-line); }
-+.lc-step-line[data-done='true'] { background: var(--lc-pass); }
-+.lc-bench { display: grid; grid-template-columns: minmax(0, 1fr) 420px; gap: 14px; min-height: 0; }
-+.lc-object { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
-+.lc-object-head { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--lc-line); }
-+.lc-file { display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 0 12px; border-radius: 9px; font-family: var(--lc-mono); font-size: 12.5px; color: var(--lc-ink-2); }
-+.lc-file[aria-current='true'] { color: var(--lc-ink); background: var(--lc-hi-soft); }
-+.lc-code { font-family: var(--lc-mono); font-size: 13px; line-height: 1.8; padding: 8px 0 24px; }
-+.lc-code-row { display: grid; grid-template-columns: 34px 46px minmax(0, 1fr); transition: background 220ms ease; }
-+.lc-code-row[data-flag='true'] { background: var(--lc-hi-faint); }
-+.lc-code-row[data-selected='true'] { background: var(--lc-hi-soft); box-shadow: inset 3px 0 0 var(--lc-hi); }
-+.lc-code-row .lc-ln { text-align: right; padding-right: 14px; color: var(--lc-ink-3); user-select: none; }
-+.lc-code-row .lc-src { white-space: pre; padding-right: 18px; color: var(--lc-ink); }
-+.lc-code-row[data-diff='del'] { background: color-mix(in srgb, var(--lc-fail) 9%, transparent); }
-+.lc-code-row[data-diff='del'] .lc-src { color: var(--lc-fail); text-decoration: line-through; text-decoration-thickness: 1px; }
-+.lc-code-row[data-diff='add'] { background: color-mix(in srgb, var(--lc-pass) 10%, transparent); }
-+.lc-code-row[data-diff='add'] .lc-src { color: var(--lc-pass); }
-+.lc-flag { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; margin: 2px 6px; border-radius: 6px; font-family: var(--lc-mono); font-size: 10.5px; font-weight: 800; color: var(--bg-base); background: currentColor; animation: lc-pop 380ms cubic-bezier(.2,.9,.3,1.3) both; }
-+.lc-flag span { color: var(--bg-base); }
-+@keyframes lc-pop { from { transform: scale(0.3); opacity: 0; } to { transform: none; opacity: 1; } }
-+.lc-console { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
-+.lc-console-head { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--lc-line); }
-+.lc-log { font-family: var(--lc-mono); font-size: 12px; line-height: 1.75; padding: 10px 14px; color: var(--lc-ink-2); }
-+.lc-log-line { display: grid; grid-template-columns: 44px 44px 1fr; gap: 6px; animation: lc-in 300ms ease both; }
-+.lc-log-line .lc-t { color: var(--lc-ink-3); }
-+.lc-log-tag { font-weight: 700; }
-+.lc-log-tag[data-tone='ok'] { color: var(--lc-pass); }
-+.lc-log-tag[data-tone='bad'] { color: var(--lc-fail); }
-+.lc-log-tag[data-tone='run'] { color: var(--lc-hi); }
-+.lc-log-tag[data-tone='find'] { color: var(--lc-warn); }
-+.lc-caret { display: inline-block; width: 7px; height: 13px; margin-left: 4px; vertical-align: -2px; background: var(--lc-hi); animation: lc-blink 1s steps(1) infinite; }
-+@keyframes lc-blink { 50% { opacity: 0; } }
-+@keyframes lc-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
-+.lc-meter { position: relative; height: 4px; background: var(--lc-line); overflow: hidden; }
-+.lc-meter > span { position: absolute; inset: 0 auto 0 0; background: var(--lc-hi); transition: width 600ms ease; }
++.lc-article { max-width: 680px; margin: 0 auto; padding: 32px 32px 48px; font-size: var(--fs-read); line-height: var(--lh-read); color: var(--ink); }
++.lc-article h2 { font-size: var(--fs-title); line-height: var(--lh-title); margin: 40px 0 12px; scroll-margin-top: 16px; }
++.lc-article p { margin: 16px 0; }
++.lc-article ul { margin: 16px 0; padding-left: 20px; list-style: disc; }
++.lc-article li { margin: 6px 0; }
++.lc-article li::marker { color: var(--ink-2); }
++.lc-article pre { margin: 20px 0; padding: 16px 20px; border-radius: 8px; background: var(--nested-block-bg); font-family: var(--mono); font-size: var(--fs-code); line-height: 22px; overflow-x: auto; }
++.lc-article figure img { width: 100%; border-radius: 8px; border: 1px solid var(--line-2); }
++.lc-article figcaption { font-size: var(--fs-meta); line-height: var(--lh-meta); color: var(--ink-2); margin-top: 8px; }
++.lc-note { margin: 20px 0; padding: 4px 0 4px 16px; border-left: 2px solid var(--info); }
++.lc-note[data-tone='warn'] { border-left-color: var(--warn); }
++.lc-toc { display: flex; align-items: center; width: 100%; min-height: 40px; padding: 0 12px; text-align: left; color: var(--ink-2); border-left: 2px solid var(--line-2); }
++.lc-toc:hover { color: var(--ink); }
++.lc-toc[aria-current='true'] { color: var(--ink); border-left-color: var(--hi); font-weight: 600; }
++.lc-finish { display: flex; align-items: center; gap: 8px; min-height: 44px; margin-top: 40px; color: var(--ink-2); font-size: var(--fs-ui); }
++.lc-finish[data-finished='true'] { color: var(--pass); }
++.lc-meter { position: relative; height: 2px; background: var(--line-2); overflow: hidden; }
++.lc-meter > span { position: absolute; inset: 0 auto 0 0; background: var(--hi); transition: width 500ms ease; }
  
 -/* 练习 */
 -.lc-stepper { display: flex; align-items: center; gap: 4px; overflow-x: auto; scrollbar-width: none; }
@@ -2184,118 +2040,136 @@ diff --git a/src/added/pages/learning-course/learningCourse.css b/src/added/page
 -.lc-region[data-selected='true'] { box-shadow: 0 0 0 3px var(--accent-primary); }
 -.lc-region-tag { position: absolute; top: -12px; left: -12px; min-width: 24px; height: 24px; padding: 0 6px; border-radius: 999px; background: var(--panel-solid); border: 1.5px solid currentColor; font-size: 11px; font-weight: 800; display: inline-flex; align-items: center; justify-content: center; }
 -.lc-check { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; line-height: 1.6; }
-+.lc-work { position: relative; padding: 14px; border-radius: 12px; background: var(--lc-solid); border: 1px solid var(--lc-line); animation: lc-in 360ms ease both; }
-+.lc-work[data-selected='true'] { border-color: var(--lc-hi); box-shadow: 0 0 0 3px var(--lc-hi-soft); }
-+.lc-sev { display: inline-flex; align-items: center; height: 20px; padding: 0 7px; border-radius: 5px; font-family: var(--lc-mono); font-size: 10.5px; font-weight: 800; color: var(--bg-base); }
-+.lc-stamp-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-+.lc-stamp-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 44px; border-radius: 10px; border: 1.5px solid var(--lc-line-2); font-size: 13px; font-weight: 700; color: var(--lc-ink-2); transition: all 160ms ease; }
-+.lc-stamp-btn:hover:not(:disabled) { color: var(--lc-ink); border-color: var(--lc-ink-3); }
-+.lc-stamp-btn[aria-pressed='true'][data-kind='accept'] { color: var(--lc-pass); border-color: var(--lc-pass); background: color-mix(in srgb, var(--lc-pass) 10%, transparent); }
-+.lc-stamp-btn[aria-pressed='true'][data-kind='reject'] { color: var(--lc-warn); border-color: var(--lc-warn); background: color-mix(in srgb, var(--lc-warn) 10%, transparent); }
-+.lc-stamp { position: absolute; top: 12px; right: 12px; padding: 3px 10px; border: 2px solid currentColor; border-radius: 6px; font-size: 13px; font-weight: 800; letter-spacing: 0.2em; transform: rotate(-8deg); opacity: 0.9; animation: lc-stamp 320ms cubic-bezier(.2,.9,.3,1.4) both; pointer-events: none; }
-+@keyframes lc-stamp { from { transform: rotate(-8deg) scale(1.8); opacity: 0; } to { transform: rotate(-8deg) scale(1); opacity: 0.9; } }
-+.lc-reason-chip { display: inline-flex; align-items: center; min-height: 44px; padding: 0 12px; border-radius: 10px; border: 1px dashed var(--lc-line-2); font-size: 12.5px; color: var(--lc-ink-2); text-align: left; }
-+.lc-reason-chip:hover { border-style: solid; color: var(--lc-ink); }
-+.lc-input { width: 100%; min-height: 44px; padding: 10px 12px; border-radius: 10px; background: var(--bg-input); border: 1px solid var(--lc-line); color: var(--lc-ink); font-size: 13.5px; line-height: 1.6; outline: none; }
-+.lc-input:focus { border-color: var(--lc-hi); box-shadow: 0 0 0 3px var(--lc-hi-soft); }
-+.lc-dock { position: sticky; bottom: 0; padding: 12px 14px; background: var(--lc-solid); border-top: 1px solid var(--lc-line); }
-+.lc-board { display: grid; gap: 1px; background: var(--lc-line); border: 1px solid var(--lc-line); border-radius: 12px; overflow: hidden; }
-+.lc-board > div { display: grid; grid-template-columns: 52px 1fr; gap: 10px; align-items: start; padding: 10px 12px; background: var(--lc-solid); font-size: 12.5px; line-height: 1.6; }
-+.lc-verdict { font-family: var(--lc-mono); font-weight: 800; font-size: 11px; letter-spacing: 0.08em; }
-+.lc-slip { background: var(--lc-solid); border: 1px solid var(--lc-line); border-radius: 4px 4px 14px 14px; padding: 16px 16px 14px; position: relative; }
-+.lc-slip::before { content: ''; position: absolute; left: 0; right: 0; top: -6px; height: 6px; background: radial-gradient(circle at 6px 6px, transparent 4px, var(--lc-solid) 4.5px) 0 0 / 12px 6px repeat-x; }
-+.lc-slip textarea { background: transparent; border: 0; border-top: 1px dashed var(--lc-line-2); border-radius: 0; padding: 12px 0 0; font-family: var(--lc-mono); font-size: 12.5px; line-height: 1.8; }
-+.lc-slip textarea:focus { box-shadow: none; }
-+.lc-cert { position: relative; padding: 24px 20px; border-radius: 16px; text-align: center; background: var(--lc-solid); border: 1px solid var(--lc-line); overflow: hidden; }
-+.lc-cert::before { content: ''; position: absolute; inset: 8px; border: 1px solid var(--lc-line-2); border-radius: 10px; pointer-events: none; }
-+.lc-seal { width: 76px; height: 76px; margin: 0 auto 10px; border-radius: 999px; border: 2px solid var(--lc-pass); color: var(--lc-pass); display: flex; align-items: center; justify-content: center; flex-direction: column; font-size: 11px; font-weight: 800; letter-spacing: 0.15em; transform: rotate(-10deg); animation: lc-stamp 420ms cubic-bezier(.2,.9,.3,1.4) both; }
-+.lc-region { position: absolute; border: 2px solid currentColor; border-radius: 6px; }
-+.lc-region[data-severity='P2'] { border-style: dashed; }
-+.lc-region[data-selected='true'] { box-shadow: 0 0 0 4px var(--lc-hi-soft); }
-+.lc-region-tag { position: absolute; top: -11px; left: -11px; width: 22px; height: 22px; border-radius: 6px; background: currentColor; display: inline-flex; align-items: center; justify-content: center; font-family: var(--lc-mono); font-size: 10.5px; font-weight: 800; }
-+.lc-region-tag span { color: var(--bg-base); }
-+.lc-skel { border-radius: 10px; background: linear-gradient(90deg, var(--lc-hi-faint), var(--lc-hi-soft), var(--lc-hi-faint)); background-size: 200% 100%; animation: lc-shimmer 1.4s ease-in-out infinite; }
-+@keyframes lc-shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
-+.lc-dotpulse { display: inline-block; width: 8px; height: 8px; border-radius: 99px; background: currentColor; animation: lc-blink 0.9s steps(1) infinite; }
++.lc-pick { display: grid; grid-template-columns: 18px 1fr; gap: 12px; align-items: start; width: 100%; min-height: 44px; padding: 10px 12px; border-radius: 8px; text-align: left; }
++.lc-pick:hover { background: var(--hi-wash); }
++.lc-pick-dot { width: 16px; height: 16px; margin-top: 3px; border-radius: 99px; border: 1.5px solid var(--line-2); }
++.lc-pick[data-active='true'] .lc-pick-dot { border: 5px solid var(--hi); }
  
-+/* 课程卡（学习中心） */
-+.lc-banner { position: relative; display: grid; grid-template-columns: 1fr; gap: 12px; width: 100%; padding: 18px 20px; text-align: left; border-radius: 16px; background: var(--lc-paper); border: 1px solid var(--lc-line); overflow: hidden; transition: border-color 200ms ease, transform 200ms ease; }
-+.lc-banner:hover { border-color: var(--lc-line-2); transform: translateY(-1px); }
-+.lc-banner-orb { position: absolute; right: -60px; top: -80px; width: 260px; height: 260px; border-radius: 999px; background: radial-gradient(circle, var(--lc-hi-soft), transparent 70%); pointer-events: none; }
-+.lc-mini-metro { display: grid; grid-template-columns: repeat(var(--n), 1fr); position: relative; }
-+.lc-mini-metro::before { content: ''; position: absolute; left: 10%; right: 10%; top: 9px; height: 2px; background: var(--lc-line); }
-+.lc-mini-stop { position: relative; display: flex; flex-direction: column; align-items: center; gap: 6px; font-size: 11.5px; color: var(--lc-ink-3); }
-+.lc-mini-stop i { width: 20px; height: 20px; border-radius: 99px; background: var(--lc-solid); border: 2px solid var(--lc-line-2); font-style: normal; font-family: var(--lc-mono); font-size: 10px; display: inline-flex; align-items: center; justify-content: center; color: var(--lc-ink-2); }
-+.lc-mini-stop[data-next='true'] i { border-color: var(--lc-hi); color: var(--lc-hi); box-shadow: 0 0 0 4px var(--lc-hi-soft); }
-+.lc-mini-stop[data-done='true'] i { border-color: var(--lc-pass); color: var(--lc-pass); }
-+
-+/* ---------- 手机 ---------- */
-+@media (max-width: 767px) {
-+  .lc-head { padding: 12px 12px 6px; }
-+  .lc-title { font-size: 19px; }
-+  .lc-metro { grid-template-columns: repeat(var(--n), 120px); overflow-x: auto; scrollbar-width: none; }
-+  .lc-branch { white-space: nowrap; }
-+  .lc-desk, .lc-bench { grid-template-columns: minmax(0, 1fr); }
-+  .lc-lesson-no { font-size: 28px; }
-+  .lc-sheet-head { padding: 10px 12px 0; }
-+  .lc-article { padding: 16px 14px 32px; font-size: 15px; }
-+}
- @media (prefers-reduced-motion: reduce) {
+-@media (prefers-reduced-motion: reduce) {
 -  .lc-finding-enter, .lc-pulse { animation: none; }
 -  .lc-progress-fill, .lc-practice-card, .lc-finding { transition: none; }
-+  .lc-flag, .lc-stamp, .lc-seal, .lc-work, .lc-log-line, .lc-skel, .lc-caret, .lc-dotpulse { animation: none; }
- }
+-}
++/* ---------- 练习页 ---------- */
++.lc-steps { display: flex; align-items: center; gap: 16px; font-size: var(--fs-meta); line-height: var(--lh-meta); color: var(--ink-2); }
++.lc-step { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
++.lc-step i { font-style: normal; width: 6px; height: 6px; border-radius: 99px; background: var(--line-2); }
++.lc-step[data-state='done'] i { background: var(--pass); }
++.lc-step[data-state='current'] { color: var(--ink); font-weight: 600; }
++.lc-step[data-state='current'] i { background: var(--hi); width: 8px; height: 8px; }
++.lc-bench { display: grid; grid-template-columns: minmax(0, 1fr) 400px; gap: 16px; min-height: 0; }
++.lc-object { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
++.lc-object-head { display: flex; align-items: center; gap: 12px; padding: 8px 16px; border-bottom: 1px solid var(--line-2); font-size: var(--fs-meta); line-height: var(--lh-meta); color: var(--ink-2); }
++.lc-file { display: inline-flex; align-items: center; min-height: 36px; font-family: var(--mono); color: var(--ink-2); }
++.lc-file[aria-current='true'] { color: var(--ink); }
++.lc-code { font-family: var(--mono); font-size: var(--fs-code); line-height: 24px; padding: 12px 0 24px; }
++.lc-code-row { display: grid; grid-template-columns: 32px 44px minmax(0, 1fr); }
++.lc-code-row[data-selected='true'] { background: var(--hi-wash); }
++.lc-code-row .lc-ln { text-align: right; padding-right: 16px; color: var(--ink-2); user-select: none; }
++.lc-code-row .lc-src { white-space: pre; padding-right: 16px; }
++.lc-code-row[data-diff='del'] .lc-src { color: var(--fail); text-decoration: line-through; text-decoration-thickness: 1px; }
++.lc-code-row[data-diff='add'] .lc-src { color: var(--pass); }
++.lc-flag { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; margin: 2px 6px; border-radius: 99px; border: 1.5px solid currentColor; font-family: var(--mono); font-size: var(--fs-meta); line-height: 1; background: var(--bg-base); }
++.lc-console { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
++.lc-console-head { display: flex; align-items: baseline; gap: 8px; padding: 16px 20px 0; }
++.lc-log { font-family: var(--mono); font-size: var(--fs-meta); line-height: 22px; color: var(--ink-2); }
++.lc-log-line { display: grid; grid-template-columns: 40px 40px 1fr; gap: 8px; animation: lc-in 280ms ease both; }
++.lc-log-tag { font-weight: 600; }
++.lc-log-tag[data-tone='ok'] { color: var(--pass); }
++.lc-log-tag[data-tone='bad'] { color: var(--fail); }
++.lc-log-tag[data-tone='run'] { color: var(--hi); }
++.lc-log-tag[data-tone='find'] { color: var(--warn); }
++.lc-caret { display: inline-block; width: 6px; height: 12px; margin-left: 4px; vertical-align: -1px; background: var(--hi); animation: lc-blink 1s steps(1) infinite; }
++@keyframes lc-blink { 50% { opacity: 0; } }
++@keyframes lc-in { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
++.lc-work { padding: 16px 0; border-top: 1px solid var(--line-2); animation: lc-in 300ms ease both; }
++.lc-work[data-selected='true'] .lc-work-title { color: var(--hi); }
++.lc-sev { font-size: var(--fs-meta); font-weight: 600; }
++.lc-choice-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
++.lc-choice { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 44px; border-radius: 10px; border: 1px solid var(--line-2); color: var(--ink-2); transition: border-color 150ms ease, color 150ms ease, background 150ms ease; }
++.lc-choice:hover:not(:disabled) { color: var(--ink); }
++.lc-choice[aria-pressed='true'][data-kind='accept'] { color: var(--pass); border-color: var(--pass); font-weight: 600; }
++.lc-choice[aria-pressed='true'][data-kind='reject'] { color: var(--warn); border-color: var(--warn); font-weight: 600; }
++.lc-reason-chip { display: inline-flex; align-items: center; min-height: 44px; padding: 0 12px; border-radius: 10px; color: var(--ink-2); background: var(--nested-block-bg); font-size: var(--fs-meta); }
++.lc-reason-chip:hover { color: var(--ink); }
++.lc-input { width: 100%; min-height: 44px; padding: 10px 12px; border-radius: 10px; background: var(--bg-input); border: 1px solid var(--line-2); color: var(--ink); font-size: var(--fs-ui); line-height: var(--lh-ui); outline: none; }
++.lc-input:focus { border-color: var(--hi); }
++.lc-dock { padding: 16px 20px; border-top: 1px solid var(--line-2); }
++.lc-checks { display: flex; flex-direction: column; }
++.lc-checks > div { display: grid; grid-template-columns: 40px 1fr; gap: 8px; padding: 8px 0; border-top: 1px solid var(--line); }
++.lc-checks > div:first-child { border-top: 0; }
++.lc-verdict { font-family: var(--mono); font-size: var(--fs-meta); font-weight: 600; }
++.lc-region { position: absolute; border: 1.5px solid currentColor; border-radius: 6px; }
++.lc-region[data-severity='P2'] { border-style: dashed; }
++.lc-region[data-selected='true'] { box-shadow: 0 0 0 3px var(--hi-wash); }
++.lc-region-tag { position: absolute; top: -10px; left: -10px; width: 20px; height: 20px; border-radius: 99px; border: 1.5px solid currentColor; background: var(--bg-base); display: inline-flex; align-items: center; justify-content: center; font-family: var(--mono); font-size: var(--fs-meta); line-height: 1; }
++.lc-skel { border-radius: 8px; background: var(--nested-block-bg); animation: lc-breath 1.6s ease-in-out infinite; }
++@keyframes lc-breath { 50% { opacity: 0.5; } }
++.lc-dotpulse { display: inline-block; width: 6px; height: 6px; border-radius: 99px; background: currentColor; animation: lc-blink 0.9s steps(1) infinite; }
++
++/* 学习中心课程卡 */
++.lc-banner { display: flex; flex-direction: column; gap: 20px; width: 100%; padding: 24px; text-align: left; border-radius: 12px; background: var(--bg-card); border: 1px solid var(--line-2); transition: border-color 150ms ease; }
++.lc-banner:hover { border-color: var(--border-default); }
++.lc-mini-metro { position: relative; display: grid; grid-template-columns: repeat(var(--n), 1fr); }
++.lc-mini-metro::before { content: ''; position: absolute; left: 10%; right: 10%; top: 4px; height: 2px; background: var(--line-2); }
++.lc-mini-stop { position: relative; display: flex; flex-direction: column; align-items: center; gap: 8px; font-size: var(--fs-meta); line-height: var(--lh-meta); color: var(--ink-2); }
++.lc-mini-stop i { width: 10px; height: 10px; border-radius: 99px; background: var(--bg-base); border: 2px solid var(--line-2); }
++.lc-mini-stop[data-done='true'] i { background: var(--pass); border-color: var(--pass); }
++.lc-mini-stop[data-next='true'] { color: var(--ink); font-weight: 600; }
++.lc-mini-stop[data-next='true'] i { background: var(--hi); border-color: var(--hi); }
  
 -/* 视频布局：宽屏逐字稿在右，较窄时在下方 */
 -.lc-video-layout { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(220px, 1fr); gap: 12px; }
 -@media (min-width: 1400px) {
 -  .lc-video-layout { grid-template-columns: minmax(0, 1fr) 300px; grid-template-rows: minmax(0, 1fr); align-items: start; }
 -  .lc-video-layout > aside { height: 100%; }
--}
++/* 手机 */
++.lc-mobile .lc-desk { display: flex; flex-direction: column; flex: none; }
++.lc-mobile .lc-sheet, .lc-mobile .lc-side, .lc-mobile .lc-stage { flex: none; }
++.lc-mobile .lc-sheet { overflow: visible; }
++.lc-mobile .lc-screen { height: auto !important; width: 100%; }
++.lc-mobile .lc-desk[data-lc-ready='video'] .lc-stage > div { height: auto; }
++.lc-mobile .lc-screen-wrap { flex: none; }
++.lc-mobile .lc-desk[data-lc-ready='pdf'] .lc-stage, .lc-mobile .lc-desk[data-lc-ready='article'] .lc-stage { height: 70vh; }
++.lc-mobile .lc-side-panel { max-height: 420px; flex: none; }
++@media (max-width: 767px) {
++  .lc-head { padding: 16px 16px 4px; }
++  .lc-metro { grid-template-columns: repeat(var(--n), 88px); overflow-x: auto; scrollbar-width: none; }
++  .lc-desk, .lc-bench { grid-template-columns: minmax(0, 1fr); }
++  .lc-sheet-head { padding: 16px 16px 0; }
++  .lc-article { padding: 20px 16px 32px; }
++  .lc-root .t-display { font-size: var(--fs-title); line-height: var(--lh-title); }
+ }
 -/* 手机：本课内容整体滚动，逐字稿限高；PDF 与图文给足阅读高度 */
 -.lc-mobile-media .lc-video-layout { grid-template-rows: auto 340px; }
 -.lc-mobile-media [data-lc-ready='pdf'], .lc-mobile-media [data-lc-ready='article'] { height: 72vh; }
-+/* 手机：整页一起滚，舞台给定阅读高度，伴读栏限高 */
-+.lc-mobile .lc-desk { display: flex; flex-direction: column; flex: none; }
-+.lc-mobile .lc-sheet, .lc-mobile .lc-side { flex: none; }
-+.lc-mobile .lc-sheet { overflow: visible; }
-+.lc-mobile .lc-screen { height: auto !important; width: 100%; }
-+.lc-mobile .lc-stage { flex: none; }
-+.lc-mobile .lc-desk[data-lc-ready='video'] .lc-stage > div { height: auto; }
-+.lc-mobile .lc-screen-wrap { flex: none; }
-+.lc-mobile .lc-desk[data-lc-ready='pdf'] .lc-stage, .lc-mobile .lc-desk[data-lc-ready='article'] .lc-stage { height: 70vh; flex: none; }
-+.lc-mobile .lc-side-panel { max-height: 420px; flex: none; }
++@media (prefers-reduced-motion: reduce) { .lc-log-line, .lc-work, .lc-caret, .lc-skel, .lc-dotpulse { animation: none; } }
 diff --git a/src/added/pages/learning-course/primitives.tsx b/src/added/pages/learning-course/primitives.tsx
 new file mode 100644
 --- /dev/null
 +++ b/src/added/pages/learning-course/primitives.tsx
-@@ -0,0 +1,33 @@
+@@ -0,0 +1,29 @@
 +import type { ButtonHTMLAttributes, ReactNode } from 'react';
 +import { Button } from '@/components/design/Button';
 +
-+/* 检验台的基础部件。动作按钮以 design/Button 为载体（框架规则 R-05），外观由 .lc-act 自定义。 */
-+
++/* 基础部件。动作按钮以 design/Button 为载体（框架规则 R-05），外观由 .lc-act 统一。 */
 +export function Act({ tone = 'secondary', className = '', children, ...rest }: ButtonHTMLAttributes<HTMLButtonElement> & { tone?: 'primary' | 'secondary' | 'ghost'; children: ReactNode }) {
 +  return <Button variant={tone} className={`lc-act ${className}`} {...rest}>{children}</Button>;
 +}
 +
 +export function Kicker({ children, className = '' }: { children: ReactNode; className?: string }) {
-+  return <div className={`lc-kicker ${className}`}>{children}</div>;
++  return <div className={`t-meta t-mute ${className}`}>{children}</div>;
 +}
 +
-+/* 等待时显示产物形状的骨架，而不是转圈 */
++/* 等待时显示页面形状的占位 */
 +export function SheetSkeleton({ label }: { label: string }) {
 +  return (
-+    <div className="lc-root h-full min-h-0 flex flex-col gap-3" aria-busy="true" aria-label={label}>
-+      <div className="lc-panel p-5 flex flex-col gap-4">
-+        <div className="lc-skel" style={{ width: 260, height: 26 }} />
-+        <div className="flex gap-6">{[0, 1, 2, 3, 4].map(i => <div key={i} className="lc-skel" style={{ width: 42, height: 42, borderRadius: 99 }} />)}</div>
-+      </div>
++    <div className="lc-root h-full min-h-0 flex flex-col gap-4" aria-busy="true" aria-label={label}>
++      <div className="lc-panel p-6 flex flex-col gap-4"><div className="lc-skel" style={{ width: 280, height: 28 }} /><div className="lc-skel" style={{ height: 36 }} /></div>
 +      <div className="lc-desk flex-1">
-+        <div className="lc-panel p-5 flex flex-col gap-3"><div className="lc-skel" style={{ height: 30, width: '40%' }} /><div className="lc-skel flex-1" style={{ minHeight: 240 }} /></div>
-+        <div className="lc-panel p-4 flex flex-col gap-2 max-md:hidden">{[0, 1, 2, 3, 4].map(i => <div key={i} className="lc-skel" style={{ height: 40 }} />)}</div>
++        <div className="lc-panel p-6 flex flex-col gap-4"><div className="lc-skel" style={{ height: 24, width: '40%' }} /><div className="lc-skel flex-1" style={{ minHeight: 240 }} /></div>
++        <div className="lc-panel p-4 flex flex-col gap-2 max-md:hidden">{[0, 1, 2, 3].map(i => <div key={i} className="lc-skel" style={{ height: 40 }} />)}</div>
 +      </div>
-+      <div className="lc-kicker">{label}</div>
++      <div className="t-meta t-mute">{label}</div>
 +    </div>
 +  );
 +}

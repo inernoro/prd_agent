@@ -7,14 +7,14 @@ const NOTE_ICON = { tip: Lightbulb, warn: AlertTriangle } as const;
 
 function Block({ block, first, no }: { block: ArticleBlock; first: boolean; no?: number }) {
   switch (block.type) {
-    case 'h2': return <h2 id={block.id} data-toc={block.id}><span className="lc-h-no">{String(no).padStart(2, '0')}</span>{block.text.replace(/^[一二三四五六七八九十]+、/, '')}</h2>;
+    case 'h2': return <h2 id={block.id} data-toc={block.id} data-no={no}>{block.text.replace(/^[一二三四五六七八九十]+、/, '')}</h2>;
     case 'p': return <p className={first ? 'lc-lede' : undefined}>{block.text}</p>;
     case 'list': return <ul>{block.items.map(x => <li key={x}>{x}</li>)}</ul>;
     case 'code': return <figure><pre className="lc-mono"><code>{block.code}</code></pre>{block.caption && <figcaption>{block.caption}</figcaption>}</figure>;
     case 'figure': return <figure className="my-5"><img src={block.imageUrl} alt={block.caption} /><figcaption>{block.caption}</figcaption></figure>;
     case 'callout': {
       const Icon = NOTE_ICON[block.tone];
-      return <div className="lc-note" data-tone={block.tone}><div className="flex items-center gap-2 font-semibold text-[14px]" style={{ color: 'var(--lc-ink)' }}><Icon size={15} />{block.title}</div><div className="text-[14px] mt-1">{block.text}</div></div>;
+      return <div className="lc-note" data-tone={block.tone}><div className="flex items-center gap-2 t-strong"><Icon size={16} />{block.title}</div><div className="mt-1 t-mute">{block.text}</div></div>;
     }
   }
 }
@@ -55,14 +55,14 @@ export function ArticleLesson({ article, head, keyPoints, ticket, onFinished }: 
   );
   const companion = (
     <div className="flex flex-col gap-0.5">
-      {toc.map((t, i) => (
+      {toc.map(t => (
         <button key={t.id} type="button" className="lc-toc" aria-current={active === t.id} onClick={() => {
           const target = box.current?.querySelector<HTMLElement>(`[data-toc="${t.id}"]`);
           if (target && box.current) box.current.scrollTo({ top: target.offsetTop - 12, behavior: 'smooth' });
-        }}><span className="lc-mono">{String(i + 1).padStart(2, '0')}</span>{t.text.replace(/^[一二三四五六七八九十]+、/, '')}</button>
+        }}>{t.text.replace(/^[一二三四五六七八九十]+、/, '')}</button>
       ))}
       <div className="px-3 pt-3">
-        <div className="flex justify-between text-[11.5px] lc-ink3 mb-1.5"><span>已读</span><span className="lc-mono">{finished ? 100 : pct}%</span></div>
+        <div className="flex justify-between t-meta lc-ink3 mb-1.5"><span>已读</span><span className="lc-num">{finished ? 100 : pct}%</span></div>
         <div className="lc-meter" style={{ borderRadius: 4 }}><span style={{ width: `${finished ? 100 : pct}%` }} /></div>
       </div>
     </div>

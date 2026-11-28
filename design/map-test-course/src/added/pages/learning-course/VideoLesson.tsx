@@ -30,7 +30,7 @@ export function VideoLesson({ video, head, keyPoints, ticket, onProgress }: {
   const save = (completed = false) => { const el = ref.current; if (!el) return; saved.current = el.currentTime; onProgress(el.currentTime, completed); };
 
   const stage = (
-    <div className="h-full min-h-0 flex flex-col gap-3 p-4">
+    <div className="h-full min-h-0 flex flex-col gap-4 p-6">
       <div className="lc-screen-wrap flex-1 min-h-0 flex items-center justify-center">
         <div className="lc-screen" style={{ aspectRatio: '16 / 9', height: '100%', maxWidth: '100%' }}>
           <video ref={ref} src={video.url} poster={video.posterUrl} controls playsInline preload="metadata" data-lc="video"
@@ -45,12 +45,12 @@ export function VideoLesson({ video, head, keyPoints, ticket, onProgress }: {
       </div>
       <div className="shrink-0 flex items-start gap-4 flex-wrap">
         <div className="min-w-0 flex-1" style={{ minWidth: 260 }}>
-          <div className="lc-kicker">{String(chapter + 1).padStart(2, '0')} · {video.chapters[chapter]?.title}</div>
+          <div className="t-meta t-mute">第 {chapter + 1} 章 · {video.chapters[chapter]?.title}</div>
           <p className="lc-caption mt-1" key={line} aria-live="polite">{video.transcript[line]?.text}</p>
         </div>
         {resumed != null && (
           <div className="lc-resume" data-lc="resume-note">
-            <span>已从上次看到的 <b className="lc-mono">{formatClock(resumed)}</b> 继续</span>
+            <span>已从上次看到的 {formatClock(resumed)} 继续</span>
             <button type="button" className="lc-tool" onClick={() => { setResumed(null); seek(0); }}><RotateCcw size={13} />从头看</button>
           </div>
         )}
@@ -64,9 +64,9 @@ export function VideoLesson({ video, head, keyPoints, ticket, onProgress }: {
         const ch = video.chapters.findIndex(c => c.atSec === cue.atSec);
         return (
           <div key={cue.atSec}>
-            {ch >= 0 && <div className="lc-chapter-head" data-active={ch === chapter}><span className="lc-mono">{String(ch + 1).padStart(2, '0')}</span>{video.chapters[ch].title}</div>}
+            {ch >= 0 && <div className="lc-chapter-head" data-active={ch === chapter}>{ch + 1}. {video.chapters[ch].title}</div>}
             <button type="button" className="lc-cue" data-line={i} aria-current={i === line} onClick={() => seek(cue.atSec)}>
-              <span className="lc-cue-time">{formatClock(cue.atSec)}</span><span>{cue.text}</span>
+              <span className="lc-cue-time lc-num">{formatClock(cue.atSec)}</span><span>{cue.text}</span>
             </button>
           </div>
         );

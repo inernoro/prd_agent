@@ -1,0 +1,445 @@
+{
+ "from": {
+  "label": "V2",
+  "version": 2,
+  "commit": "35bb8fb01a143de792d7010880f8f1550aa591bc",
+  "title": "MAP 课程 · 自动化测试实践 · 交付说明（V2）"
+ },
+ "to": {
+  "label": "V3",
+  "version": 3,
+  "commit": null,
+  "title": "MAP 课程 · 自动化测试实践 · 交付说明（V3）"
+ },
+ "direction": "upgrade",
+ "acceptance": {
+  "added": [
+   {
+    "id": "A-41",
+    "rule": "排版刻度：正文字号只用 12 / 14 / 16 / 20 / 28，代码 13；每屏最多 6 种字号；字重只用 400 与 600；强调色只给当前状态与主按钮",
+    "expected": "检查：16 个画面 × 两个主题，可见文字的计算字号与字重全部落在刻度内",
+    "how": "measure",
+    "screenId": "lesson-video",
+    "slots": [
+     "desktop-light",
+     "desktop-dark",
+     "phone-light",
+     "phone-dark"
+    ]
+   }
+  ],
+  "removed": [],
+  "changed": [
+   {
+    "id": "A-11",
+    "fields": [
+     "rule",
+     "expected"
+    ],
+    "from": {
+     "rule": "学习中心在短教程之前有「课程」区；每门课是一张横幅：课数、时长、练习完成数，迷你路线标出已学、下一站，点击直达那一课",
+     "expected": "1440×900 首屏同时看到掌握度总览、课程横幅（试运行、5 站迷你路线、「开始：第 1 课」）和本页教程标题"
+    },
+    "to": {
+     "rule": "学习中心在短教程之前有「课程」区；每门课一张卡：标题、一句说明、课数与时长，路线标出已学与下一课，点击直达那一课",
+     "expected": "1440×900 首屏同时看到掌握度总览、课程卡（试运行、5 站路线、「开始：第 1 课」）和本页教程标题"
+    }
+   },
+   {
+    "id": "A-12",
+    "fields": [
+     "rule",
+     "expected"
+    ],
+    "from": {
+     "rule": "课程页首屏：上方课程路线（5 站 + 练习支线）与进度；下方书桌——左侧主舞台是本课材料，右侧伴读栏是本课要点、跟随材料的导航与练习票",
+     "expected": "1440×900 不滚动看到路线 5 站、本课大号编号与标题、「视频 / PDF 教材 / 图文」三个材料页签、播放器与当前字幕、伴读栏的要点与逐字稿、练习票与「开始练习」"
+    },
+    "to": {
+     "rule": "课程页首屏：上方课程标题与 5 站路线；下方左侧是本课材料，右侧是本课要点、跟随材料的导航和动手练习",
+     "expected": "1440×900 不滚动看到课程标题、路线 5 站、本课标题、「视频 / PDF 教材 / 图文」页签、播放器与当前这句、右侧要点、逐字稿、3 个练习选项与「开始练习」"
+    }
+   },
+   {
+    "id": "A-13",
+    "fields": [
+     "rule"
+    ],
+    "from": {
+     "rule": "视频可播放；伴读栏是按章节分组的逐字稿，播放时当前行高亮并滚到可见，主舞台下方同步显示当前这句的大字幕；点任一行跳到那一秒"
+    },
+    "to": {
+     "rule": "视频可播放；右侧逐字稿按章节分组，播放时当前行高亮并滚到可见，播放器下方同步显示当前这句；点任一行跳到那一秒"
+    }
+   },
+   {
+    "id": "A-17",
+    "fields": [
+     "expected"
+    ],
+    "from": {
+     "expected": "检查：第 2 课「视频」页签 disabled、单位写「无」、title 为原因、文字划线；默认打开 PDF 教材"
+    },
+    "to": {
+     "expected": "检查：第 2 课「视频」页签 disabled、单位写「无」、title 为原因；默认打开 PDF 教材"
+    }
+   },
+   {
+    "id": "A-21",
+    "fields": [
+     "rule",
+     "expected"
+    ],
+    "from": {
+     "rule": "读任务：场景、你要练的判断、交付验收单、流程；唯一主动作「让 Agent 开始评审」吸在控制台底部",
+     "expected": "1440×900 右侧控制台完整看到四段与底部主按钮；左侧被检物是 applyCoupons.ts"
+    },
+    "to": {
+     "rule": "读任务：场景、你要练的判断、交付时要满足、怎么进行；唯一主动作「让 Agent 开始评审」在右栏底部",
+     "expected": "1440×900 右栏完整看到四段与底部主按钮；左侧是被检查的 applyCoupons.ts"
+    }
+   },
+   {
+    "id": "A-22",
+    "fields": [
+     "rule",
+     "expected"
+    ],
+    "from": {
+     "rule": "评审进行中：控制台像日志一样逐行打出阶段（OK / RUN / FAIL），发现的问题即时插入为 P0 / P1 行，同时以编号旗标插在代码行上；模型名与平台来自运行记录",
+     "expected": "评审中画面日志有 01/04 OK、02/04 OK、03/04 RUN 与两条发现，左侧第 13、14 行带编号旗标；顶部写「anthropic/claude-sonnet-4.5 · OpenRouter」"
+    },
+    "to": {
+     "rule": "评审进行中：阶段像日志一样逐行出现（OK / RUN / FAIL），发现的问题即时插入，同时以编号圈标在代码行上；模型名与平台来自运行记录",
+     "expected": "评审中画面日志有 1/4 OK、2/4 OK、3/4 RUN 与两条发现，左侧第 13、14 行带编号；标题下写「anthropic/claude-sonnet-4.5 · OpenRouter」"
+    }
+   },
+   {
+    "id": "A-23",
+    "fields": [
+     "rule"
+    ],
+    "from": {
+     "rule": "工单盖章：每张先证据后建议，定位可跳到代码行或截图区域；盖「采纳」或「驳回」章，驳回必须写理由（常用理由一键填入）；全部盖完主按钮才可用，否则写明还差几张"
+    },
+    "to": {
+     "rule": "逐条判断：每条先证据后建议，定位可跳到代码行或截图区域；选「采纳」或「驳回」，驳回必须写理由（常用理由一键填入）；全部判断完主按钮才可用，否则写明还差几条"
+    }
+   },
+   {
+    "id": "A-25",
+    "fields": [
+     "rule"
+    ],
+    "from": {
+     "rule": "复测后，被采纳的修复以删除（红底划线）/ 新增（绿底）两种标记插回代码"
+    },
+    "to": {
+     "rule": "复测后，被采纳的修复以删除（划线）/ 新增两种标记插回代码"
+    }
+   },
+   {
+    "id": "A-26",
+    "fields": [
+     "rule"
+    ],
+    "from": {
+     "rule": "复测通过后先给 PASS 记分板，再给一张「交付单」：三段式草稿（能做什么 / 怎么证明 / 还没做到什么），驳回理由自动进入「还没做到」，可编辑后提交"
+    },
+    "to": {
+     "rule": "复测通过后先列出 PASS 的检查项，再给交付说明草稿（能做什么 / 怎么证明 / 还没做到什么），驳回理由自动进入「还没做到」，可编辑后提交"
+    }
+   },
+   {
+    "id": "A-27",
+    "fields": [
+     "rule",
+     "expected"
+    ],
+    "from": {
+     "rule": "完成后给一张合格证（印章、经验值、编号）与时间线日志，主按钮回课程换练习；课程路线上这个练习的支线显示「已完成」",
+     "expected": "检查：完成后回到课程，路线上练习支线 data-status=done，顶部练习 1/3"
+    },
+    "to": {
+     "rule": "完成后给出完成说明、经验值与过程记录，主按钮回课程换练习；课程页练习选项里这个练习显示「已完成」",
+     "expected": "检查：完成后回到课程，练习选项 data-status=done，顶部练习 1/3"
+    }
+   },
+   {
+    "id": "A-28",
+    "fields": [
+     "rule"
+    ],
+    "from": {
+     "rule": "视觉练习：基线与实际并排或叠加对照（点阵桌面上），差异区域以编号框标在实际截图上；盖章说法换成「判为缺陷 / 在容差内」"
+    },
+    "to": {
+     "rule": "视觉练习：基线与实际并排或叠加对照，差异区域以编号框标在实际截图上；判断说法换成「判为缺陷 / 在容差内」"
+    }
+   },
+   {
+    "id": "A-31",
+    "fields": [
+     "rule",
+     "expected"
+    ],
+    "from": {
+     "rule": "一次练习是一条服务端记录（?run=），离开课程或刷新后从原处继续；课程路线上该练习支线显示「进行中」，练习票按钮变为「接着做」",
+     "expected": "检查：开始练习后地址带 run；回到课程，支线显示「练习 · 代码评审 · 进行中」，练习票按钮「接着做」并带回同一 run"
+    },
+    "to": {
+     "rule": "一次练习是一条服务端记录（?run=），离开课程或刷新后从原处继续；课程页该练习选项显示「进行中」，按钮变为「接着做」",
+     "expected": "检查：开始练习后地址带 run；回到课程，练习选项写「进行中」，按钮「接着做」并带回同一 run"
+    }
+   },
+   {
+    "id": "A-32",
+    "fields": [
+     "rule",
+     "expected"
+    ],
+    "from": {
+     "rule": "评审失败：日志在失败那一步打出 FAIL 与原因，标题写「停在第 n 步」，说明块写清已保存与不重复计费，底部主按钮「重新评审」",
+     "expected": "失败画面日志第 2 行为 FAIL 并带原因，标题「代码评审 Agent 的评审停在第 2 步」，说明块与底部「重新评审」同屏"
+    },
+    "to": {
+     "rule": "评审失败：日志在失败那一步写 FAIL 与原因，标题写「停在第 n 步」，说明已保存与不重复计费，底部主按钮「重新评审」",
+     "expected": "失败画面日志第 2 行为 FAIL 并带原因，标题「代码评审 Agent 的评审停在第 2 步」，说明与底部「重新评审」同屏"
+    }
+   },
+   {
+    "id": "A-33",
+    "fields": [
+     "rule",
+     "expected"
+    ],
+    "from": {
+     "rule": "手机课程页：头部两行（返回 + 课名、进度），路线横向滚动；本课内容、要点、逐字稿、练习票整体一起滚动",
+     "expected": "375×812 首屏：头部、可横滑的路线、本课编号与标题、材料页签、播放器与当前字幕；无横向溢出"
+    },
+    "to": {
+     "rule": "手机课程页：头部返回、课名、进度，路线横向滚动；本课内容、要点、逐字稿、练习整体一起滚动",
+     "expected": "375×812 首屏：头部、可横滑的路线、本课标题、材料页签、播放器与当前这句；无横向溢出"
+    }
+   },
+   {
+    "id": "A-34",
+    "fields": [
+     "rule",
+     "expected"
+    ],
+    "from": {
+     "rule": "手机练习页：一条顶栏（返回 + 标题 + n/5 步），「这一步 / 代码」切换，主按钮吸在控制台底部",
+     "expected": "375×812 顶栏写「3/5 · 判断与修复」，工单完整可读、盖章动画可见，主按钮吸底"
+    },
+    "to": {
+     "rule": "手机练习页：一条顶栏（返回 + 标题 + 第 n/5 步），「这一步 / 代码」切换，主按钮在右栏底部",
+     "expected": "375×812 顶栏写「第 3/5 步 · 判断与修复」，意见完整可读，主按钮在底部"
+    }
+   },
+   {
+    "id": "A-37",
+    "fields": [
+     "rule",
+     "expected"
+    ],
+    "from": {
+     "rule": "课程路线：五站是五课，已学打勾、当前站带光环，轨道填色到当前站；练习作为菱形支线挂在对应课下，点站切课、点支线进练习",
+     "expected": "路线 01 站带光环，01–03 站下各有一条「练习 · 技能名」支线；点 02 站切到第 2 课"
+    },
+    "to": {
+     "rule": "课程路线：五课是一条线上的五站，已学实心、当前站强调色，轨道填到当前站；点站切课",
+     "expected": "路线第 1 站为强调色并加粗，其余为空心；点第 2 站切到第 2 课"
+    }
+   },
+   {
+    "id": "A-38",
+    "fields": [
+     "rule"
+    ],
+    "from": {
+     "rule": "练习票：三个练习三选一，默认选中本课配套的那个并标「本课配套」；主按钮文案随选中练习的状态变化（开始 / 接着做 / 再做一遍）"
+    },
+    "to": {
+     "rule": "动手练习：三个练习三选一，默认选中本课配套的那个并标「本课配套」；主按钮文案随选中练习的状态变化（开始 / 接着做 / 再做一遍）"
+    }
+   },
+   {
+    "id": "A-39",
+    "fields": [
+     "rule",
+     "expected"
+    ],
+    "from": {
+     "rule": "等待期主视觉是产物：评审中控制台的日志行与发现即时出现、代码旗标同步弹出，不用静止的加载圈；进度与预计时间做配角",
+     "expected": "检查：评审进行中日志有 RUN 行与闪烁光标，发现数与代码旗标数一致；页面没有居中转圈"
+    },
+    "to": {
+     "rule": "等待期主视觉是产物：评审中日志行与发现即时出现、代码编号同步出现，不用静止的加载圈；进度与预计时间做配角",
+     "expected": "检查：评审进行中日志有 RUN 行与闪烁光标，发现数与代码编号数一致；页面没有居中转圈"
+    }
+   },
+   {
+    "id": "A-40",
+    "fields": [
+     "rule",
+     "expected"
+    ],
+    "from": {
+     "rule": "工单盖章有可见反馈：盖章后工单右上角出现倾斜印章（采纳绿、驳回橙），按钮同色描边；改判时印章重盖",
+     "expected": "practice-triage 第 1 张工单右上角有「采纳」印章，「采纳修复」按钮为绿色描边"
+    },
+    "to": {
+     "rule": "判断有可见反馈：选择后按钮同色描边，该条右上角写「已采纳 / 已驳回」；改判时随之更新",
+     "expected": "practice-triage 第 1 条右上角写「已采纳」，「采纳修复」按钮为绿色描边"
+    }
+   }
+  ]
+ },
+ "screens": {
+  "added": [],
+  "removed": [],
+  "changed": []
+ },
+ "docs": {
+  "added": [],
+  "removed": []
+ },
+ "meta": {
+  "prototypeVersion": {
+   "from": 2,
+   "to": 3
+  }
+ },
+ "files": {
+  "added": [
+   {
+    "path": "tools/type-audit.mjs",
+    "area": "工具"
+   }
+  ],
+  "removed": [],
+  "changed": [
+   {
+    "path": "checks/result.json",
+    "area": "自检"
+   },
+   {
+    "path": "design.json",
+    "area": "其他"
+   },
+   {
+    "path": "dist/index.html",
+    "area": "原型"
+   },
+   {
+    "path": "src/added/pages/learning-course/ArticleLesson.tsx",
+    "area": "源码"
+   },
+   {
+    "path": "src/added/pages/learning-course/CourseMetro.tsx",
+    "area": "源码"
+   },
+   {
+    "path": "src/added/pages/learning-course/CourseShelf.tsx",
+    "area": "源码"
+   },
+   {
+    "path": "src/added/pages/learning-course/Desk.tsx",
+    "area": "源码"
+   },
+   {
+    "path": "src/added/pages/learning-course/FindingTicket.tsx",
+    "area": "源码"
+   },
+   {
+    "path": "src/added/pages/learning-course/LearningCoursePage.tsx",
+    "area": "源码"
+   },
+   {
+    "path": "src/added/pages/learning-course/LearningPracticePage.tsx",
+    "area": "源码"
+   },
+   {
+    "path": "src/added/pages/learning-course/PdfLesson.tsx",
+    "area": "源码"
+   },
+   {
+    "path": "src/added/pages/learning-course/PracticeTicket.tsx",
+    "area": "源码"
+   },
+   {
+    "path": "src/added/pages/learning-course/PracticeWorkbench.tsx",
+    "area": "源码"
+   },
+   {
+    "path": "src/added/pages/learning-course/RunConsole.tsx",
+    "area": "源码"
+   },
+   {
+    "path": "src/added/pages/learning-course/VideoLesson.tsx",
+    "area": "源码"
+   },
+   {
+    "path": "src/added/pages/learning-course/learningCourse.css",
+    "area": "源码"
+   },
+   {
+    "path": "src/added/pages/learning-course/primitives.tsx",
+    "area": "源码"
+   },
+   {
+    "path": "tools/self-check.mjs",
+    "area": "工具"
+   },
+   {
+    "path": "tools/walkthrough.json",
+    "area": "工具"
+   },
+   {
+    "path": "versions.json",
+    "area": "其他"
+   },
+   {
+    "path": "交付说明.md",
+    "area": "文档"
+   },
+   {
+    "path": "交接清单.md",
+    "area": "文档"
+   },
+   {
+    "path": "思路.md",
+    "area": "文档"
+   },
+   {
+    "path": "设计文档/源码差异.diff",
+    "area": "文档"
+   },
+   {
+    "path": "设计文档/目标与验收.md",
+    "area": "文档"
+   },
+   {
+    "path": "设计文档/验收计划.md",
+    "area": "文档"
+   }
+  ]
+ },
+ "checks": {
+  "from": {
+   "passed": 42,
+   "total": 42,
+   "failed": []
+  },
+  "to": {
+   "passed": 43,
+   "total": 43,
+   "failed": []
+  }
+ },
+ "source": {
+  "files": 14,
+  "bytes": 112266
+ }
+}

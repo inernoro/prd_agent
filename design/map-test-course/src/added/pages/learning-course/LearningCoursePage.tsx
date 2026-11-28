@@ -65,11 +65,11 @@ export default function LearningCoursePage() {
 
   if (error) {
     return (
-      <div className="lc-root h-full min-h-0 flex items-center justify-center lc-grid-bg">
+      <div className="lc-root h-full min-h-0 flex items-center justify-center">
         <div className="lc-panel p-6 max-w-md flex flex-col gap-3">
-          <div className="lc-kicker">课程暂时打不开</div>
-          <div className="text-[15px] font-semibold">{error}</div>
-          <div className="text-[13px] lc-ink2">你的学习进度已保存在服务端，重新加载即可接着学。</div>
+          <div className="t-meta t-mute">课程暂时打不开</div>
+          <div className="t-strong">{error}</div>
+          <div className="t-ui lc-ink2">你的学习进度已保存在服务端，重新加载即可接着学。</div>
           <Act tone="primary" onClick={() => void load()}><RefreshCw size={15} />重新加载</Act>
         </div>
       </div>
@@ -86,23 +86,17 @@ export default function LearningCoursePage() {
 
   const head = (
     <div className="lc-sheet-head">
-      <div className="lc-lesson-no" aria-hidden>{String(lesson.index).padStart(2, '0')}</div>
-      <div className="min-w-0 flex-1 pb-2" style={{ minWidth: 220 }}>
-        <div className="lc-kicker flex items-center gap-2">
-          第 {lesson.index} 课 · {lesson.minutes} 分钟
-          {lesson.status === 'done' && <span className="inline-flex items-center gap-1" style={{ color: 'var(--lc-pass)' }}><CheckCircle2 size={12} />已学完</span>}
-        </div>
-        <h2 className="text-[18px] font-bold leading-snug mt-0.5">{lesson.title}</h2>
-        {!isMobile && <p className="text-[12.5px] lc-ink3 mt-0.5 line-clamp-1">{lesson.summary}</p>}
+      <div className="t-meta t-mute flex items-center gap-2">
+        第 {lesson.index} 课 · {lesson.minutes} 分钟
+        {lesson.status === 'done' && <span className="inline-flex items-center gap-1" style={{ color: 'var(--pass)' }}><CheckCircle2 size={12} />已学完</span>}
       </div>
+      <h2 className="t-title mt-1">{lesson.title}</h2>
       <div className="lc-ruler" role="group" aria-label="学习材料" data-tour-id="course-media-switch">
         {MEDIA_ORDER.map(kind => {
           const unit = unitOf(lesson, kind);
-          const Icon = MEDIA_REGISTRY[kind].icon;
           return (
             <button key={kind} type="button" className="lc-ruler-tab" aria-pressed={media === kind} disabled={!unit} title={unit ? undefined : lesson.missingReason?.[kind] ?? '本课没有这类材料'} data-lc={`media-${kind}`} onClick={() => pick({ media: kind })}>
-              <span className="inline-flex items-center gap-1.5"><Icon size={14} />{MEDIA_REGISTRY[kind].label}</span>
-              <small className="lc-unit">{unit ?? '无'}</small>
+              {MEDIA_REGISTRY[kind].label}<span className="lc-unit t-mute">{unit ?? '无'}</span>
             </button>
           );
         })}
@@ -115,27 +109,26 @@ export default function LearningCoursePage() {
   return (
     <div className={`lc-root h-full min-h-0 flex flex-col gap-3 ${isMobile ? 'lc-mobile lc-scroll' : ''}`} data-lc-ready="course">
       <header className="lc-panel lc-head shrink-0">
-        <div className={`flex gap-4 ${isMobile ? 'flex-col' : 'items-start flex-wrap'}`}>
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2.5 flex-wrap">
-              <Link to="/learning-center" className="lc-link -ml-2" data-lc="back-center" aria-label="回到学习中心"><ChevronLeft size={15} />学习中心</Link>
-              {!isMobile && <span className="lc-ink3" aria-hidden>/</span>}
-              <h1 className="lc-title">{course.title}</h1>
-              {course.wip && <span className="lc-tag">试运行</span>}
+        <Link to="/learning-center" className="lc-link t-meta" data-lc="back-center" aria-label="回到学习中心"><ChevronLeft size={14} />学习中心</Link>
+        <div className={`flex gap-4 ${isMobile ? 'flex-col' : 'items-end justify-between'}`}>
+          <div className="min-w-0">
+            <div className="flex items-center gap-3 flex-wrap">
+              <h1 className="t-display">{course.title}</h1>
+              {course.wip && <span className="t-meta t-mute px-2 rounded-[6px]" style={{ border: '1px solid var(--line-2)' }}>试运行</span>}
             </div>
-            {!isMobile && <p className="text-[12.5px] lc-ink3 mt-0.5">{course.subtitle}</p>}
+            {!isMobile && <p className="t-mute mt-1">{course.subtitle}</p>}
           </div>
-          <div className={`flex items-center gap-5 flex-wrap ${isMobile ? '' : 'pt-1'}`} data-lc="course-progress">
-            <span className="lc-stat">已学<b>{done}/{course.lessons.length}</b>课</span>
-            <span className="lc-stat">练习<b>{practicesDone}/{course.practices.length}</b></span>
-            <span className="lc-stat">约<b>{minutes}</b>分钟</span>
-            <div className={isMobile ? 'hidden' : 'flex items-center gap-1'}>
+          <div className="flex items-center gap-4 t-meta t-mute lc-num shrink-0" data-lc="course-progress">
+            <span>已学 {done}/{course.lessons.length} 课</span>
+            <span>练习 {practicesDone}/{course.practices.length}</span>
+            <span>约 {minutes} 分钟</span>
+            {!isMobile && <span className="flex items-center">
               <Act tone="ghost" disabled={!prev} onClick={() => prev && pick({ lesson: prev.id })} aria-label="上一课"><ArrowLeft size={15} /></Act>
               <Act tone="ghost" disabled={!next} onClick={() => next && pick({ lesson: next.id })} aria-label="下一课"><ArrowRight size={15} /></Act>
-            </div>
+            </span>}
           </div>
         </div>
-        <CourseMetro course={course} activeId={lesson.id} onLesson={l => pick({ lesson: l.id })} onPractice={openPractice} />
+        <CourseMetro course={course} activeId={lesson.id} onLesson={l => pick({ lesson: l.id })} />
       </header>
 
       <div className={isMobile ? 'flex flex-col' : 'flex-1 min-h-0 flex flex-col'} key={`${lesson.id}-${media}`}>

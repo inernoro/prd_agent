@@ -47,22 +47,21 @@ export function PdfLesson({ pdf, head, keyPoints, ticket, onPage }: { pdf: PdfMe
 
   const stage = (
     <div className="h-full min-h-0 flex flex-col">
-      <div className="shrink-0 flex items-center gap-1 px-3 py-1.5 flex-wrap" style={{ borderBottom: '1px solid var(--lc-line)' }}>
+      <div className="shrink-0 flex items-center gap-1 px-3 py-1.5 flex-wrap" style={{ borderBottom: '1px solid var(--line-2)' }}>
         <button type="button" className="lc-tool" aria-label="上一页" disabled={page <= 1} onClick={() => goTo(page - 1)}><ChevronLeft size={16} /></button>
-        <span className="lc-mono text-[13px] font-semibold px-1" data-lc="pdf-page">第 {page} / {total} 页</span>
+        <span className="t-strong lc-num px-1" data-lc="pdf-page">第 {page} / {total} 页</span>
         <button type="button" className="lc-tool" aria-label="下一页" disabled={page >= total} onClick={() => goTo(page + 1)}><ChevronRight size={16} /></button>
-        <span className="text-[12px] lc-ink3 px-2">{inLesson(page) ? '本课内容' : `本课在第 ${lo}–${hi} 页`}</span>
-        {!inLesson(page) && <button type="button" className="lc-tool" style={{ color: 'var(--lc-hi)' }} onClick={() => goTo(lo)}>回到本课</button>}
+        <span className="t-meta lc-ink3 px-2">{inLesson(page) ? '本课内容' : `本课在第 ${lo}–${hi} 页`}</span>
+        {!inLesson(page) && <button type="button" className="lc-tool" style={{ color: 'var(--hi)' }} onClick={() => goTo(lo)}>回到本课</button>}
         <span className="flex-1" />
         <button type="button" className="lc-tool" aria-pressed={fit === 'width'} onClick={() => setFit('width')}><MoveHorizontal size={14} />适合宽度</button>
         <button type="button" className="lc-tool" aria-pressed={fit === 'page'} onClick={() => setFit('page')}><Maximize2 size={14} />整页</button>
       </div>
-      <div ref={box} className="lc-scroll flex-1 lc-grid-bg" data-lc="pdf-pages" style={{ position: 'relative' }}>
+      <div ref={box} className="lc-scroll flex-1" data-lc="pdf-pages" style={{ position: 'relative' }}>
         <div className="lc-paper-stack" style={fit === 'page' ? { height: '100%' } : undefined}>
           {pdf.pages.map((p, i) => (
             <div key={p.imageUrl} data-page={i + 1} className="lc-page" style={fit === 'page' ? { height: '100%', width: 'auto', maxWidth: '100%' } : undefined}>
               <img src={p.imageUrl} alt={`第 ${i + 1} 页：${p.title}`} />
-              <span className="lc-page-no">{i + 1}{inLesson(i + 1) ? ' · 本课' : ''}</span>
             </div>
           ))}
         </div>
@@ -74,10 +73,10 @@ export function PdfLesson({ pdf, head, keyPoints, ticket, onPage }: { pdf: PdfMe
       {pdf.pages.map((p, i) => (
         <button key={p.imageUrl} type="button" className="lc-thumb" data-thumb={i + 1} aria-current={page === i + 1} data-in-lesson={inLesson(i + 1)} onClick={() => goTo(i + 1)}>
           <img src={p.imageUrl} alt="" loading="lazy" />
-          <span><span className="lc-mono text-[11px] lc-ink3 block">P{i + 1}{inLesson(i + 1) ? ' · 本课' : ''}</span>{p.title}</span>
+          <span><span className="t-meta t-mute block lc-num">第 {i + 1} 页{inLesson(i + 1) ? ' · 本课' : ''}</span>{p.title}</span>
         </button>
       ))}
-      <a className="lc-tool mt-2 justify-start" href={pdf.url} download={`${pdf.title}.pdf`} data-lc="pdf-download"><Download size={14} />下载原文件 <span className="lc-mono lc-ink3">{pdf.sizeLabel}</span></a>
+      <a className="lc-tool mt-2 justify-start" href={pdf.url} download={`${pdf.title}.pdf`} data-lc="pdf-download"><Download size={14} />下载原文件 <span className="t-meta t-mute">{pdf.sizeLabel}</span></a>
     </div>
   );
   return <Desk ready="pdf" head={head} stage={stage} companionTitle={`教材目录 · ${total} 页`} companionHint={`本课 P${lo}${hi > lo ? `–${hi}` : ''}`} companion={companion} keyPoints={keyPoints} ticket={ticket} />;

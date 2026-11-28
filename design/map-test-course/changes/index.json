@@ -1,16 +1,16 @@
 {
- "to": 2,
+ "to": 3,
  "from": [
   {
    "version": 1,
    "commit": "c934126ee54a25a138cd8319476d26558967f889",
    "files": [
-    "changes/v1-v2/summary.json",
-    "changes/v1-v2/changes.md",
-    "changes/v1-v2/source.diff"
+    "changes/v1-v3/summary.json",
+    "changes/v1-v3/changes.md",
+    "changes/v1-v3/source.diff"
    ],
    "acceptance": {
-    "added": 4,
+    "added": 5,
     "removed": 0,
     "changed": 16
    },
@@ -20,6 +20,25 @@
     "changed": 0
    },
    "sourceFiles": 21
+  },
+  {
+   "version": 2,
+   "commit": "35bb8fb01a143de792d7010880f8f1550aa591bc",
+   "files": [
+    "changes/v2-v3/summary.json",
+    "changes/v2-v3/changes.md"
+   ],
+   "acceptance": {
+    "added": 1,
+    "removed": 0,
+    "changed": 19
+   },
+   "screens": {
+    "added": 0,
+    "removed": 0,
+    "changed": 0
+   },
+   "sourceFiles": 14
   }
  ]
 }
