@@ -9,6 +9,13 @@
    "tag": "design/DSN-4B17A376/v1",
    "committedAt": "2026-11-27T21:23:09+00:00",
    "subject": "docs(design): 交接场景的可用性检查改用布尔期望值"
+  },
+  {
+   "version": 2,
+   "commit": "35bb8fb01a143de792d7010880f8f1550aa591bc",
+   "tag": "design/DSN-4B17A376/v2",
+   "committedAt": "2026-11-28T11:41:45+00:00",
+   "subject": "docs(design): 自动化测试实践课程稿件 V2，全新「检验台」视觉"
   }
  ]
 }
