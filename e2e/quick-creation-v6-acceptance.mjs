@@ -4,6 +4,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { chromium } from '@playwright/test';
+import { verifyWatercolor } from './dsn-v10-watercolor-live.mjs';
 
 const origin = new URL(process.env.E2E_BASE_URL);
 const commit = process.env.E2E_EXPECTED_COMMIT;
@@ -426,6 +427,14 @@ try {
     timeout: 20_000,
     ...options,
   });
+  if (retryFilmId && !generate && !verifyBrief) {
+    try {
+      await verifyWatercolor({ page, api, data, match, openV9Run, verifyV9Player, receipt, out, id: retryFilmId });
+    } catch (error) {
+      receipt.failures.push({ code: 'watercolor_journey', details: String(error.message).slice(0, 500) });
+      await page.screenshot({ path: join(out, '09-watercolor-failure.png') }).catch(() => {});
+    }
+  } else {
   await verifyHostingEntry(page);
   await page.screenshot({ path: join(out, '01-desktop-compose.png') });
   assert.equal(await page.locator('[data-qc=submit]').isEnabled(), false);
@@ -699,6 +708,7 @@ try {
       await page.screenshot({ path: join(out, '13-brief-failure.png') }).catch(() => {});
       receipt.failures.push({ kind: 'brief', code: 'journey', details: String(error.message).slice(0, 280) });
     }
+  }
   }
   assert.equal(receipt.failures.length, 0, JSON.stringify(receipt.failures));
 } finally {
