@@ -60,6 +60,7 @@ export function QuickCreationAgentPage() {
   const runId = params.get('run');
   const briefId = params.get('brief');
   const view = params.get('view');
+  const filmComparison = params.get('filmComparison') ?? undefined;
   const fromHosting = params.get('from') === 'web-pages';
   const requestedTeam = params.get('destTeam');
   const destinationTeamId = fromHosting && requestedTeam && TEAM_ID_PATTERN.test(requestedTeam) ? requestedTeam : undefined;
@@ -355,9 +356,9 @@ export function QuickCreationAgentPage() {
       attachmentIds: fromBrief?.attachments.map(a => a.id) ?? briefContext.attachmentIds, title: fromBrief?.brief.title ?? draftTitle,
       destinationTeamId: output === 'web' ? destinationTeamId : undefined,
       duration: output === 'video' ? (fromBrief ? fromBrief.durationChoice ?? 'auto' : duration) : undefined,
-      trial: browserFilm && output === 'video' ? trialChoice ?? undefined : undefined,
+      trial: browserFilm && output === 'video' ? (filmComparison ? false : trialChoice ?? undefined) : undefined,
       ...(fromBrief ? { briefId: fromBrief.id, briefRevision: fromBrief.revision, briefMode: mode } : {}),
-    }).finally(() => { submitLock.current = false; setSubmitting(false); });
+    }, filmComparison).finally(() => { submitLock.current = false; setSubmitting(false); });
     if (!res.success) { toast.error('没有提交成功', `${res.error?.message || '请稍后重试'}，稿件仍在输入框里`); return; }
     openRun(res.data.id);
   };

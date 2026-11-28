@@ -20,6 +20,7 @@ public sealed class QuickCreationInput
     public int? PlannedScenes { get; set; }
     public bool BrowserFilm { get; set; }
     public bool Trial { get; set; }
+    public string? FilmComparison { get; set; }
 
     public QuickCreationInput ApproveTrial()
     {

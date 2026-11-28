@@ -339,14 +339,26 @@ public sealed partial class DesignArtifactsController : ControllerBase
         DesignArtifactLlmRequestPolicy requestPolicy;
         try
         {
+            var filmComparison = quickCreation?.FilmComparison;
+            var configuredModel = filmComparison switch
+            {
+                "legacy-high" => "gpt-5.6-sol",
+                not null => "gpt-6.2-sol",
+                _ => quickCreation == null ? null : QuickCreationModel(),
+            };
             requestPolicy = resumeFilm?.LlmRequestPolicy ?? await DesignArtifactModelSelection.CaptureForWebPageAsync(_configuration,
                 _modelResolver, request.ModelOptionId, DesignArtifactOperations.Generate, CancellationToken.None,
-                configuredDefault: quickCreation == null ? null : QuickCreationModel());
-            if (isCodeFilm && resumeFilm?.LlmRequestPolicy == null
-                && _configuration["DesignRuntime:OpenDesign:CodeFilmReasoningEffort"] is { Length: > 0 } effort)
+                configuredDefault: configuredModel);
+            var filmReasoningEffort = filmComparison switch
             {
-                if (effort is not ("low" or "medium"))
-                    throw new InvalidOperationException("代码视频推理档位须为 low 或 medium");
+                "native-high" or "legacy-high" => "high",
+                not null => null,
+                _ => _configuration["DesignRuntime:OpenDesign:CodeFilmReasoningEffort"],
+            };
+            if (isCodeFilm && resumeFilm?.LlmRequestPolicy == null && filmReasoningEffort is { Length: > 0 } effort)
+            {
+                if (effort is not ("low" or "medium" or "high"))
+                    throw new InvalidOperationException("代码视频推理档位须为 low、medium 或 high");
                 requestPolicy.ReasoningMode = "effort";
                 requestPolicy.ReasoningEffort = effort;
             }

@@ -266,6 +266,16 @@ describe('POST /v1/tasks', () => {
     const normalized = normalizeTaskRequest(filmRequest);
 
     expect(normalized.codeFilm).toBe(true);
+    expect(normalized.includeOpenDesignPrompt).toBe(false);
+    const withDesignPrompt = normalizeTaskRequest({
+      ...filmRequest, envelope: { ...filmRequest.envelope, includeOpenDesignPrompt: true },
+    });
+    expect(withDesignPrompt.includeOpenDesignPrompt).toBe(true);
+    expect(withDesignPrompt.instruction).toBe(command);
+    expect(withDesignPrompt.fingerprint).not.toBe(normalized.fingerprint);
+    expect(() => normalizeTaskRequest({
+      ...filmRequest, envelope: { ...filmRequest.envelope, includeOpenDesignPrompt: 'true' },
+    })).toThrow('invalid code film prompt mode');
     expect(normalized.instruction).toBe(command);
     expect(parseWorkspacePackage(serialized, normalized.transfer).files[0].bytes).toEqual(source);
     expect(() => normalizeTaskRequest({ ...filmRequest, transfer: request.transfer })).toThrow('film.mp4 and film.json');

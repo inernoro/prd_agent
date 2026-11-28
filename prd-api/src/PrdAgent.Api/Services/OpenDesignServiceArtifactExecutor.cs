@@ -615,6 +615,7 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
                 ? new JsonObject { ["schemaVersion"] = "map-code-film-command-v1", ["runId"] = run.Id,
                     ["command"] = run.Instruction, ["resumeFilmFrom"] = run.ResumeFilmFromRunId,
                     ["retryFilmScene"] = run.RetryFilmSceneIndex,
+                    ["includeOpenDesignPrompt"] = run.QuickCreation?.FilmComparison == "charter-default",
                     ["browserFilm"] = run.QuickCreation is { BrowserFilm: true, TargetDurationSec: { } target, PlannedScenes: { } scenes } quick
                         ? new JsonObject { ["target"] = target, ["scenes"] = scenes, ["trial"] = quick.Trial } : null }
                 : JsonNode.Parse(DesignArtifactPromptBuilder.BuildRemoteEnvelope(run)),
