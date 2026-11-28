@@ -339,15 +339,10 @@ public sealed partial class DesignArtifactsController : ControllerBase
         DesignArtifactLlmRequestPolicy requestPolicy;
         try
         {
+            var modelOptionId = request.ModelOptionId;
+            if (quickCreation != null && string.IsNullOrWhiteSpace(modelOptionId)) modelOptionId = QuickCreationModel();
             requestPolicy = resumeFilm?.LlmRequestPolicy ?? await DesignArtifactModelSelection.CaptureForWebPageAsync(_configuration,
-                _modelResolver, request.ModelOptionId, DesignArtifactOperations.Generate, CancellationToken.None);
-            if (quickCreation != null && resumeFilm?.LlmRequestPolicy == null && QuickCreationModel() is { Length: > 0 } model)
-            {
-                requestPolicy.Model = model;
-                requestPolicy.ModelPoolId = null;
-                requestPolicy.PinnedPlatformId = null;
-                requestPolicy.PinnedModelId = null;
-            }
+                _modelResolver, modelOptionId, DesignArtifactOperations.Generate, CancellationToken.None);
             if (isCodeFilm && resumeFilm?.LlmRequestPolicy == null
                 && _configuration["DesignRuntime:OpenDesign:CodeFilmReasoningEffort"] is { Length: > 0 } effort)
             {

@@ -27,7 +27,7 @@ public sealed class DesignArtifactModelVisibilityTests
             .ReturnsAsync([
                 new AvailableModelPool { Code = "selected-logical", Name = "可选模型", ResolutionType = "LogicalModel",
                     Models = [new PoolModelInfo { SupportsNativeResponses = true }] },
-                new AvailableModelPool { Code = "chat-only", ResolutionType = "LogicalModel",
+                new AvailableModelPool { Code = "chat-only", IsDefault = true, ResolutionType = "LogicalModel",
                     Models = [new PoolModelInfo { SupportsNativeResponses = false }] },
                 new AvailableModelPool { Code = "private-physical", ResolutionType = "DirectModel",
                     Models = [new PoolModelInfo { SupportsNativeResponses = true }] },
@@ -51,6 +51,37 @@ public sealed class DesignArtifactModelVisibilityTests
             DesignArtifactModelSelection.CaptureForWebPageAsync(config, resolver.Object, "chat-only", operation, default));
         await Assert.ThrowsAsync<DesignArtifactModelUnavailableException>(() =>
             DesignArtifactModelSelection.CaptureForWebPageAsync(config, resolver.Object, "private-physical", operation, default));
+        await Assert.ThrowsAsync<DesignArtifactModelUnavailableException>(() =>
+            DesignArtifactModelSelection.CaptureForWebPageAsync(config, resolver.Object, null, operation, default));
+    }
+
+    [Theory]
+    [InlineData(DesignArtifactOperations.Generate, AppCallerRegistry.Admin.WebHosting.GenerateHtml)]
+    [InlineData(DesignArtifactOperations.Edit, AppCallerRegistry.Admin.WebHosting.EditHtml)]
+    public async Task AutomaticWebPageModelFollowsCallerDefaultAndPreservesPptPolicy(string operation, string caller)
+    {
+        var resolver = new Mock<IModelResolver>(MockBehavior.Strict);
+        resolver.Setup(x => x.GetAvailablePoolsAsync(caller, ModelTypes.Chat, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([
+                new AvailableModelPool { Code = "another-option", ResolutionType = "LogicalModel",
+                    Models = [new PoolModelInfo { SupportsNativeResponses = true }] },
+                new AvailableModelPool { Code = "future-design-model", IsDefault = true, ResolutionType = "LogicalModel",
+                    Models = [new PoolModelInfo { SupportsNativeResponses = true }] },
+            ]);
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["DesignArtifactRuntime:Model"] = "ppt-budget-model",
+            ["DesignArtifactRuntime:RequestPolicy:OutputTokenMode"] = "omit",
+        }).Build();
+
+        var automatic = await DesignArtifactModelSelection.CaptureForWebPageAsync(configuration, resolver.Object, null, operation, default);
+        var selected = await DesignArtifactModelSelection.CaptureForWebPageAsync(configuration, resolver.Object, "another-option", operation, default);
+
+        Assert.Equal("future-design-model", automatic.Model);
+        Assert.Null(automatic.ModelPoolId);
+        Assert.Equal("omit", automatic.OutputTokenMode);
+        Assert.Equal("another-option", selected.Model);
+        Assert.Equal("ppt-budget-model", DesignArtifactModelSelection.CaptureForNewRun(configuration).Model);
     }
 
     [Fact]

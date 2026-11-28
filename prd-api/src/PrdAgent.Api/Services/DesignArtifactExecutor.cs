@@ -74,6 +74,12 @@ internal sealed record DesignArtifactModelSelection(string? ModelPoolId, string?
 
     internal static async Task<IReadOnlyList<DesignArtifactModelOption>> ListWebPageModelsAsync(
         IModelResolver resolver, string operation, CancellationToken ct)
+        => (await ListWebPagePoolsAsync(resolver, operation, ct))
+            .Select(pool => new DesignArtifactModelOption(pool.Code, string.IsNullOrWhiteSpace(pool.Name) ? pool.Code : pool.Name))
+            .ToArray();
+
+    private static async Task<IReadOnlyList<AvailableModelPool>> ListWebPagePoolsAsync(
+        IModelResolver resolver, string operation, CancellationToken ct)
     {
         var caller = operation == DesignArtifactOperations.Edit
             ? AppCallerRegistry.Admin.WebHosting.EditHtml
@@ -82,7 +88,6 @@ internal sealed record DesignArtifactModelSelection(string? ModelPoolId, string?
         return pools
             .Where(pool => pool.ResolutionType == "LogicalModel" && !string.IsNullOrWhiteSpace(pool.Code)
                 && pool.Models.Any(model => model.SupportsNativeResponses))
-            .Select(pool => new DesignArtifactModelOption(pool.Code, string.IsNullOrWhiteSpace(pool.Name) ? pool.Code : pool.Name))
             .ToArray();
     }
 
@@ -90,13 +95,17 @@ internal sealed record DesignArtifactModelSelection(string? ModelPoolId, string?
         IConfiguration configuration, IModelResolver? resolver, string? modelOptionId, string operation, CancellationToken ct)
     {
         var policy = CaptureForNewRun(configuration);
-        if (string.IsNullOrWhiteSpace(modelOptionId)) return policy;
-        var options = resolver is not null && modelOptionId.Length <= 200
-            ? await ListWebPageModelsAsync(resolver, operation, ct)
-            : [];
-        var selected = options.FirstOrDefault(option => option.Id == modelOptionId);
+        var useDefault = string.IsNullOrWhiteSpace(modelOptionId);
+        if (resolver is null && useDefault) return policy;
+        if (resolver is null || (!useDefault && modelOptionId!.Length > 200))
+            throw new DesignArtifactModelUnavailableException();
+
+        var pools = await ListWebPagePoolsAsync(resolver, operation, ct);
+        var selected = useDefault
+            ? pools.FirstOrDefault(pool => pool.IsDefault)
+            : pools.FirstOrDefault(pool => pool.Code == modelOptionId);
         if (selected is null) throw new DesignArtifactModelUnavailableException();
-        policy.Model = selected.Id;
+        policy.Model = selected.Code;
         policy.ModelPoolId = null;
         policy.PinnedPlatformId = null;
         policy.PinnedModelId = null;
