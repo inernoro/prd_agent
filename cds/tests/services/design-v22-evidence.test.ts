@@ -6,9 +6,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { deflateSync } from 'node:zlib';
 import express from 'express';
+import type { Page } from 'playwright';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createDesignWorkspaceRouter } from '../../src/routes/design-workspace.js';
-import { createDesignAcceptanceBrowser, type OpenDesignPreviewBuild } from '../../src/services/design-acceptance-browser.js';
+import { createDesignAcceptanceBrowser, takeScreenshot, type OpenDesignPreviewBuild } from '../../src/services/design-acceptance-browser.js';
 import { DesignWorkspaceService, type DesignActor, type DesignWorkspaceCommit } from '../../src/services/design-workspace.js';
 import { FileProjectRevisionStore } from '../../src/services/project-revision-store.js';
 import type { DesignVisualChecks } from '../../src/shared/design-visual.js';
@@ -197,6 +198,41 @@ async function recheckOverHttp(service: DesignWorkspaceService, selectedRunId = 
 }
 
 describe('V28 记录中的反馈和资料取证', () => {
+  it('只解码视口内的图片，并在解码前触发可见图片的懒加载', async () => {
+    const picture = (left: number, top: number) => {
+      const box = { left, top, width: 20, height: 20, right: left + 20, bottom: top + 20 };
+      return { loading: 'lazy', decode: vi.fn(async () => undefined), getClientRects: () => [box], getBoundingClientRect: () => box };
+    };
+    const image = picture(30, 30);
+    const loadingAtDecode: string[] = [];
+    image.decode.mockImplementation(async () => { loadingAtDecode.push(image.loading); });
+    const above = picture(30, -80);
+    const outside = picture(1600, 30);
+    const hidden = picture(80, 80);
+    const bytes = Buffer.from('fixture-image');
+    const page = {
+      waitForFunction: vi.fn(async () => undefined),
+      evaluate: async (read: () => Promise<void>) => read(),
+      screenshot: vi.fn(async () => bytes),
+    } as unknown as Page;
+    vi.stubGlobal('innerWidth', 1280);
+    vi.stubGlobal('innerHeight', 800);
+    vi.stubGlobal('document', { fonts: { ready: Promise.resolve() }, images: [image, above, outside, hidden] });
+    vi.stubGlobal('getComputedStyle', (probe: typeof image) => ({ visibility: probe === hidden ? 'hidden' : 'visible' }));
+    vi.stubGlobal('requestAnimationFrame', (read: FrameRequestCallback) => { read(0); return 1; });
+    try {
+      await expect(takeScreenshot(page)).resolves.toBe(bytes);
+      expect(image.loading).toBe('eager');
+      expect(loadingAtDecode).toEqual(['eager']);
+      expect(above.decode).not.toHaveBeenCalled();
+      expect(outside.decode).not.toHaveBeenCalled();
+      expect(hidden.decode).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+
   function captureScene(route: string, binding: string, viewport: 'desktop' | 'phone' = 'desktop', bindingProject = projectId) {
     const build = { current: vi.fn(async () => false), read: vi.fn() };
     const openBuild = vi.fn<OpenDesignPreviewBuild>().mockResolvedValue(build);

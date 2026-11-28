@@ -71,7 +71,7 @@ function recordDeliveryReady(target: URL) {
     ? `${panel} .dw-dl-parts [data-part="${part}"][aria-selected="true"]` : panel;
 }
 
-async function takeScreenshot(page: Page) {
+export async function takeScreenshot(page: Page) {
   await page.waitForFunction(() => !Array.from(document.querySelectorAll('.dw-frame-loading')).some(element => {
     const box = element.getBoundingClientRect();
     return box.height > 0 && box.width > 0 && box.top < innerHeight && box.bottom > 0
@@ -79,9 +79,16 @@ async function takeScreenshot(page: Page) {
   }), undefined, { timeout: captureTimeout });
   await page.evaluate(async () => {
     await document.fonts.ready;
-    await Promise.all(Array.from(document.images)
-      .filter(image => image.getClientRects().length > 0 && image.getBoundingClientRect().top < innerHeight)
-      .map(image => image.decode().catch(() => undefined)));
+    const images = Array.from(document.images).filter(image => {
+      const box = image.getBoundingClientRect();
+      return box.width > 0 && box.height > 0 && box.left < innerWidth && box.right > 0
+        && box.top < innerHeight && box.bottom > 0 && getComputedStyle(image).visibility === 'visible';
+    });
+    // Chromium can postpone lazy loads in a background capture context.
+    for (const image of images) {
+      if (image.loading === 'lazy') image.loading = 'eager';
+    }
+    await Promise.all(images.map(image => image.decode().catch(() => undefined)));
     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
   });
   return page.screenshot(screenshotOptions);
