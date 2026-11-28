@@ -81,9 +81,9 @@ export function BriefConversation({ session, pending, error, templates, disabled
                   const template = templates.find(style => style.id === item.templateId);
                   if (!template) return null;
                   return (
-                    <div key={template.id} className={`qc-card flex flex-col overflow-hidden max-sm:flex-row ${session?.styleId === template.id ? 'ring-1 ring-[color:var(--accent-primary)]' : ''}`} data-qc="rec-style" data-style={template.id}>
-                      <div className="max-sm:w-28 max-sm:shrink-0 max-sm:self-stretch max-sm:[&>div]:!aspect-auto max-sm:[&>div]:!h-full"><StyleFrame template={{ ...template, frame: undefined }} /></div>
-                      <div className="min-w-0 flex-1 space-y-1 p-2.5">
+                    <div key={template.id} className="flex flex-col gap-2 max-sm:flex-row max-sm:gap-3" data-qc="rec-style" data-style={template.id}>
+                      <div className={`overflow-hidden rounded-xl max-sm:w-28 max-sm:shrink-0 max-sm:self-start ${session?.styleId === template.id ? 'shadow-[0_0_0_2px_var(--accent-primary)]' : 'shadow-[var(--shadow-card-sm)]'}`}><StyleFrame template={{ ...template, frame: undefined }} /></div>
+                      <div className="min-w-0 flex-1 space-y-1">
                         <div className="text-[13px] font-medium">{index + 1}. {template.name}</div>
                         <p className="m-0 text-[12px] leading-5 text-token-secondary">{item.reason}</p>
                         {message === lastMessage && <button type="button" className="-ml-1 inline-flex h-7 items-center gap-1 rounded-md px-1 text-[12.5px] font-medium text-[color:var(--accent-primary)] hover:underline disabled:no-underline max-md:h-11" data-qc="rec-use"

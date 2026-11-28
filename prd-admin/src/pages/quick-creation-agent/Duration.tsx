@@ -3,7 +3,7 @@
  * - 自动：服务端按内容估算（稿件全文照念多长、取多少讲重点），选项上直接写出估算值，不写空泛的「自动」；
  * - 指定：约 1 / 3 / 5 / 10 分钟。服务端按目标决定幕数与旁白字数，并校验脚本总时长落在目标的 ±15%。
  * 估算值来自 POST /api/quick-creation/estimate，前端只显示。
- * 选项放在「时长 · 风格」按钮的面板顶部：时长、风格都是「怎么做这一支」，收在同一个按钮里，输入框不再多一个按钮。
+ * 产出类型、时长和试看放在「做成什么」面板，风格单独选择。
  */
 import { Check } from 'lucide-react';
 import { cn } from '@/lib/cn';
@@ -24,7 +24,7 @@ export function durationShort(value: DurationChoice, estimate?: QcEstimate | nul
   return sec ? `约 ${minutesLabel(sec)}` : '时长';
 }
 
-/** 时长选项：桌面在时长按钮的面板里，手机在「视频 · 风格」面板顶部 */
+/** 时长选项放在创作输入框的「做成什么」面板 */
 export function DurationOptions({ value, estimate, onChange, compact }: { value: DurationChoice; estimate?: QcEstimate | null; onChange: (v: DurationChoice) => void; compact?: boolean }) {
   return (
     <div>

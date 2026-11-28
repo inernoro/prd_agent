@@ -143,7 +143,7 @@ export function BrowserExport({ run }: { run: QcRun }) {
     <CloudExport run={run} offerRequest />
   </div>;
   return (
-    <section className="mt-3 space-y-2" data-qc="export-card" data-state={download ? 'done' : busy ? 'exporting' : 'ready'}>
+    <section className="mt-4 space-y-2" data-qc="export-card" data-state={download ? 'done' : busy ? 'exporting' : 'ready'}>
       <iframe ref={iframe} title="导出画面" sandbox="allow-scripts" srcDoc={frameHtml} hidden />
       {busy ? <div className="qc-card space-y-2 p-3" role="status">
         <div className="flex items-center gap-2 text-sm"><MapSpinner size={14} />正在用你的浏览器合成 {container?.toUpperCase()}</div>

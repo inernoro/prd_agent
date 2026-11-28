@@ -5,6 +5,7 @@ import { readQuickCreationFilm, readQuickCreationPage } from '@/services/real/qu
 import { StyleFrame, TemplatePageBody } from './TemplateFrames';
 import type { QcRun, QcScene, QcTemplate } from './types';
 import { formatClock } from './format';
+import { stageName } from './RunProgress';
 
 const SCENE_STATUS: Record<QcScene['status'], string> = { ready: '已完成', drawing: '正在画', drawn: '待配音', voicing: '配音中', failed: '没有完成', waiting: '等待中' };
 
@@ -30,7 +31,7 @@ export function ProgressPreview({ run, template }: { run: QcRun; template: QcTem
   const stage = run.stages.find(item => item.status === 'running');
   const statusText = run.status === 'queued' ? '排队中'
     : run.status === 'failed' ? run.failure?.message ?? '这次没有完成'
-      : stage?.label || '正在生成';
+      : stage ? `正在${stageName(run.kind, stage.key)}` : '正在生成';
   if (run.kind === 'web') {
     const sections = run.sections ?? [];
     return (
@@ -127,7 +128,7 @@ export function ProgressPreview({ run, template }: { run: QcRun; template: QcTem
                   {s.status === 'waiting' ? <FrameSkeleton /> : <div className={cn(s.status === 'drawn' && 'opacity-80')}><StyleFrame template={template} scene={s.frameScene} /></div>}
                 </div>
                 <figcaption className="mt-1.5 px-0.5 text-[11.5px] leading-4">
-                  <span className="block truncate text-token-secondary"><span className="tabular-nums text-token-muted">{s.index}</span> {s.title}</span>
+                  <span className="tabular-nums text-token-muted">第 {s.index} 幕</span>
                   <span className="mt-0.5 flex items-center gap-1" style={{ color: s.status === 'ready' ? 'var(--accent-fg-success)' : s.status === 'failed' ? 'var(--accent-fg-error)' : s.status === 'voicing' || s.status === 'drawing' ? 'var(--accent-primary)' : 'var(--text-muted)' }}>
                     {s.status === 'voicing' && <Wave />}{SCENE_STATUS[s.status]}
                   </span>

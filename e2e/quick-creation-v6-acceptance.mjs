@@ -67,6 +67,7 @@ async function openWorkbench(page, { mobile = false } = {}) {
   assert.equal(catalog.source.name, 'Lemo-Opuscar by Lemomo (LemoLab)');
   assert.ok(catalog.items.every(style => style.posterUrl && style.promptRef && !style.guide));
   await page.locator('[data-qc-ready="compose"]').waitFor();
+  if (await page.locator('[data-qc=landing]').isVisible()) receipt.version = 10;
   return accessToken;
 }
 
@@ -174,7 +175,8 @@ async function verifyMaterialsBeforeGeneration(page, api, original) {
     assert.equal(referenceDownload.status(), 200);
     assert.equal(digest(await referenceDownload.body()), digest(imageBytes));
     await page.screenshot({ path: join(out, '17-pre-submit-image.png') });
-    await page.getByRole('button', { name: '完成', exact: true }).click();
+    if (receipt.version === 10) await page.locator('[data-qc=materials-sheet]').getByRole('button', { name: '关闭', exact: true }).click();
+    else await page.getByRole('button', { name: '完成', exact: true }).click();
 
     const extraFiles = [2, 3, 4].flatMap(index => [
       { name: `参考图-${index}.png`, mimeType: 'image/png', buffer: imageBytes },
@@ -195,9 +197,9 @@ async function verifyMaterialsBeforeGeneration(page, api, original) {
     assert.deepEqual(payload.attachmentIds, expectedIds);
     assert.equal(payload.title, '需求评审的三个习惯');
     assert.equal(await page.locator('#qc-ask').inputValue(), requirement);
-    await page.getByRole('radiogroup', { name: '选择产出' }).getByRole('radio', { name: '视频', exact: true }).click();
+    await pickOutput(page, '视频');
     const film = await stopAtSubmission(page, () => submit.click());
-    assert.deepEqual(film, { ...payload, kind: 'video', ...(receipt.version === 9 ? { duration: 'auto' } : {}) });
+    assert.deepEqual(film, { ...payload, kind: 'video', ...(receipt.version >= 9 ? { duration: 'auto' } : {}) });
     receipt.preSubmission = { generatedJobs: 0, sourceSha256: digest(longSource), referenceSha256: digest(imageBytes),
       readable: expectedIds.length, rejected: 2, sourceCharacters: longSource.length, referenceBytes: imageBytes.length,
       referenceCount: [reference, ...extras.filter(item => item.kind === 'image')].length, requestCharacters: requirement.length,
@@ -244,7 +246,7 @@ async function verifyBriefJourney(page, api) {
     assert.equal(createdRuns.length, 0, 'An incomplete brief must never start a generation job');
     assert.equal(await page.locator('[data-qc=submit]').isEnabled(), false);
     await page.screenshot({ path: join(out, '11-brief-missing.png') });
-    await page.getByRole('radiogroup', { name: '选择产出' }).getByRole('radio', { name: '视频', exact: true }).click();
+    await pickOutput(page, '视频');
 
     const beforePick = await send('我要做一个 1 分钟的手绘培训视频，给刚加入产品团队的新同事。主题是需求评审的三个习惯：先读目标确认解决谁的什么问题，再明确哪些事这次不做，最后核对能操作的验收条件。请推荐三种适合这份内容的风格。');
     assert.equal(beforePick.brief.ready, true, 'The model must complete the brief for the supplied topic');
@@ -271,7 +273,7 @@ async function verifyBriefJourney(page, api) {
     let planned = await data(await api(`${base}/brief/${briefId}`), 'read rendered script');
     assert.ok(planned.script.length > 0 && planned.script.every(scene => scene.visual && scene.narration));
     assert.equal(createdRuns.length, 0, 'A storyboard draft must not enter the generation queue');
-    if (receipt.version === 9) {
+    if (receipt.version >= 9) {
       const initialSeconds = planned.script.reduce((sum, scene) => sum + scene.durationSec, 0);
       assert.ok(initialSeconds >= 51 && initialSeconds <= 69);
       planned = await send('长一点');
@@ -304,11 +306,17 @@ async function verifyBriefJourney(page, api) {
   }
 }
 
-async function verifyV9Duration(page) {
+async function pickOutput(page, name) {
   const output = page.getByRole('radiogroup', { name: '选择产出' });
-  await output.getByRole('radio', { name: '视频', exact: true }).click();
-  const chip = page.locator('[data-qc=style-chip]');
-  await chip.getByText(/约 3 分钟/).waitFor();
+  if (receipt.version === 10 && !(await output.isVisible())) await page.locator('[data-qc=output-chip]').click();
+  await output.getByRole('radio', { name, exact: true }).click();
+  if (receipt.version === 10) await page.keyboard.press('Escape');
+}
+
+async function verifyV9Duration(page) {
+  await pickOutput(page, '视频');
+  const chip = page.locator(receipt.version === 10 ? '[data-qc=output-chip]' : '[data-qc=style-chip]');
+  await chip.getByText(/3 分钟/).waitFor();
   await chip.click();
   await page.locator('[data-qc=duration-basis]').filter({ hasText: /约 13 幕/ }).waitFor();
   assert.equal(await page.locator('[data-qc=trial-toggle]').getAttribute('aria-checked'), 'true');
@@ -322,12 +330,14 @@ async function verifyV9Duration(page) {
   await chip.click();
   await page.locator('[data-qc=duration-option][data-value="auto"]').click();
   await page.keyboard.press('Escape');
-  await output.getByRole('radio', { name: '网页', exact: true }).click();
+  await pickOutput(page, '网页');
   receipt.cases.push('V9 duration uses server estimates, persistence payload and trial defaults');
 }
 
 async function openV9Run(page, view) {
+  const onLanding = await page.locator('[data-qc=landing]').isVisible();
   await page.getByRole('button', { name: /^我的作品，共/ }).click();
+  if (onLanding) await page.locator('[data-qc=all-works]').click();
   await page.locator(`[data-qc=works] button[data-run-id="${view.id}"]`).click();
   await page.locator(`[data-run-id="${view.id}"]`).waitFor();
 }
@@ -414,15 +424,29 @@ try {
   await verifyHostingEntry(page);
   await page.screenshot({ path: join(out, '01-desktop-compose.png') });
   assert.equal(await page.locator('[data-qc=submit]').isEnabled(), false);
-  assert.ok(await page.locator('[data-qc=block-reason]').isVisible());
+  if (receipt.version === 10) {
+    const submit = page.locator('[data-qc=submit]');
+    assert.match(await submit.getAttribute('title'), /放进稿件/);
+    assert.equal(await submit.getAttribute('data-block-reason'), await submit.getAttribute('title'));
+    assert.equal(await page.getByRole('region', { name: '预览' }).count(), 0);
+    assert.equal(await page.locator('[data-qc=composer-tools] [data-qc=submit], [data-qc=composer-tools] [data-qc=brief-send]').count(), 1);
+    await page.locator('[data-qc=style-library-open]').click();
+    await page.locator('[data-qc=style-sheet]').waitFor();
+    await page.keyboard.press('Escape');
+    await page.locator('[data-qc=works-link]').click();
+    await page.locator('[data-qc=recent-works][data-tab=mine]').waitFor();
+    assert.equal(await page.locator('[data-qc=all-works]').isVisible(), true);
+    await page.locator('[data-qc=landing]').evaluate(el => el.scrollTo(0, 0));
+    receipt.cases.push('V10 single-column landing, single action, style sheet and in-page history');
+  } else assert.ok(await page.locator('[data-qc=block-reason]').isVisible());
   const chip = page.locator('[data-qc=style-chip]');
   await chip.click();
   const popover = page.locator('[data-qc=style-popover]');
   await popover.getByRole('textbox').fill('水墨');
   await popover.getByRole('radio', { name: /中国水墨/ }).click();
   assert.match(await chip.getAttribute('aria-label'), /中国水墨/);
-  await page.getByRole('radiogroup', { name: '选择产出' }).getByRole('radio', { name: '视频', exact: true }).click();
-  await page.getByRole('radiogroup', { name: '选择产出' }).getByRole('radio', { name: '网页', exact: true }).click();
+  await pickOutput(page, '视频');
+  await pickOutput(page, '网页');
   assert.match(await chip.getAttribute('aria-label'), /中国水墨/);
   assert.equal(await page.locator('[data-qc-ready="compose"]').getAttribute('data-output'), 'web');
   await page.screenshot({ path: join(out, '02-desktop-web-style.png') });
@@ -436,7 +460,7 @@ try {
   assert.equal(original.name, '需求评审的三个习惯.md');
   assert.equal(original.status, 'ready');
   assert.ok(original.excerpt.includes('习惯三：最后对验收'));
-  if (receipt.version === 9) await verifyV9Duration(page);
+  if (receipt.version >= 9) await verifyV9Duration(page);
   await page.locator('[data-qc=submit]:enabled').waitFor();
   await page.screenshot({ path: join(out, '03-desktop-source.png') });
   receipt.cases.push('fixed V6 sample loaded and eligible');
@@ -466,7 +490,7 @@ try {
   }
   if (generate) {
     const filmInput = { kind: 'video', templateId: 'sketchnote', ask: '', attachmentIds: [original.id], title: '需求评审的三个习惯',
-      ...(receipt.version === 9 ? { duration: 180, trial: true } : {}) };
+      ...(receipt.version >= 9 ? { duration: 180, trial: true } : {}) };
     const unverified = await api(base + '/runs', { method: 'POST', data: filmInput });
     assert.equal(unverified.status(), 400, 'A request without explicit intent must not create a task');
     assert.equal((await unverified.json()).error?.code, 'TASK_INTENT_REQUIRED');

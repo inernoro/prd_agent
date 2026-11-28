@@ -83,10 +83,10 @@ export function StylePickerChip({ templates, categories, selected, onSelect, onB
     <Popover.Root open={open} onOpenChange={setOpen}>
       <Popover.Trigger asChild>
         <button type="button" data-qc="style-chip" data-template={selected?.id ?? ''} aria-label={`${outputLabel ? outputLabel + ' · ' : ''}风格：${selected?.name ?? '未选'}，点此更换`}
-          className="inline-flex h-8 min-w-0 max-w-full items-center gap-1.5 rounded-lg pl-1 pr-1.5 text-[12px] text-token-primary hover-bg-soft max-md:h-11">
+          className="inline-flex h-8 min-w-0 max-w-full items-center gap-1.5 rounded-lg pl-1 pr-1.5 text-[12px] text-token-primary hover-bg-soft max-md:h-11 max-md:w-11 max-md:justify-center max-md:px-0">
           {selected && <span className="w-7 shrink-0 overflow-hidden rounded-[4px]"><StyleFrame template={{ ...selected, frame: undefined }} /></span>}
-          <span className="min-w-0 truncate">{outputLabel && `${outputLabel} · `}{selected?.name ?? '选风格'}</span>
-          <ChevronDown size={13} className="shrink-0 text-token-muted" aria-hidden />
+          <span className="min-w-0 truncate max-md:sr-only">{outputLabel && `${outputLabel} · `}{selected?.name ?? '选风格'}</span>
+          <ChevronDown size={13} className="shrink-0 text-token-muted max-md:hidden" aria-hidden />
         </button>
       </Popover.Trigger>
       <Popover.Portal>

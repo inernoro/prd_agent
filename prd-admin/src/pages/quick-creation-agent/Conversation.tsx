@@ -15,7 +15,7 @@ export function AgentTurn({ children, status }: { children: ReactNode; status?: 
       </span>
       <div className="min-w-0 flex-1">
         <div className="flex h-7 items-center gap-2 text-[12.5px]">
-          <span className="font-semibold text-token-primary">快速创作</span>
+          <span className="font-medium text-token-primary">快速创作</span>
           {status && <span className="min-w-0 truncate text-token-muted">{status}</span>}
         </div>
         <div className="mt-1 flex flex-col gap-3">{children}</div>
@@ -27,7 +27,8 @@ export function AgentTurn({ children, status }: { children: ReactNode; status?: 
 export function UserTurn({ children, meta }: { children: ReactNode; meta?: ReactNode }) {
   return (
     <div className="qc-rise ml-auto flex w-full max-w-[92%] flex-col items-end gap-1.5" data-turn="user">
-      <div className="flex w-full flex-col gap-2.5 rounded-[16px_16px_4px_16px] bg-[var(--selection-bg)] p-2.5">{children}</div>
+      {/* 气泡按内容收宽：一句话就一句话的宽，带资料卡时才撑开 */}
+      <div className="flex w-fit max-w-full flex-col gap-2.5 rounded-[18px_18px_4px_18px] bg-[var(--selection-bg)] px-3 py-2.5">{children}</div>
       {meta && <div className="flex items-center gap-1.5 px-1 text-[11.5px] text-token-muted">{meta}</div>}
     </div>
   );
