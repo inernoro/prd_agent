@@ -405,6 +405,7 @@ async function verifyExistingBrowserFilm(page, api) {
     assert.equal(bundle.scenes.length, 2);
     assert.ok(row.durationSec >= 12 && row.durationSec <= 45);
     await page.locator('[data-qc=trial-approve]').waitFor();
+    assert.match(await page.locator('[data-qc=run-progress]').innerText(), /试看已完成/);
     receipt.cases.push('original ADR V9 two-scene trial played in the cloud and is waiting for approval');
     return;
   }
@@ -464,8 +465,10 @@ async function verifyExistingBrowserFilm(page, api) {
   await cloud.addInitScript(() => Object.defineProperty(globalThis, 'VideoEncoder', { configurable: true, value: undefined }));
   await cloud.goto(new URL(`/quick-creation-agent?run=${encodeURIComponent(view.id)}`, origin).href);
   await cloud.locator('[data-qc=export-unsupported]').waitFor();
-  await cloud.getByRole('button', { name: '请服务器导出' }).click();
-  await cloud.locator('[data-qc=cloud-export][data-state="queued"], [data-qc=cloud-export][data-state="running"], [data-qc=cloud-export][data-state="done"]').waitFor();
+  const priorExport = await data(await api(`${base}/runs/${view.id}/export`), 'read persisted cloud export');
+  row.initialCloudExportStatus = priorExport.status;
+  if (priorExport.status === 'none') await cloud.getByRole('button', { name: '请服务器导出' }).click();
+  if (priorExport.status === 'failed') await cloud.getByRole('button', { name: '重试服务器导出' }).click();
   await cloud.reload();
   const cloudButton = cloud.getByRole('button', { name: '下载云端导出的 MP4' });
   await cloudButton.or(cloud.getByRole('button', { name: '重试服务器导出' })).waitFor({ timeout: 50 * 60_000 });
