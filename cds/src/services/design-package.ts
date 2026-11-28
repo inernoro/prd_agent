@@ -6,7 +6,7 @@ import previewContract from '../shared/design-preview-contract.json' with { type
 import { crc32 } from '../utils/zip.js';
 import { designSlots, designViewports, type DesignDeliveryFile, type DesignDemoData, type DesignDemoStep, type DesignFrameworkCharter, type DesignGoal, type DesignMaterial,
   type DesignRule, type DesignScope, type DesignScreen, type DesignTheme, type DesignVideo } from '../shared/design-workspace.js';
-import { designHandoffChecks, type DesignHandoffPlan, type DesignHandoffStep } from '../shared/design-handoff.js';
+import { designHandoffCaseLimit, designHandoffChecks, type DesignHandoffPlan, type DesignHandoffStep } from '../shared/design-handoff.js';
 import { designDimensions, designObjectiveMethods, type DesignAcceptancePlan, type DesignCoverageRecord, type DesignDimension } from '../shared/design-methods.js';
 import { inspectDesignAcceptance, type DesignAcceptanceIssue } from '../shared/design-acceptance-standard.mjs';
 import { DesignAcceptanceGateError, rejectDesignGate, validateDesignPublicationGate, type DesignPublicationGateContext } from './design-publication-gate.js';
@@ -425,7 +425,7 @@ function parseHandoffStep(value: unknown, remembered: Set<string>): DesignHandof
 export function parseDesignHandoffPlan(value: unknown, screens: DesignScreen[], acceptance: DesignRule[]): DesignHandoffPlan {
   const definition = designRecord(value, '交接场景', ['cases']);
   const rules = new Map(acceptance.map(item => [item.id, item]));
-  const cases = unique(list(definition.cases, '交接场景', 24, raw => {
+  const cases = unique(list(definition.cases, '交接场景', designHandoffCaseLimit, raw => {
     const item = designRecord(raw, '交接场景', ['id', 'title', 'screenId', 'ruleIds', 'theme', 'steps']);
     const screenId = designId(item.screenId, '画面编号');
     const screen = screens.find(row => row.id === screenId) ?? invalidDesign('交接场景引用了不存在的画面');

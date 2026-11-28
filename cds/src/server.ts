@@ -60,7 +60,7 @@ import { createScheduledJobsRouter } from './routes/scheduled-jobs.js';
 import { createReportsRouter, createPublicReportShareRouter } from './routes/reports.js';
 import { createCodeReviewsRouter } from './routes/code-reviews.js';
 import { createEngineeringPlanningRouter, normalizedPlanningPath } from './routes/engineering-planning.js';
-import { resolveEngineeringPlanningAccess } from './services/engineering-planning-access.js';
+import { designProjectKeyAuthor, resolveEngineeringPlanningAccess } from './services/engineering-planning-access.js';
 import { environmentAuditFacts } from './services/environment-audit.js';
 import { createPlanningPreviewAccessRouter, createPreviewTokenRouter, normalizedPreviewAccessPath, previewAccessPerson } from './routes/planning-preview-access.js';
 import { PlanningPreviewAccess, previewPolicyReturnUrl, previewReturnPath, resolvePreviewClientSettings, type PreviewAccessCommit, type PreviewAccessClient } from './services/planning-preview-access.js';
@@ -6083,6 +6083,17 @@ export function createServer(deps: ServerDeps): express.Express {
     reviewer: async (projectId, id) => {
       const user = await authService?.findUserById(id);
       return user && activeProjectMember(user, projectId) ? { id, label: user.name || user.username || user.githubLogin } : undefined;
+    },
+    feedbackAssignees: async projectId => {
+      const state = deps.stateService;
+      const collaboration = state.getProject(projectId)?.agentKeyCollaboration;
+      const people = (await projectMemberDirectory(projectId))
+        .map(user => ({ id: user.id, label: user.name || user.username || user.githubLogin, kind: 'person' as const }));
+      const agents = state.getAgentKeys(projectId)
+        .filter(key => (collaboration || key.designAccess === 'feedback' || key.designAccess === 'publish')
+          && dtsCredentialAllowed(state, { kind: 'project-key', id: key.id }, projectId, 'design'))
+        .map(designProjectKeyAuthor);
+      return [...new Map([...agents, ...people].map(person => [person.id, person])).values()];
     },
     sourcePackage: (projectId, commit, sourcePath) => {
       const project = deps.stateService.getProject(projectId);

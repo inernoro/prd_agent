@@ -48,6 +48,7 @@ export const LEGACY_PROJECT_ID = 'default';
 
 export type DeploymentSourcePreparationErrorCode =
   | 'invalid-branch-ref'
+  | 'git-ref-validation-unavailable'
   | 'deployment-worktree-unavailable'
   | 'deployment-worktree-recovery-failed';
 
@@ -789,8 +790,14 @@ export class WorktreeService {
     try { await fs.promises.lstat(targetDir); }
     catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') absent = true; else throw error; }
     let gitCwd = absent && repoRoot ? repoRoot : targetDir;
-    const valid = await this.shell.exec(`git check-ref-format --branch ${quote(branch)}`, { cwd: repoRoot || (absent ? undefined : targetDir) });
-    if (valid.exitCode !== 0) throw new DeploymentSourcePreparationError('invalid-branch-ref', '无法准备非法分支的部署源码');
+    const invalidBranch = () => new DeploymentSourcePreparationError('invalid-branch-ref', '部署分支名不符合 Git 规则，请核对分支名后重试');
+    if (branch === 'HEAD' || branch.startsWith('-') || branch.includes('\0')) throw invalidBranch();
+    // 校验完整的字面 ref，无需可用的仓库目录或当前工作树的 checkout 历史。
+    const refCheck = await this.shell.exec(`git check-ref-format ${quote(`refs/heads/${branch}`)}`);
+    if (refCheck.exitCode === 1 && !refCheck.stdout.trim() && !refCheck.stderr.trim()) throw invalidBranch();
+    if (refCheck.exitCode !== 0) {
+      throw new DeploymentSourcePreparationError('git-ref-validation-unavailable', '暂时无法校验部署分支，请检查执行器后重试');
+    }
     if (recovery.kind === 'managed-missing') {
       recovery.assertCurrent?.();
       const projectId = recovery.projectId?.trim() ? recovery.projectId : LEGACY_PROJECT_ID;

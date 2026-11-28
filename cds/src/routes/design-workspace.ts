@@ -56,6 +56,10 @@ export function createDesignWorkspaceRouter(deps: {
 
   router.get(route, authorized, handle(async (req, res, projectId, actor) => {
     const { view, designId: id, version, fromVersion } = req.query;
+    if (id === undefined && version === undefined && fromVersion === undefined) {
+      if (view === 'inbox') return res.json(await deps.service.feedbackInbox(projectId, actor));
+      if (view === 'assignees') return res.json(await deps.service.feedbackAssignees(projectId, actor));
+    }
     if (view === 'thumbnails' && fromVersion === undefined) {
       res.json(await deps.service.thumbnailStatus(projectId, actor, designId(id, '稿件编号'), readVersion(version)));
       return;

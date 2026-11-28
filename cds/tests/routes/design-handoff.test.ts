@@ -7,10 +7,12 @@ import path from 'node:path';
 import express from 'express';
 import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 import { createDesignWorkspaceRouter } from '../../src/routes/design-workspace.js';
+import { createDesignHandoffContainer } from '../../src/services/design-cover-container.js';
 import type { DesignHandoffExecutor } from '../../src/services/design-handoff-browser.js';
 import { DesignWorkspaceService, type DesignActor, type DesignWorkspaceCommit } from '../../src/services/design-workspace.js';
 import { FileProjectRevisionStore } from '../../src/services/project-revision-store.js';
 import type { DesignHandoffCaseResult, DesignHandoffState } from '../../src/shared/design-handoff.js';
+import type { IShellExecutor } from '../../src/types.js';
 import { versionedDesignFixture } from '../helpers/versioned-design-fixture.js';
 
 const project = 'fixture-handoff';
@@ -130,6 +132,37 @@ describe('设计交接服务端门禁', () => {
     expect(saved.status).toBe(200);
     expect(Buffer.from(await saved.arrayBuffer())).toEqual(archive);
     expect(checkHandoff).not.toHaveBeenCalled();
+  });
+
+  it('同一稿件接收 25 个交接场景，分批取证并且只重跑未通过的场景', async () => {
+    const cases = Array.from({ length: 25 }, (_, index) => ({ ...fixtureCase, id: `case-${index + 1}` }));
+    const batches: string[][] = [];
+    const exec: IShellExecutor['exec'] = async (command, options) => {
+      if (command.startsWith('docker create')) return { stdout: 'a'.repeat(64), stderr: '', exitCode: 0 };
+      if (!command.startsWith('docker start')) return { stdout: '', stderr: '', exitCode: 0 };
+      const { cases: batch } = JSON.parse(String(options?.stdin)) as { cases: Array<{ id: string }> };
+      batches.push(batch.map(row => row.id));
+      const results = batch.map(row => batches.length === 1
+        ? { caseId: row.id, status: 'unavailable', code: 'runtime' }
+        : { caseId: row.id, status: 'passed' });
+      return { stdout: JSON.stringify(results), stderr: '', exitCode: 0 };
+    };
+    const api = await openApi('enabled', createDesignHandoffContainer({ exec }, async () => 'fixture-design-browser'));
+    const intake = await (await api.get('/intake')).json();
+    expect(intake.handoffCaseLimit).toBeGreaterThanOrEqual(cases.length);
+    const designId = await api.publish(draft(1, { handoff: { cases } }));
+    const initial = await api.readHandoff(designId, 1, 'unavailable');
+    expect(batches.length).toBeGreaterThan(1);
+    expect(batches.flat()).toEqual(cases.map(row => row.id));
+    expect(initial.cases.filter((row: DesignHandoffCaseResult) => row.status === 'unavailable').map((row: DesignHandoffCaseResult) => row.caseId))
+      .toEqual(batches[0]);
+    const originalBatchCount = batches.length;
+    expect((await api.command('handoff.check', { designId, version: 1 })).status).toBe(201);
+    const completed = await api.readHandoff(designId, 1, 'passed');
+    expect(batches.slice(originalBatchCount)).toEqual([batches[0]]);
+    expect(completed.cases).toHaveLength(25);
+    expect(completed.cases.every((row: DesignHandoffCaseResult) => row.status === 'passed')).toBe(true);
+    expect((await api.command('implementation.start', { designId, version: 1, expectedBaseline: null })).status).toBe(201);
   });
 
   it('交接检查严格按项目、稿件和版本定位，不借用其他范围的记录', async () => {

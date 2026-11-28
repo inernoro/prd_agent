@@ -62,13 +62,25 @@ export function createDesignCoverContainer(shell: Shell, resolveImage: Image): D
 
 export function createDesignHandoffContainer(shell: Shell, resolveImage: Image): DesignHandoffExecutor {
   return async ({ prototype, screens, cases }) => {
-    const involved = new Set(cases.map(test => test.screenId));
-    const { output } = await runDesignBrowserContainer(shell, resolveImage, {
-      prototype: prototype.toString('base64'), cases, screens: screens.filter(screen => involved.has(screen.id)),
-    }, 75_000);
-    if (!output || output.length > 32_000) return undefined;
-    const results: unknown = JSON.parse(output);
-    return Array.isArray(results) ? results as DesignHandoffCaseResult[] : undefined;
+    const source = prototype.toString('base64');
+    const results: DesignHandoffCaseResult[] = [];
+    // Each sandbox has its own deadline. A slow batch must not exhaust the time for the remaining scenes.
+    const batchSize = 6;
+    for (let offset = 0; offset < cases.length; offset += batchSize) {
+      const batch = cases.slice(offset, offset + batchSize);
+      const involved = new Set(batch.map(test => test.screenId));
+      const { output, unavailable } = await runDesignBrowserContainer(shell, resolveImage, {
+        prototype: source, cases: batch, screens: screens.filter(screen => involved.has(screen.id)),
+      }, 75_000);
+      if (unavailable) break;
+      if (!output || output.length > 32_000) continue;
+      try {
+        const rows: unknown = JSON.parse(output);
+        const ids = new Set(batch.map(test => test.id));
+        if (Array.isArray(rows)) results.push(...rows.filter(row => ids.has(row?.caseId)));
+      } catch { /* Invalid output leaves this batch unverified without discarding the other batches. */ }
+    }
+    return results.length ? results : undefined;
   };
 }
 
