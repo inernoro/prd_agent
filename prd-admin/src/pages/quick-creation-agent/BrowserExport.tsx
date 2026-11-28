@@ -30,7 +30,7 @@ export function BrowserFilmPlayer({ run }: { run: QcRun }) {
   );
 }
 
-function CloudExport({ run, offerRequest }: { run: QcRun; offerRequest: boolean }) {
+function CloudExport({ run }: { run: QcRun }) {
   const [state, setState] = useState<'none' | 'queued' | 'running' | 'failed' | 'done'>('none');
   const [ahead, setAhead] = useState(0);
   const [estimatedMinutes, setEstimatedMinutes] = useState<number>();
@@ -68,12 +68,11 @@ function CloudExport({ run, offerRequest }: { run: QcRun; offerRequest: boolean 
     } catch { setError('暂时没取回导出文件，可以重试下载'); }
     finally { setBusy(false); }
   };
-  if (!offerRequest && state === 'none') return null;
   return <div className="space-y-2" data-qc="cloud-export" data-state={state}>
     {active ? <p className="m-0 text-xs text-token-secondary" role="status">
       {state === 'queued' ? `已交给服务器导出，前面还有 ${ahead} 个${estimatedMinutes ? `，预计约 ${estimatedMinutes} 分钟后可以下载` : ''}。` : '服务器正在合成，可以稍后回来下载。'}
     </p> : <Button size="sm" variant="secondary" disabled={busy} onClick={() => void (state === 'done' ? download() : queue())}>
-      {state === 'done' ? '下载云端导出的 MP4' : state === 'failed' ? '重试服务器导出' : '请服务器导出'}
+      {state === 'done' ? '下载云端导出的 MP4' : state === 'failed' ? '重试云端导出' : '云端导出 MP4'}
     </Button>}
     {error && <p className="m-0 text-xs" role="alert">{error}</p>}
   </div>;
@@ -140,7 +139,7 @@ export function BrowserExport({ run }: { run: QcRun }) {
   if (container === null) return <div className="qc-card mt-3 space-y-1 p-3" data-qc="export-unsupported">
     <div className="text-sm font-medium">这个浏览器不能在本机合成视频</div>
     <p className="m-0 text-xs text-token-secondary">请用电脑上的 Chrome、Edge 或 Safari 打开这一页，也可以排队请服务器导出。</p>
-    <CloudExport run={run} offerRequest />
+    <CloudExport run={run} />
   </div>;
   return (
     <section className="mt-3 space-y-2" data-qc="export-card" data-state={download ? 'done' : busy ? 'exporting' : 'ready'}>
@@ -156,7 +155,7 @@ export function BrowserExport({ run }: { run: QcRun }) {
         <Download size={14} />导出 {container === 'webm' ? 'WebM' : 'MP4'} 文件
       </Button>}
       {error && <p className="m-0 text-xs text-[color:var(--accent-fg-error)]" role="alert">{error}</p>}
-      <CloudExport run={run} offerRequest={Boolean(error)} />
+      <CloudExport run={run} />
     </section>
   );
 }
