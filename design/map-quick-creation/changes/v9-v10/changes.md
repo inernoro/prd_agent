@@ -18,7 +18,7 @@
 
 - 新增 1：源码 1（src/added/pages/quick-creation-agent/Landing.tsx）
 - 删除 0：无
-- 改动 20：自检 2（checks/handoff-local.json、checks/result.json）；其他 2（design.json、versions.json）；原型 1（dist/index.html）；源码 8（src/added/pages/quick-creation-agent/BriefChat.tsx、src/added/pages/quick-creation-agent/BrowserExport.tsx、src/added/pages/quick-creation-agent/Conversation.tsx、src/added/pages/quick-creation-agent/QuickCreationAgentPage.tsx、src/added/pages/quick-creation-agent/ResultPanel.tsx、src/added/pages/quick-creation-agent/RunProgress.tsx…）；工具 3（tools/manifest-src.mjs、tools/self-check.mjs、tools/walkthrough.json）；文档 4（交付说明.md、思路.md、设计文档/源码差异.diff、设计文档/验收计划.md）
+- 改动 21：自检 2（checks/handoff-local.json、checks/result.json）；其他 2（design.json、versions.json）；原型 1（dist/index.html）；源码 8（src/added/pages/quick-creation-agent/BriefChat.tsx、src/added/pages/quick-creation-agent/BrowserExport.tsx、src/added/pages/quick-creation-agent/Conversation.tsx、src/added/pages/quick-creation-agent/QuickCreationAgentPage.tsx、src/added/pages/quick-creation-agent/ResultPanel.tsx、src/added/pages/quick-creation-agent/RunProgress.tsx…）；工具 3（tools/manifest-src.mjs、tools/self-check.mjs、tools/walkthrough.json）；文档 5（交付说明.md、交接清单.md、思路.md、设计文档/源码差异.diff、设计文档/验收计划.md）
 
 源码有 9 个文件变化，差异没有附在包里（见文末命令）。
 

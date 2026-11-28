@@ -20,7 +20,7 @@ export function Sheet({ open, onOpenChange, title, qc, wide, attrs, children }: 
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-[100] bg-[var(--dialog-overlay)]" />
+        <Dialog.Overlay className="fixed inset-0 z-[100] bg-[var(--hosting-scrim)]" />
         <Dialog.Content data-qc={qc} aria-describedby={undefined} {...attrs}
           className={cn('qc-menu-surface fixed left-1/2 top-1/2 z-[101] flex -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-2xl shadow-2xl',
             wide ? 'h-[min(86vh,820px)] w-[min(1100px,calc(100vw-24px))]' : 'max-h-[86vh] w-[min(720px,calc(100vw-24px))]')}>
@@ -52,7 +52,7 @@ export function Starters({ onSample, onKnowledge, onSay, showSay }: { onSample: 
 function SectionHead({ title, action }: { title: string; action?: React.ReactNode }) {
   return (
     <div className="mb-3 flex items-end justify-between gap-3">
-      <h2 className="m-0 text-[15px] font-semibold text-token-primary">{title}</h2>
+      <h2 className="m-0 text-[15px] font-semibold tracking-tight text-token-primary">{title}</h2>
       {action}
     </div>
   );
@@ -76,7 +76,7 @@ export function StyleInspiration({ templates, selectedId, onSelect, onBrowseAll 
               <span className={cn('block overflow-hidden rounded-xl transition-[box-shadow,transform] duration-200 group-hover:-translate-y-0.5', on ? 'shadow-[0_0_0_2px_var(--accent-primary)]' : 'shadow-[var(--shadow-card-sm)]')}>
                 <StyleFrame template={{ ...t, frame: undefined }} />
               </span>
-              <span className={cn('mt-2 block truncate text-[13px]', on ? 'font-semibold text-token-primary' : 'text-token-primary')}>{t.name}</span>
+              <span className={cn('mt-2.5 block truncate text-[13px] font-medium', on ? 'text-[color:var(--accent-primary)]' : 'text-token-primary')}>{t.name}</span>
               <span className="block truncate text-[12px] text-token-muted">{t.line}</span>
             </button>
           );
@@ -117,7 +117,7 @@ export function RecentWorks({ works, templates, onOpenWork, onAllWorks, onUseSty
     void listQuickCreationAssets('team').then(res => setTeam(res.success ? res.data.items.filter(a => !a.mine) : []));
   }, [tab, team]);
   const style = (id: string) => templates.find(t => t.id === id);
-  const tabCls = (on: boolean) => cn('relative inline-flex min-h-8 items-center text-[15px] max-md:min-h-11', on ? 'font-semibold text-token-primary' : 'text-token-muted hover:text-token-secondary');
+  const tabCls = (on: boolean) => cn('relative inline-flex min-h-8 items-center text-[15px] max-md:min-h-11', on ? 'font-semibold text-token-primary' : 'font-semibold text-token-muted hover:text-token-secondary');
   const detailStyle = detail ? style(detail.templateId) : undefined;
   return (
     <section className="mt-12" aria-label="最近作品" data-qc="recent-works" data-tab={tab}>
@@ -144,7 +144,7 @@ export function RecentWorks({ works, templates, onOpenWork, onAllWorks, onUseSty
                       </span>
                     )}
                   </span>
-                  <span className="mt-2 block truncate text-[13px] text-token-primary">{w.title}</span>
+                  <span className="mt-2.5 block truncate text-[13px] font-medium text-token-primary">{w.title}</span>
                   <span className="flex items-center gap-1 truncate text-[12px] text-token-muted">
                     {w.kind === 'video' ? <Video size={11} className="shrink-0" aria-label="视频" /> : <Globe size={11} className="shrink-0" aria-label="网页" />}
                     <span className="truncate">{w.updatedAt}</span>
@@ -161,7 +161,7 @@ export function RecentWorks({ works, templates, onOpenWork, onAllWorks, onUseSty
           {team.slice(0, 8).map(a => (
             <button key={a.id} type="button" data-asset={a.id} onClick={() => setDetail(a)} className="group min-w-0 text-left">
               <span className="block overflow-hidden rounded-xl shadow-[var(--shadow-card-sm)] transition-transform duration-200 group-hover:-translate-y-0.5"><Poster template={style(a.templateId)} /></span>
-              <span className="mt-2 block truncate text-[13px] text-token-primary">{a.title}</span>
+              <span className="mt-2.5 block truncate text-[13px] font-medium text-token-primary">{a.title}</span>
               <span className="block truncate text-[12px] text-token-muted">{a.ownerName} · {style(a.templateId)?.name ?? ''}</span>
             </button>
           ))}

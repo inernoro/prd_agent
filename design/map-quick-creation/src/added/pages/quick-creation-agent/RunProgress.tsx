@@ -51,7 +51,7 @@ export function QueueCard({ run }: { run: QcRun }) {
   return (
     <section className="qc-rise" data-qc="queue-card" data-position={q.position}>
       <div className="flex items-baseline justify-between gap-3">
-        <div className="text-[22px] font-semibold tracking-tight text-token-primary">排队中 · 第 {q.position} 位</div>
+        <div className="text-[20px] font-semibold tracking-tight text-token-primary">排队中 · 第 {q.position} 位</div>
         <div className="shrink-0 text-[13px] tabular-nums text-token-secondary">约 {mins(q.startInSec)}后开始</div>
       </div>
       <p className="m-0 mt-1.5 text-[13px] leading-5 text-token-secondary" data-qc="queue-reason">
@@ -61,7 +61,7 @@ export function QueueCard({ run }: { run: QcRun }) {
         {aheadItems.map((a, i) => (
           <li key={a.ownerName + a.title} className="flex items-center gap-2.5 py-1.5 text-[13px]" data-queue-ahead={i + 1}>
             <Initial name={a.ownerName} />
-            <span className="shrink-0 text-token-primary">{a.ownerName}</span>
+            <span className="shrink-0 font-medium text-token-primary">{a.ownerName}</span>
             <span className="min-w-0 flex-1 truncate text-token-muted">{a.title}</span>
             <span className="shrink-0 tabular-nums text-token-muted">{mins(a.startInSec ?? 0)}后</span>
           </li>
@@ -148,7 +148,7 @@ export function RunProgress({ run }: { run: QcRun }) {
   return (
     <section className="qc-rise" data-qc="run-progress">
       <div className="flex items-baseline justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-2 text-[22px] font-semibold tracking-tight text-token-primary">
+        <div className="flex min-w-0 items-center gap-2 text-[20px] font-semibold tracking-tight text-token-primary">
           {failed && <AlertTriangle size={18} className="shrink-0" style={{ color: 'var(--accent-fg-error)' }} aria-hidden />}
           <span className="truncate">{title}</span>
         </div>

@@ -15,7 +15,7 @@ export function AgentTurn({ children, status }: { children: ReactNode; status?: 
       </span>
       <div className="min-w-0 flex-1">
         <div className="flex h-7 items-center gap-2 text-[12.5px]">
-          <span className="font-semibold text-token-primary">快速创作</span>
+          <span className="font-medium text-token-primary">快速创作</span>
           {status && <span className="min-w-0 truncate text-token-muted">{status}</span>}
         </div>
         <div className="mt-1 flex flex-col gap-3">{children}</div>

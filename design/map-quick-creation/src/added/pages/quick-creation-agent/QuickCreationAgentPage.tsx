@@ -338,7 +338,7 @@ export function QuickCreationAgentPage() {
 
   if (view === 'works') {
     return (
-      <div className="flex h-full min-h-0 flex-col" data-qc-ready="works">
+      <div className="qc-scope flex h-full min-h-0 flex-col" data-qc-ready="works">
         {header}
         <div className="min-h-0 flex-1 overflow-y-auto">
           <WorksList works={works} templates={templates} onOpen={openRun} onCreate={startNew} />
@@ -471,7 +471,7 @@ export function QuickCreationAgentPage() {
   const landingBody = (
     <div className="h-full overflow-y-auto" data-qc="landing">
       <div className="mx-auto w-full max-w-[780px] px-4 pb-24 pt-[min(13vh,112px)] max-md:pt-8">
-        <h1 className="m-0 text-center text-[32px] font-semibold leading-tight tracking-tight text-token-primary max-md:text-[24px]">把一份文档，变成视频或网页</h1>
+        <h1 className="m-0 text-center text-[34px] font-semibold leading-tight tracking-[-0.02em] text-token-primary max-md:text-[24px]">把一份文档，变成视频或网页</h1>
         <div className="mt-8 max-md:mt-6">{composer}</div>
         <Starters onSample={() => void addKnowledge(SAMPLE_KB_ENTRY)} onKnowledge={() => void addKnowledge('kb-picker')} onSay={t => void sendChat(t)} showSay={!attachments.length} />
         <StyleInspiration templates={templates} selectedId={template?.id} onSelect={setTemplateId} onBrowseAll={() => setStyleSheetOpen(true)} />
@@ -525,7 +525,7 @@ export function QuickCreationAgentPage() {
         )}
         {run.trial?.status === 'ready' && (
           <section className="qc-rise" data-qc="trial-card">
-            <div className="text-[22px] font-semibold tracking-tight text-token-primary">试看好了</div>
+            <div className="text-[20px] font-semibold tracking-tight text-token-primary">试看好了</div>
             <div className="mt-1 text-[13px] text-token-secondary">片头和第 1 幕，约 {run.trial.seconds} 秒</div>
             <p className="m-0 mt-3 text-[13px] leading-5 text-token-secondary">
               满意就接着做完剩下的 {run.trial.restScenes} 幕（约 {run.trial.restMin[0]}–{run.trial.restMin[1]} 分钟），试看的两幕直接沿用；等你确认时不占排队名额。
@@ -546,7 +546,7 @@ export function QuickCreationAgentPage() {
           <section className="qc-rise" data-qc="done-card">
             <div>
               <div className="min-w-0">
-                <div className="flex items-center gap-2 text-[22px] font-semibold tracking-tight text-token-primary"><CircleCheck size={19} className="shrink-0 text-[color:var(--accent-fg-success)]" aria-hidden />{run.kind === 'video' ? '成片好了' : '网页好了'}</div>
+                <div className="flex items-center gap-2 text-[20px] font-semibold tracking-tight text-token-primary"><CircleCheck size={19} className="shrink-0 text-[color:var(--accent-fg-success)]" aria-hidden />{run.kind === 'video' ? '成片好了' : '网页好了'}</div>
                 <div className="mt-1 text-[13px] leading-5 text-token-secondary">
                   {run.kind === 'video' ? `${formatClock(run.durationSec ?? 0)}${run.targetSec ? `（目标约 ${minutesLabel(run.targetSec)}）` : ''} · ${run.scenes?.length ?? 0} 幕 · 1080p` : `${run.sections?.length ?? 0} 节 · 适配手机`}，右边可以直接{run.kind === 'video' ? '播放' : '浏览'}。
                 </div>
@@ -675,7 +675,7 @@ export function QuickCreationAgentPage() {
   /* 风格目录读到之前不标「可以创作」：输入框里的风格按钮和右栏风格库都依赖它 */
   const ready = loading ? undefined : run ? `run-${run.status}` : templates.length ? 'compose' : undefined;
   return (
-    <div className="flex h-full min-h-0 flex-col" data-qc-ready={ready} data-output={run?.kind ?? kind} data-run-id={run?.id ?? ''}>
+    <div className="qc-scope flex h-full min-h-0 flex-col" data-qc-ready={ready} data-output={run?.kind ?? kind} data-run-id={run?.id ?? ''}>
       {header}
       {/* 窄屏：对话 / 预览切换（公共组件 PaneTabs，32px 触控高度记为框架债务） */}
       {run && <div className="flex shrink-0 items-center border-b border-token-subtle px-3 py-1.5 lg:hidden" data-qc-touch-exempt>

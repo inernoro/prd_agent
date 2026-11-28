@@ -146,3 +146,40 @@
   transition: box-shadow .2s;
 }
 .qc-composer:focus-within { box-shadow: 0 0 0 1.5px var(--accent-primary), 0 16px 40px -24px var(--border-default); }
+
+/* ---------- V11 深邃底 ----------
+ * 页面与它的弹出层、浮层沿用网页托管的配色（--hosting-*，深浅两档都定义好了）：
+ * 深色是近黑的冷灰底 + 一层实色面，不再用通用的暖灰半透明玻璃（看起来像塑料）。
+ * 与 HostedCollectionManager 同一个做法：在作用域里把通用令牌指向托管令牌，组件照常写语义令牌。 */
+.qc-scope, .qc-menu-surface {
+  --text-primary: var(--hosting-text);
+  --text-secondary: var(--hosting-secondary);
+  --text-muted: var(--hosting-muted);
+  --bg-base: var(--hosting-bg);
+  --bg-elevated: var(--hosting-surface);
+  --bg-card: var(--hosting-surface);
+  --bg-card-hover: var(--hosting-inset);
+  --bg-input: var(--hosting-inset);
+  --bg-secondary: var(--hosting-surface);
+  --bg-tertiary: var(--hosting-inset);
+  --border-subtle: var(--hosting-border);
+  --border-default: var(--hosting-border-strong);
+  --accent-primary: var(--hosting-accent);
+  --accent-on-primary: var(--hosting-on-accent);
+  --selection-bg: var(--hosting-accent-soft);
+  --button-primary-bg: var(--hosting-accent);
+  --button-primary-bg-hover: color-mix(in srgb, var(--hosting-accent) 86%, var(--hosting-text));
+  --button-primary-fg: var(--hosting-on-accent);
+  --shadow-card-sm: 0 1px 2px var(--hosting-scrim);
+  color: var(--text-primary);
+}
+.qc-scope { background: var(--hosting-bg); }
+/* 输入框用实色面（比底亮一档），在深底上浮起来 */
+.qc-scope .qc-composer, .qc-composer { background: var(--hosting-surface); box-shadow: 0 0 0 1px var(--hosting-border), 0 24px 48px -28px var(--hosting-scrim); }
+.qc-scope .qc-composer:focus-within, .qc-composer:focus-within { box-shadow: 0 0 0 1.5px var(--hosting-accent), 0 24px 48px -28px var(--hosting-scrim); }
+
+/* ---------- V11 字重 ----------
+ * 600 只给页面标题、状态标题与分区标题；500 给卡片标题、名字与按钮；正文与说明 400。
+ * 中文在 600 下发闷，按钮一律 500；安静的文字按钮 400。 */
+.qc-face, .qc-scope .map-btn { font-weight: 500; }
+.qc-face-quiet { font-weight: 400; }
