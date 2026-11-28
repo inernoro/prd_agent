@@ -108,7 +108,8 @@ export async function verifyWatercolor({page, api, data, match, openV9Run, verif
       const link = new URL(page.url());
       link.searchParams.set('openSite', finalRow.siteId);
       await page.goto(link.href);
-      const player = page.frameLocator('[role=dialog][data-review-layout] iframe').first();
+      const wrapper = page.frameLocator('[role=dialog][data-review-layout] iframe').first();
+      const player = wrapper.frameLocator('iframe[title=影片]');
       const audio = player.locator('audio');
       await player.locator('canvas').waitFor();
       await audio.waitFor();
