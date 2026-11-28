@@ -186,6 +186,7 @@ export interface DesignTaskInput {
   transfer: WorkspaceTransferRequest;
   previewUrl?: string;
   codeFilm?: boolean;
+  includeOpenDesignPrompt?: boolean;
   resumeFilmFrom?: string;
   retryFilmScene?: number;
   browserFilm?: { target: number; scenes: number; trial: boolean };
@@ -566,6 +567,7 @@ export class DesignTaskExecutor {
               conversationId,
               agentId: 'codex',
               model: model.model,
+              mapCodeFilmPrompt: task.includeOpenDesignPrompt ? 'design' : 'native',
               message,
               currentPrompt: message,
               userMessageId: randomUUID(),
@@ -637,7 +639,10 @@ export class DesignTaskExecutor {
           attachments.push(deliveryPath);
         }
         const firstRunId = await startFilmTurn(instruction, assistantMessageId, attachments);
-        onStage('code_film_input_verified', { ...proof, runId: firstRunId, instructionSha256: sha256(instruction) });
+        onStage('code_film_input_verified', {
+          ...proof, runId: firstRunId, instructionSha256: sha256(instruction),
+          openDesignPrompt: task.includeOpenDesignPrompt ? 'design' : 'native',
+        });
         const retainFilm = (film: WorkspacePackageFile): boolean => {
           try {
             if (this.options.filmRecovery?.retain(sessionId, film)) {

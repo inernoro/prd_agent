@@ -64,9 +64,10 @@ export async function readQuickCreationPlayer(runId: string) {
   return await result.blob.text();
 }
 
-export function createQuickCreationRun(input: CreateRunInput) {
+export function createQuickCreationRun(input: CreateRunInput, filmComparison?: string) {
   const headers = input.briefId ? { 'Idempotency-Key': `${input.briefId}-${input.briefRevision}` } : undefined;
-  return apiRequest<QcRun>(`${base}/runs`, { method: 'POST', body: input, headers });
+  const query = filmComparison ? `?filmComparison=${encodeURIComponent(filmComparison)}` : '';
+  return apiRequest<QcRun>(`${base}/runs${query}`, { method: 'POST', body: input, headers });
 }
 
 export function getQuickCreationBrief(id: string, signal?: AbortSignal) {

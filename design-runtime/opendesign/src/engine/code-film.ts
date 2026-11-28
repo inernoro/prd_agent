@@ -10,6 +10,13 @@ import type { WorkspacePackageFile } from '../workspace/transfer.js';
 
 export const CODE_FILM_SKILL_ID = 'lemo-opuscar';
 const SKILL_SOURCE = '/opt/map-design-runtime/lemo-opuscar';
+const LIBRARY_SOURCE = '/opt/map-design-runtime/opuscar-library';
+const LIBRARY_REVISION = '439b98af08b04400f8fd8a8dd19cd773c0c96532';
+const WATERCOLOR_DEMO_SHA256 = 'bc140bd92ec602768416503d5954c1997810f35f936f6810f755104eedf76e18';
+
+function codeFilmLibraryDirectory(dataDir: string): string {
+  return path.join(path.dirname(path.join(dataDir, OPEN_DESIGN_CODEX_HOME_RELATIVE)), 'lemo-opuscar');
+}
 const SKILL_FILES = {
   'SKILL.md': '17c2f1c2a337becf28ec1e23eec46b42a6f0ffa2691b40d8b97b35d043b79f65',
   'scripts/setup.sh': '6b5e39efe99e42d671edb365e11b89d065ccda7188a45e81fe5757f5f46661be',
@@ -33,6 +40,12 @@ export function registerCodeFilmSkill(dataDir: string, chownForEngine: (target: 
     fs.mkdirSync(path.dirname(output), { recursive: true, mode: 0o755 });
     fs.writeFileSync(output, bytes, { flag: 'wx', mode: 0o644 });
   }
+  // The original setup script looks for the library in this task's HOME.
+  // Each job can install its own dependencies without changing the image or
+  // leaving files visible to later jobs.
+  fs.cpSync(LIBRARY_SOURCE, codeFilmLibraryDirectory(dataDir), {
+    recursive: true, force: false, errorOnExist: true, mode: fs.constants.COPYFILE_FICLONE,
+  });
   chownForEngine(path.join(dataDir, 'sandbox'));
 }
 
@@ -53,7 +66,12 @@ export function verifyCodeFilmInput(
       throw new AgentWorkspaceRuntimeError('workspace_input_changed', 'The original material inside the OpenDesign workspace changed');
     }
   }
+  const demoPath = path.join(codeFilmLibraryDirectory(dataDir), 'styles/watercolor/DEMO.md');
+  if (sha256(readRegularFileNoFollow(demoPath, 128 * 1024)) !== WATERCOLOR_DEMO_SHA256) {
+    throw new AgentWorkspaceRuntimeError('code_film_library_changed', 'The pinned Lemo-Opuscar library is incomplete or has changed');
+  }
   return { skillId: CODE_FILM_SKILL_ID, skillSha256: SKILL_FILES['SKILL.md'],
+    libraryRevision: LIBRARY_REVISION, watercolorDemoSha256: WATERCOLOR_DEMO_SHA256,
     sourceSha256: inputs[0]?.sha256, inputHashes: inputs.map(input => ({ path: input.path, sha256: input.sha256 })) };
 }
 

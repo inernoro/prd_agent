@@ -107,6 +107,11 @@ export function normalizeTaskRequest(body: unknown, trustedLlmGwBaseUrl = 'http:
   const codeFilm = envelope.schemaVersion === 'map-code-film-command-v1';
   if (codeFilm && (envelope.runId !== taskId || typeof envelope.command !== 'string'
       || !envelope.command.trim() || envelope.command.length > 4_000)) invalid('invalid code film envelope');
+  const includeOpenDesignPrompt = envelope.includeOpenDesignPrompt === true;
+  if (envelope.includeOpenDesignPrompt != null &&
+      (!codeFilm || typeof envelope.includeOpenDesignPrompt !== 'boolean')) {
+    invalid('invalid code film prompt mode');
+  }
   const resumeFilmFrom = envelope.resumeFilmFrom;
   if (resumeFilmFrom !== undefined && resumeFilmFrom !== null
       && (!codeFilm || typeof resumeFilmFrom !== 'string' || !SESSION_ID_RE.test(resumeFilmFrom) || resumeFilmFrom === taskId)) {
@@ -164,7 +169,7 @@ export function normalizeTaskRequest(body: unknown, trustedLlmGwBaseUrl = 'http:
       runId: model.runId,
     },
     timeoutSeconds,
-    ...(codeFilm ? { codeFilm } : {}),
+    ...(codeFilm ? { codeFilm, includeOpenDesignPrompt } : {}),
     ...(browserFilm ? { browserFilm } : {}),
     ...(typeof resumeFilmFrom === 'string' ? { resumeFilmFrom } : {}),
     ...(typeof retryFilmScene === 'number' ? { retryFilmScene } : {}),
@@ -178,7 +183,7 @@ export function normalizeTaskRequest(body: unknown, trustedLlmGwBaseUrl = 'http:
     ...(previewUrl ? { previewUrl } : {}),
     model,
     timeoutSeconds: Number(timeoutSeconds),
-    ...(codeFilm ? { codeFilm } : {}),
+    ...(codeFilm ? { codeFilm, includeOpenDesignPrompt } : {}),
     ...(browserFilm ? { browserFilm } : {}),
     ...(typeof resumeFilmFrom === 'string' ? { resumeFilmFrom } : {}),
     ...(typeof retryFilmScene === 'number' ? { retryFilmScene } : {}),
