@@ -380,7 +380,11 @@ describe('V17 交付工作区', () => {
       expect(await page.getByRole('combobox', { name: '稿件版本' }).inputValue()).toBe('2');
       await copy.click();
       const link = await checkCopiedBuildPrompt(page, bound.id, 1);
-      await page.getByRole('status').filter({ hasText: '已复制 V1 实现提示词。' }).waitFor();
+      expect(await copy.getAttribute('data-copied')).toBe('true');
+      expect(await copy.locator('.lucide-check').count()).toBe(1);
+      expect(await header.getByRole('status').textContent()).toBe('已复制 V1 实现提示词');
+      expect(await page.getByText('已复制 V1 实现提示词。', { exact: true }).count()).toBe(0);
+      await expect.poll(() => copy.getAttribute('data-copied'), { timeout: 3000 }).toBe(null);
       expect(await copyBuildPromptFromDesignInfo(page, bound.id, 1)).toBe(link);
       await page.goto(link);
       expect(await page.getByRole('combobox', { name: '稿件版本' }).inputValue()).toBe('1');
@@ -513,7 +517,7 @@ describe('V17 交付工作区', () => {
     expect(initial).not.toContain('data-full-view="need"');
     expect(design(query + '&tab=need', historyWorkspace)).toContain('data-full-view="need"');
     expect(design(query + '&tab=spec', historyWorkspace)).toContain('data-full-view="notes"');
-    expect(design(query + '&tab=delivery&part=feedback', historyWorkspace)).toContain('data-full-view="delivery"');
+    expect(design(query + '&tab=delivery&part=feedback', historyWorkspace)).toContain('class="dr-delivery"');
     expect(design(query + '&tab=delivery&side=off', historyWorkspace)).toContain('data-action="side-open"');
   });
 
@@ -523,13 +527,13 @@ describe('V17 交付工作区', () => {
     const html = design(`&design=${draft.id}&tab=log`, input);
     expect(html).toContain('已实现 V1');
     expect(html).toContain('落后 1 版');
-    expect(html).toContain('按版本 · 因果');
+    expect(html).toContain('按版本');
     expect(html).toContain(previousFeedback.title);
     expect(html).toContain('反馈');
-    expect(html).toContain('data-history-view="causal"');
+    expect(html).toContain('class="dr-top"');
     const timeline = design(`&design=${draft.id}&tab=log&log=timeline`, input);
-    expect(timeline).toContain('data-history-view="timeline"');
-    expect(timeline).toContain('登记反馈');
+    expect(timeline).toContain('class="dr-top"');
+    expect(timeline).toContain('反馈和资料');
     expect(design(`&design=${draft.id}&tab=diff`, input))
       .toMatch(/<select[^>]*aria-label="稿件版本"[^>]*disabled/);
   });
@@ -849,15 +853,116 @@ describe('V17 交付工作区', () => {
 });
 
 describe('已发布的演示、评论和交付布局', () => {
+  it('V-07 深色反馈中退回和严重停滞的文字达到 4.5:1', async () => {
+    const markup = `<main class="dw-workspace"><div class="dr-delivery"><button class="dw-fl-row" aria-current="true" type="button">
+      <span class="dw-fl-l2"><span class="dw-fl-stage" data-stage="returned">退回重做</span>
+      <span class="dw-fl-stall" data-stall="bad">停了 8 天</span></span>
+    </button></div></main>`;
+    const css = await layoutStyles(markup, [...draftHeaderStyles, 'web/src/pages/design-workspace/design-v25.css',
+      'web/src/pages/design-workspace/design-v26-record.css']);
+    const page = await fixturePage({ colorScheme: 'dark' });
+    try {
+      await page.setContent('<!doctype html><html data-theme="dark"><body>' + markup + '</body></html>');
+      await applyFixtureStyles(page, css);
+      await page.screenshot({ animations: 'disabled' });
+      const { darkText } = await measureDesignPage(page, 'dark');
+      expect(darkText).toMatchObject({ measured: 2, low: 0 });
+      expect(darkText?.lowest).toBeGreaterThanOrEqual(4.5);
+    } finally {
+      await page.close();
+    }
+  }, 20_000);
+
+  it('A-51 只有上次访问时间的旧稿仍可打开按版本记录', () => {
+    const html = design(`&design=${guidedDraft.id}&version=18&tab=log`, {
+      ...guidedWorkspace, viewer: { lastVisitAt: '2026-11-18T00:00:00.000Z' } as DesignViewerState,
+    });
+    expect(html).toContain('data-log="versions"');
+    expect(html).toContain('class="dr-main"');
+  });
+
+  it('A-13 反馈长列表在手机使用紧凑页头，桌面页头保持整行', async () => {
+    const draft = { ...guidedDraft, feedback: Array.from({ length: 30 }, (_, index) => ({
+      ...currentFeedback, id: `FDB-layout-${index}`, title: `交付反馈 ${index + 1}`,
+    })) };
+    const input = { ...guidedWorkspace, designs: [draft] };
+    const params = { design: draft.id, version: '18', tab: 'log', log: 'delivery', part: 'feedback' };
+    const markup = design('&' + new URLSearchParams(params), input);
+    await withDesignBrowser(() => input, async page => {
+      await page.goto(browserDesignUrl(params));
+      await applyFixtureStyles(page, await layoutStyles(markup, draftHeaderStyles));
+      const list = page.getByLabel('反馈列表');
+      const detail = page.locator('.dw-dl-detail');
+      await list.waitFor();
+      const measure = () => page.locator('.dw-workspace--log').evaluate(workspace => {
+        const box = (selector: string) => workspace.querySelector(selector)!.getBoundingClientRect();
+        const panel = workspace.querySelector('.dr-delivery')!;
+        return { height: box('.dw-head--draft').height, actions: box('.dw-draft-bar').height,
+          tabs: box('.dw-draft-tabbar').height, scrolls: panel.scrollHeight > panel.clientHeight,
+          overflow: document.documentElement.scrollWidth - innerWidth };
+      });
+      const mobile = await measure();
+      expect(mobile.scrolls).toBe(true);
+      expect(mobile.overflow).toBe(0);
+      expect(mobile.height).toBeLessThan(mobile.actions + mobile.tabs);
+      const draftTabs = await page.getByRole('navigation', { name: '稿件标签' }).getByRole('button').all();
+      expect(draftTabs).toHaveLength(3);
+      for (const tab of draftTabs) await tab.click({ trial: true, timeout: 1_500 });
+      expect(await detail.isVisible()).toBe(false);
+      await list.getByRole('button', { name: /交付反馈 1\s/ }).click();
+      await detail.getByText(currentFeedback.body, { exact: true }).waitFor();
+      await detail.getByRole('button', { name: '全部反馈', exact: true }).click();
+      await list.waitFor();
+
+      await page.setViewportSize({ width: 1280, height: 800 });
+      const desktop = await measure();
+      expect(desktop.overflow).toBe(0);
+      expect(desktop.height).toBe(desktop.actions + 1);
+    }, { viewport: { width: 375, height: 812 }, hasTouch: true, reducedMotion: 'reduce' });
+  }, 20_000);
+
+  it('A-10/A-51/A-63 从旧地址进入记录、查看实际反馈，并保留交付的三个入口', async () => {
+    const css = await layoutStyles(design(`&design=${guidedDraft.id}&version=18&tab=log`, guidedWorkspace), draftHeaderStyles);
+    await withDesignBrowser(() => guidedWorkspace, async page => {
+      const document = { design: guidedDraft.id, version: '18' };
+      await page.goto(browserDesignUrl({ ...document, tab: 'delivery', full: 'delivery', part: 'feedback' }));
+      await applyFixtureStyles(page, css);
+      await page.locator('.dr-views').getByRole('tab', { name: '反馈和资料', exact: true }).waitFor({ timeout: 3_000 });
+      expect(await page.locator('.dw-full').count()).toBe(0);
+      await page.locator('.dr-views').getByRole('tab', { name: '按版本', exact: true }).click();
+      await page.locator('.dr-top').getByRole('searchbox', { name: '搜索记录' }).waitFor();
+      await page.locator('.dr-card-h').getByRole('navigation', { name: '切换版本' }).waitFor();
+      const measured = await page.locator('.dr').evaluate(root => {
+        const box = (selector: string) => root.querySelector(selector)!.getBoundingClientRect();
+        const views = box('.dr-views'), search = box('.dr-search'), card = box('.dr-card-h');
+        const main = box('.dr-main'), rail = box('.dr-rail');
+        return { toolbarRowDelta: Math.abs(views.y + views.height / 2 - search.y - search.height / 2),
+          rowGap: card.y - views.bottom, arrowGap: box('.dr-vbar ol').x - box('.dr-vstep').right,
+          topDelta: Math.abs(main.top - rail.top), bottomDelta: Math.abs(main.bottom - rail.bottom) };
+      });
+      expect(measured.toolbarRowDelta).toBeLessThanOrEqual(2);
+      expect(measured.rowGap).toBeGreaterThan(0);
+      expect(measured.arrowGap).toBeLessThanOrEqual(4);
+      expect(measured.topDelta).toBeLessThanOrEqual(1);
+      expect(measured.bottomDelta).toBeLessThanOrEqual(1);
+      await page.goto(browserDesignUrl({ ...document, tab: 'delivery', pane: 'deliver' }));
+      await page.getByRole('tab', { name: '要点', exact: true }).waitFor({ timeout: 3_000 });
+      expect(await page.getByRole('tab', { name: '要点', exact: true }).getAttribute('aria-selected')).toBe('true');
+      await page.getByRole('tab', { name: '画面', exact: true }).waitFor();
+      await page.getByRole('tab', { name: '评论', exact: true }).waitFor();
+      await page.getByRole('heading', { name: /^这一屏要做到/ }).waitFor();
+    }, { viewport: { width: 1280, height: 800 }, reducedMotion: 'reduce' });
+  }, 15_000);
+
   it('同一份稿件的新版展示新右栏，历史版沿用原画面入口', async () => {
     await withDesignBrowser(() => guidedWorkspace, async page => {
       await page.goto(browserDesignUrl({ design: guidedDraft.id, version: '18' }));
-      const side = page.getByRole('complementary', { name: '演示、评论和交付' });
+      const side = page.getByRole('complementary', { name: '画面、要点和评论' });
       await side.getByRole('heading', { name: '演示流程' }).waitFor();
       await side.getByRole('tab', { name: '评论' }).click();
-      await side.getByText('这一版还没有评论。').waitFor();
-      await side.getByRole('tab', { name: '交付' }).click();
-      for (const item of ['做出什么', '做到什么算完成', '为什么要这样', '拿什么做', '还没定的']) {
+      await side.getByRole('button', { name: '在画面上评论' }).waitFor();
+      await side.getByRole('tab', { name: '要点' }).click();
+      for (const item of ['这一版解决什么', '这一屏要做到']) {
         await side.getByRole('heading', { name: new RegExp(item) }).waitFor();
       }
       await page.getByRole('combobox', { name: '稿件版本' }).selectOption('2');
@@ -932,7 +1037,7 @@ describe('已发布的演示、评论和交付布局', () => {
       await page.keyboard.press('Enter');
       await inspect(missing);
 
-      const side = page.getByRole('complementary', { name: '演示、评论和交付' });
+      const side = page.getByRole('complementary', { name: '画面、要点和评论' });
       const missingStep = side.locator(`button[data-screen="${missing.id}"]`);
       await missingStep.getByText('打开原型', { exact: true }).waitFor();
 
@@ -950,7 +1055,7 @@ describe('已发布的演示、评论和交付布局', () => {
     await withDesignBrowser(() => guidedWorkspace, async page => {
       await page.goto(browserDesignUrl());
       await page.getByRole('link', { name: guidedVersion.title, exact: true }).first().click();
-      const side = page.getByRole('complementary', { name: '演示、评论和交付' });
+      const side = page.getByRole('complementary', { name: '画面、要点和评论' });
       const gallery = page.locator('.dw-all-screens');
       const all = page.getByRole('button', { name: '全部 3 屏', exact: true });
       const selected = page.getByRole('combobox', { name: '选择画面' });
@@ -1261,7 +1366,7 @@ function getBrowserDesignScript() {
   }).then(result => result.outputFiles[0].text);
 }
 
-async function withDesignBrowser(input: () => DesignWorkspace,
+async function withDesignBrowser(input: (url?: URL) => DesignWorkspace,
   check: (page: Page, commands: RecordedDesignCommand[], views: FixtureView[]) => Promise<void>, options?: BrowserContextOptions) {
   const script = await getBrowserDesignScript();
   const page = await fixturePage(options);
@@ -1283,7 +1388,10 @@ async function withDesignBrowser(input: () => DesignWorkspace,
       if (url.pathname === '/api/projects') {
         return route.fulfill({ json: { projects: [{ id: projectId, name: '虚拟工程项目' }] } });
       }
-      if (url.pathname === designPath) return route.fulfill({ json: { ...input(), ...(viewer ? { viewer } : {}) } });
+      if (url.pathname === designPath && url.searchParams.get('view') === 'assignees') {
+        return route.fulfill({ json: { projectId, items: [{ id: 'fixture-handler', label: '项目交接方', kind: 'person' }] } });
+      }
+      if (url.pathname === designPath) return route.fulfill({ json: { ...input(url), ...(viewer ? { viewer } : {}) } });
       if (url.pathname === `${designPath}/viewed` && viewer && route.request().method() === 'POST') {
         const view: FixtureView = route.request().postDataJSON();
         views.push(view);
@@ -1337,7 +1445,8 @@ async function copyBuildPromptFromDesignInfo(page: Page, designId: string, targe
 
 const draftStyles = ['web/src/pages/engineering-planning/planning.css', 'web/src/pages/design-workspace/design.css',
   'web/src/pages/design-workspace/design-v17-delivery.css'];
-const draftHeaderStyles = [...draftStyles, 'web/src/pages/design-workspace/design-v18.css'];
+const draftHeaderStyles = [...draftStyles, 'web/src/pages/design-workspace/design-v18.css',
+  'web/src/pages/design-workspace/design-v25.css', 'web/src/pages/design-workspace/design-v26-record.css'];
 const acceptanceStyles = [...draftStyles, 'web/src/pages/design-workspace/design-v17-acceptance.css'];
 const desktopSizes = [[1280, 800], [1024, 640], [853, 533]] as const;
 const infoSizes = [...desktopSizes, [375, 812]] as const;
@@ -1673,15 +1782,18 @@ describe('工程规划与设计 V2 前端回归', () => {
     expect(cards.find(card => card.includes(unboundTitle))).toContain('未绑定框架');
     await withDesignBrowser(() => workspace, async page => {
       await page.goto(browserDesignUrl());
-      const frameworks = page.locator('.dw-library-bar').getByRole('button', { name: '框架 1 套', exact: true });
+      const frameworks = page.locator('.dw-library-bar').getByRole('button', { name: '框架 1', exact: true });
       await frameworks.waitFor();
       expect(await page.getByRole('region', { name: '本项目框架' }).count()).toBe(0);
       await frameworks.click();
+      const drawer = page.getByRole('dialog', { name: '框架', exact: true });
+      expect(await drawer.locator('.dw-fwc').count()).toBe(1);
+      await drawer.getByRole('button', { name: '打开框架页' }).click();
       await page.waitForURL(url => url.searchParams.get('view') === 'frameworks');
       const card = page.locator('.dw-framework-card');
       expect(await card.count()).toBe(1);
       expect(await card.innerText()).toContain(frameworkTitle);
-      expect(await card.innerText()).toContain('2 份稿件使用');
+      expect(await card.innerText()).toContain('2 份稿件在用');
     });
     const scope = { systemId: 'fixture-console', moduleId: 'settings' };
     const module = design(`&system=${scope.systemId}&module=${scope.moduleId}`, {
@@ -1704,7 +1816,7 @@ describe('工程规划与设计 V2 前端回归', () => {
       const folderTitle = page.getByRole('heading', { name: /^文件夹/ });
       const recent = recentTitle.locator('xpath=ancestor::section[1]');
       const folders = folderTitle.locator('xpath=ancestor::section[1]');
-      const frameworks = page.locator('.dw-library-bar').getByRole('button', { name: '框架 2 套', exact: true });
+      const frameworks = page.locator('.dw-library-bar').getByRole('button', { name: '框架 2', exact: true });
       expect.soft(await page.locator('.dw-side').count(), '库不再占用左侧范围栏').toBe(0);
       expect.soft(await recent.locator('.dw-card-title').allTextContents(), '最近更新按最新一版时间排序且只列四份').toEqual([
         '另一文件夹稿件', '其他分类稿件', '实现阶段稿件', '目标稿件',
@@ -2021,14 +2133,14 @@ describe('工程规划与设计 V2 前端回归', () => {
       ] }],
     };
     const home = design('', input);
-    expect(visibleText(home)).toContain('框架 1 套');
+    expect(visibleText(home)).toContain('框架 1');
     expect(visibleText(home)).not.toContain('框架使用示意');
     const pending = home.match(/<section\b[^>]*aria-label="等你处理"[^>]*>([\s\S]*?)<\/section>/)?.[1] ?? '';
     expect(text(pending)).toContain(reviewTitle);
     expect(text(pending)).toContain('新 V4');
     const frameworks = design('&view=frameworks', input);
     expect([...frameworks.matchAll(/\bdw-framework-card\b/g)]).toHaveLength(1);
-    expect(visibleText(frameworks)).toContain('2 份稿件使用');
+    expect(visibleText(frameworks)).toContain('2 份稿件在用');
     const detail = design(`&framework=${frameworkId}&version=${revision.version}`, input);
     const link = detail.match(new RegExp(`<a[^>]*href="([^\"]+)"[^>]*>示意稿 ${example.id}[^<]*`));
     expect(link).not.toBeNull();
@@ -2063,15 +2175,28 @@ describe('工程规划与设计 V2 前端回归', () => {
 
   it('A-40 对文件的反馈带当前版路径，保存诉求和验收标准', async () => {
     await withDesignBrowser(() => workspace, async (page, commands) => {
-      await page.goto(browserDesignUrl({ design: bound.id, version: '2', tab: 'delivery', part: 'files', file: 'artifact-doc' }));
-      await page.getByRole('button', { name: '对这个文件提反馈' }).click();
+      let releaseAssignees!: () => void;
+      const waitForAssignees = new Promise<void>(resolve => { releaseAssignees = resolve; });
+      await page.route(url => url.pathname.endsWith('/design') && url.searchParams.get('view') === 'assignees', async route => {
+        await waitForAssignees;
+        await route.fallback();
+      });
       const form = page.locator('.dw-dl-detail form');
+      try {
+        await page.goto(browserDesignUrl({ design: bound.id, version: '2', tab: 'delivery', part: 'files', file: 'artifact-doc' }));
+        await page.getByRole('button', { name: '对这个文件提反馈' }).click();
+        await form.getByRole('status', { name: '正在读取可接手的项目成员和智能体' }).waitFor({ state: 'visible' });
+        expect(await form.getByRole('button', { name: '提交反馈' }).isDisabled()).toBe(true);
+      } finally {
+        releaseAssignees();
+      }
       await form.locator('textarea[name="ask"]').fill('可以直接读到交付说明的结尾');
       await form.locator('textarea[name="done"]').fill('下一段打开后看到文档尾注');
+      await form.getByLabel('交接方').selectOption('fixture-handler');
       await form.getByRole('button', { name: '提交反馈' }).click();
       await expect.poll(() => commands.length).toBe(1);
       expect(commands[0]).toMatchObject({
-        type: 'feedback.create', designId: bound.id, version: 2, filePath: deliveryPath,
+        type: 'feedback.create', designId: bound.id, version: 2, filePath: deliveryPath, handlerId: 'fixture-handler',
         body: '## 诉求\n\n可以直接读到交付说明的结尾\n\n## 怎么算解决\n\n下一段打开后看到文档尾注',
       });
     });
@@ -2134,47 +2259,41 @@ describe('工程规划与设计 V2 前端回归', () => {
     });
   }, 30_000);
 
-  it('跨版交付只把未关闭反馈计入待办，打开交付才清除新反馈，旧版的新回复可再次提示', async () => {
+  it('跨版本记录读反馈、保留旧消息，设计库无新反馈角标', async () => {
     const closed: DesignFeedback = { ...previousFeedback, id: 'FDB-fixture-closed', title: '已经处理的旧版反馈',
       body: '可回读的已处理反馈原文', status: 'closed', replies: [], decisions: [
         { decision: 'close', body: '已按原版画面复核关闭', author, at: '2026-11-21T00:00:00.000Z' },
       ] };
     let feedback = [previousFeedback, currentFeedback, closed];
     const seen = { ...viewerBeforeChanges, designs: { [historyDraft.id]: { version: 2 } } };
-    await withDesignBrowser(() => ({ ...historyWorkspace, viewer: seen, designs: [{ ...historyDraft, feedback }] }), async page => {
-      const newFeedback = page.locator('.dw-design-card').filter({ hasText: boundTitle }).getByRole('link', { name: '新反馈' });
-      const draftPath = { design: historyDraft.id };
+    await withDesignBrowser(() => ({ ...historyWorkspace, viewer: seen, designs: [{ ...historyDraft, feedback }] }), async (page, _commands, views) => {
       await page.goto(browserDesignUrl());
-      await newFeedback.waitFor();
-      await page.goto(browserDesignUrl({ ...draftPath, version: '1' }));
-      await page.getByRole('heading', { name: boundTitle }).waitFor();
-      await page.goto(browserDesignUrl());
-      await newFeedback.click();
-      await page.waitForURL(url => url.searchParams.get('tab') === 'delivery');
-      const list = page.locator('[aria-label="反馈列表"]');
+      const card = page.locator('.dw-design-card').filter({ hasText: boundTitle });
+      await card.waitFor();
+      expect(await card.getByText('新反馈', { exact: true }).count()).toBe(0);
+
+      const draftPath = { design: historyDraft.id, tab: 'log', log: 'delivery', part: 'feedback' };
+      await page.goto(browserDesignUrl(draftPath));
+      const list = page.getByLabel('反馈列表');
       const detail = page.locator('.dw-dl-detail');
-      expect(await list.innerText()).toContain('待处理 2');
+      expect(await list.innerText()).toContain('2 条进行中');
       for (const thread of [previousFeedback, currentFeedback]) {
         await list.getByRole('button', { name: new RegExp(thread.title) }).click();
-        expect(await detail.getByText(thread.body, { exact: true }).isVisible()).toBe(true);
+        await detail.getByText(thread.body, { exact: true }).waitFor();
         expect(await detail.count()).toBe(1);
       }
-      await list.getByRole('button', { name: '全部 3', exact: true }).click();
-      await list.getByRole('button', { name: new RegExp(closed.title) }).click();
-      expect(await detail.getByText(closed.decisions[0].body, { exact: true }).isVisible()).toBe(true);
 
-      await page.goto(browserDesignUrl());
-      await page.locator('.dw-design-card').filter({ hasText: boundTitle }).waitFor();
-      await expect.poll(() => newFeedback.count()).toBe(0);
-      const reply = '旧版反馈在打开交付后收到的新回复';
+      await list.locator('summary').click();
+      await list.getByRole('button', { name: new RegExp(closed.title) }).click();
+      await detail.getByText(closed.decisions[0].body, { exact: true }).waitFor();
+      expect(views.some(view => view.kind === 'design' && view.feedbackAt)).toBe(true);
+
+      const reply = '旧版反馈在打开记录后收到的新回复';
       feedback = [{ ...previousFeedback, replies: [...previousFeedback.replies,
         { author, at: '2026-11-22T00:00:00.000Z', body: reply }] }, currentFeedback, closed];
-      await page.reload();
-      await newFeedback.click();
-      await list.getByRole('button', { name: new RegExp(previousFeedback.title) }).click();
+      await page.goto(browserDesignUrl({ ...draftPath, fb: previousFeedback.id }));
       await detail.getByText(reply, { exact: true }).waitFor();
       expect(await page.getByRole('combobox', { name: '稿件版本' }).inputValue()).toBe('2');
-      expect(await list.innerText()).toContain('待处理 2');
     });
   }, 20_000);
 
@@ -2267,9 +2386,11 @@ describe('工程规划与设计 V2 前端回归', () => {
       expect(await version.inputValue()).toBe('4');
       await page.getByRole('button', { name: '对比', exact: true }).click();
       const left = page.getByRole('combobox', { name: '对比左侧版本' });
+      const right = page.getByRole('combobox', { name: '对比右侧版本' });
       const baselineShortcut = page.getByRole('button', { name: '和基线 V2 对比', exact: true });
       expect(await left.inputValue()).toBe('2');
-      expect(await baselineShortcut.count()).toBe(0);
+      expect(await right.inputValue()).toBe('implementation');
+      expect(await baselineShortcut.count()).toBe(1);
       await left.selectOption('3');
       await baselineShortcut.click();
       await page.waitForURL(url => url.searchParams.get('compareFrom') === '2');
@@ -2300,6 +2421,71 @@ describe('工程规划与设计 V2 前端回归', () => {
       expect(commands[0]).toMatchObject({ type: 'design.freeze', designId: layoutDraft.id, version: 4, requestId: expect.any(String) });
     });
   }, 20_000);
+
+  it('默认以锁定版对照同版、同画面和同主题的真实截图，提示和取证入口对应实际缺项', async () => {
+    const approved: DesignScreen = { id: 'approved-view', name: '获准版界面', route: '#approved', impl: '/fixture/approved',
+      viewport: 'desktop', themes: ['light', 'dark'] };
+    const appendix: DesignScreen = { ...approved, id: 'approved-extra', name: '获准版第二个界面', impl: null };
+    const latest: DesignScreen = { ...approved, id: 'draft-view', name: '续稿界面', impl: '/fixture/draft' };
+    const target = { ...second, screens: [approved, appendix] };
+    const head = { ...second, version: 4, screens: [latest] };
+    const run: DesignRun = { id: 'RUN-compare-v2', version: 2, pullRequest: 41, commit: 'e'.repeat(40), createdAt: at,
+      previewUrl: 'https://preview.fixture.invalid', verdict: 'needs_evidence', issues: {}, cells: [], upgradeId: 'UPG-compare-v2',
+      visual: {
+        'approved-view/desktop-light': { imageId: 'fixture-actual', referenceImageId: 'fixture-reference',
+          measured: { width: 1280, height: 800, path: approved.impl!, theme: 'light' }, checks: {}, at, by: author.id },
+        'approved-view/desktop-dark': { imageId: 'fixture-wrong-path',
+          measured: { width: 1280, height: 800, path: latest.impl!, theme: 'dark' }, checks: {}, at, by: author.id },
+      } };
+    const draft: DesignEntry = { ...bound, frozen: 2, pullRequest: 41, versions: [first, target, head],
+      upgrade: { id: 'UPG-compare-v2', targetVersion: 2, fromVersion: 1, startedAt: at, startedBy: author.id, status: 'active' },
+      runs: [run, { ...run, id: 'RUN-unrelated', pullRequest: 88, visual: undefined }] };
+    let hasImplementation = false;
+    const expanded: number[] = [];
+    await withDesignBrowser(url => {
+      const version = Number(url?.searchParams.get('version')) || 4;
+      if (url) expanded.push(version);
+      return { ...workspace, designs: [{ ...draft, pullRequest: hasImplementation ? draft.pullRequest : undefined,
+        versions: draft.versions.map(row => row.version === version ? row : { ...row, prototypeId: '', screens: [] }),
+        runs: hasImplementation ? draft.runs.map(row => row.version === version ? row : { ...row, visual: undefined }) : [] }] };
+    }, async page => {
+      const current = { design: draft.id, version: '4', compare: '1', screen: approved.id };
+      let shotAvailable = false;
+      await page.route(`**/api/projects/${projectId}/design/artifacts/fixture-actual`,
+        route => shotAvailable ? route.fulfill({ contentType: 'image/png', body: thumbnailPng }) : route.fulfill({ status: 404 }));
+      await page.goto(browserDesignUrl(current));
+      const canvas = page.locator('.dw-canvas');
+      const missing = canvas.getByText('尚未关联实现预览或验收运行', { exact: true });
+      await missing.waitFor();
+      expect(await canvas.getByRole('link', { name: '打开验收', exact: true }).getAttribute('href')).toContain('version=2');
+
+      hasImplementation = true;
+      await page.reload();
+      await canvas.getByText('实拍图片暂时无法读取', { exact: true }).waitFor();
+      shotAvailable = true;
+      await canvas.getByRole('button', { name: '重试加载', exact: true }).click();
+      const screenshot = canvas.getByRole('img', { name: '获准版界面真实页面截图' });
+      await screenshot.waitFor();
+      expect(await page.getByRole('combobox', { name: '对比左侧版本' }).inputValue()).toBe('2');
+      expect(await page.getByRole('combobox', { name: '对比右侧版本' }).inputValue()).toBe('implementation');
+      expect(await screenshot.getAttribute('src')).toContain('/artifacts/fixture-actual');
+      await expect.poll(() => screenshot.evaluate(node => (node as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
+      expect(await page.getByRole('combobox', { name: '选择画面' }).locator('option').allTextContents())
+        .toEqual(['1 / 2 · 获准版界面', '2 / 2 · 获准版第二个界面']);
+      expect(expanded).toContain(2);
+      await page.getByRole('button', { name: '切换为深色', exact: true }).click();
+      await canvas.getByText('本次运行缺少该画面和主题的实拍', { exact: true }).waitFor();
+      expect(await screenshot.count()).toBe(0);
+      const acceptance = new URL((await canvas.getByRole('link', { name: '打开验收' }).getAttribute('href'))!, browserDesignOrigin);
+      expect(acceptance.searchParams.get('run')).toBe(run.id);
+      expect(acceptance.searchParams.get('compare-slot')).toBe('desktop-dark');
+      await page.getByRole('combobox', { name: '选择画面' }).selectOption(appendix.id);
+      await canvas.getByText('此画面待绑定实现地址', { exact: true }).waitFor();
+      await page.reload();
+      await canvas.getByText('此画面待绑定实现地址', { exact: true }).waitFor();
+      expect(await page.getByRole('combobox', { name: '选择画面' }).inputValue()).toBe(appendix.id);
+    }, { viewport: { width: 1280, height: 800 } });
+  }, 25_000);
 
   it('A-27 稿件信息有具名分组，危险操作在底部靠右，缩窄后仍在视口内', async () => {
     const entry: DesignEntry = {

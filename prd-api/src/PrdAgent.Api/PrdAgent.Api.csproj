@@ -64,6 +64,8 @@
     <!-- 风格目录：OpenDesign 设计系统快照（scripts/sync-opendesign-design-systems.py 从钉住版本的镜像生成），
          内嵌供 DesignSystemCatalog 读取；只含元数据与 tokens.css。 -->
     <EmbeddedResource Include="Resources/DesignSystems/opendesign-design-systems.json" />
+    <EmbeddedResource Include="Content/QuickCreation/catalog.json" LogicalName="QuickCreation.catalog.json" />
+    <EmbeddedResource Include="Content/QuickCreation/styles/*.md" LogicalName="QuickCreation.styles.%(Filename).md" />
   </ItemGroup>
 
 </Project>

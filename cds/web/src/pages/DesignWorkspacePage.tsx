@@ -8,16 +8,16 @@ import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import { apiRequest, apiUrl } from '@/lib/api';
 import { requestAgentAccess } from '@/lib/agent-onboarding';
 import type { DesignComment, DesignEntry, DesignReviewer, DesignScreen, DesignTheme, DesignVersion, DesignViewerState, DesignWorkspace } from '../../../src/shared/design-workspace';
-import { adoptedFrameworkVersion, currentDesignRun, designProgramEvidenceRequired, frameworkInUse, frameworkMaterialCandidates, latestDesignFeedbackAt, type DesignMaterialKey, type FrameworkResolutions } from '../../../src/shared/design-workspace';
+import { adoptedFrameworkVersion, currentDesignRun, designProgramEvidenceRequired, frameworkInUse, frameworkMaterialCandidates, isDesignRecordDelivery, latestDesignFeedbackAt, latestDesignRecordAt, type DesignMaterialKey, type FrameworkResolutions } from '../../../src/shared/design-workspace';
 import { type PlanningProject, usePlanningRead } from './engineering-planning/planning-ui';
-import { DesignCanvas, DesignReviewDialog } from './design-workspace/DesignCanvas';
+import { DesignCanvas, DesignReviewDialog, type SidePin } from './design-workspace/DesignCanvas';
 import { DesignAcceptancePanel } from './design-workspace/DesignAcceptancePanel';
 import { DesignDeliveryPanel } from './design-workspace/DesignDelivery';
 import { DesignDeliverySide, type DesignFullView, type SideTab } from './design-workspace/DesignDeliverySide';
 import { DesignLegacyDeliverySide } from './design-workspace/DesignLegacyDeliverySide';
 import { DesignRationale } from './design-workspace/DesignRationale';
 import { DesignNeed, needTrace } from './design-workspace/DesignNeed';
-import { DesignHistory } from './design-workspace/DesignHistory';
+import { DesignRecord } from './design-workspace/DesignRecord';
 import { DesignRequirementView } from './design-workspace/DesignRequirements';
 import { DesignLibrary, libraryStatus } from './design-workspace/DesignLibrary';
 import { DesignShareDialog } from './design-workspace/DesignShareDialog';
@@ -28,6 +28,8 @@ import './engineering-planning/planning.css';
 import './design-workspace/design.css';
 import './design-workspace/design-v17-delivery.css';
 import './design-workspace/design-v18.css';
+import './design-workspace/design-v25.css';
+import './design-workspace/design-v26-record.css';
 
 const tabs = [['delivery', '交付', '人和智能体'], ['accept', '验收', '人和智能体按规则执行'], ['log', '记录', '操作时自动写入']] as const;
 const deliveryQuery = { full: '', part: '', fb: '', file: '', about: '', compare: '' };
@@ -135,18 +137,21 @@ export function DesignWorkspacePage() {
   const canAssign = permissions?.write && entry && (permissions.steward || latestDesign(entry).publisher.id === permissions.actorId);
   const pinnedFramework = workspace?.frameworks.find(row => row.id === version?.framework)?.versions.find(row => row.version === version?.frameworkVersion);
   const requestedTab = params.get('tab');
+  /* V26（用户：反馈和资料不应该在交付，而是在记录；记录里要有一个能点进去看真正反馈的地方）：
+   * 记录页两个视图——按版本（log 不写）和反馈和资料（log=delivery，part/fb/file 照旧）。旧地址 tab=delivery&full=delivery&part=… 打开记录里的反馈和资料。 */
+  const recordDelivery = isDesignRecordDelivery(params, hash);
   const tab = requestedTab === 'accept' || requestedTab === 'delivery' && params.get('part') === 'checks' ? 'accept'
-    : requestedTab === 'log' ? 'log' : 'delivery';
+    : requestedTab === 'log' || recordDelivery ? 'log' : 'delivery';
+  const logView = recordDelivery ? 'delivery' : 'versions';
   const comparing = tab === 'delivery' && (requestedTab === 'diff' || params.get('compare') === '1');
   const requestedFull = params.get('full');
   const fullView: DesignFullView | undefined = tab !== 'delivery' ? undefined
     : requestedFull === 'need' || requestedFull === 'notes' || requestedFull === 'delivery' ? requestedFull
     : requestedTab === 'need' ? 'need'
-    : requestedTab === 'rationale' || requestedTab === 'notes' || requestedTab === 'spec' ? 'notes'
-    : requestedTab === 'delivery' && (params.has('part') || params.has('fb') || params.has('file') || hash.startsWith('#dw-')) ? 'delivery' : undefined;
+    : requestedTab === 'rationale' || requestedTab === 'notes' || requestedTab === 'spec' ? 'notes' : undefined;
   const sideClosed = params.get('side') === 'off';
   const pane = params.get('pane');
-  const sideTab: SideTab = pane === 'comments' || pane === 'deliver' ? pane : 'demo';
+  const sideTab: SideTab = pane === 'comments' || pane === 'points' || pane === 'deliver' ? pane : 'demo';
   const availablePanes = new Set(version?.screens.flatMap(({ route }) => route.startsWith('#/design?')
     ? new URLSearchParams(route.slice('#/design?'.length)).getAll('pane') : []));
   const guidedDelivery = Boolean(version?.screens.length && (
@@ -156,10 +161,17 @@ export function DesignWorkspacePage() {
   const frameworkTab = frameworkTabs.find(value => value === params.get('tab')) ?? 'overview';
   const screenParam = params.get('screen') ?? undefined;
   const commentParam = params.get('comment') ?? undefined;
+  /* V25：右栏「对话」和记录页右侧打开的是哪一条对话（f:反馈编号 或 c:评论编号），写进地址，刷新和分享都还在 */
+  const threadParam = params.get('thread') ?? undefined;
+  /* V26：「在画面上评论」的放置状态和位置放在页面上，画布画评论点，右栏「评论」写正文 */
+  const [pinDraft, setPinDraft] = useState<SidePin>();
+  useEffect(() => { setPinDraft(undefined); }, [entry?.id, version?.version]);
   const sceneDraft = entry && version ? `${entry.id}/${version.version}/${screenParam ?? ''}` : '';
   const defaultScene = version && defaultDesignScreen(version, screenParam);
   const scene = selectedScene?.draft === sceneDraft ? selectedScene.screen
     : defaultScene;
+  /* V28：换了画面，在别的画面上点下的评论位置作废（A-74：切换画面或版本后草稿清除） */
+  useEffect(() => { setPinDraft(undefined); }, [scene?.id]);
   const rememberScene = useCallback((screen?: DesignScreen) => setScene(current =>
     current?.draft === sceneDraft && current.screen === screen ? current : { draft: sceneDraft, screen }), [sceneDraft]);
   const compareFrom = Number(params.get('compareFrom') ?? params.get('from')) || undefined;
@@ -170,8 +182,9 @@ export function DesignWorkspacePage() {
   const viewer = read?.key === readKey && read ? read.viewer : workspace?.viewer ?? emptyDesignViewer;
   const viewedVersion = draftVisible ? version?.version : undefined;
   const viewedDesign = draftVisible ? entry?.id : undefined;
-  const viewedFeedback = fullView === 'delivery' && draftVisible && entry
+  const viewedFeedback = recordDelivery && draftVisible && entry
     && (params.get('part') !== 'files' && !params.has('file')) ? latestDesignFeedbackAt(entry) || undefined : undefined;
+  const viewedRecord = tab === 'log' && draftVisible && entry ? latestDesignRecordAt(entry) || undefined : undefined;
   const viewedBrief = requirement?.designKey;
   const viewedBriefAt = requirement?.sharedAt;
   const viewingLibrary = !requirementKey && !draftId && !framework && !frameworkList;
@@ -179,7 +192,7 @@ export function DesignWorkspacePage() {
   useEffect(() => {
     if (!readKey) return;
     const mark = viewedDesign && viewedVersion ? { kind: 'design', designId: viewedDesign, version: viewedVersion,
-      ...(viewedFeedback ? { feedbackAt: viewedFeedback } : {}) }
+      ...(viewedFeedback ? { feedbackAt: viewedFeedback } : {}), ...(viewedRecord ? { recordAt: viewedRecord } : {}) }
       : viewedBrief && viewedBriefAt ? { kind: 'brief', designKey: viewedBrief, sharedAt: viewedBriefAt }
         : viewingLibrary ? { kind: 'library' } : undefined;
     if (!mark) return;
@@ -189,7 +202,9 @@ export function DesignWorkspacePage() {
         if (viewedDesign && viewedVersion) {
           const old = base.designs?.[viewedDesign];
           const feedbackAt = [old?.feedbackAt ?? '', viewedFeedback ?? ''].sort().at(-1);
-          const updated = { version: Math.max(old?.version ?? 0, viewedVersion), ...(feedbackAt ? { feedbackAt } : {}) };
+          const recordAt = [old?.recordAt ?? '', viewedRecord ?? ''].sort().at(-1);
+          const updated = { version: Math.max(old?.version ?? 0, viewedVersion), ...(feedbackAt ? { feedbackAt } : {}),
+            ...(recordAt ? { recordAt } : {}) };
           return { key: readKey, viewer: { ...base, designs: { ...base.designs, [viewedDesign]: updated } } };
         }
         return { key: readKey, viewer: { ...base, briefs: { ...base.briefs, [viewedBrief!]: viewedBriefAt! } } };
@@ -202,14 +217,14 @@ export function DesignWorkspacePage() {
       if (!controller.signal.aborted && result.projectId === project) setRead({ key: readKey, viewer: result.viewer });
     }).catch(() => {});
     return () => controller.abort();
-  }, [readKey, project, serverReading, viewedDesign, viewedVersion, viewedFeedback, viewedBrief, viewedBriefAt, viewingLibrary]);
+  }, [readKey, project, serverReading, viewedDesign, viewedVersion, viewedFeedback, viewedRecord, viewedBrief, viewedBriefAt, viewingLibrary]);
   const objectScope = entry?.scope ?? requirement?.scope;
   const objectSystem = workspace?.systems?.find(row => row.id === objectScope?.systemId);
   const objectModule = objectSystem?.modules.find(row => row.id === objectScope?.moduleId);
   const canvas = !!entry && tab === 'delivery';
   useEffect(() => {
     const source = deliveryReturn.current;
-    if (fullView !== 'delivery' || !source || entry?.id !== source.designId || version?.version !== source.version) return;
+    if (!recordDelivery || !source || entry?.id !== source.designId || version?.version !== source.version) return;
     const frame = requestAnimationFrame(() => {
       const element = document.getElementById(source.origin);
       if (!element) return;
@@ -221,7 +236,7 @@ export function DesignWorkspacePage() {
       deliveryReturn.current = undefined;
     });
     return () => cancelAnimationFrame(frame);
-  }, [entry?.id, version?.version, fullView]);
+  }, [entry?.id, version?.version, recordDelivery]);
   const needsDetail = (id: string, version: number) =>
     !workspace?.designs.some(entry => entry.id === id && entry.versions.some(row => row.version === version && row.prototypeId));
   const modalSource = usePlanningRead<DesignWorkspace>(authorized && review
@@ -278,6 +293,11 @@ export function DesignWorkspacePage() {
     const menu = trigger?.closest<HTMLDetailsElement>('details[data-design-panel="design-info"]');
     const focused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     returnFocus.current = menu?.querySelector('summary') ?? focused;
+    if (view === 'delivery') {
+      onChange({ ...deliveryQuery, tab: 'log', log: 'delivery', thread: '', ...(menu ? { panel: '', baseline: '' } : {}), ...fields });
+      if (menu) menu.open = false;
+      return;
+    }
     onChange({ ...deliveryQuery, tab: 'delivery', full: view, compare: comparing ? '1' : '',
       ...(menu ? { panel: '', baseline: '' } : {}),
       screen: scene?.id ?? '', ...fields });
@@ -360,7 +380,7 @@ export function DesignWorkspacePage() {
   const canvasCommon = {
     command, canComment: Boolean(permissions?.review), canWrite: Boolean(permissions?.write),
     actorId: permissions?.actorId ?? '', steward: Boolean(permissions?.steward), commandBusy: busy,
-    selectedTheme: canvasTheme, onThemeChange: setCanvasTheme, onThumbnailsUpdated: refreshWorkspace,
+    selectedTheme: canvasTheme, onThemeChange: setCanvasTheme, onThumbnailsUpdated: refreshWorkspace, revision: reload,
   };
   const draftActions = entry && version && <div className="dw-tools dw-draft-actions">
     <select className="dw-version-select" value={version.version} aria-label="稿件版本" disabled={comparing}
@@ -373,10 +393,7 @@ export function DesignWorkspacePage() {
         return <option key={row.version} value={row.version}>{label}</option>;
       })}
     </select>
-    {tab === 'delivery' && <CopyDesignBuildPrompt key={buildPrompt?.path ?? entry.id} prompt={buildPrompt} onCopied={target => {
-      setIssue('');
-      setNotice(`已复制 V${target} 实现提示词。`);
-    }} />}
+    {tab === 'delivery' && <CopyDesignBuildPrompt key={buildPrompt?.path ?? entry.id} prompt={buildPrompt} />}
     <button className="ep-button ep-icon-button" type="button" aria-label="大屏" title="大屏" onClick={() => openLarge(entry, version)}><Maximize /></button>
     <details className="ep-new dw-info" data-design-panel="design-info" open={panel === 'design-info' || undefined}
       onToggle={event => { if (!event.currentTarget.open) dismissPanel('design-info'); }}>
@@ -453,7 +470,7 @@ export function DesignWorkspacePage() {
     {notice && <p className="dw-message" role="status">{notice}</p>}
   </>;
   return <AppShell active="design" topbar={breadcrumbs} wide>
-    <Workspace fluid className={`ep-workspace dw-workspace${entry ? ' dw-workspace--detail' : ''}${canvas ? ' cds-workspace--fill dw-workspace--canvas' : ''}`}>
+    <Workspace fluid className={`ep-workspace dw-workspace${entry ? ' dw-workspace--detail' : ''}${canvas ? ' cds-workspace--fill dw-workspace--canvas' : ''}${entry && tab === 'log' ? ' cds-workspace--fill dw-workspace--log' : ''}`}>
       {!draftVisible && messages}
       {!workspace ? (projects.error || source.error)
         ? <p role="alert" className="dw-placeholder">{projects.error ?? source.error} <button type="button" className="ep-button" onClick={() => refresh(value => value + 1)}>重试</button></p>
@@ -472,21 +489,23 @@ export function DesignWorkspacePage() {
           <div className="dw-canvas-slot" aria-hidden={Boolean(fullView) || undefined}>
             <DesignCanvas key={`${entry.id}/${version.version}/${commentParam ?? ''}/${compareFrom ?? ''}`} {...canvasCommon}
               entry={entry} version={version} active={!large && !review && !fullView}
-              comparing={comparing} initialScreenId={defaultScene?.id} initialCommentId={commentParam} initialComparisonVersion={compareFrom}
+              comparing={comparing} initialScreenId={comparing ? screenParam : defaultScene?.id} initialCommentId={commentParam} initialComparisonVersion={compareFrom}
               cornerTools onSceneChange={rememberScene} galleryOpen={openGallery === `${entry.id}/${version.version}`}
               onGalleryChange={open => setOpenGallery(open ? `${entry.id}/${version.version}` : undefined)}
               onSelectScreen={id => onChange({ screen: id, comment: '' }, true)}
               onModeChange={(compare, screen, from) => onChange({ ...deliveryQuery, tab: 'delivery', compare: compare ? '1' : '',
                 screen: screen ?? '', compareFrom: from === undefined ? '' : String(from), from: '' })}
-              onReview={(comment, sourceVersion) => openReview(entry, comment, sourceVersion)} />
+              onReview={(comment, sourceVersion) => openReview(entry, comment, sourceVersion)}
+              sideComments={guidedDelivery} sidePin={pinDraft} onSidePin={setPinDraft}
+              onCommentOpen={id => onChange({ pane: 'comments', thread: 'c:' + id, side: '' }, true)} />
             {!fullView && deliveryReturn.current?.designId === entry.id && <button className="ep-button dw-delivery-back" type="button"
               aria-label="返回交付" title="返回交付" onClick={() => {
                 const prior = deliveryReturn.current!;
-                onChange({ ...deliveryQuery, ...prior.fields, tab: 'delivery', full: 'delivery', version: String(prior.version) });
+                onChange({ ...deliveryQuery, ...prior.fields, tab: 'log', log: 'delivery', version: String(prior.version) });
               }}><ChevronLeft /><span>返回交付</span></button>}
           </div>
           {sideClosed ? <button className="ep-button dw-side-open" type="button" data-action="side-open"
-            onClick={() => onChange({ side: '' })}><PanelRightOpen />{guidedDelivery ? '演示、评论和交付' : '打开右栏'}</button>
+            onClick={() => onChange({ side: '' })}><PanelRightOpen />{guidedDelivery ? '画面、要点和评论' : '打开右栏'}</button>
             : guidedDelivery ? <DesignDeliverySide key={`${entry.id}/${version.version}`} entry={entry} version={version} screenId={scene?.id}
               requirement={draftRequirement} permissions={permissions} tab={sideTab} theme={canvasTheme}
               onTab={value => onChange({ pane: value === 'demo' ? '' : value }, true)}
@@ -495,26 +514,23 @@ export function DesignWorkspacePage() {
                 setOpenGallery(undefined);
                 onChange({ screen: id, comment: '' }, true);
               }}
-              onReview={comment => openReview(entry, comment, version)}
+              command={command} busy={busy} thread={threadParam}
+              onThread={key => onChange({ pane: 'comments', thread: key ?? '' }, true)}
+              onPin={() => { setOpenGallery(undefined); setPinDraft({ placing: true }); }}
+              draft={pinDraft && (pinDraft.placing || pinDraft.screenId === scene?.id) ? { ...pinDraft, screenName: scene?.name } : undefined}
+              onDraftCancel={() => setPinDraft(undefined)}
+              onDraftSubmit={async body => {
+                if (!pinDraft?.point || !scene) return false;
+                const ok = await command('comment.create', { designId: entry.id, version: version.version, screenId: scene.id, ...pinDraft.point, body });
+                if (ok) setPinDraft(undefined);
+                return Boolean(ok);
+              }}
               onAccept={() => onChange({ ...deliveryQuery, tab: 'accept', screen: scene?.id ?? '' })} />
             : <DesignLegacyDeliverySide entry={entry} version={version} screen={scene} requirement={draftRequirement}
               permissions={permissions} onOpen={openFull} onCollapse={() => onChange({ side: 'off' })} />}
-          {fullView && <DesignFullOverlay view={fullView} onClose={closeFull}>
+          {fullView && fullView !== 'delivery' && <DesignFullOverlay view={fullView} onClose={closeFull}>
             {fullView === 'need' ? <DesignNeed entry={entry} version={version} requirement={draftRequirement} />
-              : fullView === 'notes' ? <DesignRationale entry={entry} version={version} baseline={pinnedFramework} focusSpec={requestedTab === 'spec'} />
-              : <DesignDeliveryPanel key={`${entry.id}/${version.version}`} entry={entry} version={version}
-                permissions={permissions} busy={busy} command={command}
-                openScreen={(selected, screen, origin) => {
-                  const fields = Object.fromEntries(['screen', 'part', 'fb', 'file', 'about']
-                    .flatMap(key => params.has(key) ? [[key, params.get(key)!]] : []));
-                  const thread = origin.startsWith('delivery-feedback-') ? origin.slice('delivery-feedback-'.length) : undefined;
-                  if (thread) Object.assign(fields, { part: 'feedback', fb: thread });
-                  deliveryReturn.current = { designId: entry.id, version: version.version, origin, fields };
-                  rememberRouteFocus(locationKey, origin);
-                  onChange({ ...deliveryQuery, version: String(selected), tab: 'delivery', screen });
-                }}
-                openVersion={selected => onChange({ version: String(selected), tab: 'delivery', full: 'delivery', screen: '',
-                  part: 'files', fb: '', file: '', about: '' })} />}
+              : <DesignRationale entry={entry} version={version} baseline={pinnedFramework} focusSpec={requestedTab === 'spec'} />}
           </DesignFullOverlay>}
         </div> : <>
           {tab === 'accept' && <DesignAcceptancePanel key={`${entry.id}/${version.version}`} entry={entry} version={version} busy={busy}
@@ -530,10 +546,43 @@ export function DesignWorkspacePage() {
             }} onOpenPrototype={() => setOpenGallery(undefined)}
             onSetBaseline={canFreeze && !handoffBlocks && !activeUpgrade ? () => setFreezeTarget({ id: entry.id, version: version.version }) : undefined}
             command={command} onPreviewStale={refreshWorkspace} />}
-          {tab === 'log' && <DesignHistory entry={entry} version={version}
-            onVersion={selected => onChange({ ...deliveryQuery, version: String(selected), tab: 'delivery', run: '', screen: '' })}
-            onRun={(selected, run) => onChange({ ...deliveryQuery, version: String(selected), tab: 'accept', run })}
-            onFeedback={selected => openFull('delivery', { part: 'feedback', fb: selected })} />}
+          {tab === 'log' && logView === 'delivery' && <nav className="dr-views" role="tablist" aria-label="记录">
+            <button type="button" role="tab" aria-selected={logView !== 'delivery'} data-log="versions"
+              onClick={() => onChange({ ...deliveryQuery, tab: 'log', log: '', part: '', fb: '', file: '', about: '' }, true)}>按版本</button>
+            <button type="button" role="tab" aria-label="反馈和资料" aria-selected={logView === 'delivery'} data-log="delivery"
+              onClick={() => onChange({ ...deliveryQuery, tab: 'log', log: 'delivery', thread: '' }, true)}>反馈和资料
+              {(entry.feedback ?? []).filter(row => row.status !== 'closed').length > 0 && <small>{(entry.feedback ?? []).filter(row => row.status !== 'closed').length} 条进行中</small>}</button>
+            {params.get('part') === 'handoff' && <button type="button" className="ep-button" onClick={closeFull}>回到画面</button>}
+          </nav>}
+          {tab === 'log' && logView === 'delivery' && permissions && <div className="dr-delivery">
+              <DesignDeliveryPanel key={`${entry.id}/${version.version}`} entry={entry} version={version}
+                permissions={permissions} busy={busy} command={command}
+                openScreen={(selected, screen, origin) => {
+                  const fields = Object.fromEntries(['screen', 'part', 'fb', 'file', 'about']
+                    .flatMap(key => params.has(key) ? [[key, params.get(key)!]] : []));
+                  const thread = origin.startsWith('delivery-feedback-') ? origin.slice('delivery-feedback-'.length) : undefined;
+                  if (thread) Object.assign(fields, { part: 'feedback', fb: thread });
+                  deliveryReturn.current = { designId: entry.id, version: version.version, origin, fields };
+                  rememberRouteFocus(locationKey, origin);
+                  onChange({ ...deliveryQuery, version: String(selected), tab: 'delivery', screen, log: '' });
+                }}
+                openVersion={selected => onChange({ version: String(selected), tab: 'log', log: 'delivery', screen: '',
+                  part: 'files', fb: '', file: '', about: '' })} /></div>}
+          {/* V26：记录页从零重新设计（三栏对稿 + 监控中心调性），替换原来的「按版本因果 / 时间线」 */}
+          {tab === 'log' && logView === 'versions' && <DesignRecord key={`${readKey}/${entry.id}`} entry={entry} version={version}
+            readAt={viewer.designs?.[entry.id]?.recordAt} lead={<nav className="dr-views" role="tablist" aria-label="记录">
+            <button type="button" role="tab" aria-selected={logView === 'versions'} data-log="versions"
+              onClick={() => onChange({ ...deliveryQuery, tab: 'log', log: '', part: '', fb: '', file: '', about: '' }, true)}>按版本</button>
+            <button type="button" role="tab" aria-label="反馈和资料" aria-selected={logView !== 'versions'} data-log="delivery"
+              onClick={() => onChange({ ...deliveryQuery, tab: 'log', log: 'delivery', thread: '' }, true)}>反馈和资料
+              {(entry.feedback ?? []).filter(row => row.status !== 'closed').length > 0 && <small>{(entry.feedback ?? []).filter(row => row.status !== 'closed').length} 条进行中</small>}</button>
+          </nav>}
+            onPick={(selected, key) => onChange({ version: String(selected), thread: key ?? '' }, true)}
+            thread={threadParam} onThread={key => onChange({ thread: key ?? '' }, true)}
+            onReply={key => onChange({ ...deliveryQuery, tab: 'delivery', pane: 'comments', thread: key, side: '', screen: '' })}
+            onOpen={key => key.startsWith('f:')
+              ? onChange({ ...deliveryQuery, tab: 'log', log: 'delivery', part: 'feedback', fb: key.slice(2), thread: '' })
+              : onChange({ ...deliveryQuery, tab: 'delivery', pane: 'comments', thread: key, side: '', screen: '' })} />}
         </>}
       </> : <>
         <DesignLibrary workspace={workspace} query={query} onChange={changeLibrary} mode={mode} theme={canvasTheme}

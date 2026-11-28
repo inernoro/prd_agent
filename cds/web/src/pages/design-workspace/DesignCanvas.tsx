@@ -5,11 +5,11 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/compone
 import type { DesignComment, DesignEntry, DesignRun, DesignScreen, DesignTheme, DesignVersion } from '../../../../src/shared/design-workspace';
 import type { DesignWorkspace } from '../../../../src/shared/design-workspace';
 import previewContract from '../../../../src/shared/design-preview-contract.json';
-import { designAcceptanceTarget, designViewports } from '../../../../src/shared/design-workspace';
+import { designAcceptanceTarget, designDemoImplementationPath, designImplementationTargetVersion, designProgramEvidenceRequired, designViewports } from '../../../../src/shared/design-workspace';
 import { designVisualKey } from '../../../../src/shared/design-visual';
 import { designPixelDifference as pixelDifference } from '../../../../src/shared/design-pixels';
 import { usePlanningRead } from '../engineering-planning/planning-ui';
-import { designArtifact, designDate, designDetailPath, type DesignCommand } from './design-ui';
+import { defaultDesignScreen, designArtifact, designDate, designDetailPath, type DesignCommand } from './design-ui';
 import { compareDesignStructure } from './design-structure';
 import { DesignGallery } from './DesignGallery';
 
@@ -230,9 +230,13 @@ type CanvasProps = {
   onSceneChange?: (screen?: DesignScreen) => void;
   onSelectScreen?: (screen: string) => void;
   onModeChange?: (compare: boolean, screen?: string, from?: number) => void;
+  sideComments?: boolean; sidePin?: SidePin; onSidePin?: (next?: SidePin) => void; onCommentOpen?: (id: string) => void;
+  revision?: number;
 };
 
-export function DesignCanvas({ entry, version, comparing, active, full, command, canComment, canWrite, actorId, steward, commandBusy, initialScreenId, initialCommentId, initialComparisonVersion, selectedTheme, onThemeChange, onReview, onEscape, cornerTools, galleryOpen, onGalleryChange, onThumbnailsUpdated, onSceneChange, onSelectScreen, onModeChange }: CanvasProps) {
+export type SidePin = { placing: boolean; point?: Point; screenId?: string };
+
+export function DesignCanvas({ entry, version, comparing, active, full, command, canComment, canWrite, actorId, steward, commandBusy, initialScreenId, initialCommentId, initialComparisonVersion, selectedTheme, onThemeChange, onReview, onEscape, cornerTools, galleryOpen, onGalleryChange, onThumbnailsUpdated, onSceneChange, onSelectScreen, onModeChange, sideComments, sidePin, onSidePin, onCommentOpen, revision = 0 }: CanvasProps) {
   const [localTheme, setLocalTheme] = useState<DesignTheme>('light');
   const theme = selectedTheme ?? localTheme;
   const setTheme = onThemeChange ?? setLocalTheme;
@@ -244,13 +248,16 @@ export function DesignCanvas({ entry, version, comparing, active, full, command,
     window.addEventListener('resize', fit);
     return () => window.removeEventListener('resize', fit);
   }, [cornerTools]);
-  const [selected, select] = useState(initialScreenId ?? version.demo?.[0]?.screen ?? version.screens[0]?.id);
+  const [selected, select] = useState(initialScreenId);
   const pickScreen = (id: string) => { select(id); onSelectScreen?.(id); };
-  const [left, setLeft] = useState(() => entry.versions.find(row => row.version === initialComparisonVersion && row.version !== version.version)?.version
-    ?? (entry.frozen !== version.version ? entry.frozen : undefined)
-    ?? entry.versions.find(row => row.version === version.version - 1)?.version ?? version.version);
-  const [right, setRight] = useState<string>(String(version.version));
+  const implementationTarget = designImplementationTargetVersion(entry);
+  const historyFrom = entry.versions.find(row => row.version === initialComparisonVersion && row.version !== version.version)?.version;
+  const [selectedLeft, setLeft] = useState<number>();
+  const [selectedRight, setRight] = useState<string>();
+  const left = selectedLeft ?? historyFrom ?? implementationTarget ?? version.version;
+  const right = selectedRight ?? (historyFrom === undefined ? 'implementation' : String(version.version));
   const [implementationRun, setImplementationRun] = useState<string>();
+  const [failedCapture, setFailedCapture] = useState<string>();
   const [mode, setMode] = useState<CompareMode>('side');
   const [withCompare, setWithCompare] = useState(comparing);
   const [changes, showChanges] = useState(false);
@@ -270,21 +277,26 @@ export function DesignCanvas({ entry, version, comparing, active, full, command,
   const [leftScroll, setLeftScroll] = useState<{ left: number; top: number }>();
   const [rightScroll, setRightScroll] = useState<{ left: number; top: number }>();
   const compare = full ? withCompare : comparing;
-  const real = right === 'implementation';
+  const real = compare && right === 'implementation';
   const leftIndex = entry.versions.find(row => row.version === left);
   const rightIndex = entry.versions.find(row => row.version === Number(right));
   const comparison = usePlanningRead<DesignWorkspace>(compare && leftIndex && !leftIndex.prototypeId
-    ? designDetailPath(entry.projectId, entry.id, left) : null, 0);
+    ? designDetailPath(entry.projectId, entry.id, left) : null, revision);
   const alternate = usePlanningRead<DesignWorkspace>(compare && !real && rightIndex && !rightIndex.prototypeId
-    ? designDetailPath(entry.projectId, entry.id, Number(right)) : null, 0);
-  const leftVersion = comparison.data?.designs.find(row => row.id === entry.id)?.versions.find(row => row.version === left) ?? leftIndex;
+    ? designDetailPath(entry.projectId, entry.id, Number(right)) : null, revision);
+  const comparedEntry = comparison.data?.designs.find(row => row.id === entry.id) ?? entry;
+  const leftVersion = comparedEntry.versions.find(row => row.version === left);
   const rightVersion = alternate.data?.designs.find(row => row.id === entry.id)?.versions.find(row => row.version === Number(right)) ?? rightIndex;
-  const matchingRuns = entry.runs.filter(row => row.version === version.version);
+  const versionRun = entry.runs.filter(row => row.version === version.version).at(-1);
+  const matchingRuns = real && implementationTarget !== null ? comparedEntry.runs.filter(row => row.version === left
+    && (row.target === 'installed' || row.pullRequest !== undefined && row.pullRequest === comparedEntry.pullRequest)
+    && (entry.upgrade?.status !== 'active' || left !== implementationTarget || row.upgradeId === entry.upgrade.id)) : [];
   const run = matchingRuns.find(item => item.id === implementationRun) ?? matchingRuns.at(-1);
-  const screens = compare ? Array.from(new Map([...(leftVersion?.screens ?? []), ...(rightVersion?.screens ?? version.screens)]
+  const screens = real ? leftVersion?.screens ?? [] : compare ? Array.from(new Map([...(leftVersion?.screens ?? []), ...(rightVersion?.screens ?? version.screens)]
     .map(screen => [screen.id, screen] as const)).values()) : version.screens;
-  const index = Math.max(0, screens.findIndex(screen => screen.id === selected));
-  const screen = screens[index];
+  const defaultScreen = real && leftVersion ? defaultDesignScreen(leftVersion) : defaultDesignScreen(version);
+  const screen = screens.find(row => row.id === selected) ?? screens.find(row => row.id === defaultScreen?.id) ?? screens[0];
+  const index = Math.max(0, screens.indexOf(screen));
   useEffect(() => { if (initialScreenId) select(initialScreenId); }, [initialScreenId]);
   useEffect(() => { onSceneChange?.(all && !compare ? undefined : screen); }, [screen, all, compare, onSceneChange]);
   const visibleTheme = screen?.themes.includes(theme) ? theme : screen?.themes[0] ?? theme;
@@ -318,12 +330,15 @@ export function DesignCanvas({ entry, version, comparing, active, full, command,
 
   const compareMode = real ? (mode === 'side' ? 'side' : 'slide') : mode;
   const [leftScreen, rightScreen] = [leftVersion, rightVersion].map(row => row?.screens.find(candidate => candidate.id === screen?.id));
-  const recordedVisual = run && screen ? run.visual?.[designVisualKey(screen.id, `${screen.viewport}-${visibleTheme}`)] : undefined;
-  const screenshotId = recordedVisual?.measured?.path === screen?.impl && recordedVisual?.measured?.theme === visibleTheme
-    ? recordedVisual?.imageId : undefined;
-  const capture = screenshotId ?? (run && screen ? realEvidence(run, version, screen, visibleTheme)?.imageId : undefined);
+  const slot = screen ? `${screen.viewport}-${visibleTheme}` as const : undefined;
+  const recordedVisual = screen && slot ? versionRun?.visual?.[designVisualKey(screen.id, slot)] : undefined;
+  const program = Boolean(leftVersion && designProgramEvidenceRequired(leftVersion));
+  const implementationPath = screen?.impl ?? (screen && program ? designDemoImplementationPath(screen) : undefined);
+  const capture = run && leftVersion && screen && implementationPath ? realScreenshot(run, leftVersion, screen, visibleTheme, implementationPath) : undefined;
   const installed = run?.target === 'installed';
   const localImplementation = installed && screen?.impl && /^\/(?![\/\\])/.test(screen.impl) ? screen.impl : undefined;
+  const comparisonLabel = (revision: number) => revision === entry.frozen ? ' · 定稿'
+    : revision === implementationTarget ? ' · 实施目标' : implementationTarget === null && revision === version.version ? ' · 未定稿' : '';
   const structure = useMemo(() => compare && leftVersion && rightVersion ? compareDesignStructure(leftVersion, rightVersion) : [],
     [compare, leftVersion, rightVersion]);
   const reported = Object.entries(rightVersion?.resolves ?? {});
@@ -361,12 +376,23 @@ export function DesignCanvas({ entry, version, comparing, active, full, command,
     staticOnly={!leftInteractive}
     scroll={leftScroll} onScrollFrom={useLeftScroll} onKey={key} onLayout={real ? undefined : boxes => setLeftLayout({ key: layoutKey, boxes })}
     boxes={compareMode === 'side' ? overlays?.left : undefined} />;
+  const acceptancePath = `/design?${new URLSearchParams({ project: entry.projectId, design: entry.id, version: String(left), tab: 'accept',
+    ...(run ? { run: run.id, check: 'compare' } : {}),
+    ...(run && screen && slot ? { 'compare-screen': screen.id, 'compare-slot': slot } : {}) })}`;
+  const [emptyTitle, emptyHelp] = capture ? ['实拍图片暂时无法读取', '可重试加载，或到验收查看本次取证。']
+    : implementationTarget === null ? ['此稿尚未定稿', '定稿后实现方可以关联已部署的提交并取证。']
+      : !implementationPath ? ['此画面待绑定实现地址', '实现方可在验收中填写实际页面地址和就绪条件。']
+        : run ? ['本次运行缺少该画面和主题的实拍', '实现方需为当前提交和所选视口取证。']
+          : [comparedEntry.pullRequest ? '尚未创建此版本的验收运行' : '尚未关联实现预览或验收运行', '实现方可用已部署的实现提交发起验收。'];
   const rightFrame = real ? <div className="dw-fit">
-    {capture ? <img className="dw-real-shot" alt={screen!.name + '真实页面截图'} src={designArtifact(entry.projectId, capture)} />
-      : <div className="dw-frame-empty"><b>真实页面</b><p>{screen?.impl ? (run ? '该提交和视口缺少截图' : '已绑定地址，等待真实页面取证') : '当前画面待绑定实现地址'}</p>
+    {capture && capture !== failedCapture ? <img className="dw-real-shot" alt={screen.name + '真实页面截图'}
+      src={designArtifact(entry.projectId, capture)} onError={() => setFailedCapture(capture)} />
+      : <div className="dw-frame-empty">
+        <b>{emptyTitle}</b><p>{emptyHelp}</p>
+        {capture && <button type="button" className="ep-button" onClick={() => setFailedCapture(undefined)}>重试加载</button>}
         {localImplementation && <Link className="ep-link dw-implementation-link" to={localImplementation}>打开主用实现</Link>}
-        <Link className="ep-link" to={`/design?${new URLSearchParams({ project: entry.projectId, design: entry.id,
-          version: String(version.version), tab: 'accept', ...(screen ? { screen: screen.id } : {}) })}`}>查看做法验收</Link></div>}
+        <Link className="ep-link" to={acceptancePath}>打开验收</Link>
+      </div>}
   </div> : <DesignFrame projectId={entry.projectId} version={rightVersion} screen={rightScreen} theme={visibleTheme} zoom={zoom}
     staticOnly={!rightInteractive}
     scroll={rightScroll} onScrollFrom={useRightScroll} onKey={key} onLayout={boxes => setRightLayout({ key: layoutKey, boxes })}
@@ -377,6 +403,7 @@ export function DesignCanvas({ entry, version, comparing, active, full, command,
           value={compare ? 'compare' : 'single'} onChange={mode => {
             const next = mode === 'compare';
             if (next === compare) return;
+            if (next) { setLeft(undefined); setRight(undefined); setImplementationRun(undefined); setMode('side'); }
             if (onModeChange) onModeChange(next, screen?.id);
             else setWithCompare(next);
           }} />}
@@ -389,7 +416,7 @@ export function DesignCanvas({ entry, version, comparing, active, full, command,
               onModeChange?.(true, screen?.id, entry.frozen);
             }}>和基线 V{entry.frozen} 对比</button>}
           <select aria-label="对比左侧版本" value={left} onChange={event => setLeft(Number(event.target.value))}>
-            {entry.versions.map(row => <option key={row.version} value={row.version}>V{row.version}</option>)}
+            {entry.versions.map(row => <option key={row.version} value={row.version}>V{row.version}{comparisonLabel(row.version)}</option>)}
           </select>
           <span aria-hidden="true">→</span>
           <select aria-label="对比右侧版本" value={right} onChange={event => setRight(event.target.value)}>
@@ -412,7 +439,7 @@ export function DesignCanvas({ entry, version, comparing, active, full, command,
         {compare ? <button type="button" className="ep-button" aria-expanded={changes} onClick={() => showChanges(!changes)}><ListMinus />
           {real ? '变化详情' : changedOnScreen === undefined ? '本屏待测量' : `本屏 ${changedOnScreen} 处变化`}
           {!real && structure.length + reported.length > 0 && <small>声明 {structure.length + reported.length}</small>}</button>
-          : <button type="button" className="ep-button dw-canvas-comments" disabled={!screen} aria-expanded={comments}
+          : sideComments ? null : <button type="button" className="ep-button dw-canvas-comments" disabled={!screen} aria-expanded={comments}
             aria-label={`评论 ${commentCount}`} title={`评论 ${commentCount}`} onClick={() => { showComments(!comments); setPlacing(false); }}>
             <MessageSquare /><span>评论 {commentCount}</span></button>}
       </div>
@@ -428,22 +455,29 @@ export function DesignCanvas({ entry, version, comparing, active, full, command,
             : overlays ? `缺少同视口截图 · 结构变化 ${overlays.right.length} 处 · 约 ${regionCoverage(overlays.right)}% 画面`
               : '缺少同视口、同主题的截图。可以在「变化」查看结构和交付差异。'}
       </p>}
-      {real && compare && <p className="dw-canvas-note">{installed ? '真实页面使用主用构建的实拍。' : '真实页面使用分支实拍。'}
-        {localImplementation ? <> <Link className="ep-link" to={localImplementation}>打开主用实现</Link></> : '稿件与实现请按验收核对。'}</p>}
-      {compare && !screens.length ? <div className="dw-frame-empty">两版都没有声明画面。可以在预览标签打开独立原型。</div>
+      {real && capture && capture !== failedCapture && localImplementation && <p className="dw-canvas-note">
+        <Link className="ep-link" to={localImplementation}>打开主用实现</Link></p>}
+      {compare && !screens.length ? <div className="dw-frame-empty">{comparison.loading ? `正在读取 V${left} 的画面与取证记录`
+        : comparison.error ? `暂时无法读取 V${left} 的画面。请刷新后重试。`
+          : real ? `V${left} 尚未声明可对照的画面。` : '两版都没有声明画面。可以在预览标签打开独立原型。'}</div>
         : compare ? <div className={`dw-compare dw-compare-${compareMode}`} data-viewport={screen?.viewport}>
-        <figure aria-hidden={compareMode === 'diff'}><figcaption>V{left} <small>{leftVersion && designDate(leftVersion.createdAt)}</small></figcaption>{leftFrame}</figure>
+        <figure aria-hidden={compareMode === 'diff'}><figcaption>V{left}{comparisonLabel(left)} <small>{leftVersion && designDate(leftVersion.createdAt)}</small></figcaption>{leftFrame}</figure>
         <figure style={compareMode === 'slide' ? { clipPath: `inset(0 0 0 ${slider}%)` } : undefined}>
-          <figcaption>{real ? '真实页面' : `V${right}`} <small>{real ? run?.commit.slice(0, 8) : rightVersion && designDate(rightVersion.createdAt)}</small></figcaption>
+          <figcaption>{real ? '真实页面' : `V${right}`} <small>{real ? run && `${installed ? '主用构建' : `PR #${run.pullRequest}`} · ${run.commit.slice(0, 8)}`
+            : rightVersion && designDate(rightVersion.createdAt)}</small></figcaption>
           {rightFrame}</figure>
         {compareMode === 'slide' && <input aria-label="对比滑动分界" className="dw-slider" type="range" min={0} max={100} value={slider} onChange={event => setSlider(Number(event.target.value))} />}
-      </div> : all ? <DesignGallery key={`${entry.id}/${version.version}`} entry={entry} version={version} run={run} theme={theme} zoom={zoom}
+      </div> : all ? <DesignGallery key={`${entry.id}/${version.version}`} entry={entry} version={version} run={versionRun} theme={theme} zoom={zoom}
         canGenerate={canComment && canWrite} busy={commandBusy} command={command} onThumbnailsUpdated={onThumbnailsUpdated}
         onOpen={id => { pickScreen(id); showAll(false); }} />
         : <div className="dw-single" data-viewport={screen?.viewport}>
-        <DesignFrame projectId={entry.projectId} version={version} screen={screen} theme={visibleTheme} zoom={zoom} placing={placing}
-          staticOnly={!active} referenceId={recordedVisual?.referenceImageId} pin={pin} comments={comments ? marks : undefined}
-          onPin={point => { setPin(point); setPlacing(false); }} onKey={key} onComment={setComment} />
+        <DesignFrame projectId={entry.projectId} version={version} screen={screen} theme={visibleTheme} zoom={zoom} placing={sideComments ? Boolean(sidePin?.placing) : placing}
+          staticOnly={!active} referenceId={recordedVisual?.referenceImageId} pin={sideComments ? sidePin?.point && sidePin.screenId === screen?.id ? sidePin.point : undefined : pin}
+          comments={comments || sideComments ? marks : undefined}
+          onPin={point => sideComments ? onSidePin?.({ placing: false, point, screenId: screen?.id }) : (setPin(point), setPlacing(false))}
+          onKey={key} onComment={id => sideComments ? onCommentOpen?.(id) : setComment(id)} />
+        {sideComments && sidePin?.placing && <p className="dw-place-hint" role="status">点画面上要说的位置，正文在右栏写
+          <button type="button" className="ep-link" onClick={() => onSidePin?.(undefined)}>取消</button></p>}
       </div>}
 
       {screen && (!all || compare) && <div className="dw-screen-nav">
@@ -462,7 +496,7 @@ export function DesignCanvas({ entry, version, comparing, active, full, command,
           const before = leftVersion?.screens.find(row => row.id === item.id), after = rightVersion?.screens.find(row => row.id === item.id);
           const previousImage = leftVersion?.renders?.[item.id]?.[visibleTheme];
           const nextImage = rightVersion?.renders?.[item.id]?.[visibleTheme];
-          const status = real ? (item.impl ? '已绑定实现' : '缺少实现地址')
+          const status = real ? (item.impl || program && designDemoImplementationPath(item) ? '有实现地址' : '待绑定实现地址')
             : !before ? '新增' : !after ? '移除' : previousImage && nextImage ? (previousImage.sha256 === nextImage.sha256 ? '截图相同' : '截图有变化')
               : JSON.stringify(before) === JSON.stringify(after) ? '声明相同' : '声明变化';
           return <button type="button" className="dw-change-list" key={item.id} onClick={() => pickScreen(item.id)}>{item.name}<small>{status}</small></button>;
@@ -475,7 +509,7 @@ export function DesignCanvas({ entry, version, comparing, active, full, command,
           return <button type="button" key={id} className="dw-change-list" disabled={!comment || !rightVersion} onClick={() => comment && rightVersion && onReview(comment, rightVersion)}>{detail}</button>;
         }) : <p>本版没有声明处理评论。</p>}
       </aside>}
-      {!compare && comments && <aside className="dw-float" aria-label="画面评论">
+      {!compare && comments && !sideComments && <aside className="dw-float" aria-label="画面评论">
         <header><b>评论 · {marks.length}</b><button className="ep-button ep-icon-button" aria-label="关闭评论" onClick={() => { showComments(false); setPlacing(false); }}><X /></button></header>
         {canComment && <button type="button" className="ep-button" onClick={() => { showAll(false); setPlacing(!placing); setPin(undefined); }}>
           <Plus />{placing ? '取消标记' : '添加评论'}</button>}
@@ -524,16 +558,26 @@ export function DesignCanvas({ entry, version, comparing, active, full, command,
   </>;
 }
 
-function realEvidence(run: DesignRun, version: DesignVersion, screen: DesignScreen, theme: DesignTheme) {
+function realScreenshot(run: DesignRun, version: DesignVersion, screen: DesignScreen, theme: DesignTheme, path: string) {
+  const slot = `${screen.viewport}-${theme}` as const;
+  const key = designVisualKey(screen.id, slot);
+  const visual = run.visual?.[key];
+  const measured = visual?.measured;
+  const view = designViewports[screen.viewport];
+  const sameSlot = measured?.path === path && measured?.theme === theme && measured.width === view.width && measured.height === view.height;
+  if (designProgramEvidenceRequired(version)) {
+    const proof = run.programEvidence?.[key];
+    const dataset = version.demoData?.sha256 ?? proof?.fixtureDigest;
+    return sameSlot && proof && dataset && [proof, visual].every(row => row?.capturedBy === 'cds'
+      && row.commit === run.commit && row.dataset === dataset) ? visual?.imageId : undefined;
+  }
+  if (sameSlot && visual?.imageId && (!visual.commit || visual.commit === run.commit)) return visual.imageId;
   return run.cells.find(cell => {
-    if (!cell.imageId || !cell.measured || cell.measured.path !== screen.impl || cell.measured.theme !== theme
-      || !cell.slot.startsWith(screen.viewport)) return false;
-    const rule = version.acceptance.find(row => row.id === cell.itemId);
-    if (!rule) return false;
-    const target = designAcceptanceTarget(version, rule, cell.slot);
-    return target && target.impl === screen.impl && (target.readySelector ?? null) === (screen.readySelector ?? null)
-      && (!rule.screenId || rule.screenId === screen.id);
-  });
+    if (!cell.imageId || cell.slot !== slot || cell.measured?.path !== path || cell.measured.theme !== theme
+      || (cell.commit && cell.commit !== run.commit)) return false;
+    const rule = version.acceptance.find(row => row.id === cell.itemId && row.slots.includes(slot));
+    return rule && designAcceptanceTarget(version, rule, slot)?.id === screen.id;
+  })?.imageId;
 }
 
 export function DesignReviewDialog({ entry, comment, version, canReview, command, busy, onClose }: {

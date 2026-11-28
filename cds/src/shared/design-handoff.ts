@@ -1,6 +1,8 @@
 import type { DesignTheme } from './design-workspace.js';
 
 export const designHandoffPolicy = 'prototype-v1';
+// A full draft can declare 80 screens, each with light and dark variants.
+export const designHandoffCaseLimit = 160;
 export const designHandoffChecks = [
   'text', 'value', 'attribute', 'visible', 'enabled', 'media-playing', 'audio-playing', 'fullscreen',
 ] as const;

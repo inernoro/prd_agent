@@ -1,0 +1,131 @@
+/* 快速创作页的少量局部样式；颜色只取 tokens.css 语义变量 */
+/* 放进 components 层：Tailwind 工具类（hidden、sm:inline-flex 等）可以覆盖这里 */
+@layer components {
+.qc-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex: none;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background-color .15s, color .15s;
+}
+.qc-icon-btn:hover { background: var(--bg-tertiary); color: var(--text-primary); }
+.qc-icon-btn:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 1px; }
+.qc-icon-btn:disabled { opacity: .4; cursor: not-allowed; }
+
+/* 卡片：左栏对话里的过程卡、右栏的面板。浅色主题带一层很轻的投影，深色主题靠边框 */
+.qc-card {
+  border: 1px solid var(--border-subtle);
+  border-radius: 14px;
+  background: var(--bg-input);
+  box-shadow: var(--shadow-site-card);
+}
+
+.qc-range { appearance: none; background: transparent; cursor: pointer; margin: 0; }
+.qc-range::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: var(--border-default); }
+.qc-range::-webkit-slider-thumb { appearance: none; width: 12px; height: 12px; margin-top: -4px; border-radius: 50%; background: var(--accent-primary); }
+.qc-range::-moz-range-track { height: 4px; border-radius: 2px; background: var(--border-default); }
+.qc-range::-moz-range-thumb { width: 12px; height: 12px; border: 0; border-radius: 50%; background: var(--accent-primary); }
+
+@keyframes qc-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .45; transform: scale(.7); } }
+.qc-pulse { animation: qc-pulse 1.4s ease-in-out infinite; }
+@keyframes qc-rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.qc-rise { animation: qc-rise .32s ease-out both; }
+
+/* 生成中的扫光：正在画 / 正在写的那一块有一道光扫过，表示「此刻在这里干活」 */
+@keyframes qc-sweep { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
+.qc-shimmer { position: relative; overflow: hidden; }
+.qc-shimmer::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg, transparent 20%, color-mix(in srgb, var(--accent-primary) 16%, transparent) 50%, transparent 80%);
+  animation: qc-sweep 1.8s ease-in-out infinite;
+  pointer-events: none;
+}
+
+/* 进行中阶段的进度条：主色 + 缓慢流动的斜纹 */
+@keyframes qc-stripes { from { background-position: 0 0; } to { background-position: 24px 0; } }
+.qc-bar-live {
+  background-color: var(--accent-primary);
+  background-image: linear-gradient(135deg, color-mix(in srgb, var(--accent-on-primary) 22%, transparent) 25%, transparent 25%, transparent 50%, color-mix(in srgb, var(--accent-on-primary) 22%, transparent) 50%, color-mix(in srgb, var(--accent-on-primary) 22%, transparent) 75%, transparent 75%);
+  background-size: 24px 24px;
+  animation: qc-stripes 1s linear infinite;
+}
+
+/* 配音中的声波：几根竖条高低起伏 */
+@keyframes qc-wave { 0%, 100% { transform: scaleY(.3); } 50% { transform: scaleY(1); } }
+.qc-wave { display: inline-flex; align-items: center; gap: 2px; height: 14px; }
+.qc-wave > i { display: block; width: 2.5px; height: 100%; border-radius: 2px; background: currentColor; transform-origin: center; animation: qc-wave 1s ease-in-out infinite; }
+.qc-wave > i:nth-child(2) { animation-delay: -.8s; }
+.qc-wave > i:nth-child(3) { animation-delay: -.6s; }
+.qc-wave > i:nth-child(4) { animation-delay: -.4s; }
+.qc-wave > i:nth-child(5) { animation-delay: -.2s; }
+
+/* 骨架：作品形状的占位在呼吸 */
+@keyframes qc-breathe { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
+.qc-skel { background: var(--skeleton-base); border-radius: 6px; animation: qc-breathe 1.6s ease-in-out infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .qc-pulse, .qc-rise, .qc-shimmer::after, .qc-bar-live, .qc-wave > i, .qc-skel { animation: none; }
+}
+
+@media (max-width: 767px) {
+  .qc-icon-btn { width: 44px; height: 44px; }
+}
+}
+
+/* ---------- 质感：点按区域和画出来的大小分开 ----------
+ * 手机上 44px 是手指的点按区域，不是按钮该画多大。直接把按钮画成 44px 高、13px 字，
+ * 字只占三成高度，看起来肥、像塑料。这里按钮元素仍是 44px（真实点按区域），
+ * 只在中间画一块 32px 的面；桌面上元素本身就是那块面。
+ * 放在 @layer 之外：需要压过 Button 组件自带的底色与 50% 透明的禁用态。 */
+.qc-face {
+  /* 定位交给工具类（relative / absolute），这里写了会压过 absolute */
+  isolation: isolate;
+  height: var(--qc-face-h, 32px);
+  border-radius: var(--qc-face-r, 999px);
+  background: var(--qc-face-bg, transparent);
+  box-shadow: var(--qc-face-ring, none);
+  border: 0;
+}
+.qc-face-chip { --qc-face-h: 30px; --qc-face-bg: var(--bg-input); --qc-face-ring: inset 0 0 0 1px var(--border-default); }
+.qc-face-chip:hover:not(:disabled) { --qc-face-bg: var(--bg-tertiary); }
+.qc-face-send { --qc-face-h: 32px; --qc-face-r: 999px; width: 32px; --qc-face-bg: var(--button-primary-bg); color: var(--button-primary-fg); }
+.qc-face-send:disabled { --qc-face-bg: var(--bg-tertiary); color: var(--text-muted); cursor: not-allowed; }
+.map-btn.qc-face-primary { --qc-face-h: 32px; --qc-face-r: 10px; --qc-face-bg: var(--button-primary-bg); color: var(--button-primary-fg); background: var(--qc-face-bg); box-shadow: none; }
+.map-btn.qc-face-primary:hover:not(:disabled) { --qc-face-bg: var(--button-primary-bg-hover); }
+/* 禁用不用半透明：主色打五折会变成一块发灰的塑料色，改成实心的中性底 */
+.map-btn.qc-face-primary:disabled { --qc-face-bg: var(--bg-tertiary); color: var(--text-muted); opacity: 1; }
+.map-btn.qc-face-secondary { --qc-face-h: 32px; --qc-face-r: 10px; --qc-face-bg: var(--bg-input); --qc-face-ring: inset 0 0 0 1px var(--border-default); background: var(--qc-face-bg); box-shadow: var(--qc-face-ring); }
+.map-btn.qc-face-secondary:hover:not(:disabled) { --qc-face-bg: var(--bg-tertiary); }
+.map-btn.qc-face-secondary:disabled { color: var(--text-muted); opacity: 1; }
+@media (max-width: 767px) {
+  .qc-face { height: auto; min-height: 44px; background: transparent; box-shadow: none; }
+  .map-btn.qc-face-primary, .map-btn.qc-face-secondary { background: transparent; box-shadow: none; }
+  .qc-face::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 50%;
+    height: var(--qc-face-h, 32px);
+    transform: translateY(-50%);
+    border-radius: var(--qc-face-r, 999px);
+    background: var(--qc-face-bg, transparent);
+    box-shadow: var(--qc-face-ring, none);
+    transition: background-color .15s;
+    z-index: -1;
+  }
+  .qc-face-send { width: 44px; }
+  .qc-face-send::before { left: 6px; right: 6px; }
+}
+
+/* 弹出菜单的底：浅色主题 --bg-input 是实色（白），深色主题它是半透明，叠在 --bg-elevated 上才不透出下面的字 */
+.qc-menu-surface { background: linear-gradient(var(--bg-input), var(--bg-input)), var(--bg-elevated); }

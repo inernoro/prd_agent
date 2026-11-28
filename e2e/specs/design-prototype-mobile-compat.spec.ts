@@ -188,7 +188,10 @@ test('V23 A-72 手机演示先走手机画面，支持清单后备和显式入�
       await expect(thumbnail.nth(index)).toHaveAttribute('title', step.name);
     }
     await expect(flow.locator('[data-action="demo-next"]')).toContainText(secondPhoneInDemo.name);
-    await expect(flow.locator('[data-action="demo-restart"]')).toHaveCount(0);
+    // 从头开始始终占位，第一步不可操作（V28 A-63）。
+    const restart = flow.locator('[data-action="demo-restart"]');
+    await expect(restart).toBeVisible();
+    await expect(restart).toBeDisabled();
     await expect.poll(async () => (await canvas.locator('.dw-fit .dw-frame').boundingBox())?.height).toBeGreaterThanOrEqual(360);
     const phoneFrame = await canvas.locator('.dw-fit .dw-frame').boundingBox();
     expect(phoneFrame!.width / phoneFrame!.height).toBeLessThan(1);
@@ -198,9 +201,11 @@ test('V23 A-72 手机演示先走手机画面，支持清单后备和显式入�
     await expectScreen(secondPhoneInDemo.name);
     await expect(flow.locator('h3 small')).toHaveText('2 / 3');
     await expect(flow.locator('[data-action="demo-next"]')).toContainText(desktop.name);
-    await flow.locator('[data-action="demo-restart"]').tap();
+    await expect(restart).toBeEnabled();
+    await restart.tap();
     await expectScreen(phoneInDemo.name);
     await expect(flow.locator('h3 small')).toHaveText('1 / 3');
+    await expect(restart).toBeDisabled();
 
     const explicit = new URL(url);
     explicit.searchParams.set('screen', desktop.id);

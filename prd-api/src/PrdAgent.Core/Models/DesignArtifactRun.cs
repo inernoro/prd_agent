@@ -76,6 +76,19 @@ public sealed class DesignArtifactBrowserQualitySummary
 [MongoDB.Bson.Serialization.Attributes.BsonIgnoreExtraElements]
 public class DesignArtifactRun : PrdAgent.Core.Interfaces.ITaskAuthorizedRun
 {
+    public QuickCreationInput? QuickCreation { get; set; }
+    public DateTime? ExecutionStartedAt { get; set; }
+    public string? QuickCreationPublishedSiteId { get; set; }
+    public DateTime? QuickCreationPublishedAt { get; set; }
+    public QuickCreationMedia? QuickCreationMedia { get; set; }
+    public QuickCreationBrowserExport? BrowserFilmExport { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public List<QuickCreationExportAttempt> BrowserFilmExportAttempts { get; set; } = new();
+    [System.Text.Json.Serialization.JsonIgnore]
+    public long BrowserFilmExportAttemptCount { get; set; }
+    public string? RetryOfRunId { get; set; }
+    public string? ResumeFilmFromRunId { get; set; }
+    public int? RetryFilmSceneIndex { get; set; }
     /// <summary>仅由服务端新任务创建点写入；旧记录缺失时必须保持未准入。</summary>
     [System.Text.Json.Serialization.JsonIgnore]
     public string? TaskPermitId { get; set; }
@@ -188,6 +201,7 @@ public class DesignArtifactRun : PrdAgent.Core.Interfaces.ITaskAuthorizedRun
     /// 禁止按更新时间重新选择另一个基础设施目标。
     /// </summary>
     public string? RuntimeConnectionId { get; set; }
+    public string? CodeFilmRuntimeSlot { get; set; }
 
     public string Instruction { get; set; } = string.Empty;
 
@@ -502,6 +516,7 @@ public static class DesignArtifactTypes
 {
     public const string WebPage = "web-page";
     public const string HtmlPpt = "html-ppt";
+    public const string CodeFilm = "code-film";
 }
 
 public static class DesignArtifactOperations
@@ -513,6 +528,7 @@ public static class DesignArtifactOperations
 
 public static class DesignArtifactSourceSurfaces
 {
+    public const string QuickCreation = "quick-creation";
     public const string WebHosting = "web-hosting";
     public const string KnowledgeBase = "knowledge-base";
     public const string Workflow = "workflow";

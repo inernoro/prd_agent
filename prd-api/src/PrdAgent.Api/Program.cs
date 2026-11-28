@@ -33,6 +33,15 @@ using Serilog;
 using Serilog.Events;
 using Microsoft.Extensions.Configuration;
 
+if (args is ["--verify-quick-creation-resources"])
+{
+    var templates = QuickCreationCatalog.Get().Items;
+    foreach (var template in templates)
+        QuickCreationCatalog.ReadGuide(template);
+    Console.WriteLine($"快捷创作风格说明校验通过：{templates.Count} 份");
+    return;
+}
+
 var builder = WebApplication.CreateBuilder(args);
 
 // MongoDB BSON 映射注册：
@@ -437,6 +446,8 @@ PrdAgent.Api.Services.OpenDesignTransportServiceCollectionExtensions.AddOpenDesi
 builder.Services.AddSingleton<PrdAgent.Api.Services.IDesignArtifactProviderDefinitionSource, PrdAgent.Api.Services.BuiltInDesignArtifactProviderDefinitionSource>();
 builder.Services.AddScoped<PrdAgent.Api.Services.IDesignArtifactProviderCatalog, PrdAgent.Api.Services.DesignArtifactProviderCatalog>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.HostedSiteEditRunWorker>();
+builder.Services.AddSingleton<PrdAgent.Api.Services.QuickCreationExportWorker>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<PrdAgent.Api.Services.QuickCreationExportWorker>());
 builder.Services.AddHostedService<PrdAgent.Api.Services.HostedCommentReplyWorker>();
 
 // 工作流后台执行器（DAG 拓扑排序 → 逐节点推进）

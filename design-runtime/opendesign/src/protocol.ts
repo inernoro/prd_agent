@@ -18,6 +18,7 @@ const MAP_DESIGN_COMMAND_SCHEMA = 'map-design-artifact-command-v2';
 const DEFAULT_TASK_TIMEOUT_SECONDS = 900;
 const MIN_TASK_TIMEOUT_SECONDS = 30;
 const MAX_TASK_TIMEOUT_SECONDS = 7_200;
+const MAX_CODE_FILM_TIMEOUT_SECONDS = 14_400;
 
 export interface NormalizedTaskRequest extends DesignTaskInput {
   /** 第几次尝试。同一 taskId 只有在上一次尝试以失败 / 取消结束后才能以更大的 attempt 重新提交。 */
@@ -102,7 +103,28 @@ export function normalizeTaskRequest(body: unknown, trustedLlmGwBaseUrl = 'http:
   if (!Number.isSafeInteger(attempt) || Number(attempt) < 1 || Number(attempt) > 100) invalid('attempt must be an integer in [1, 100]');
   const rawTransfer = record(request.transfer, 'transfer');
   const { previewUrl: rawPreviewUrl, ...transferFields } = rawTransfer;
-  const transfer = normalizeWorkspaceTransfer(transferFields);
+  const envelope = record(request.envelope, 'envelope');
+  const codeFilm = envelope.schemaVersion === 'map-code-film-command-v1';
+  if (codeFilm && (envelope.runId !== taskId || typeof envelope.command !== 'string'
+      || !envelope.command.trim() || envelope.command.length > 4_000)) invalid('invalid code film envelope');
+  const resumeFilmFrom = envelope.resumeFilmFrom;
+  if (resumeFilmFrom !== undefined && resumeFilmFrom !== null
+      && (!codeFilm || typeof resumeFilmFrom !== 'string' || !SESSION_ID_RE.test(resumeFilmFrom) || resumeFilmFrom === taskId)) {
+    invalid('invalid code film checkpoint identity');
+  }
+  const retryFilmScene = envelope.retryFilmScene;
+  if (retryFilmScene !== undefined && retryFilmScene !== null
+      && (typeof resumeFilmFrom !== 'string' || typeof retryFilmScene !== 'number' || !Number.isInteger(retryFilmScene)
+        || retryFilmScene < 1 || retryFilmScene > 100)) invalid('invalid code film retry scene');
+  let browserFilm: DesignTaskInput['browserFilm'];
+  if (envelope.browserFilm != null) {
+    const raw = record(envelope.browserFilm, 'browserFilm');
+    if (!codeFilm || ![60, 180, 300, 600].includes(Number(raw.target)) || typeof raw.target !== 'number'
+        || typeof raw.scenes !== 'number' || !Number.isInteger(raw.scenes) || raw.scenes < 4 || raw.scenes > 40
+        || typeof raw.trial !== 'boolean') invalid('invalid browser film contract');
+    browserFilm = { target: raw.target, scenes: raw.scenes, trial: raw.trial };
+  }
+  const transfer = normalizeWorkspaceTransfer(transferFields, codeFilm, browserFilm !== undefined);
   let previewUrl: string | undefined;
   if (rawPreviewUrl !== undefined && rawPreviewUrl !== null) {
     const parsed = validateTransferUrl(rawPreviewUrl, 'transfer.previewUrl');
@@ -118,14 +140,15 @@ export function normalizeTaskRequest(body: unknown, trustedLlmGwBaseUrl = 'http:
   }
   const model = normalizeModel(request.model, taskId, trustedLlmGwBaseUrl, transfer.inputPackageUrl);
   const timeoutSeconds = request.timeoutSeconds === undefined ? DEFAULT_TASK_TIMEOUT_SECONDS : request.timeoutSeconds;
+  const maxTimeout = codeFilm ? MAX_CODE_FILM_TIMEOUT_SECONDS : MAX_TASK_TIMEOUT_SECONDS;
   if (
     !Number.isSafeInteger(timeoutSeconds)
     || Number(timeoutSeconds) < MIN_TASK_TIMEOUT_SECONDS
-    || Number(timeoutSeconds) > MAX_TASK_TIMEOUT_SECONDS
+    || Number(timeoutSeconds) > maxTimeout
   ) {
-    invalid(`timeoutSeconds must be an integer in [${MIN_TASK_TIMEOUT_SECONDS}, ${MAX_TASK_TIMEOUT_SECONDS}]`);
+    invalid(`timeoutSeconds must be an integer in [${MIN_TASK_TIMEOUT_SECONDS}, ${maxTimeout}]`);
   }
-  const instruction = normalizeEnvelope(request.envelope, taskId);
+  const instruction = codeFilm ? envelope.command as string : normalizeEnvelope(envelope, taskId);
   const fingerprint = sha256(JSON.stringify({
     taskId,
     attempt,
@@ -141,6 +164,10 @@ export function normalizeTaskRequest(body: unknown, trustedLlmGwBaseUrl = 'http:
       runId: model.runId,
     },
     timeoutSeconds,
+    ...(codeFilm ? { codeFilm } : {}),
+    ...(browserFilm ? { browserFilm } : {}),
+    ...(typeof resumeFilmFrom === 'string' ? { resumeFilmFrom } : {}),
+    ...(typeof retryFilmScene === 'number' ? { retryFilmScene } : {}),
     instruction,
   }));
   return {
@@ -151,6 +178,10 @@ export function normalizeTaskRequest(body: unknown, trustedLlmGwBaseUrl = 'http:
     ...(previewUrl ? { previewUrl } : {}),
     model,
     timeoutSeconds: Number(timeoutSeconds),
+    ...(codeFilm ? { codeFilm } : {}),
+    ...(browserFilm ? { browserFilm } : {}),
+    ...(typeof resumeFilmFrom === 'string' ? { resumeFilmFrom } : {}),
+    ...(typeof retryFilmScene === 'number' ? { retryFilmScene } : {}),
     instruction,
   };
 }

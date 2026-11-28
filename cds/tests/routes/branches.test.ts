@@ -280,7 +280,7 @@ describe('Branch Routes', () => {
     // 模拟真正的 detached worktree：解析得到完整身份，快照 HEAD 与请求目标一致。
     const sourceHeads = new Map<string, string>();
     const defaultSourceSha = 'abc1234' + '0'.repeat(33);
-    mock.addResponsePattern(/git check-ref-format --branch/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+    mock.addResponsePattern(/^git check-ref-format 'refs\/heads\//, () => ({ stdout: '', stderr: '', exitCode: 0 }));
     mock.addResponsePattern(/git rev-parse --verify '([^']+)\^\{commit\}'/, (match) => ({
       stdout: /^[0-9a-f]{7,40}$/i.test(match[1]) ? match[1].padEnd(40, '0') : defaultSourceSha,
       stderr: '', exitCode: 0,

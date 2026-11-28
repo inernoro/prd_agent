@@ -2,7 +2,7 @@ import '@/components/workspace/workspace.css';
 import '@/components/web-hosting/web-hosting-toolbar.css';
 import { HostedCollectionEditor, HostedCollectionLibrary } from '@/components/web-hosting/HostedCollectionManager';
 import { getWebHostingUploadError, WEB_HOSTING_UPLOAD_ACCEPT, WEB_HOSTING_UPLOAD_EXTENSIONS } from '@/lib/webHostingUploadLimits';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type CompositionEvent } from 'react';
 import { useHostedSiteSelection } from '@/components/web-hosting/useHostedSiteSelection';
 import { CheckSquare2 } from 'lucide-react';
 import { Button } from '@/components/design/Button';
@@ -115,6 +115,7 @@ import SiteWorkbench, { type WorkbenchTarget } from '@/components/web-hosting/wo
 import GenerateSiteMenu from '@/components/web-hosting/GenerateSiteMenu';
 import GenerationSettingsDrawer from '@/components/web-hosting/GenerationSettingsDrawer';
 import { parseDesignArtifactLaunch } from '@/lib/designArtifactLaunch';
+import { listQuickCreationTemplates } from '@/services/real/quickCreation';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { listMyTeams } from '@/services/real/teams';
 import { SiteEditCount, SiteNewBadge } from '@/components/web-hosting/SiteActivityMeta';
@@ -344,6 +345,31 @@ export default function WebPagesPage() {
   // 团队空间下我的有效角色（owner/editor/viewer）；个人空间为 null（=自己的，全权）
   const [myWebHostingRole, setMyWebHostingRole] = useState<WebHostingRole | null>(null);
   const [keyword, setKeyword] = useState('');
+  const [searchText, setSearchText] = useState('');
+  const [searchFocused, setSearchFocused] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const searchComposing = useRef(false);
+  const searchInput = {
+    ref: searchInputRef,
+    value: searchText,
+    onFocus: () => setSearchFocused(true),
+    onBlur: () => {
+      if (searchComposing.current) setSearchText(keyword);
+      searchComposing.current = false;
+      setSearchFocused(false);
+    },
+    onChange: (event: ChangeEvent<HTMLInputElement>) => {
+      const value = event.currentTarget.value;
+      setSearchText(value);
+      if (!searchComposing.current) setKeyword(value);
+    },
+    onCompositionStart: () => { searchComposing.current = true; },
+    onCompositionEnd: (event: CompositionEvent<HTMLInputElement>) => {
+      searchComposing.current = false;
+      setSearchText(event.currentTarget.value);
+      setKeyword(event.currentTarget.value);
+    },
+  };
   const [activeTag, setActiveTag] = useState<string | null>(null);
   // 来源筛选（手动上传 / 工作流生成 / MCP 生成 / 保存自分享）；null = 不限
   const [activeSource, setActiveSource] = useState<string | null>(null);
@@ -408,10 +434,17 @@ export default function WebPagesPage() {
     setEditItem(null);
     setShowUploadDialog(true);
   };
-  // 顶部「生成网页」主入口：与上传弹窗同一个空间快照口径（分组归属用它判定）。
-  const openGenerateDialog = () => {
-    uploadDialogSpaceRef.current = currentSpace;
-    setWorkbenchTarget({ kind: 'new' });
+  const openQuickCreation = async () => {
+    const space = currentSpace;
+    const result = await listQuickCreationTemplates();
+    if (!result.success) {
+      uploadDialogSpaceRef.current = space;
+      setWorkbenchTarget({ kind: 'new' });
+      return;
+    }
+    const query = new URLSearchParams({ from: 'web-pages' });
+    if (space.kind === 'team') query.set('destTeam', space.teamId);
+    navigate(`/quick-creation-agent?${query}`);
   };
 
   /**
@@ -446,6 +479,12 @@ export default function WebPagesPage() {
 
   useEffect(() => {
     if (!location.search || consumedLaunchRef.current === location.search) return;
+    if (new URLSearchParams(location.search).get('legacyCreate') === '1') {
+      consumedLaunchRef.current = location.search;
+      uploadDialogSpaceRef.current = currentSpace;
+      setWorkbenchTarget({ kind: 'new' });
+      return;
+    }
     const launch = parseDesignArtifactLaunch(location.search);
     if (!launch || launch.target !== 'web-page') return;
     consumedLaunchRef.current = location.search;
@@ -518,6 +557,13 @@ export default function WebPagesPage() {
    * 后台只保留一个「以访客身份预览」的动作。
    */
   const [workspaceTab, setWorkspaceTab] = useState<'library' | 'shares'>('library');
+  useLayoutEffect(() => {
+    // 响应式切换可能直接卸载搜索框，浏览器这时不会派发 blur。
+    if (!searchFocused || (workspaceTab === 'library' && searchInputRef.current === document.activeElement)) return;
+    if (searchComposing.current) setSearchText(keyword);
+    searchComposing.current = false;
+    setSearchFocused(false);
+  }, [isMobile, keyword, searchFocused, workspaceTab]);
 
   useEffect(() => {
     if (checkedRecentDelivery.current || location.search || !seenDeliveryKey) return;
@@ -555,7 +601,7 @@ export default function WebPagesPage() {
       if (!preferredSpace && target.ownerUserId !== currentUserId) throw new Error('暂时无法进入这个网页所属的团队空间');
       const space: Space = preferredSpace ?? { kind: 'personal' };
       if (!preferredSpace) setOwnerReturnSite(target);
-      setKeyword(''); setActiveTag(null); setActiveSource(null);
+      setSearchText(''); setKeyword(''); setActiveTag(null); setActiveSource(null);
       setActiveFolder(null); setActiveGroupId(null); setWorkspaceTab('library'); setVisibilityFilter('all');
       setCurrentSpace(space); rememberSpace(space);
       setSites(previous => [target, ...previous.filter(site => site.id !== target.id)]);
@@ -1275,6 +1321,7 @@ export default function WebPagesPage() {
           <div key={site.id} className="min-w-0">
             <SiteCard
               site={site}
+              pauseLivePreview={searchFocused}
               size={cardSize}
               selected={selectedIds.has(site.id)}
               selectionMode={selectionMode}
@@ -1309,6 +1356,7 @@ export default function WebPagesPage() {
       <div className="flex flex-col">
         {items.map(site => (
           <SiteListItem
+            pauseLivePreview={searchFocused}
             traffic={siteTraffic[site.id]}
             activity={siteActivity[site.id]}
             relatedSummary={relatedSummaries[site.id]}
@@ -1411,8 +1459,7 @@ export default function WebPagesPage() {
                   <input
                     type="text"
                     placeholder="搜索标题、描述、标签"
-                    value={keyword}
-                    onChange={e => setKeyword(e.target.value)}
+                    {...searchInput}
                     className="web-hosting-toolbar-input"
                   />
                   {/* 设计稿右端的 `/` 快捷键提示片 */}
@@ -1505,11 +1552,9 @@ export default function WebPagesPage() {
                     「从个人空间添加」只留左栏底部那一处，不在两个地方各摆一遍。 */}
                 {(currentSpace.kind !== 'team' || canEditInWebHosting(myWebHostingRole)) && (
                   <div className="web-hosting-toolbar-actions">
-                    {/* 设计稿 Main：「生成网页」是主操作，下拉选素材来源，旁边齿轮进设置；「上传网页」退为次操作。 */}
                     <Button size="sm" variant="ghost" onClick={() => navigate("/web-pages/new-document")}>按模版新建文档</Button>
-                    <Button size="sm" variant="ghost" onClick={() => navigate("/web-pages/collections")}>合集</Button>
                     <GenerateSiteMenu
-                      onGenerate={openGenerateDialog}
+                      onGenerate={openQuickCreation}
                       onOpenSettings={() => setShowGenerationSettings(true)}
                     />
                     <Button data-tour-id="webpages-upload-primary" size="sm" variant="secondary" onClick={openCreateUploadDialog}>
@@ -1679,8 +1724,7 @@ export default function WebPagesPage() {
                 <input
                   type="text"
                   placeholder="搜索站点名称、描述..."
-                  value={keyword}
-                  onChange={e => setKeyword(e.target.value)}
+                  {...searchInput}
                   className="min-h-11 w-full pl-9 pr-3 py-2 rounded-lg text-sm outline-none"
                   style={{
                     background: 'var(--bg-sunken)',
@@ -1739,7 +1783,7 @@ export default function WebPagesPage() {
         ) : null}
 
         {isMobile && (currentSpace.kind !== 'team' || canEditInWebHosting(myWebHostingRole)) && (
-          <MobileFab onClick={openGenerateDialog} icon={Sparkles} label="生成网页" />
+          <MobileFab onClick={openQuickCreation} icon={Sparkles} label="生成" />
         )}
 
         {/* Batch actions */}
@@ -2170,6 +2214,7 @@ export default function WebPagesPage() {
           ) : (
             <SiteContextPanel
               site={contextSite}
+              pauseLivePreview={searchFocused}
               links={shareLinks}
               visitorCount={contextSite ? siteVisitors[contextSite.id] : undefined}
               pulse={weeklyPulse}
@@ -3123,8 +3168,9 @@ function MoreActionsButton({ actions }: { actions: MoreAction[] }) {
 
 // ─── List View ───
 
-export function SiteListItem({ site, selected, selectionMode = false, shared, caps, activity, traffic, relatedSummary, onNavigateRelated, onVisit, onSelect, onEdit, onDelete, onShare, onQrCode, onTogglePublic, onComments, onAskConfig, onAiEdit }: {
+export function SiteListItem({ site, pauseLivePreview, selected, selectionMode = false, shared, caps, activity, traffic, relatedSummary, onNavigateRelated, onVisit, onSelect, onEdit, onDelete, onShare, onQrCode, onTogglePublic, onComments, onAskConfig, onAiEdit }: {
   site: HostedSite;
+  pauseLivePreview?: boolean;
   selected: boolean;
   selectionMode?: boolean;
   shared?: boolean;
@@ -3195,7 +3241,7 @@ export function SiteListItem({ site, selected, selectionMode = false, shared, ca
         <PdfThumbnail className="shrink-0 w-8 h-8 rounded overflow-hidden" compact />
       ) : (
         <div className="shrink-0 w-8 h-8 rounded overflow-hidden" style={{ background: 'var(--bg-sunken)' }}>
-          <SitePreview site={site} url={site.siteUrl} className="w-full h-full" />
+          <SitePreview site={site} url={site.siteUrl} className="w-full h-full" paused={pauseLivePreview} />
         </div>
       )}
 

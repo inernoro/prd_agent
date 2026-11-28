@@ -1206,6 +1206,14 @@ public static class Admin
             Category = "Document"
         )]
         public const string GenerateHtml = "prd-agent-web.web-hosting.generate-html::chat";
+
+        [AppCallerMetadata(
+            "快速创作-对话起稿",
+            "逐轮补齐创作简报、推荐真实风格并拟定可确认的脚本",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Document"
+        )]
+        public const string QuickCreationBrief = "prd-agent-web.web-hosting.quick-creation-brief::chat";
     }
 
     public static class Lab

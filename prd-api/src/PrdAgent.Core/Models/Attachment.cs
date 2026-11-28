@@ -45,4 +45,8 @@ public class Attachment
 
     /// <summary>从文件中提取的纯文本内容（PDF/Word/Excel/PPT 等）</summary>
     public string? ExtractedText { get; set; }
+
+    /// <summary>快捷创作接收的原稿、知识库副本或图片类型。</summary>
+    public string? QuickCreationKind { get; set; }
+    public string? QuickCreationReadError { get; set; }
 }

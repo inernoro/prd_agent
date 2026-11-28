@@ -31,7 +31,8 @@ ARG GIT_COMMIT=""
 RUN --mount=type=cache,id=nuget,target=/root/.nuget/packages \
     dotnet restore "PrdAgent.Api.csproj" && \
     dotnet publish "PrdAgent.Api.csproj" -c Release -o /app/publish /p:UseAppHost=false --no-restore \
-      ${GIT_COMMIT:+-p:SourceRevisionId=$GIT_COMMIT}
+      ${GIT_COMMIT:+-p:SourceRevisionId=$GIT_COMMIT} && \
+    dotnet /app/publish/PrdAgent.Api.dll --verify-quick-creation-resources
 
 FROM base AS final
 WORKDIR /app

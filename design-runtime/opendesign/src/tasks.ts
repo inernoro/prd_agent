@@ -338,6 +338,9 @@ export class TaskManager {
     const onStage: StageReporter = (stage, detail) => {
       if (record.state !== 'running') return;
       const { status: runtimeStatus, ...stageDetail } = detail || {};
+      if (stage === 'code_film_input_verified' || stage === 'code_film_form_answered') {
+        this.options.log?.(JSON.stringify({ taskId: request.taskId, stage, ...stageDetail }));
+      }
       this.push(record, 'status', {
         ...stageDetail,
         status: 'running',

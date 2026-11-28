@@ -26,7 +26,7 @@ describe('网页托管原版列表布局回归', () => {
     // 设计稿 Main（2026-09-23）：「生成网页」是主操作，「上传网页」退为次操作紧挨着它。
     expect(toolbar).toContain('size="sm" variant="secondary" onClick={openCreateUploadDialog}');
     // 2026-09-24：点「生成网页」直接进工作台，不再先弹来源二选一。
-    expect(toolbar).toContain('onGenerate={openGenerateDialog}');
+    expect(toolbar).toContain('onGenerate={openQuickCreation}');
     expect(toolbar).not.toContain('帮我修改');
     expect(toolbar).not.toContain('webpages-knowledge-generate');
   });
@@ -39,7 +39,7 @@ describe('网页托管原版列表布局回归', () => {
     expect(source).toContain('data-tour-id="webpages-knowledge-generate"');
     expect(source).toContain('onClick={onGenerate}');
     expect(source).toContain('parseDesignArtifactLaunch(location.search)');
-    expect(source).toContain('<MobileFab onClick={openGenerateDialog} icon={Sparkles} label="生成网页" />');
+    expect(source).toContain('<MobileFab onClick={openQuickCreation} icon={Sparkles} label="生成" />');
     expect(source).toContain('data-tour-id="webpages-mobile-upload"');
     expect(source).toContain('aria-label="上传网页"');
     expect(source).toContain("gridTemplateColumns: isMobile ? 'repeat(2, minmax(0, 1fr))'");

@@ -14,6 +14,7 @@ const AGENT_CARD_PRESENTATION: Readonly<Record<string, AgentCardPresentation>> =
   'video-agent': { task: '生成成片视频' },
   'report-agent': { task: '汇总本周进展' },
   'md-to-ppt-agent': { task: '生成演示页面' },
+  'quick-creation-agent': { task: '把稿件做成视频或网页' },
   'task-tree-agent': { task: '梳理今日任务' },
   'speech-agent': { task: '组织上台表达' },
   'pm-agent': { task: '推进项目交付' },

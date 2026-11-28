@@ -63,6 +63,16 @@ const RULES: FailureRule[] = [
     owner: 'cds', retryable: true, suggestedAction: '确认 CDS 状态存储健康后重试；不要把本次响应视为已完成',
   },
   {
+    code: 'config.git.branch-invalid',
+    pattern: /部署分支名不符合 Git 规则/,
+    owner: 'config', retryable: false, suggestedAction: '核对远端仓库登记的分支名后重新部署',
+  },
+  {
+    code: 'cds.git.ref-validation-unavailable',
+    pattern: /暂时无法校验部署分支/,
+    owner: 'cds', retryable: true, suggestedAction: '确认执行器能够运行 Git 后重新部署',
+  },
+  {
     code: 'cds.executor.unavailable',
     pattern: /executor.*(?:offline|unavailable|拒绝|不可达)|owning_executor_offline|执行器.*(?:离线|不可达)/i,
     owner: 'cds', retryable: true, suggestedAction: '等待原执行器恢复或重新分配执行器后重试',

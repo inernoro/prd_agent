@@ -372,6 +372,7 @@ public class MongoDbContext
     public IMongoCollection<HostedSiteRevision> HostedSiteRevisions => _database.GetCollection<HostedSiteRevision>("hosted_site_revisions");
     // 物理集合隔离：未升级 worker 的旧扫描不能认领、恢复或清理新任务。
     public IMongoCollection<DesignArtifactRun> DesignArtifactRuns => _database.GetCollection<DesignArtifactRun>("design_artifact_runs_v2");
+    public IMongoCollection<QuickCreationBrief> QuickCreationBriefs => _database.GetCollection<QuickCreationBrief>("quick_creation_briefs");
     /// <summary>网页生成设置单例（默认执行器、风格预设、可编辑提示词）。</summary>
     public IMongoCollection<DesignGenerationSettings> DesignGenerationSettings => _database.GetCollection<DesignGenerationSettings>("design_generation_settings");
     // 「我的风格」：每人自己的网页生成风格（按 OwnerUserId 隔离，每人最多 20 套）

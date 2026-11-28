@@ -344,6 +344,7 @@ export function SiteBatchPanel({
  */
 export function SiteContextPanel({
   site,
+  pauseLivePreview,
   links,
   visitorCount,
   pulse,
@@ -353,6 +354,7 @@ export function SiteContextPanel({
   onRenew,
 }: {
   site: HostedSite | null;
+  pauseLivePreview?: boolean;
   /** 当前用户的全部分享链接；面板内部按站点筛 */
   links: ShareLinkItem[];
   /** 该站点的去重访客数（列表接口的 visitors 映射）；拿不到就不写「N 位访客」那半句 */
@@ -394,13 +396,15 @@ export function SiteContextPanel({
         overflow: 'hidden',
       }}>
         <div style={{ aspectRatio: '16 / 10', background: 'var(--bg-tertiary)' }}>
-          {isPdfSite(site) ? (
+          {pauseLivePreview && site.coverImageUrl ? (
+            <img src={site.coverImageUrl} alt="" className="h-full w-full object-cover" />
+          ) : isPdfSite(site) ? (
             <PdfThumbnail
               sizeBytes={site.files.find((f) => f.path?.toLowerCase().endsWith('.pdf'))?.size ?? site.totalSize}
               className="h-full w-full"
             />
           ) : (
-            <SitePreview site={site} url={site.siteUrl} className="h-full w-full" />
+            <SitePreview site={site} url={site.siteUrl} className="h-full w-full" paused={pauseLivePreview} />
           )}
         </div>
         <div style={{ padding: 10 }}>

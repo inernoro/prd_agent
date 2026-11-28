@@ -13,6 +13,7 @@ import { MobileSegmented } from '@/components/mobile/MobileSegmented';
 import { MobileFab } from '@/components/mobile/MobileFab';
 import { AppStoreSection, AppStoreRankedList } from '@/components/mobile/appStore';
 import { AgentCardArtwork, AgentCardTask, hasAgentCardArtwork } from '@/components/agent-shell/AgentCardArtwork';
+import { Badge } from '@/components/design/Badge';
 
 /**
  * 移动端「发现」（AI 百宝箱）—— 原生手机浏览体验。
@@ -230,6 +231,9 @@ function AgentCard({ item, onClick }: { item: ToolboxItem; onClick: () => void }
   const Icon = iconFor(item.icon);
   const hasArtwork = hasAgentCardArtwork(item.agentKey);
   const pcOnly = item.routePath ? resolveMobileCompat(item.routePath)?.level === 'pc-only' : false;
+  const wipBadge = item.type === 'builtin' && item.wip
+    ? <Badge variant="warning" size="sm" className="shrink-0">开发中</Badge>
+    : null;
 
   return (
     <button
@@ -266,9 +270,10 @@ function AgentCard({ item, onClick }: { item: ToolboxItem; onClick: () => void }
       )}
       {hasArtwork ? (
         <span className="relative z-10 flex items-start justify-between gap-2">
-          <b style={{ maxWidth: '62%', fontSize: 20, fontWeight: 700, display: 'block', lineHeight: 1.2 }}>
-            {item.name}
-          </b>
+          <span className="flex max-w-[62%] flex-wrap items-center gap-1.5">
+            <b style={{ fontSize: 20, fontWeight: 700, lineHeight: 1.2 }}>{item.name}</b>
+            {wipBadge}
+          </span>
           <AgentCardTask agentKey={item.agentKey} compact />
         </span>
       ) : (
@@ -290,7 +295,10 @@ function AgentCard({ item, onClick }: { item: ToolboxItem; onClick: () => void }
         } : undefined}
       >
         {!hasArtwork && (
-          <b style={{ fontSize: 17, fontWeight: 700, display: 'block', lineHeight: 1.2 }}>{item.name}</b>
+          <span className="flex flex-wrap items-center gap-1.5">
+            <b style={{ fontSize: 17, fontWeight: 700, lineHeight: 1.2 }}>{item.name}</b>
+            {wipBadge}
+          </span>
         )}
         {hasArtwork ? (
           <span className="flex min-w-0 items-center gap-1.5 overflow-hidden">

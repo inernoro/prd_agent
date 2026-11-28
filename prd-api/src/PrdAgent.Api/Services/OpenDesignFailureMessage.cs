@@ -165,7 +165,8 @@ internal static class OpenDesignFailureMessage
         OpenDesignFailureStage stage,
         string? remoteReason,
         string? remoteCode = null,
-        OpenDesignRemoteFailureDetails? details = null)
+        OpenDesignRemoteFailureDetails? details = null,
+        bool codeFilm = false)
     {
         var diagnostic = string.IsNullOrWhiteSpace(remoteReason) ? null : remoteReason.Trim();
         var structuredDiagnostic = diagnostic != null
@@ -177,22 +178,23 @@ internal static class OpenDesignFailureMessage
                 details)
             : null;
         return new InvalidOperationException(
-            Describe(stage, remoteReason, remoteCode),
+            Describe(stage, remoteReason, remoteCode, codeFilm),
             structuredDiagnostic);
     }
 
-    internal static string Describe(OpenDesignFailureStage stage, string? remoteReason, string? remoteCode = null)
+    internal static string Describe(OpenDesignFailureStage stage, string? remoteReason, string? remoteCode = null, bool codeFilm = false)
     {
+        var failure = codeFilm ? "视频生成失败" : "网页生成失败";
         if (!HasReason(remoteReason))
-            return $"网页生成失败：{stage.Happened}，而且远端没有回传原因。下一步：{OpenDesignFailureStage.NextStepWithoutReason}。";
+            return $"{failure}：{stage.Happened}，而且远端没有回传原因。下一步：{OpenDesignFailureStage.NextStepWithoutReason}。";
 
         var code = remoteCode?.Trim();
         foreach (var (codes, reason, nextStep) in KnownRemoteCodes)
         {
             if (code != null && codes.Contains(code, StringComparer.Ordinal))
-                return $"网页生成失败：{stage.Happened}——{reason}。下一步：{nextStep}。";
+                return $"{failure}：{stage.Happened}——{reason}。下一步：{nextStep}。";
         }
-        return $"网页生成失败：{stage.Happened}——{UnmappedReason}。下一步：{stage.NextStepWithReason}。";
+        return $"{failure}：{stage.Happened}——{UnmappedReason}。下一步：{stage.NextStepWithReason}。";
     }
 
     private static bool HasReason(string? remoteReason)

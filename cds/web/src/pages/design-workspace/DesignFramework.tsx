@@ -46,6 +46,18 @@ function tokenEntries(value: unknown): Array<[string, string | number]> {
     (entry): entry is [string, string | number] => typeof entry[1] === 'string' || (typeof entry[1] === 'number' && Number.isFinite(entry[1])));
 }
 
+/* V25：框架卡片的预览区——配色和字号，和稿件卡片的缩略图占同一个位置 */
+export function FrameworkPreview({ material }: { material: DesignMaterial }) {
+  const colors = colorsOf(material);
+  const sizes = typeOf(material);
+  const rules = designFrameworkRules(material.rules ?? '').size;
+  return <span className="dw-fwc-sample">
+    {colors.length ? <span className="dw-fwc-swatches" aria-label="框架配色">{colors.slice(0, 6).map(color =>
+      <i key={color.name} title={color.name} style={{ backgroundColor: color.light }} />)}</span> : <span className="dw-muted">没有配色令牌</span>}
+    <span className="dw-fwc-type">{sizes.length ? <><b>Aa</b>{sizes.slice(0, 3).map(row => row.size).join(' · ')}</> : null}{rules ? <small>{rules} 条规则</small> : null}</span>
+  </span>;
+}
+
 export function FrameworkOverview({ material, used, revision, outdated = 0 }: { material: DesignMaterial; used: number; revision?: FrameworkRevision; outdated?: number }) {
   const charter = charterOf(revision);
   const colors = colorsOf(material);
