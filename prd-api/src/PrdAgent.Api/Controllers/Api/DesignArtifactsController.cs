@@ -410,9 +410,10 @@ public sealed partial class DesignArtifactsController : ControllerBase
             DesignArtifactBriefFactory.Freeze(run, currentHtml: null);
             WebPageDesignArtifactLifecycleAdapter.InitializeNewRun(run, capability, currentHtml: null);
         }
-        // MongoDB cannot write a BSON document over 16 MiB. Check the real stored record
-        // before inserting or queuing anything, rather than estimating a character quota.
-        if (quickCreation != null && run.ToBson().LongLength > 16L * 1024 * 1024)
+        // MongoDB 的 16 MiB 上限也适用于后续写入。按实际序列化体积检查，
+        // 预留后续写入的预览、阶段状态和结果元数据，避免生成成功却无法保存。
+        const long maxInitialRunBytes = 14L * 1024 * 1024;
+        if (quickCreation != null && run.ToBson().LongLength > maxInitialRunBytes)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
                 "这次稿件打包后超出任务存储容量，请减少文件体积后再提交"));
         await _db.DesignArtifactRuns.InsertOneAsync(run, cancellationToken: CancellationToken.None);
@@ -444,7 +445,7 @@ public sealed partial class DesignArtifactsController : ControllerBase
         }
         try
         {
-            await _queue.EnqueueAsync(RunKinds.DesignArtifactQueue(run.ArtifactType), runId, CancellationToken.None);
+            await _queue.EnqueueAsync(OpenDesignTransportResolver.QueueForRun(run, OpenDesignTransportResolver.CodeFilmSlots(_configuration)), runId, CancellationToken.None);
         }
         catch (Exception ex)
         {
@@ -756,7 +757,7 @@ public sealed partial class DesignArtifactsController : ControllerBase
         }
         try
         {
-            await _queue.EnqueueAsync(RunKinds.DesignArtifactQueue(restarted.ArtifactType), restarted.Id, CancellationToken.None);
+            await _queue.EnqueueAsync(OpenDesignTransportResolver.QueueForRun(restarted, OpenDesignTransportResolver.CodeFilmSlots(_configuration)), restarted.Id, CancellationToken.None);
         }
         catch (Exception ex)
         {

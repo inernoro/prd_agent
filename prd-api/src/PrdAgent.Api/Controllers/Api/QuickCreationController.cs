@@ -5,6 +5,7 @@ using Microsoft.Extensions.Caching.Memory;
 using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Api.Services;
+using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Services;
@@ -381,40 +382,66 @@ public sealed partial class DesignArtifactsController
     }
 
     [HttpGet("/api/quick-creation/assets")]
-    public async Task<IActionResult> ListQuickCreationAssets([FromQuery] string? scope, CancellationToken ct)
+    public async Task<IActionResult> ListQuickCreationAssets([FromQuery] string? scope,
+        [FromServices] ITeamService teams, CancellationToken ct)
     {
         if (!QuickCreationEnabled()) return NotFound();
         if (scope is not ("mine" or "team")) return QuickCreationError("请选择我的产物或团队产物");
+        const int pageSize = 80;
         var userId = this.GetRequiredUserId();
+        var teamScope = scope == "team";
+        var teamIds = teamScope ? await teams.GetMyTeamIdsAsync(userId, ct) : [];
+        var result = new List<object>();
+        if (teamScope && teamIds.Count == 0)
+            return Ok(ApiResponse<object>.Ok(new { items = result, total = result.Count }));
+
         var filter = Builders<DesignArtifactRun>.Filter;
         var completed = QuickCreationScope() & filter.Eq(row => row.Status, RunStatuses.Done)
             & filter.Ne(row => row.QuickCreation!.Trial, true);
-        if (scope == "mine") completed &= filter.Eq(row => row.UserId, userId);
-        else
+        completed &= teamScope
+            ? filter.Ne(row => row.UserId, userId) & filter.Ne(row => row.QuickCreationPublishedSiteId, null)
+            : filter.Eq(row => row.UserId, userId);
+        var query = _db.DesignArtifactRuns.Find(completed, new FindOptions { BatchSize = pageSize })
+            .SortByDescending(row => row.UpdatedAt);
+        if (!teamScope) query.Limit(pageSize);
+
+        using var cursor = await query.ToCursorAsync(ct);
+        while (result.Count < pageSize && await cursor.MoveNextAsync(ct))
         {
-            // 只有进入团队空间且经过现有托管权限检查的产物会出现在团队列表。
-            completed &= filter.Ne(row => row.QuickCreationPublishedSiteId, null);
-        }
-        var runs = await _db.DesignArtifactRuns.Find(completed).SortByDescending(row => row.UpdatedAt).Limit(80).ToListAsync(ct);
-        var result = new List<object>();
-        foreach (var run in runs)
-        {
-            var mine = run.UserId == userId;
-            var ownerName = "我";
-            if (scope == "team")
+            var runs = cursor.Current.ToList();
+            var candidateIds = new HashSet<string>(StringComparer.Ordinal);
+            if (teamScope)
             {
-                var site = await _sites.GetByIdAsync(run.QuickCreationPublishedSiteId!, userId, ct);
-                if (site == null || site.SharedTeamIds.Count == 0 || mine) continue;
-                ownerName = await _db.Users.Find(user => user.UserId == run.UserId)
-                    .Project(user => user.DisplayName).FirstOrDefaultAsync(ct) ?? "团队成员";
+                var siteFilter = Builders<HostedSite>.Filter;
+                var siteIds = await _db.HostedSites.Find(
+                        siteFilter.In(site => site.Id, runs.Select(run => run.QuickCreationPublishedSiteId!))
+                        & siteFilter.AnyIn(site => site.SharedTeamIds, teamIds))
+                    .Project(site => site.Id).ToListAsync(ct);
+                candidateIds.UnionWith(siteIds);
             }
-            result.Add(new
+
+            foreach (var run in runs)
             {
-                id = run.Id, runId = run.Id, run.Title, kind = QuickKind(run), templateId = run.QuickCreation!.TemplateId,
-                ownerName, mine, durationSec = run.QuickCreationMedia?.DurationSec,
-                publishStatus = run.QuickCreationPublishedAt.HasValue ? "done" : "none",
-                siteId = run.QuickCreationPublishedSiteId, run.UpdatedAt,
-            });
+                var ownerName = "我";
+                if (teamScope)
+                {
+                    // 复用站点权限，受限分组中的作品必须通过单站点可见性检查。
+                    var siteId = run.QuickCreationPublishedSiteId!;
+                    if (!candidateIds.Contains(siteId)) continue;
+                    var site = await _sites.GetByIdAsync(siteId, userId, ct);
+                    if (site == null || !site.SharedTeamIds.Any(teamIds.Contains)) continue;
+                    ownerName = await _db.Users.Find(user => user.UserId == run.UserId)
+                        .Project(user => user.DisplayName).FirstOrDefaultAsync(ct) ?? "团队成员";
+                }
+                result.Add(new
+                {
+                    id = run.Id, runId = run.Id, run.Title, kind = QuickKind(run), templateId = run.QuickCreation!.TemplateId,
+                    ownerName, mine = !teamScope, durationSec = run.QuickCreationMedia?.DurationSec,
+                    publishStatus = run.QuickCreationPublishedAt.HasValue ? "done" : "none",
+                    siteId = run.QuickCreationPublishedSiteId, run.UpdatedAt,
+                });
+                if (result.Count == pageSize) break;
+            }
         }
         return Ok(ApiResponse<object>.Ok(new { items = result, total = result.Count }));
     }

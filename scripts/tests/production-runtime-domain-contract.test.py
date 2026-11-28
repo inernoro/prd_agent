@@ -27,4 +27,12 @@ _design_gate = DEPLOY.index("\n  check_design_runtime_after_deploy\n")
 _activate = DEPLOY.index("\n  activate_pending_static_release\n", _design_gate)
 assert _compose_up < _design_gate < _activate
 
+# 影片回传只在对应路径使用与 API 一致的容量，其他请求继续沿用通用限制。
+for name in ("nginx.conf", "conf.d/branches/_standalone.conf"):
+    nginx = (ROOT / "deploy/nginx" / name).read_text(encoding="utf-8")
+    result_location = nginx.split("location ~ ^/api/design-artifacts/runtime/[0-9a-f]+/workspace/result/?$ {", 1)[1].split("}", 1)[0]
+    assert "client_max_body_size 80m;" in result_location
+    assert "proxy_pass http://api:8080;" in result_location
+    assert "client_max_body_size 30m;" in nginx
+
 print("Production runtime domain contract test: PASS")

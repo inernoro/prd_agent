@@ -68,23 +68,19 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
 
     protected override Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        var workers = new List<Task> {
-            ReconcileLoopAsync(stoppingToken),
-            ConsumeQueueAsync(RunKinds.DesignArtifact, null, stoppingToken)
-        };
-        workers.Add(ConsumeCodeFilmQueueAsync(stoppingToken));
-        return Task.WhenAll(workers);
+        var recovery = ReconcileLoopAsync(stoppingToken);
+        if (_codeFilmSlots.Count == 0)
+        {
+            // 共享执行器只能同时执行一项。交替从两类队列取任务，避免一类长期占满。
+            return Task.WhenAll(recovery,
+                ConsumeQueueAsync(RunKinds.DesignArtifact, null, stoppingToken, secondaryKind: RunKinds.CodeFilm));
+        }
+        return Task.WhenAll(recovery, ConsumeQueueAsync(RunKinds.DesignArtifact, null, stoppingToken),
+            ConsumeCodeFilmQueueAsync(stoppingToken));
     }
 
     private async Task ConsumeCodeFilmQueueAsync(CancellationToken stoppingToken)
     {
-        if (_codeFilmSlots.Count == 0)
-        {
-            // 没部署独立槽的历史配置仍能走原执行器。
-            await ConsumeQueueAsync(RunKinds.CodeFilm, null, stoppingToken);
-            return;
-        }
-
         var startupPlan = await Task.WhenAll(_codeFilmSlots.Select(async slot =>
             (Slot: slot, Ready: await ProbeCodeFilmSlotAsync(slot, stoppingToken))));
         var readyCount = startupPlan.Count(slot => slot.Ready);
@@ -125,9 +121,11 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
 
     private async Task ConsumeQueueAsync(
         string kind, Uri? codeFilmSlot, CancellationToken stoppingToken,
-        bool slotReady = true)
+        bool slotReady = true, string? secondaryKind = null)
     {
         var nextProbeAt = DateTime.UtcNow + CodeFilmSlotProbeInterval;
+        var slotQueue = codeFilmSlot == null ? null : RunKinds.CodeFilmSlotQueue(codeFilmSlot.AbsoluteUri);
+        var preferSecondary = false;
         while (!stoppingToken.IsCancellationRequested)
         {
             string? runId = null;
@@ -151,7 +149,20 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                     }
                 }
 
-                runId = await _queue.DequeueAsync(kind, TimeSpan.FromSeconds(1), stoppingToken);
+                if (secondaryKind != null)
+                {
+                    var first = preferSecondary ? secondaryKind : kind;
+                    var second = preferSecondary ? kind : secondaryKind;
+                    preferSecondary = !preferSecondary;
+                    runId = await _queue.DequeueAsync(first, TimeSpan.Zero, stoppingToken)
+                        ?? await _queue.DequeueAsync(second, TimeSpan.Zero, stoppingToken);
+                }
+                else
+                {
+                    if (slotQueue != null)
+                        runId = await _queue.DequeueAsync(slotQueue, TimeSpan.Zero, stoppingToken);
+                    runId ??= await _queue.DequeueAsync(kind, TimeSpan.FromSeconds(1), stoppingToken);
+                }
                 if (string.IsNullOrWhiteSpace(runId))
                 {
                     await Task.Delay(250, stoppingToken);
@@ -176,6 +187,19 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
         var publicLifecycle = scope.ServiceProvider.GetRequiredService<IWebPageDesignArtifactLifecycleAdapter>();
         var lifecycle = scope.ServiceProvider.GetRequiredService<IDesignArtifactLifecycleService>();
+        if (codeFilmSlot != null)
+        {
+            // 旧队列消息可能在新版本上线前已写入。认领前转交，避免扣住另一个槽。
+            var boundSlot = await db.DesignArtifactRuns.Find(item => item.Id == runId
+                    && item.DeploymentSlug == DeploymentScope.Current && item.Status == RunStatuses.Queued)
+                .Project(item => item.CodeFilmRuntimeSlot).FirstOrDefaultAsync(ct);
+            if (boundSlot != null && boundSlot != codeFilmSlot.AbsoluteUri
+                && _codeFilmSlots.Any(slot => slot.AbsoluteUri == boundSlot))
+            {
+                await _queue.EnqueueAsync(RunKinds.CodeFilmSlotQueue(boundSlot), runId, ct);
+                return;
+            }
+        }
         var leaseOwner = $"{_instanceId}:{Guid.NewGuid():N}";
         var run = await TryClaimWithLifecycleAsync(
             db,
@@ -1403,7 +1427,8 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             scope.ServiceProvider.GetRequiredService<IActivityActionRecorder>(),
             publicLifecycle,
             scope.ServiceProvider.GetRequiredService<IDesignArtifactLifecycleService>(),
-            _logger);
+            _logger,
+            _codeFilmSlots);
     }
 
     internal static async Task<PersistedDesignArtifact> PersistArtifactWithLeaseAsync(
@@ -2282,8 +2307,10 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         IActivityActionRecorder? activityRecorder = null,
         IWebPageDesignArtifactLifecycleAdapter? publicLifecycle = null,
         IDesignArtifactLifecycleService? lifecycle = null,
-        ILogger? logger = null)
+        ILogger? logger = null,
+        IReadOnlyList<Uri>? codeFilmSlots = null)
     {
+        codeFilmSlots ??= [];
         // 恢复以精确 revision 为主。唯一的跨 revision 动作是下面的「接管上一版的孤儿任务」：
         // 同项目同分支、上一版 revision 的 Running 任务，租约早已到期且结果未落定时，
         // 逐条 CAS 改写到本 revision，再走与同 revision 重启完全相同的终结路径。
@@ -2375,7 +2402,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                         CancellationToken.None);
                     try
                     {
-                        await queue.EnqueueAsync(RunKinds.DesignArtifactQueue(resumed.ArtifactType), resumed.Id, CancellationToken.None);
+                        await queue.EnqueueAsync(OpenDesignTransportResolver.QueueForRun(resumed, codeFilmSlots), resumed.Id, CancellationToken.None);
                     }
                     catch
                     {
@@ -2495,7 +2522,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                     Builders<DesignArtifactRun>.Update.Set(row => row.DeploymentSlug, currentScope)
                         .Set(row => row.RecoveryEnqueuedAt, now), cancellationToken: ct);
                 if (write.ModifiedCount == 1)
-                    await queue.EnqueueAsync(RunKinds.DesignArtifactQueue(candidate.ArtifactType), candidate.Id, CancellationToken.None);
+                    await queue.EnqueueAsync(OpenDesignTransportResolver.QueueForRun(candidate, codeFilmSlots), candidate.Id, CancellationToken.None);
             }
         }
 
@@ -2514,7 +2541,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                 Builders<DesignArtifactRun>.Update.Set(x => x.RecoveryEnqueuedAt, now),
                 cancellationToken: CancellationToken.None);
             if (write.ModifiedCount == 1)
-                await queue.EnqueueAsync(RunKinds.DesignArtifactQueue(candidate.ArtifactType), candidate.Id, CancellationToken.None);
+                await queue.EnqueueAsync(OpenDesignTransportResolver.QueueForRun(candidate, codeFilmSlots), candidate.Id, CancellationToken.None);
         }
 
         if (activityRecorder != null)

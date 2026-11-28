@@ -76,6 +76,14 @@ public static class OpenDesignTransportResolver
         return slots;
     }
 
+    internal static string QueueForRun(DesignArtifactRun run, IReadOnlyList<Uri> slots)
+    {
+        if (run.ArtifactType == DesignArtifactTypes.CodeFilm
+            && run.CodeFilmRuntimeSlot is { } boundSlot && slots.Any(slot => slot.AbsoluteUri == boundSlot))
+            return RunKinds.CodeFilmSlotQueue(boundSlot);
+        return RunKinds.DesignArtifactQueue(run.ArtifactType);
+    }
+
     public static OpenDesignTransportResolution ResolveForCodeFilmSlot(IConfiguration configuration, string? slot)
     {
         var transport = Resolve(configuration);
