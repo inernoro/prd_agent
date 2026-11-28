@@ -403,7 +403,7 @@ function FeedbackForm({ entry, version, busy, command, draftPath, screenId, onCa
       <label>交接方 <select name="handlerId" required defaultValue=""><option value="" disabled>选择交接方</option>
         {people.map(person => <option key={person.id} value={person.id}>{designPublisherLabel(person.label)} · {actorNames[actorOf(person)]}</option>)}
       </select></label>
-      {assignees.loading ? <p role="status">正在读取可接手的项目成员和智能体。</p>
+      {assignees.loading ? <ContentLoading variant="inline" label="正在读取可接手的项目成员和智能体" />
         : assignees.error ? <p className="ep-error" role="alert">{assignees.error}</p>
           : !people.length && <p role="status">当前项目没有其他可接手的成员或智能体。</p>}
       {draftPath && <p className="dw-feedback-path">关联交付文件 <code>{draftPath}</code></p>}

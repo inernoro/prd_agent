@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Check } from 'lucide-react';
 import { designSlots, type DesignEntry, type DesignFeedback, type DesignFeedbackAction, type DesignFeedbackProof,
   type DesignWorkspace } from '../../../../src/shared/design-workspace';
 import { checkFeedbackLanguage, feedbackActionLabels, feedbackHandover, feedbackProgramProof } from '../../../../src/shared/design-feedback';
@@ -43,7 +44,7 @@ function HandoverBar({ hand, canAct, human, actorId, busy, proofs, figures, onSt
   const issue = note.trim() ? checkFeedbackLanguage(note, '').problems[0] : undefined;
   return <div className="dw-fl-handover" data-stage={hand.stage}>
     <ol className="dw-fl-steps">{stageSteps.map(([, label], index) => <li key={label} data-on={index === at || undefined} data-past={index < at || undefined}>
-      <b>{index < at ? '✓' : index + 1}</b>{hand.stage === 'returned' && index === 1 ? '退回重做' : label}</li>)}</ol>
+      <b>{index < at ? <Check size={12} aria-hidden /> : index + 1}</b>{hand.stage === 'returned' && index === 1 ? '退回重做' : label}</li>)}</ol>
     <p className="dw-fl-who-line"><span>{designPublisherLabel(hand.raiser.label)} 提出</span><span aria-hidden>→</span>
       <span>{hand.handler ? <>{designPublisherLabel(hand.handler.label)} 处理</> : '还没指定交接方'}</span>
       {hand.confirmer && <span>{designPublisherLabel(hand.confirmer.label)} 确认</span>}
