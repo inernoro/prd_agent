@@ -24,6 +24,17 @@ public class BackgroundTaskAdmissionTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public void QuickCreationExportWorker_ProcessesUserQueuedWork(bool preview)
+    {
+        var registry = new BackgroundTaskAdmissionRegistry(Configuration(grant: false, preview: preview));
+        var state = registry.Check(typeof(QuickCreationExportWorker));
+        state.Kind.ShouldBe(BackgroundTaskKind.UserRunConsumer);
+        state.Allowed.ShouldBeTrue();
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public async Task UnregisteredService_ExecuteIsBlocked_ForTypeAndFactoryRegistration(bool factory)
     {
         var probe = new Probe();

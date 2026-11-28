@@ -11,12 +11,12 @@ using PrdAgent.Infrastructure.Services.AssetStorage;
 namespace PrdAgent.Api.Services;
 
 public sealed class QuickCreationExportWorker(IServiceScopeFactory scopes, IHttpClientFactory http,
-    IConfiguration config, IHostApplicationLifetime lifetime, ILogger<QuickCreationExportWorker> logger) : BackgroundService
+    IConfiguration config, ILogger<QuickCreationExportWorker> logger) : BackgroundService
 {
     private const int MaxExportBytes = 384 * 1024 * 1024;
     private static readonly TimeSpan LeaseTime = TimeSpan.FromMinutes(50);
     private static readonly TimeSpan Poll = TimeSpan.FromSeconds(4);
-    private readonly SemaphoreSlim _exportSlot = new(1, 1);
+    private readonly SemaphoreSlim _queuedSignal = new(0, 1);
 
     internal static FilterDefinition<DesignArtifactRun> Scope
         => DesignArtifactTimingStats.ScopeFilter(DeploymentScope.CurrentDurable);
@@ -24,19 +24,26 @@ public sealed class QuickCreationExportWorker(IServiceScopeFactory scopes, IHttp
     internal void NotifyQueuedExport(string runId)
     {
         logger.LogInformation("Browser film export notified run={RunId}", runId);
-        _ = ProcessNextAsync(lifetime.ApplicationStopping);
+        try { _queuedSignal.Release(); }
+        catch (SemaphoreFullException) { /* One pending wake is sufficient. */ }
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         logger.LogInformation("Browser film export worker ready");
-        while (await DelayAsync(stoppingToken))
-            await ProcessNextAsync(stoppingToken);
+        try
+        {
+            while (!stoppingToken.IsCancellationRequested)
+            {
+                await _queuedSignal.WaitAsync(Poll, stoppingToken);
+                await ProcessNextAsync(stoppingToken);
+            }
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { }
     }
 
     private async Task ProcessNextAsync(CancellationToken stoppingToken)
     {
-        if (stoppingToken.IsCancellationRequested || !_exportSlot.Wait(0)) return;
         try
         {
             await using var scope = scopes.CreateAsyncScope();
@@ -103,10 +110,6 @@ public sealed class QuickCreationExportWorker(IServiceScopeFactory scopes, IHttp
         catch (Exception error)
         {
             logger.LogWarning("Browser film export polling failed kind={ErrorType}", error.GetType().Name);
-        }
-        finally
-        {
-            _exportSlot.Release();
         }
     }
 
@@ -194,11 +197,5 @@ public sealed class QuickCreationExportWorker(IServiceScopeFactory scopes, IHttp
             };
         }
         catch (JsonException) { return "invalid_json"; }
-    }
-
-    private static async Task<bool> DelayAsync(CancellationToken token)
-    {
-        try { await Task.Delay(Poll, token); return true; }
-        catch (OperationCanceledException) when (token.IsCancellationRequested) { return false; }
     }
 }
