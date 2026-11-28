@@ -279,6 +279,9 @@ jobs:
         run: |
           pnpm -C e2e install --frozen-lockfile
           pnpm -C e2e exec playwright install --with-deps chromium
+      - name: Prepare media verifier in the cloud
+        if: inputs.quick_creation_existing_film_id != ''
+        run: command -v ffprobe || (sudo apt-get update && sudo apt-get install -y ffmpeg)
       - name: Verify the deployed quick creation journey
         env:
           E2E_BASE_URL: ${{ inputs.e2e_base_url }}
