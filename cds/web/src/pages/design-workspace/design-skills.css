@@ -66,6 +66,15 @@
 .dw-skills .dw-skill-guide > footer .ep-button { padding-inline: 14px; }
 .dw-skill-guide .dw-sg-copy-status { color: var(--dw-ok); font-size: .75rem; }
 .dw-skill-guide .dw-sg-copy-status[data-result=failed] { color: var(--dw-danger); }
+
+:is(.dw-workspace, .dw-surface) .ep-button[data-copied=true] { color: var(--dw-ok); border-color: var(--dw-ok); }
+@media (prefers-reduced-motion: no-preference) {
+  :root:not(.cds-reduced-motion) :is(.dw-workspace, .dw-surface) .ep-button[data-copied=true] svg { animation: dw-copy-confirm .23s ease-out both; }
+  @keyframes dw-copy-confirm {
+    from { opacity: .6; transform: scale(.75); }
+    to { opacity: 1; transform: scale(1); }
+  }
+}
 @media (min-width: 641px) {
   .dw-draft-actions .dw-info-panel:has(.dw-sg-mini) {
     width: min(286px, calc(100vw - 34px));

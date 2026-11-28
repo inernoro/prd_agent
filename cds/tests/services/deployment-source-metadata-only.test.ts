@@ -15,7 +15,10 @@ function fixture(){
 }
 it('cold metadata-only canonical resolves fixed B from project repo after origin advances C, without fetching or creating canonical',async()=>{
  const f=fixture();fs.writeFileSync(f.remote+'/version.txt','C');git(f.remote,'commit','-am','C');f.offline();const r=await f.service.resolveDeploymentCommit('main',f.canonical,f.B,f.repo);
- expect(r.afterFull).toBe(f.B);expect(r.before).toBe('');expect(fs.existsSync(f.canonical)).toBe(false);expect(f.commands.some(c=>c.command.startsWith('git fetch '))).toBe(false);expect(f.commands.every(c=>c.cwd===f.repo)).toBe(true);
+ expect(r.afterFull).toBe(f.B);expect(r.before).toBe('');expect(fs.existsSync(f.canonical)).toBe(false);expect(f.commands.some(c=>c.command.startsWith('git fetch '))).toBe(false);
+ const refChecks = f.commands.filter(c => c.command.startsWith('git check-ref-format '));
+ expect(refChecks).toEqual([{ command: "git check-ref-format 'refs/heads/main'", cwd: undefined }]);
+ expect(f.commands.filter(c => !refChecks.includes(c)).every(c => c.cwd === f.repo)).toBe(true);
 });
 it('new ordinary source dependency creates B under branch UUID root while canonical remains absent',async()=>{
  const f=fixture();expect(deploymentNeedsSourceCheckout([{prebuiltImage:false,command:'node app.js'} as any])).toBe(true);f.offline();const r=await f.service.prepareDeploymentSource('main',f.canonical,f.B,f.repo);

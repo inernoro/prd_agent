@@ -8,6 +8,7 @@ import { deflateSync } from 'node:zlib';
 import express from 'express';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createDesignWorkspaceRouter } from '../../src/routes/design-workspace.js';
+import { createDesignAcceptanceBrowser, type OpenDesignPreviewBuild } from '../../src/services/design-acceptance-browser.js';
 import { DesignWorkspaceService, type DesignActor, type DesignWorkspaceCommit } from '../../src/services/design-workspace.js';
 import { FileProjectRevisionStore } from '../../src/services/project-revision-store.js';
 import type { DesignVisualChecks } from '../../src/shared/design-visual.js';
@@ -194,6 +195,59 @@ async function recheckOverHttp(service: DesignWorkspaceService, selectedRunId = 
     await new Promise<void>(resolve => server.close(() => resolve()));
   }
 }
+
+describe('V28 记录中的反馈和资料取证', () => {
+  function captureScene(route: string, binding: string, viewport: 'desktop' | 'phone' = 'desktop', bindingProject = projectId) {
+    const build = { current: vi.fn(async () => false), read: vi.fn() };
+    const openBuild = vi.fn<OpenDesignPreviewBuild>().mockResolvedValue(build);
+    const capture = createDesignAcceptanceBrowser('', '/usr/bin/chromium', openBuild)!;
+    const version = published(28);
+    version.delivery = {
+      archiveId: 'fixture-archive', archiveRoot: '', warnings: [],
+      files: demoData.files.map(file => ({ id: file, path: file, kind: 'source', size: 0, sha256: dataset, text: true })),
+    };
+    const screen = {
+      ...version.screens[0], viewport,
+      route: `#/design?project=fixture-virtual&design=DSN-demo&version=4&${route}`,
+      impl: `/design?project=${bindingProject}&design=${designId}&${binding}`,
+    };
+    return { build, openBuild, take: () => capture({ prototype, screen, theme: 'light', rules: [], commit, version, projectId, preview: privatePreview }) };
+  }
+
+  it.each([
+    ['A-10 电脑', 'tab=delivery&full=delivery', 'tab=log&log=delivery', 'desktop'],
+    ['A-11 资料', 'tab=delivery&part=files', 'tab=log&log=delivery&part=files', 'desktop'],
+    ['A-13 手机', 'tab=delivery&full=delivery', 'tab=log&log=delivery', 'phone'],
+    ['旧反馈详情', 'tab=delivery&part=feedback&fb=FDB-demo', 'tab=log&log=delivery&part=feedback&fb=FDB-demo', 'desktop'],
+    ['旧资料详情', 'tab=delivery&file=file-demo', 'tab=log&log=delivery&file=file-demo', 'desktop'],
+    ['旧反馈锚点', 'tab=delivery#dw-feedback-FDB-demo', 'tab=log&log=delivery#dw-feedback-FDB-demo', 'desktop'],
+  ] as const)('%s的两个入口到达同提交构建校验', async (_name, route, binding, viewport) => {
+    const { build, openBuild, take } = captureScene(route, binding, viewport);
+    await expect(take()).rejects.toMatchObject({ status: 409, code: 'design_capture_preview_build_unavailable' });
+    expect(openBuild).toHaveBeenCalledTimes(1);
+    expect(openBuild).toHaveBeenCalledWith({ projectId, commit, preview: privatePreview });
+    expect(build.current).toHaveBeenCalledTimes(1);
+    expect(build.read).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['其他项目', 'tab=delivery&full=delivery', 'tab=log&log=delivery', 'other-project'],
+    ['按版本', 'tab=delivery&full=delivery', 'tab=log'],
+    ['时间线', 'tab=delivery&full=delivery', 'tab=log&log=timeline'],
+    ['交付画布', 'tab=delivery&full=delivery', 'tab=delivery'],
+    ['旧验收入口', 'tab=delivery&full=delivery&part=checks', 'tab=log&log=delivery&part=checks'],
+    ['反馈和资料分栏', 'tab=delivery&part=files', 'tab=log&log=delivery&part=feedback'],
+    ['反馈详情', 'tab=log&log=delivery&part=feedback&fb=FDB-demo', 'tab=log&log=delivery&part=feedback&fb=FDB-other'],
+    ['资料详情', 'tab=log&log=delivery&part=files&file=file-demo', 'tab=log&log=delivery&part=files&file=file-other'],
+    ['反馈锚点', 'tab=delivery#dw-feedback-FDB-demo', 'tab=log&log=delivery#dw-feedback-FDB-other'],
+    ['弹板', 'tab=delivery&full=delivery', 'tab=log&log=delivery&panel=unfreeze'],
+    ['全文面板', 'tab=delivery&full=delivery', 'tab=log&log=delivery&full=need'],
+  ])('%s的绑定不匹配时拒绝取证', async (_name, route, binding, bindingProject) => {
+    const { openBuild, take } = captureScene(route, binding, 'desktop', bindingProject);
+    await expect(take()).rejects.toMatchObject({ status: 422, code: 'design_capture_binding_mismatch' });
+    expect(openBuild).not.toHaveBeenCalled();
+  });
+});
 
 describe('程序验收的签收门槛', () => {
   it('上线前在同一私有 PR 构建取证及独立复验后，可以签收该预览运行', async () => {
