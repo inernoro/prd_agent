@@ -135,7 +135,7 @@ await flow('A-14', 'lesson-video', 'dark', async f => {
 });
 await flow('A-15', 'lesson-no-video', 'light', async f => {
   const p1 = await text(f, '[data-lc=pdf-page]');
-  const visible = await f.$eval('[data-page="4"]', el => { const r = el.getBoundingClientRect(); const box = el.parentElement.getBoundingClientRect(); return r.top < box.bottom && r.bottom > box.top; });
+  const visible = await f.$eval('[data-page="4"]', el => { const r = el.getBoundingClientRect(); const box = el.closest('[data-lc=pdf-pages]').getBoundingClientRect(); return r.top < box.bottom && r.bottom > box.top; });
   await f.click('[aria-label=下一页]'); await wait(700);
   const p2 = await text(f, '[data-lc=pdf-page]');
   const hint = await f.evaluate(() => document.body.innerText.includes('本课在第 4–4 页') && document.body.innerText.includes('回到本课'));
@@ -149,11 +149,11 @@ await flow('A-16', 'lesson-article', 'light', async f => {
   return { pass: fin === 'true', note: `滚到底部后 data-finished=${fin}，文末显示「本篇已读完，进度已记下」` };
 });
 await flow('A-19', 'lesson-article', 'dark', async f => {
-  const before = await f.evaluate(() => document.body.innerText.match(/已学 \d\/5 课/)?.[0]);
+  const before = await f.evaluate(() => document.querySelector('[data-lc=course-progress]').innerText.match(/已学\s*(\d)\/5/)?.[1]);
   await f.click('[data-lc=article-end]'); await wait(600);
   const status = await f.$eval('[data-lesson=l1]', el => el.dataset.status);
-  const after = await f.evaluate(() => document.body.innerText.match(/已学 \d\/5 课/)?.[0]);
-  return { pass: status === 'done' && before === '已学 0/5 课' && after === '已学 1/5 课', note: `${before} → ${after}，目录第 1 课 data-status=${status}（服务端返回 done 后只更新这一课）` };
+  const after = await f.evaluate(() => document.querySelector('[data-lc=course-progress]').innerText.match(/已学\s*(\d)\/5/)?.[1]);
+  return { pass: status === 'done' && before === '0' && after === '1', note: `已学 ${before}/5 → ${after}/5，目录第 1 课 data-status=${status}（服务端返回 done 后只更新这一课）` };
 });
 await flow('A-17', 'lesson-no-video', 'dark', async f => {
   const v = await f.$eval('[data-lc=media-video]', b => ({ dis: b.disabled, title: b.title, unit: b.querySelector('.lc-unit')?.textContent }));
@@ -184,7 +184,7 @@ await flow('A-23', 'practice-triage', 'light', async f => {
   const disabled0 = await f.$eval('[data-lc=submit-decisions]', b => b.disabled);
   await f.click('[data-finding=R2] [data-lc=decide-accept]'); seq.push(await r());
   await f.click('[data-finding=R3] [data-lc=decide-reject]'); seq.push(await r());
-  await f.click('[data-finding=R3] .lc-chip-btn'); seq.push(await r());
+  await f.click('[data-finding=R3] .lc-reason-chip'); seq.push(await r());
   await f.click('[data-finding=R4] [data-lc=decide-accept]'); seq.push(await r());
   const enabled = await f.$eval('[data-lc=submit-decisions]', b => !b.disabled);
   return { pass: seq.join('') === '32210' && disabled0 && enabled, note: `未判断数 ${seq.join(' → ')}；初始主按钮不可用，全部判断后可用` };
@@ -195,7 +195,7 @@ await flow('A-24', 'practice-triage', 'dark', async f => {
   await f.click('[data-finding=R4] [data-lc=decide-accept]');
   await f.click('[data-lc=submit-decisions]');
   await f.waitForSelector('[data-lc=reopen-triage]', { timeout: 15000 });
-  const failed = await f.evaluate(() => document.body.innerText.includes('联合测试 · 结算页显示的应付与接口一致 · 失败'));
+  const failed = await f.evaluate(() => /FAIL\s*联合测试 · 结算页显示的应付与接口一致/.test(document.querySelector('[data-lc=retest-board]')?.innerText ?? ''));
   await f.click('[data-lc=reopen-triage]'); await wait(500);
   const fb = await f.$$eval('[data-lc=finding-feedback]', els => els.map(e => e.closest('[data-finding]').dataset.finding));
   const kept = await f.$eval('[data-finding=R1] [data-lc=decide-accept]', b => b.getAttribute('aria-pressed'));
@@ -215,8 +215,8 @@ await flow('A-27', 'practice-deliver', 'dark', async f => {
   await f.click('[data-lc=back-course]');
   await f.waitForSelector('[data-practice=p-review]');
   const st = await f.$eval('[data-practice=p-review]', el => el.dataset.status);
-  const top = await f.evaluate(() => document.body.innerText.match(/练习 \d\/3/)?.[0]);
-  return { pass: st === 'done' && top === '练习 1/3' && !!xp, note: `提交后完成页「${xp}」与时间线；回到课程练习卡 data-status=${st}，顶部「${top}」` };
+  const top = await f.evaluate(() => document.querySelector('[data-lc=course-progress]').innerText.match(/练习\s*(\d)\/3/)?.[1]);
+  return { pass: st === 'done' && top === '1' && !!xp, note: `提交后完成页「${xp}」与时间线；回到课程练习卡 data-status=${st}，顶部「${top}」` };
 });
 await flow('A-29', 'practice-unit', 'light', async f => {
   await f.click('[data-finding=U3] [data-lc=decide-accept]');
@@ -227,7 +227,7 @@ await flow('A-29', 'practice-unit', 'light', async f => {
   const t = await f.evaluate(() => document.body.innerText);
   await f.click('[data-lc=reopen-triage]'); await wait(400);
   const fb = await f.$eval('[data-finding=U3] [data-lc=finding-feedback]', el => el.textContent);
-  return { pass: words === '保留这条测试' && /稳定性：连续 3 次结果一致 · 失败/.test(t) && /绿 \/ 红 \/ 绿/.test(fb), note: `按钮为「${words}」；保留第 3 条后「稳定性」失败，反馈「${fb.slice(5, 40)}…」` };
+  return { pass: words === '保留这条测试' && /FAIL\s*稳定性：连续 3 次结果一致/.test(t) && /绿 \/ 红 \/ 绿/.test(fb), note: `按钮为「${words}」；保留第 3 条后「稳定性」失败，反馈「${fb.slice(5, 40)}…」` };
 });
 await flow('A-30', 'practice-triage', 'light', async f => {
   const keys = await f.evaluate(async () => { const r = await fetch('/api/learning/practice-runs/run-triage'); const j = await r.json(); return [...new Set(j.data.findings.flatMap(x => Object.keys(x)))]; });
@@ -242,7 +242,23 @@ await flow('A-31', 'practice-brief', 'light', async (f, page) => {
   const btn = await f.evaluate(() => document.querySelector('[data-lc=start-practice]')?.textContent.trim());
   await f.click('[data-practice=p-review]');
   await f.waitForSelector('[data-lc=agent-run], [data-lc-ready=practice-triage]', { timeout: 8000 });
-  return { pass: card.st === 'doing' && /进行中，可续上/.test(card.t) && btn === '接着做', note: `练习卡 ${card.st}「进行中，可续上」；底部按钮「${btn}」；点回去仍是同一次评审` };
+  return { pass: card.st === 'doing' && /进行中/.test(card.t) && btn === '接着做', note: `路线上练习支线 ${card.st}「${card.t}」；底部按钮「${btn}」；点回去仍是同一次评审` };
+});
+await flow('A-38', 'lesson-video', 'light', async f => {
+  const def = await f.$eval('[role=radio][aria-checked=true]', el => el.dataset.pick);
+  const tag = await f.$eval('[data-pick=p-review]', el => el.textContent.includes('本课配套'));
+  await f.click('[data-pick=p-visual]');
+  await f.click('[data-lc=start-practice]');
+  await f.waitForSelector('[data-lc-ready=practice]');
+  const id = await f.$eval('[data-lc-ready=practice]', el => el.dataset.practiceId);
+  return { pass: def === 'p-review' && tag && id === 'p-visual', note: `第 1 课默认选中 ${def}（标「本课配套」）；改选视觉练习后进入 ${id}` };
+});
+await flow('A-39', 'practice-review', 'dark', async f => {
+  const caret = await f.$$eval('.lc-caret', els => els.length);
+  const finds = await f.$$eval('.lc-log-tag[data-tone=find]', els => els.length);
+  const flags = await f.$$eval('.lc-flag', els => els.length);
+  const spinner = await f.$$eval('[class*=animate-spin]', els => els.length);
+  return { pass: caret === 1 && finds === flags && finds > 0 && spinner === 0, note: `RUN 行光标 ${caret}，日志发现 ${finds} 条，代码旗标 ${flags} 个，转圈 ${spinner}` };
 });
 await browser.close(); server.close();
 

@@ -10,6 +10,8 @@ export interface CourseSummary {
   title: string;
   subtitle: string;
   lessonCount: number;
+  /** 每课的短名，课程卡的迷你路线用 */
+  lessonShortTitles: string[];
   minutes: number;
   level: string;
   /** 试运行：真人验收前为 true，学习中心课程卡显示「试运行」 */
@@ -58,6 +60,8 @@ export interface Lesson {
   index: number;
   title: string;
   summary: string;
+  /** 本课要点，三条以内，伴读栏常驻 */
+  keyPoints: string[];
   minutes: number;
   status: LessonStatus;
   media: { video?: VideoMedia; pdf?: PdfMedia; article?: ArticleMedia };

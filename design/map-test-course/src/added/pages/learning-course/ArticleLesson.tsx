@@ -1,74 +1,71 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { AlertTriangle, CheckCircle2, Lightbulb } from 'lucide-react';
+import { Desk } from './Desk';
 import type { ArticleBlock, ArticleMedia } from './types';
 
-const CALLOUT_ICON = { tip: Lightbulb, warn: AlertTriangle } as const;
+const NOTE_ICON = { tip: Lightbulb, warn: AlertTriangle } as const;
 
-function Block({ block }: { block: ArticleBlock }) {
+function Block({ block, first, no }: { block: ArticleBlock; first: boolean; no?: number }) {
   switch (block.type) {
-    case 'h2': return <h2 id={block.id} data-toc={block.id}>{block.text}</h2>;
-    case 'p': return <p>{block.text}</p>;
-    case 'list': return <ul>{block.items.map(item => <li key={item}>{item}</li>)}</ul>;
+    case 'h2': return <h2 id={block.id} data-toc={block.id}><span className="lc-h-no">{String(no).padStart(2, '0')}</span>{block.text.replace(/^[一二三四五六七八九十]+、/, '')}</h2>;
+    case 'p': return <p className={first ? 'lc-lede' : undefined}>{block.text}</p>;
+    case 'list': return <ul>{block.items.map(x => <li key={x}>{x}</li>)}</ul>;
     case 'code': return <figure><pre className="lc-mono"><code>{block.code}</code></pre>{block.caption && <figcaption>{block.caption}</figcaption>}</figure>;
-    case 'figure': return <figure className="my-4"><img src={block.imageUrl} alt={block.caption} /><figcaption>{block.caption}</figcaption></figure>;
+    case 'figure': return <figure className="my-5"><img src={block.imageUrl} alt={block.caption} /><figcaption>{block.caption}</figcaption></figure>;
     case 'callout': {
-      const Icon = CALLOUT_ICON[block.tone];
-      return (
-        <div className="lc-callout" data-tone={block.tone}>
-          <div className="flex items-center gap-2 font-semibold text-[14px]" style={{ color: 'var(--text-primary)' }}><Icon size={15} />{block.title}</div>
-          <div className="text-[14px] mt-1">{block.text}</div>
-        </div>
-      );
+      const Icon = NOTE_ICON[block.tone];
+      return <div className="lc-note" data-tone={block.tone}><div className="flex items-center gap-2 font-semibold text-[14px]" style={{ color: 'var(--lc-ink)' }}><Icon size={15} />{block.title}</div><div className="text-[14px] mt-1">{block.text}</div></div>;
     }
   }
 }
 
-/* 图文：阅读栏 + 目录（随滚动高亮）。读到底记为读完。 */
-export function ArticleLesson({ article, onFinished }: { article: ArticleMedia; onFinished: () => void }) {
+/* 图文：舒展的阅读栏；伴读栏是编号目录与阅读进度。读到底或点文末记为读完。 */
+export function ArticleLesson({ article, head, keyPoints, ticket, onFinished }: { article: ArticleMedia; head: ReactNode; keyPoints: string[]; ticket: ReactNode; onFinished: () => void }) {
   const toc = article.blocks.filter((b): b is Extract<ArticleBlock, { type: 'h2' }> => b.type === 'h2');
   const [active, setActive] = useState<string | undefined>(toc[0]?.id);
+  const [pct, setPct] = useState(0);
   const [finished, setFinished] = useState(false);
   const box = useRef<HTMLDivElement>(null);
+  const finish = () => { if (!finished) { setFinished(true); onFinished(); } };
 
   useEffect(() => {
-    const el = box.current;
-    if (!el) return;
+    const el = box.current; if (!el) return;
     const onScroll = () => {
-      let current: string | undefined = toc[0]?.id;
-      el.querySelectorAll<HTMLElement>('[data-toc]').forEach(h => { if (h.offsetTop - el.scrollTop <= 80) current = h.dataset.toc; });
-      setActive(current);
-      if (!finished && el.scrollTop + el.clientHeight >= el.scrollHeight - 24) { setFinished(true); onFinished(); }
+      let cur: string | undefined = toc[0]?.id;
+      el.querySelectorAll<HTMLElement>('[data-toc]').forEach(h => { if (h.offsetTop - el.scrollTop <= 90) cur = h.dataset.toc; });
+      setActive(cur);
+      const max = el.scrollHeight - el.clientHeight;
+      setPct(max > 0 ? Math.round((el.scrollTop / max) * 100) : 100);
+      if (el.scrollTop + el.clientHeight >= el.scrollHeight - 24) finish();
     };
     el.addEventListener('scroll', onScroll, { passive: true });
     return () => el.removeEventListener('scroll', onScroll);
-  }, [finished, onFinished, toc]);
+  });
 
-  return (
-    <div className="flex gap-4 h-full min-h-0" data-lc-ready="article">
-      <div ref={box} className="lc-scroll flex-1 lc-surface px-5 md:px-8 py-2" data-lc="article">
-        <article className="lc-article pb-8">
-          {article.blocks.map((b, i) => <Block key={i} block={b} />)}
-          <div className="flex items-center gap-2 text-[13px] mt-8 pt-3" style={{ borderTop: '1px solid var(--border-subtle)' }}>
-            <button type="button" className="inline-flex items-center gap-2 min-h-[44px] px-1" data-lc="article-end" data-finished={finished}
-              style={{ color: finished ? 'var(--accent-fg-success)' : 'var(--text-muted)' }}
-              onClick={() => { if (!finished) { setFinished(true); onFinished(); } }}>
-              <CheckCircle2 size={15} />{finished ? '本篇已读完，进度已记下' : '读到这里就算读完，也可以点这里记下'}
-            </button>
-          </div>
-        </article>
-      </div>
-      {toc.length > 1 && (
-        <nav className="hidden xl:flex flex-col shrink-0 pt-2" style={{ width: 180 }} aria-label="本篇目录">
-          <div className="lc-eyebrow px-2.5 pb-2">本篇目录</div>
-          {toc.map(h => (
-            <a key={h.id} className="lc-toc-link" aria-current={active === h.id} href={`#${h.id}`} onClick={e => {
-              e.preventDefault();
-              const target = box.current?.querySelector<HTMLElement>(`[data-toc="${h.id}"]`);
-              if (target && box.current) box.current.scrollTo({ top: target.offsetTop - 8, behavior: 'smooth' });
-            }}>{h.text}</a>
-          ))}
-        </nav>
-      )}
+  let h = 0;
+  const stage = (
+    <div ref={box} className="lc-scroll h-full" data-lc="article">
+      <article className="lc-article">
+        {article.blocks.map((b, i) => <Block key={i} block={b} first={i === 0} no={b.type === 'h2' ? ++h : undefined} />)}
+        <button type="button" className="lc-finish" data-lc="article-end" data-finished={finished} onClick={finish}>
+          <CheckCircle2 size={18} />{finished ? '本篇已读完，进度已记下' : '读到这里就算读完，也可以点这里记下'}
+        </button>
+      </article>
     </div>
   );
+  const companion = (
+    <div className="flex flex-col gap-0.5">
+      {toc.map((t, i) => (
+        <button key={t.id} type="button" className="lc-toc" aria-current={active === t.id} onClick={() => {
+          const target = box.current?.querySelector<HTMLElement>(`[data-toc="${t.id}"]`);
+          if (target && box.current) box.current.scrollTo({ top: target.offsetTop - 12, behavior: 'smooth' });
+        }}><span className="lc-mono">{String(i + 1).padStart(2, '0')}</span>{t.text.replace(/^[一二三四五六七八九十]+、/, '')}</button>
+      ))}
+      <div className="px-3 pt-3">
+        <div className="flex justify-between text-[11.5px] lc-ink3 mb-1.5"><span>已读</span><span className="lc-mono">{finished ? 100 : pct}%</span></div>
+        <div className="lc-meter" style={{ borderRadius: 4 }}><span style={{ width: `${finished ? 100 : pct}%` }} /></div>
+      </div>
+    </div>
+  );
+  return <Desk ready="article" head={head} stage={stage} companionTitle={`本篇 · ${article.readMinutes} 分钟`} companionHint={`${toc.length} 节`} companion={companion} keyPoints={keyPoints} ticket={ticket} />;
 }

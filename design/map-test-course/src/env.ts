@@ -48,7 +48,7 @@ function evaluate(s: State): RetestResult {
   }
   const checks = retestChecks[s.practiceId].map(c => {
     const bad = c.dependsOn.find(id => wrong.has(id));
-    return bad ? { name: c.name, status: 'fail' as const, message: '失败' } : { name: c.name, status: 'pass' as const, message: c.okMessage };
+    return bad ? { name: c.name, status: 'fail' as const } : { name: c.name, status: 'pass' as const, message: c.okMessage };
   });
   const passed = wrong.size === 0;
   return {

@@ -1,4 +1,25 @@
 {
- "to": 1,
- "from": []
+ "to": 2,
+ "from": [
+  {
+   "version": 1,
+   "commit": "c934126ee54a25a138cd8319476d26558967f889",
+   "files": [
+    "changes/v1-v2/summary.json",
+    "changes/v1-v2/changes.md",
+    "changes/v1-v2/source.diff"
+   ],
+   "acceptance": {
+    "added": 4,
+    "removed": 0,
+    "changed": 16
+   },
+   "screens": {
+    "added": 0,
+    "removed": 0,
+    "changed": 0
+   },
+   "sourceFiles": 21
+  }
+ ]
 }

@@ -31,8 +31,8 @@
       "applicable": true
     }
   },
-  "prototypeVersion": 1,
-  "date": "2026-11-27",
+  "prototypeVersion": 2,
+  "date": "2026-11-28",
   "prototype": "dist/index.html",
   "rationale": "思路.md",
   "checks": "checks/result.json",
@@ -44,7 +44,7 @@
     "交付说明.md",
     "spec/rules.md"
   ],
-  "notes": "课程挂在学习中心下：学习中心新增课程区，课程页（视频 / PDF 教材 / 图文三选一）与练习页（检查 → 判断 → 修复 → 复测 → 交付）。示例内容：1 门课 5 课、2 段视频、8 页教材、3 个练习，全部为虚构演示数据，见 设计文档/演示数据.json。",
+  "notes": "V2 全新视觉「检验台」：除 AppShell 导航外界面组件均为本稿自绘（动作按钮以 design/Button 为载体、外观自定义，满足框架规则 R-05）。课程页：课程路线（5 站 + 练习支线）+ 书桌（主舞台 + 伴读栏 + 练习票）；练习页：被检物 + 控制台（日志、工单盖章、复测记分板、交付单、合格证）。演示数据见 设计文档/演示数据.json。",
   "screens": [
     {
       "id": "center",
@@ -302,8 +302,8 @@
         "desktop-light",
         "desktop-dark"
       ],
-      "rule": "按钮用 components/design/Button，每一屏只有一个 primary 主动作",
-      "expected": "逐画面数 primary：课程页「开始练习」、读任务「让 Agent 开始评审」、判断「应用修复并复测」、复测失败「回到判断」、交付「提交交付」、完成「回到课程」，各一个",
+      "rule": "动作按钮以 design/Button 为载体（外观由页面自定义），每一屏只有一个 primary 主动作",
+      "expected": "逐画面数 primary：课程页练习票「开始练习」、读任务「让 Agent 开始评审」、评审失败「重新评审」、判断「应用修复并复测」、复测失败「回到判断」、交付「提交交付」、完成「回到课程，换一个练习」，各一个",
       "dimension": "experience",
       "ruleId": "R-05"
     },
@@ -380,8 +380,8 @@
         "desktop-light",
         "desktop-dark"
       ],
-      "rule": "学习中心在短教程之前有「课程」区；课程卡显示课数、时长、练习完成数、进度条和「开始 / 继续：第 n 课」，点击直达那一课",
-      "expected": "1440×900 首屏同时看到掌握度总览、课程区（课程卡带封面、试运行、进度与下一课）和本页教程标题",
+      "rule": "学习中心在短教程之前有「课程」区；每门课是一张横幅：课数、时长、练习完成数，迷你路线标出已学、下一站，点击直达那一课",
+      "expected": "1440×900 首屏同时看到掌握度总览、课程横幅（试运行、5 站迷你路线、「开始：第 1 课」）和本页教程标题",
       "dimension": "experience"
     },
     {
@@ -392,8 +392,8 @@
         "desktop-light",
         "desktop-dark"
       ],
-      "rule": "课程页首屏：左栏目录（5 课，每课时长与有哪几种材料）与练习列表；右侧本课标题、材料切换与播放器同屏，底部给出本课练习",
-      "expected": "1440×900 不滚动看到目录 5 课、3 个练习、本课标题、「视频 0:27 / PDF 教材 本课 2 页 / 图文 6 分钟」、播放器、逐字稿与「开始练习」",
+      "rule": "课程页首屏：上方课程路线（5 站 + 练习支线）与进度；下方书桌——左侧主舞台是本课材料，右侧伴读栏是本课要点、跟随材料的导航与练习票",
+      "expected": "1440×900 不滚动看到路线 5 站、本课大号编号与标题、「视频 / PDF 教材 / 图文」三个材料页签、播放器与当前字幕、伴读栏的要点与逐字稿、练习票与「开始练习」",
       "dimension": "experience"
     },
     {
@@ -404,7 +404,7 @@
         "desktop-light",
         "desktop-dark"
       ],
-      "rule": "视频可播放；章节与逐字稿在同一栏，播放时当前行高亮并自动滚到可见，点任一行跳到那一秒",
+      "rule": "视频可播放；伴读栏是按章节分组的逐字稿，播放时当前行高亮并滚到可见，主舞台下方同步显示当前这句的大字幕；点任一行跳到那一秒",
       "expected": "检查：点第 4 行后 video.currentTime ≈ 该行时间，且该行 aria-current=true；所在章节标题为高亮色",
       "dimension": "correctness",
       "interaction": true
@@ -456,7 +456,7 @@
         "desktop-dark"
       ],
       "rule": "本课缺某类材料时，按钮留在原位、不可点，写「无」并提示原因；默认打开本课已有的第一种材料",
-      "expected": "检查：第 2 课「视频」按钮 disabled、显示「无」、title 为原因；默认打开 PDF 教材",
+      "expected": "检查：第 2 课「视频」页签 disabled、单位写「无」、title 为原因、文字划线；默认打开 PDF 教材",
       "dimension": "experience"
     },
     {
@@ -504,8 +504,8 @@
         "desktop-light",
         "desktop-dark"
       ],
-      "rule": "读任务：场景、你要练的判断、交付时要满足、怎么进行；唯一主动作「让 Agent 开始评审」",
-      "expected": "1440×900 右栏完整看到四段与主按钮；左栏是被评审的代码",
+      "rule": "读任务：场景、你要练的判断、交付验收单、流程；唯一主动作「让 Agent 开始评审」吸在控制台底部",
+      "expected": "1440×900 右侧控制台完整看到四段与底部主按钮；左侧被检物是 applyCoupons.ts",
       "dimension": "experience"
     },
     {
@@ -516,8 +516,8 @@
         "desktop-light",
         "desktop-dark"
       ],
-      "rule": "评审进行中：意见逐条出现，同时以编号标在代码行上；模型名与平台来自网关返回",
-      "expected": "评审中画面右栏列出已发现的 2 处，左栏第 13、14 行带编号标记；运行面板写「anthropic/claude-sonnet-4.5 · OpenRouter」",
+      "rule": "评审进行中：控制台像日志一样逐行打出阶段（OK / RUN / FAIL），发现的问题即时插入为 P0 / P1 行，同时以编号旗标插在代码行上；模型名与平台来自运行记录",
+      "expected": "评审中画面日志有 01/04 OK、02/04 OK、03/04 RUN 与两条发现，左侧第 13、14 行带编号旗标；顶部写「anthropic/claude-sonnet-4.5 · OpenRouter」",
       "dimension": "experience"
     },
     {
@@ -528,7 +528,7 @@
         "desktop-light",
         "desktop-dark"
       ],
-      "rule": "逐条判断：先证据后建议；定位可跳到代码行或截图区域；二选一判断，驳回必须写理由（可点常用理由一键填入）；全部判断完主按钮才可用，否则写明还差几处",
+      "rule": "工单盖章：每张先证据后建议，定位可跳到代码行或截图区域；盖「采纳」或「驳回」章，驳回必须写理由（常用理由一键填入）；全部盖完主按钮才可用，否则写明还差几张",
       "expected": "检查：第 1 条已采纳时提示「还有 3 处没判断完」；采纳第 2 条后为 2；驳回第 3 条不写理由仍为 2；点常用理由后为 1；全部判断完主按钮可用",
       "dimension": "correctness",
       "interaction": true
@@ -554,8 +554,8 @@
         "desktop-light",
         "desktop-dark"
       ],
-      "rule": "复测后，被采纳的修复以删除 / 新增两种标记插回代码，看得见改了什么",
-      "expected": "左栏第 4、13、14 行原文划掉，下方是新增行；没采纳的第 18 行保持原样",
+      "rule": "复测后，被采纳的修复以删除（红底划线）/ 新增（绿底）两种标记插回代码",
+      "expected": "左侧第 4、13、14 行原文划掉，下方是新增行；没采纳的第 18 行保持原样",
       "dimension": "experience"
     },
     {
@@ -566,7 +566,7 @@
         "desktop-light",
         "desktop-dark"
       ],
-      "rule": "复测通过后给出三段式交付说明草稿（能做什么 / 怎么证明 / 还没做到什么），驳回理由自动进入「还没做到」，可编辑后提交",
+      "rule": "复测通过后先给 PASS 记分板，再给一张「交付单」：三段式草稿（能做什么 / 怎么证明 / 还没做到什么），驳回理由自动进入「还没做到」，可编辑后提交",
       "expected": "检查：草稿含三段标题、复测项列表和两条驳回理由；清空后「提交交付」不可用",
       "dimension": "correctness"
     },
@@ -578,8 +578,8 @@
         "desktop-light",
         "desktop-dark"
       ],
-      "rule": "完成页给出经验值与时间线，主按钮回课程换练习；课程目录里这个练习显示「已完成」",
-      "expected": "检查：完成后回到课程，练习卡状态为「已完成」，顶部「练习 1/3」",
+      "rule": "完成后给一张合格证（印章、经验值、编号）与时间线日志，主按钮回课程换练习；课程路线上这个练习的支线显示「已完成」",
+      "expected": "检查：完成后回到课程，路线上练习支线 data-status=done，顶部练习 1/3",
       "dimension": "correctness",
       "interaction": true
     },
@@ -591,8 +591,8 @@
         "desktop-light",
         "desktop-dark"
       ],
-      "rule": "视觉练习：基线与实际并排或叠加对照，差异区域编号标在实际截图上；判断说法换成「判为缺陷 / 在容差内」",
-      "expected": "并排模式下实际截图有 3 个编号框，右栏每条两个按钮为「判为缺陷」「在容差内」",
+      "rule": "视觉练习：基线与实际并排或叠加对照（点阵桌面上），差异区域以编号框标在实际截图上；盖章说法换成「判为缺陷 / 在容差内」",
+      "expected": "并排模式下实际截图有 3 个编号框，右侧每张工单两个按钮为「判为缺陷」「在容差内」",
       "dimension": "experience"
     },
     {
@@ -627,8 +627,8 @@
         "desktop-light",
         "desktop-dark"
       ],
-      "rule": "一次练习是一条服务端记录（?run=），离开课程或刷新后从原处继续；课程页练习按钮变为「接着做」",
-      "expected": "检查：开始练习后地址带 run；回到课程练习卡写「进行中，可续上」，按钮为「接着做」并带回同一 run",
+      "rule": "一次练习是一条服务端记录（?run=），离开课程或刷新后从原处继续；课程路线上该练习支线显示「进行中」，练习票按钮变为「接着做」",
+      "expected": "检查：开始练习后地址带 run；回到课程，支线显示「练习 · 代码评审 · 进行中」，练习票按钮「接着做」并带回同一 run",
       "dimension": "operations"
     },
     {
@@ -639,8 +639,8 @@
         "desktop-light",
         "desktop-dark"
       ],
-      "rule": "评审失败：阶段列表标出失败在哪一步，说明原因、已保存与是否重复计费，主按钮「重新评审」",
-      "expected": "失败画面第 2 阶段为失败标记，红色说明块与「重新评审」主按钮同屏",
+      "rule": "评审失败：日志在失败那一步打出 FAIL 与原因，标题写「停在第 n 步」，说明块写清已保存与不重复计费，底部主按钮「重新评审」",
+      "expected": "失败画面日志第 2 行为 FAIL 并带原因，标题「代码评审 Agent 的评审停在第 2 步」，说明块与底部「重新评审」同屏",
       "dimension": "experience"
     },
     {
@@ -651,8 +651,8 @@
         "phone-light",
         "phone-dark"
       ],
-      "rule": "手机课程页：一条顶栏（返回 + 本课 / 目录切换），本课内容整体滚动，练习入口吸底",
-      "expected": "375×812 首屏：顶栏一条、本课标题、材料切换、播放器，底部吸住「开始练习」",
+      "rule": "手机课程页：头部两行（返回 + 课名、进度），路线横向滚动；本课内容、要点、逐字稿、练习票整体一起滚动",
+      "expected": "375×812 首屏：头部、可横滑的路线、本课编号与标题、材料页签、播放器与当前字幕；无横向溢出",
       "dimension": "experience"
     },
     {
@@ -663,8 +663,8 @@
         "phone-light",
         "phone-dark"
       ],
-      "rule": "手机练习页：一条顶栏（返回 + 标题 + 第 n/5 步），「这一步 / 工作台」切换，点意见的定位切到工作台",
-      "expected": "375×812 顶栏写「第 3/5 步 · 判断与修复」，意见卡完整可读，主按钮吸底",
+      "rule": "手机练习页：一条顶栏（返回 + 标题 + n/5 步），「这一步 / 代码」切换，主按钮吸在控制台底部",
+      "expected": "375×812 顶栏写「3/5 · 判断与修复」，工单完整可读、盖章动画可见，主按钮吸底",
       "dimension": "experience"
     },
     {
@@ -689,6 +689,55 @@
       ],
       "rule": "课程卡、课程页、练习页文案用学员的话：不出现 runId、appCallerCode 等内部名",
       "expected": "逐画面通读，内部编号只出现在地址栏",
+      "dimension": "experience"
+    },
+    {
+      "id": "A-37",
+      "screenId": "lesson-video",
+      "how": "screenshot",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "课程路线：五站是五课，已学打勾、当前站带光环，轨道填色到当前站；练习作为菱形支线挂在对应课下，点站切课、点支线进练习",
+      "expected": "路线 01 站带光环，01–03 站下各有一条「练习 · 技能名」支线；点 02 站切到第 2 课",
+      "dimension": "experience"
+    },
+    {
+      "id": "A-38",
+      "screenId": "lesson-video",
+      "how": "measure",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "练习票：三个练习三选一，默认选中本课配套的那个并标「本课配套」；主按钮文案随选中练习的状态变化（开始 / 接着做 / 再做一遍）",
+      "expected": "检查：第 1 课默认选中「评审优惠券叠加计算的改动」；改选视觉练习后点「开始练习」进入视觉练习",
+      "dimension": "correctness",
+      "interaction": true
+    },
+    {
+      "id": "A-39",
+      "screenId": "practice-review",
+      "how": "measure",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "等待期主视觉是产物：评审中控制台的日志行与发现即时出现、代码旗标同步弹出，不用静止的加载圈；进度与预计时间做配角",
+      "expected": "检查：评审进行中日志有 RUN 行与闪烁光标，发现数与代码旗标数一致；页面没有居中转圈",
+      "dimension": "experience"
+    },
+    {
+      "id": "A-40",
+      "screenId": "practice-triage",
+      "how": "screenshot",
+      "slots": [
+        "desktop-light",
+        "desktop-dark"
+      ],
+      "rule": "工单盖章有可见反馈：盖章后工单右上角出现倾斜印章（采纳绿、驳回橙），按钮同色描边；改判时印章重盖",
+      "expected": "practice-triage 第 1 张工单右上角有「采纳」印章，「采纳修复」按钮为绿色描边",
       "dimension": "experience"
     }
   ],
@@ -716,7 +765,8 @@
         "A-17",
         "A-18",
         "A-19",
-        "A-20"
+        "A-20",
+        "A-37"
       ]
     },
     {
@@ -734,7 +784,10 @@
         "A-28",
         "A-29",
         "A-30",
-        "A-31"
+        "A-31",
+        "A-38",
+        "A-39",
+        "A-40"
       ]
     },
     {
@@ -1010,7 +1063,7 @@
           },
           {
             "action": "click",
-            "selector": "[data-finding=R3] .lc-chip-btn:nth-child(1)"
+            "selector": "[data-finding=R3] .lc-reason-chip:nth-child(1)"
           },
           {
             "action": "expect",
@@ -1100,6 +1153,46 @@
             "check": "attribute",
             "attribute": "data-status",
             "equals": "done"
+          }
+        ]
+      },
+      {
+        "id": "pick-other-practice",
+        "title": "在练习票里改选视觉练习并开始",
+        "screenId": "lesson-video",
+        "theme": "light",
+        "ruleIds": [
+          "A-38"
+        ],
+        "steps": [
+          {
+            "action": "expect",
+            "selector": "[data-pick=p-review]",
+            "check": "attribute",
+            "attribute": "aria-checked",
+            "equals": "true"
+          },
+          {
+            "action": "click",
+            "selector": "[data-pick=p-visual]"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-pick=p-visual]",
+            "check": "attribute",
+            "attribute": "aria-checked",
+            "equals": "true"
+          },
+          {
+            "action": "click",
+            "selector": "[data-lc=start-practice]"
+          },
+          {
+            "action": "expect",
+            "selector": "[data-lc-ready=practice]",
+            "check": "attribute",
+            "attribute": "data-practice-id",
+            "equals": "p-visual"
           }
         ]
       }

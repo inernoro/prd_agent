@@ -43,6 +43,7 @@ export function initialCourse(): Course {
     lessons: [
       {
         id: 'l1', index: 1, title: '代码评审：让 Agent 先读懂改动，再下结论', minutes: 18, status: 'current', practiceIds: ['p-review'],
+        keyPoints: ['上下文给全：diff、需求、测试三样一起交', '每条意见要有文件、行号和能复现的输入', '判断归你，复测归测试'],
         summary: '把 diff、需求和测试一起交给 Agent，要求每条意见带文件、行号和能复现的输入，再由你逐条判断。',
         media: {
           video: {
@@ -78,6 +79,7 @@ export function initialCourse(): Course {
       },
       {
         id: 'l2', index: 2, title: '视觉验收：截图、对照、标注', minutes: 15, status: 'todo', practiceIds: ['p-visual'],
+        keyPoints: ['基线与实际用同一份演示数据截图', '桌面与手机、浅色与深色都要截', '截断、遮挡、对比度不足是缺陷；1px 偏差在容差内'],
         summary: '同一份演示数据下截基线与实际两张图，让 Agent 标出差异，你判断哪些是缺陷、哪些在容差内。',
         missingReason: { video: '本课没有视频：操作都在图文里一步步截了图' },
         media: {
@@ -97,6 +99,7 @@ export function initialCourse(): Course {
       },
       {
         id: 'l3', index: 3, title: '单元测试：先写一条会失败的测试', minutes: 16, status: 'todo', practiceIds: ['p-unit'],
+        keyPoints: ['每条测试先在旧代码上失败，再在修复后通过', '不依赖当前时间与随机数', '审测试和审代码一样严'],
         summary: '让 Agent 生成测试，但每条都要先在旧代码上失败、修复后通过；依赖时间或随机数的测试要删掉。',
         missingReason: { video: '本课没有视频：图文与教材已覆盖' },
         media: {
@@ -112,6 +115,7 @@ export function initialCourse(): Course {
       },
       {
         id: 'l4', index: 4, title: '联合测试：把真实链路串起来', minutes: 14, status: 'todo', practiceIds: ['p-unit'],
+        keyPoints: ['单元测试证明不了接口与页面对得上', '联合测试打真实预览地址，不打本地桩', '断言页面显示 = 接口返回'],
         summary: '每个函数都对，拼在一起仍可能错。联合测试打真实部署的预览地址，断言页面显示与接口返回一致。',
         missingReason: { video: '本课没有视频：图文与教材已覆盖' },
         media: {
@@ -126,6 +130,7 @@ export function initialCourse(): Course {
       },
       {
         id: 'l5', index: 5, title: '闭环：修复、复测、交付', minutes: 12, status: 'todo', practiceIds: ['p-review'],
+        keyPoints: ['只改被证实的问题，驳回写理由', '用同一组输入复测', '交付说明三段：能做什么 · 怎么证明 · 还没做到'],
         summary: '只改被证实的问题，用同一组输入复测，写出三段式交付说明：能做什么、怎么证明、还没做到什么。',
         media: {
           video: {
@@ -155,7 +160,7 @@ export function summaryOf(course: Course): CourseSummary {
   const next = course.lessons.find(l => l.status !== 'done');
   return {
     id: course.id, title: course.title, subtitle: course.subtitle, wip: course.wip, level: '入门到实战',
-    lessonCount: course.lessons.length, minutes: course.lessons.reduce((s, l) => s + l.minutes, 0), coverUrl: courseCover,
+    lessonCount: course.lessons.length, lessonShortTitles: course.lessons.map(l => l.title.split('：')[0]), minutes: course.lessons.reduce((s, l) => s + l.minutes, 0), coverUrl: courseCover,
     progress: { lessonsDone: course.lessons.filter(l => l.status === 'done').length, practicesDone: course.practices.filter(p => p.status === 'done').length, nextLessonId: next?.id, nextLessonTitle: next ? `第 ${next.index} 课` : undefined },
   };
 }
