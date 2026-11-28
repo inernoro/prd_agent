@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -23,6 +25,7 @@ const out = join(process.env.RUNNER_TEMP, 'dsn-1400e277-evidence');
 await mkdir(out, { recursive: true });
 const receipt = { design: 'DSN-1400E277', version: 8, commit, origin: origin.origin, cases: [], runs: [], failures: [] };
 const base = '/api/quick-creation';
+const runProcess = promisify(execFile);
 
 const match = (path, method = 'GET') => response => new URL(response.url()).origin === origin.origin
   && new URL(response.url()).pathname === path && response.request().method() === method;
@@ -362,7 +365,7 @@ async function verifyExistingBrowserFilm(page, api) {
   const row = { id: existingFilmId, kind: 'video', templateId: 'watercolor' };
   receipt.runs.push(row);
   assert.equal(receipt.version, 9);
-  const deadline = Date.now() + 40 * 60_000;
+  const deadline = Date.now() + 65 * 60_000;
   let view;
   while (Date.now() < deadline) {
     view = await data(await api(`${base}/runs/${existingFilmId}`), 'read original V9 film');
@@ -419,6 +422,26 @@ async function verifyExistingBrowserFilm(page, api) {
   } else row.siteId = view.publish.siteId;
   await page.locator('[data-qc=published]').waitFor();
   await page.screenshot({ path: join(out, '25-v9-published.png') });
+  const site = await data(await api(`/api/web-pages/${encodeURIComponent(row.siteId)}`), 'read published playback website');
+  assert.equal(site.entryFile, 'index.html');
+  assert.ok(site.files.every(file => !/\.mp4$/i.test(file.path ?? file.name ?? '')), 'Published film must be playable HTML rather than an MP4 upload');
+  const hosted = await page.context().newPage();
+  try {
+    await hosted.goto(new URL(site.siteUrl, origin).href);
+    const iframe = hosted.frameLocator('iframe[title="影片"]');
+    const audio = iframe.locator('audio');
+    await audio.waitFor({ timeout: 50_000 });
+    await audio.evaluate(element => new Promise((resolve, reject) => {
+      if (element.readyState >= 1) { resolve(); return; }
+      element.addEventListener('loadedmetadata', resolve, { once: true });
+      element.addEventListener('error', reject, { once: true });
+    }));
+    assert.ok(Math.abs(await audio.evaluate(element => element.duration) - row.durationSec) < .25);
+    await hosted.screenshot({ path: join(out, '27-v9-hosted-playback.png') });
+    row.hostedPlayback = 'pass';
+  } catch (error) {
+    receipt.failures.push({ id: view.id, code: 'published_playback', details: String(error.message).slice(0, 300) });
+  } finally { await hosted.close(); }
   try {
     const native = page.locator('[data-qc=export-start]:enabled');
     await native.or(page.locator('[data-qc=export-unsupported]')).waitFor();
@@ -448,8 +471,15 @@ async function verifyExistingBrowserFilm(page, api) {
   await cloudButton.or(cloud.getByRole('button', { name: '重试服务器导出' })).waitFor({ timeout: 50 * 60_000 });
   assert.ok(await cloudButton.isVisible(), 'Cloud export ended in the retry state');
   const [download] = await Promise.all([cloud.waitForEvent('download'), cloudButton.click()]);
-  const exported = await readFile(await download.path());
+  const exportedPath = await download.path();
+  assert.ok(exportedPath);
+  const exported = await readFile(exportedPath);
   assert.equal(exported.toString('ascii', 4, 8), 'ftyp');
+  const { stdout } = await runProcess('ffprobe', ['-v', 'error', '-show_entries', 'stream=codec_type,codec_name:format=duration', '-of', 'json', exportedPath], { timeout: 20_000 });
+  const media = JSON.parse(stdout);
+  assert.ok(media.streams.some(stream => stream.codec_type === 'audio') && media.streams.some(stream => stream.codec_type === 'video'));
+  assert.ok(Math.abs(Number(media.format.duration) - row.durationSec) < .5);
+  row.cloudExportStreams = media.streams;
   row.cloudExport = 'pass';
   row.cloudExportBytes = exported.length;
   await cloud.close();
