@@ -570,7 +570,7 @@ export function DesignWorkspacePage() {
                   part: 'files', fb: '', file: '', about: '' })} /></div>}
           {/* V26：记录页从零重新设计（三栏对稿 + 监控中心调性），替换原来的「按版本因果 / 时间线」 */}
           {tab === 'log' && logView === 'versions' && <DesignRecord key={`${readKey}/${entry.id}`} entry={entry} version={version}
-            readAt={viewer.designs[entry.id]?.recordAt} lead={<nav className="dr-views" role="tablist" aria-label="记录">
+            readAt={viewer.designs?.[entry.id]?.recordAt} lead={<nav className="dr-views" role="tablist" aria-label="记录">
             <button type="button" role="tab" aria-selected={logView === 'versions'} data-log="versions"
               onClick={() => onChange({ ...deliveryQuery, tab: 'log', log: '', part: '', fb: '', file: '', about: '' }, true)}>按版本</button>
             <button type="button" role="tab" aria-label="反馈和资料" aria-selected={logView !== 'versions'} data-log="delivery"

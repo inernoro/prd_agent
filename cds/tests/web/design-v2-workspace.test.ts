@@ -853,6 +853,14 @@ describe('V17 交付工作区', () => {
 });
 
 describe('已发布的演示、评论和交付布局', () => {
+  it('A-51 只有上次访问时间的旧稿仍可打开按版本记录', () => {
+    const html = design(`&design=${guidedDraft.id}&version=18&tab=log`, {
+      ...guidedWorkspace, viewer: { lastVisitAt: '2026-11-18T00:00:00.000Z' } as DesignViewerState,
+    });
+    expect(html).toContain('data-log="versions"');
+    expect(html).toContain('class="dr-main"');
+  });
+
   it('A-10/A-51/A-63 从旧地址进入记录、查看实际反馈，并保留交付的三个入口', async () => {
     const css = await layoutStyles(design(`&design=${guidedDraft.id}&version=18&tab=log`, guidedWorkspace), draftHeaderStyles);
     await withDesignBrowser(() => guidedWorkspace, async page => {
