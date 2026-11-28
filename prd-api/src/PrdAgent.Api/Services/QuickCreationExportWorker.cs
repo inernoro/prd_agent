@@ -22,6 +22,7 @@ public sealed class QuickCreationExportWorker(IServiceScopeFactory scopes, IHttp
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        logger.LogInformation("Browser film export worker ready");
         while (await DelayAsync(stoppingToken))
         {
             try
@@ -32,20 +33,22 @@ public sealed class QuickCreationExportWorker(IServiceScopeFactory scopes, IHttp
                 var claim = Guid.NewGuid().ToString("N");
                 var filter = Builders<DesignArtifactRun>.Filter;
                 var updates = Builders<DesignArtifactRun>.Update;
-                var run = await db.DesignArtifactRuns.FindOneAndUpdateAsync(Scope &
-                    (filter.Eq(row => row.BrowserFilmExport!.Status, "queued")
-                     | (filter.Eq(row => row.BrowserFilmExport!.Status, "running")
-                         & filter.Lte(row => row.BrowserFilmExport!.ExpiresAt, now))),
+                var eligible = Scope & (filter.Eq(row => row.BrowserFilmExport!.Status, "queued")
+                    | (filter.Eq(row => row.BrowserFilmExport!.Status, "running")
+                       & filter.Lte(row => row.BrowserFilmExport!.ExpiresAt, now)));
+                using var claimDeadline = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+                claimDeadline.CancelAfter(TimeSpan.FromSeconds(20));
+                var run = await db.DesignArtifactRuns.Find(eligible)
+                    .SortBy(row => row.BrowserFilmExport!.QueuedAt).Limit(1).FirstOrDefaultAsync(claimDeadline.Token);
+                if (run == null) continue;
+                var sameRun = filter.Eq(row => row.Id, run.Id);
+                var claimed = await db.DesignArtifactRuns.UpdateOneAsync(sameRun & eligible,
                     updates.Set(row => row.BrowserFilmExport!.Status, "running")
                         .Set(row => row.BrowserFilmExport!.Lease, claim)
-                        .Set(row => row.BrowserFilmExport!.ExpiresAt, now.Add(LeaseTime)),
-                    new FindOneAndUpdateOptions<DesignArtifactRun>
-                    {
-                        ReturnDocument = ReturnDocument.After,
-                        Sort = Builders<DesignArtifactRun>.Sort.Ascending(row => row.BrowserFilmExport!.QueuedAt),
-                    }, stoppingToken);
-                if (run == null) continue;
-                var owned = filter.Eq(row => row.Id, run.Id) & filter.Eq(row => row.BrowserFilmExport!.Lease, claim);
+                        .Set(row => row.BrowserFilmExport!.ExpiresAt, now.Add(LeaseTime)), cancellationToken: claimDeadline.Token);
+                if (claimed.ModifiedCount != 1) continue;
+                logger.LogInformation("Browser film export claimed run={RunId}", run.Id);
+                var owned = sameRun & filter.Eq(row => row.BrowserFilmExport!.Lease, claim);
                 var attempt = new QuickCreationExportAttempt { Id = claim };
                 try
                 {
