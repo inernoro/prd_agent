@@ -871,7 +871,7 @@ describe('已发布的演示、评论和交付布局', () => {
     } finally {
       await page.close();
     }
-  });
+  }, 20_000);
 
   it('A-51 只有上次访问时间的旧稿仍可打开按版本记录', () => {
     const html = design(`&design=${guidedDraft.id}&version=18&tab=log`, {
@@ -882,7 +882,7 @@ describe('已发布的演示、评论和交付布局', () => {
   });
 
   it('A-13 反馈长列表在手机使用紧凑页头，桌面页头保持整行', async () => {
-    const draft = { ...guidedDraft, feedback: Array.from({ length: 12 }, (_, index) => ({
+    const draft = { ...guidedDraft, feedback: Array.from({ length: 30 }, (_, index) => ({
       ...currentFeedback, id: `FDB-layout-${index}`, title: `交付反馈 ${index + 1}`,
     })) };
     const input = { ...guidedWorkspace, designs: [draft] };
@@ -905,6 +905,9 @@ describe('已发布的演示、评论和交付布局', () => {
       expect(mobile.scrolls).toBe(true);
       expect(mobile.overflow).toBe(0);
       expect(mobile.height).toBeLessThan(mobile.actions + mobile.tabs);
+      const draftTabs = await page.getByRole('navigation', { name: '稿件标签' }).getByRole('button').all();
+      expect(draftTabs).toHaveLength(3);
+      for (const tab of draftTabs) await tab.click({ trial: true, timeout: 1_500 });
       expect(await detail.isVisible()).toBe(false);
       await list.getByRole('button', { name: /交付反馈 1\s/ }).click();
       await detail.getByText(currentFeedback.body, { exact: true }).waitFor();
