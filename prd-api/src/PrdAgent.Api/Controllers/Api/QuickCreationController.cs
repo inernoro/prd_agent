@@ -441,7 +441,8 @@ public sealed partial class DesignArtifactsController
     }
 
     [HttpPost("/api/quick-creation/runs/{runId}/export")]
-    public async Task<IActionResult> QueueQuickCreationExport(string runId, CancellationToken ct)
+    public async Task<IActionResult> QueueQuickCreationExport(string runId,
+        [FromServices] QuickCreationExportWorker worker, CancellationToken ct)
     {
         if (!QuickCreationEnabled()) return NotFound();
         var run = await FindOwnedQuickRunAsync(runId, ct);
@@ -451,6 +452,7 @@ public sealed partial class DesignArtifactsController
         await _db.DesignArtifactRuns.UpdateOneAsync(owner & (filters.Eq(row => row.BrowserFilmExport, null)
             | filters.Eq(row => row.BrowserFilmExport!.Status, "failed")),
             Builders<DesignArtifactRun>.Update.Set(row => row.BrowserFilmExport, new QuickCreationBrowserExport()), cancellationToken: ct);
+        worker.NotifyQueuedExport(run.Id);
         return await ReadQuickCreationExport(runId, ct);
     }
 

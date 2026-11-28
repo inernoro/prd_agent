@@ -11,87 +11,102 @@ using PrdAgent.Infrastructure.Services.AssetStorage;
 namespace PrdAgent.Api.Services;
 
 public sealed class QuickCreationExportWorker(IServiceScopeFactory scopes, IHttpClientFactory http,
-    IConfiguration config, ILogger<QuickCreationExportWorker> logger) : BackgroundService
+    IConfiguration config, IHostApplicationLifetime lifetime, ILogger<QuickCreationExportWorker> logger) : BackgroundService
 {
     private const int MaxExportBytes = 384 * 1024 * 1024;
     private static readonly TimeSpan LeaseTime = TimeSpan.FromMinutes(50);
     private static readonly TimeSpan Poll = TimeSpan.FromSeconds(4);
+    private readonly SemaphoreSlim _exportSlot = new(1, 1);
 
     internal static FilterDefinition<DesignArtifactRun> Scope
         => DesignArtifactTimingStats.ScopeFilter(DeploymentScope.CurrentDurable);
+
+    internal void NotifyQueuedExport(string runId)
+    {
+        logger.LogInformation("Browser film export notified run={RunId}", runId);
+        _ = ProcessNextAsync(lifetime.ApplicationStopping);
+    }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         logger.LogInformation("Browser film export worker ready");
         while (await DelayAsync(stoppingToken))
+            await ProcessNextAsync(stoppingToken);
+    }
+
+    private async Task ProcessNextAsync(CancellationToken stoppingToken)
+    {
+        if (stoppingToken.IsCancellationRequested || !_exportSlot.Wait(0)) return;
+        try
         {
+            await using var scope = scopes.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
+            var now = DateTime.UtcNow;
+            var claim = Guid.NewGuid().ToString("N");
+            var filter = Builders<DesignArtifactRun>.Filter;
+            var updates = Builders<DesignArtifactRun>.Update;
+            var eligible = Scope & (filter.Eq(row => row.BrowserFilmExport!.Status, "queued")
+                | (filter.Eq(row => row.BrowserFilmExport!.Status, "running")
+                   & filter.Lte(row => row.BrowserFilmExport!.ExpiresAt, now)));
+            using var claimDeadline = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+            claimDeadline.CancelAfter(TimeSpan.FromSeconds(20));
+            var run = await db.DesignArtifactRuns.Find(eligible)
+                .SortBy(row => row.BrowserFilmExport!.QueuedAt).Limit(1).FirstOrDefaultAsync(claimDeadline.Token);
+            if (run == null) return;
+            var sameRun = filter.Eq(row => row.Id, run.Id);
+            var claimed = await db.DesignArtifactRuns.UpdateOneAsync(sameRun & eligible,
+                updates.Set(row => row.BrowserFilmExport!.Status, "running")
+                    .Set(row => row.BrowserFilmExport!.Lease, claim)
+                    .Set(row => row.BrowserFilmExport!.ExpiresAt, now.Add(LeaseTime)), cancellationToken: claimDeadline.Token);
+            if (claimed.ModifiedCount != 1) return;
+            logger.LogInformation("Browser film export claimed run={RunId}", run.Id);
+            var owned = sameRun & filter.Eq(row => row.BrowserFilmExport!.Lease, claim);
+            var attempt = new QuickCreationExportAttempt { Id = claim };
             try
             {
-                await using var scope = scopes.CreateAsyncScope();
-                var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
-                var now = DateTime.UtcNow;
-                var claim = Guid.NewGuid().ToString("N");
-                var filter = Builders<DesignArtifactRun>.Filter;
-                var updates = Builders<DesignArtifactRun>.Update;
-                var eligible = Scope & (filter.Eq(row => row.BrowserFilmExport!.Status, "queued")
-                    | (filter.Eq(row => row.BrowserFilmExport!.Status, "running")
-                       & filter.Lte(row => row.BrowserFilmExport!.ExpiresAt, now)));
-                using var claimDeadline = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
-                claimDeadline.CancelAfter(TimeSpan.FromSeconds(20));
-                var run = await db.DesignArtifactRuns.Find(eligible)
-                    .SortBy(row => row.BrowserFilmExport!.QueuedAt).Limit(1).FirstOrDefaultAsync(claimDeadline.Token);
-                if (run == null) continue;
-                var sameRun = filter.Eq(row => row.Id, run.Id);
-                var claimed = await db.DesignArtifactRuns.UpdateOneAsync(sameRun & eligible,
-                    updates.Set(row => row.BrowserFilmExport!.Status, "running")
-                        .Set(row => row.BrowserFilmExport!.Lease, claim)
-                        .Set(row => row.BrowserFilmExport!.ExpiresAt, now.Add(LeaseTime)), cancellationToken: claimDeadline.Token);
-                if (claimed.ModifiedCount != 1) continue;
-                logger.LogInformation("Browser film export claimed run={RunId}", run.Id);
-                var owned = sameRun & filter.Eq(row => row.BrowserFilmExport!.Lease, claim);
-                var attempt = new QuickCreationExportAttempt { Id = claim };
-                try
-                {
-                    var key = await ExportAsync(run, scope.ServiceProvider, attempt, stoppingToken);
-                    await FinishAsync(key == null ? "queued" : "done", key, null);
-                }
-                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-                {
-                    await FinishAsync("queued", null, null);
-                    return;
-                }
-                catch (Exception error)
-                {
-                    logger.LogWarning("Browser film export failed run={RunId} kind={ErrorType}", run.Id, error.GetType().Name);
-                    await FinishAsync("failed", null, "云端导出没有完成，播放网页仍保留，可以重试。");
-                }
-
-                async Task FinishAsync(string state, string? key, string? error)
-                {
-                    using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-                    var change = updates.Set(row => row.BrowserFilmExport!.Status, state)
-                        .Set(row => row.BrowserFilmExport!.AssetKey, key)
-                        .Set(row => row.BrowserFilmExport!.Error, error)
-                        .Set(row => row.BrowserFilmExport!.Lease, null)
-                        .Set(row => row.BrowserFilmExport!.ExpiresAt, null);
-                    if (attempt.StartedAt != default)
-                    {
-                        attempt.EndedAt = DateTime.UtcNow;
-                        change = updates.Combine(change,
-                            updates.PushEach(row => row.BrowserFilmExportAttempts, new[] { attempt }, slice: -100),
-                            updates.Inc(row => row.BrowserFilmExportAttemptCount, 1L));
-                    }
-                    await db.DesignArtifactRuns.UpdateOneAsync(owned, change, cancellationToken: deadline.Token);
-                }
+                var key = await ExportAsync(run, scope.ServiceProvider, attempt, stoppingToken);
+                await FinishAsync(key == null ? "queued" : "done", key, null);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
+                await FinishAsync("queued", null, null);
                 return;
             }
             catch (Exception error)
             {
-                logger.LogWarning("Browser film export polling failed kind={ErrorType}", error.GetType().Name);
+                logger.LogWarning("Browser film export failed run={RunId} kind={ErrorType}", run.Id, error.GetType().Name);
+                await FinishAsync("failed", null, "云端导出没有完成，播放网页仍保留，可以重试。");
             }
+
+            async Task FinishAsync(string state, string? key, string? error)
+            {
+                using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+                var change = updates.Set(row => row.BrowserFilmExport!.Status, state)
+                    .Set(row => row.BrowserFilmExport!.AssetKey, key)
+                    .Set(row => row.BrowserFilmExport!.Error, error)
+                    .Set(row => row.BrowserFilmExport!.Lease, null)
+                    .Set(row => row.BrowserFilmExport!.ExpiresAt, null);
+                if (attempt.StartedAt != default)
+                {
+                    attempt.EndedAt = DateTime.UtcNow;
+                    change = updates.Combine(change,
+                        updates.PushEach(row => row.BrowserFilmExportAttempts, new[] { attempt }, slice: -100),
+                        updates.Inc(row => row.BrowserFilmExportAttemptCount, 1L));
+                }
+                await db.DesignArtifactRuns.UpdateOneAsync(owned, change, cancellationToken: deadline.Token);
+            }
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            return;
+        }
+        catch (Exception error)
+        {
+            logger.LogWarning("Browser film export polling failed kind={ErrorType}", error.GetType().Name);
+        }
+        finally
+        {
+            _exportSlot.Release();
         }
     }
 
