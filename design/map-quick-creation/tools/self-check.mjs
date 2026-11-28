@@ -95,13 +95,14 @@ for (const screen of design.screens) {
         text: document.body.innerText,
         vars: ['--text-primary', '--text-secondary', '--bg-base'].map(v => style.getPropertyValue(v).trim()),
         submitDisabled: q('[data-qc=submit]')?.disabled ?? null,
-        blockReason: !!q('[data-qc=block-reason]'),
+        /* 不能生成的原因写在「生成」按钮的提示与读屏标签上（输入框下不再放文字） */
+        blockReason: !!q('[data-qc=submit]')?.getAttribute('data-block-reason') && (q('[data-qc=submit]')?.getAttribute('title') ?? '').length > 4,
         trayHeight: tray ? Math.round(tray.getBoundingClientRect().height) : null,
         toggleHeight: toggle ? Math.round(toggle.getBoundingClientRect().height) : null,
         chips: tray && !list ? tray.querySelectorAll('[title]').length : null,
         plusN: tray ? /\+\d+/.test(tray.innerText) : null,
-        listMax: list ? `${getComputedStyle(list).overflowY} · 列表区 ${Math.round(list.getBoundingClientRect().height)}px（资料面板在右栏，列表区填满剩余高度）` : null,
-        listScrolls: list ? getComputedStyle(list).overflowY === 'auto' && !!list.closest('[data-workbench-pane=preview]') : null,
+        listMax: list ? `${getComputedStyle(list).overflowY} · 列表区 ${Math.round(list.getBoundingClientRect().height)}px（资料管理在浮层里，列表区填满剩余高度）` : null,
+        listScrolls: list ? getComputedStyle(list).overflowY === 'auto' && !!list.closest('[data-workbench-pane=preview], [data-qc=materials-sheet]') : null,
         listFooter: (q('[data-qc=budget]')?.innerText ?? '').match(/文字 [\d,]+ \/ 20,000 · 附件 \d+ \/ 10/)?.[0] ?? null,
       };
     });
@@ -135,7 +136,7 @@ const measure = {
     note: results.screens.filter(s => s.viewport === 'phone').map(s => `${s.id}/${s.theme}：溢出 ${s.overflow}px${s.small.length ? '，小于 44px：' + [...new Set(s.small)].join('、') : ''}`).join('；') },
   'A-07': { pass: navOk, note: navOk ? 'navRegistry 有 /quick-creation-agent 与 wip: true；toolboxStore 有 builtin-quick-creation' : '缺少注册' },
   'A-10': { pass: svcOk, note: `apiRequest 封装；fetch 仅 ${fetchCount} 处（附件上传 FormData）` },
-  'A-12': { pass: every(S('compose'), s => s.submitDisabled === true && s.blockReason), note: '无附件时快捷生成不可用，下方写原因' },
+  'A-12': { pass: every(S('compose'), s => s.submitDisabled === true && s.blockReason), note: '无附件时「生成」不可用，按钮提示与读屏标签写明原因' },
   'A-14': { pass: every(S('attachments'), s => s.trayHeight <= 88 && s.toggleHeight <= 28 && s.chips <= 2 && s.plusN), note: S('attachments').map(s => `${s.theme}：托盘 ${s.trayHeight}px，摘要行 ${s.toggleHeight}px，胶囊 ${s.chips}，+N ${s.plusN}`).join('；') },
   'A-16': { pass: every(S('attachments-expanded'), s => s.listScrolls === true && !!s.listFooter), note: S('attachments-expanded').map(s => `${s.theme}：${s.listMax}；${s.listFooter}`).join('；') },
 };

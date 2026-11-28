@@ -130,3 +130,19 @@
 /* 弹出菜单的底：浅色主题 --bg-input 是实色（白），深色主题它是半透明，叠在 --bg-elevated 上才不透出下面的字 */
 .qc-menu-surface { background: linear-gradient(var(--bg-input), var(--bg-input)), var(--bg-elevated); }
 .qc-face-chip[aria-checked="true"] { --qc-face-ring: inset 0 0 0 1.5px var(--accent-primary); }
+
+/* V10：安静的文字按钮（起头、次要动作）：平时没有底和框，悬停才出一层浅底 */
+.qc-face-quiet { --qc-face-h: 32px; --qc-face-bg: transparent; }
+.qc-face-quiet:hover:not(:disabled) { --qc-face-bg: var(--bg-tertiary); color: var(--text-primary); }
+/* 不依赖 Button 组件的主按钮（浮层里用） */
+.qc-face-primary-plain { --qc-face-h: 34px; --qc-face-r: 10px; --qc-face-bg: var(--button-primary-bg); color: var(--button-primary-fg); }
+.qc-face-primary-plain:hover:not(:disabled) { --qc-face-bg: var(--button-primary-bg-hover); }
+
+/* V10 输入框：一块面，不套框；靠一圈极淡的轮廓和柔和的投影浮起来，聚焦时轮廓变成主色 */
+.qc-composer {
+  background: var(--bg-input);
+  border-radius: 22px;
+  box-shadow: 0 0 0 1px var(--border-subtle), 0 16px 40px -24px var(--border-default);
+  transition: box-shadow .2s;
+}
+.qc-composer:focus-within { box-shadow: 0 0 0 1.5px var(--accent-primary), 0 16px 40px -24px var(--border-default); }

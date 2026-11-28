@@ -1,0 +1,570 @@
+{
+ "from": {
+  "label": "V8",
+  "version": 8,
+  "commit": "754e85ad507804cdb8ccd52315596fdcb8770de0",
+  "title": "快速创作 · 交付说明（V8）"
+ },
+ "to": {
+  "label": "V10",
+  "version": 10,
+  "commit": null,
+  "title": "快速创作 · 交付说明（V10）"
+ },
+ "direction": "upgrade",
+ "acceptance": {
+  "added": [
+   {
+    "id": "A-55",
+    "rule": "开工前就知道成片多长，也能自己定：时长和风格收在输入框里同一个按钮上（按钮写「约 3 分钟 · 视觉笔记」），面板顶部是时长，默认自动并直接写出估算值；可选约 1 / 3 / 5 / 10 分钟；面板写明依据（稿件字数、全文照念多长）、幕数和预计生成耗时；估算由服务端给出，前端不自己算",
+    "expected": "放入示例稿件后按钮写「约 3 分钟 · 视觉笔记」；面板写「自动 · 约 3 分钟」与「稿件 1,840 字，全文照念约 7 分钟；自动取约 3 分钟讲重点。分成约 13 幕，生成约 35–54 分钟」；选「约 10 分钟」后按钮变为「约 10 分钟 · 视觉笔记」，提交后任务里写「视频 · 约 10 分钟」",
+    "how": "human",
+    "screenId": "duration-picker",
+    "slots": [
+     "desktop-light",
+     "desktop-dark"
+    ],
+    "interaction": true
+   },
+   {
+    "id": "A-56",
+    "rule": "分镜脚本按目标时长写：每幕写秒数，顶部写合计与目标；「短一点 / 长一点」在 1–10 分钟的档位间重写这版脚本；对话里说「5 分钟」「长一点」同样生效；培训、教程类先问一次想要多长；服务端校验脚本总时长落在目标的 ±15%，不够就补写",
+    "expected": "宣传片聊完出脚本：4 幕、合计约 1 分钟（目标约 1 分钟）；点「长一点」后 13 幕、合计约 3 分钟（目标约 3 分钟），输入框里的时长同步为约 3 分钟",
+    "how": "human",
+    "screenId": "chat-script",
+    "slots": [
+     "desktop-light",
+     "desktop-dark"
+    ],
+    "interaction": true
+   },
+   {
+    "id": "A-57",
+    "rule": "服务器不渲染视频：成片是能播放的网页（画面代码 + 配音），播放与导出都在用户浏览器里；完成卡写实际时长与目标；「导出 MP4 文件」显示帧数进度、已用与还需时间、保持前台的提醒，可取消，完成后可下载；发布到网页托管发布的是能播放的网页（约几 MB），不传视频文件",
+    "expected": "点「导出 MP4 文件」后出现「正在用你的浏览器合成 MP4」、第 x / 2,304 帧、还需时间与「保持这个页面在前台」；完成后写「已导出 需求评审的三个习惯.mp4」并可下载；发布按钮旁写「发布的是能播放的网页（约 2 MB），不传视频文件」",
+    "how": "human",
+    "screenId": "export-progress",
+    "slots": [
+     "desktop-light",
+     "desktop-dark"
+    ],
+    "interaction": true
+   },
+   {
+    "id": "A-58",
+    "rule": "浏览器不能本机合成时（没有 WebCodecs，或 H.264 与 VP9 都编不了）说明原因并给两条路：换电脑上的 Chrome / Edge / Safari 打开这一页，或请服务器代为导出（排队，作为兜底）",
+    "expected": "没有 WebCodecs 时写「这个浏览器不能在本机合成视频」并给「请服务器导出」；点它后写「已交给服务器导出：前面还有 2 个，预计 12 分钟后可以下载」",
+    "how": "human",
+    "screenId": "export-unsupported",
+    "slots": [
+     "desktop-light",
+     "desktop-dark"
+    ],
+    "interaction": true
+   },
+   {
+    "id": "A-59",
+    "rule": "先试看再做完：3 分钟及以上默认先只做片头和第 1 幕（带配音），约占整片一成的时间；做好后在右边播放，满意就从断点接着做完（试看的两幕沿用），不满意回去换风格或改要求；等确认时任务暂停、不占排队名额；时长与风格面板和分镜脚本卡都能开关",
+    "expected": "trial-ready 左栏写「试看好了：片头和第 1 幕（约 28 秒）」与「满意，继续做完」「不满意，回去换风格或改要求」，右栏标题「试看」并能播放；点「满意，继续做完」后写「试看已确认，接着做剩下的 11 幕」；放入示例稿件（约 3 分钟）时面板里「先试看」默认开，改成约 1 分钟后默认关",
+    "how": "human",
+    "screenId": "trial-ready",
+    "slots": [
+     "desktop-light",
+     "desktop-dark"
+    ],
+    "interaction": true
+   }
+  ],
+  "removed": [],
+  "changed": [
+   {
+    "id": "A-05",
+    "fields": [
+     "expected"
+    ],
+    "from": {
+     "expected": "逐画面数：空态只有「快捷生成」，已生成只有「发布到网页托管」，失败只有恢复主按钮，作品列表只有「新建」"
+    },
+    "to": {
+     "expected": "逐画面数：新建页只有「生成」，已生成只有「发布到网页托管」，失败只有恢复主按钮，作品列表只有「新建」"
+    }
+   },
+   {
+    "id": "A-11",
+    "fields": [
+     "rule",
+     "expected"
+    ],
+    "from": {
+     "rule": "首屏：左栏是助手开场与输入框（含产出切换与风格按钮），右栏是风格库：选中风格的大图与说明在上，按类别浏览全部风格在下；选中态唯一",
+     "expected": "1440×900 首屏同时看到左栏的开场、输入框里的「视频 / 网页」与风格按钮、「快捷生成」，右栏的风格大图、样片说明、类别行与风格卡"
+    },
+    "to": {
+     "rule": "新建页是居中一列：一句标题、输入框（放稿件、做成什么、风格、语音与一个动作）、几个起头、风格灵感、最近作品；不套卡片，靠留白分组，输入框下不放说明文字",
+     "expected": "1440×900 首屏看到标题、输入框与起头，往下是风格灵感与最近作品；页面上没有右栏，输入框下没有文字"
+    }
+   },
+   {
+    "id": "A-12",
+    "fields": [
+     "rule",
+     "expected"
+    ],
+    "from": {
+     "rule": "没有可用稿件时不能生成，原因写在按钮下方",
+     "expected": "检查：没有附件时 [data-qc=submit] 为 disabled，且 [data-qc=block-reason] 可见"
+    },
+    "to": {
+     "rule": "没有可用稿件时不能生成，原因写在「生成」按钮的提示与读屏标签上（输入框下不放文字）",
+     "expected": "检查：没有附件时 [data-qc=submit] 为 disabled，且 title 与 data-block-reason 写明原因"
+    }
+   },
+   {
+    "id": "A-16",
+    "fields": [
+     "rule",
+     "expected"
+    ],
+    "from": {
+     "rule": "资料管理在右栏面板：按读取失败 / 稿件 / 知识库文档 / 图片分组，列表区内部滚动，右侧看正文，底部显示文字预算与附件上限",
+     "expected": "检查：[data-qc=attachment-list] 在预览栏内且 overflow-y 为 auto；分组标题含数量；底部写「文字 x / 20,000 · 附件 n / 10」"
+    },
+    "to": {
+     "rule": "资料管理在浮层里（新建时）或右栏（任务中回看）：按读取失败 / 稿件 / 知识库文档 / 图片分组，列表区内部滚动，右侧看正文，底部显示文字预算与附件上限",
+     "expected": "检查：[data-qc=attachment-list] 在资料浮层或预览栏内且 overflow-y 为 auto；分组标题含数量；底部写「文字 x / 20,000 · 附件 n / 10」"
+    }
+   },
+   {
+    "id": "A-19",
+    "fields": [
+     "rule",
+     "expected"
+    ],
+    "from": {
+     "rule": "提交后先确认稿件和要求已保存，说明离开也会继续",
+     "expected": "左栏消息下方第一张卡写「稿件和要求已保存。生成在后台进行，离开页面也会继续。」"
+    },
+    "to": {
+     "rule": "提交后确认稿件和要求已保存，说明离开也会继续",
+     "expected": "进度下方一行写「已保存，可以离开，做好了会通知你」"
+    }
+   },
+   {
+    "id": "A-21",
+    "fields": [
+     "rule",
+     "expected"
+    ],
+    "from": {
+     "rule": "生成中写出当前阶段在做什么、阶段进度、已用与预计剩余，以及预计依据；计时超过 1 小时显示到小时",
+     "expected": "配音阶段有说明与进度；计时 22:00、「还需约 18 分钟」；预计依据写最近 20 次同风格任务的中位数（约 42 分钟）"
+    },
+    "to": {
+     "rule": "生成中只说重点：一行大字写正在做什么（阶段名不超过四个字），一行写这一步的具体进展，右侧写还需多久，下面一条总进度；各阶段、计时与预计依据收在「过程」里",
+     "expected": "配音阶段大字「正在配音」，下一行「正在为第 3 / 6 幕配旁白」，右侧「还需约 18 分钟」；展开「过程」才看到各阶段与预计依据；标题里不出现模型调用次数等内部信息"
+    }
+   },
+   {
+    "id": "A-35",
+    "fields": [
+     "rule",
+     "expected"
+    ],
+    "from": {
+     "rule": "手机上「对话 / 预览」切换；输入框做减法：左下「+」（上传、知识库）与「视频 · 风格」按钮（产出切换收在它的面板顶部），右下语音与一个动作（有字是发送，没字且稿件齐了是「生成」）；输入框下不放说明文字",
+     "expected": "390×844 下输入框工具行只有 +、「视频 · 风格」、语音、一个动作；点 + 出现「上传稿件或图片 / 从知识库选择」；输入框下没有文字"
+    },
+    "to": {
+     "rule": "手机输入框做减法：左下「+」（上传、知识库、示例稿件）、「做成什么」（产出、时长与先试看收在面板里）与风格缩略图，右下语音与一个动作（还没有稿件且有字时是发送，其他时候是「生成」）；输入框下不放文字；任务页用「对话 / 预览」切换",
+     "expected": "390×844 下工具行一行排完：+、视频 3 分钟、风格缩略图、语音、生成；点 + 出现三项；输入框下没有文字"
+    }
+   },
+   {
+    "id": "A-39",
+    "fields": [
+     "rule",
+     "expected"
+    ],
+    "from": {
+     "rule": "切到网页后风格保持不变，右栏说明换成「按这个风格的配色、字体与版式出页面」，标题与风格按钮同步",
+     "expected": "「网页」高亮；风格仍是「视觉笔记」；右栏说明写网页的生成方式"
+    },
+    "to": {
+     "rule": "切到网页后风格保持不变，标题与风格按钮同步",
+     "expected": "「做成什么」面板里「网页」高亮，面板写「网页按内容分 4–5 节」；风格仍是「视觉笔记」"
+    }
+   },
+   {
+    "id": "A-43",
+    "fields": [
+     "rule",
+     "expected"
+    ],
+    "from": {
+     "rule": "风格库按 Lemo-Opuscar 的分类：15 类 99 种，可按类别筛选、按名字或类别搜索；选中风格显示样片海报、样片名与时长、一句话说明和来源署名",
+     "expected": "类别行「全部 99」与 15 类各带数量；搜「水墨」只剩「中国水墨」；选中后大图、样片《》与署名同步"
+    },
+    "to": {
+     "rule": "风格库按 Lemo-Opuscar 的分类：15 类 99 种，可按类别筛选、按名字或类别搜索；选中风格显示样片海报、样片名与时长、一句话说明和来源署名；从新建页「全部 99 种」或风格按钮面板底部打开，是浮层，关掉回到原处",
+     "expected": "类别行「全部 99」与 15 类各带数量；搜「水墨」只剩「中国水墨」；选中后大图、样片与署名同步，输入框里的风格按钮同步"
+    }
+   },
+   {
+    "id": "A-44",
+    "fields": [
+     "rule",
+     "expected"
+    ],
+    "from": {
+     "rule": "输入框里的风格按钮就地弹出选择面板（搜索 + 类别 + 列表），选中后面板关闭，按钮与右栏风格库同步；面板底部可去右栏看大图",
+     "expected": "点风格按钮 → 面板含搜索、类别行与风格列表；点「中国水墨」后按钮写「中国水墨」，右栏同一张卡被选中"
+    },
+    "to": {
+     "rule": "输入框里的风格按钮就地弹出选择面板（搜索 + 类别 + 列表），选中后面板关闭，按钮与新建页的风格灵感同步；面板底部可打开风格库看大图",
+     "expected": "点风格按钮 → 面板含搜索、类别行与风格列表；点「中国水墨」后按钮写「中国水墨」，风格灵感里同一张海报被选中"
+    }
+   },
+   {
+    "id": "A-45",
+    "fields": [
+     "rule"
+    ],
+    "from": {
+     "rule": "「视频 / 网页」在输入框里切换，风格与产出相互独立：切换产出不改风格，切换风格不改产出"
+    },
+    "to": {
+     "rule": "产出在输入框的「做成什么」里切换，风格与产出相互独立：切换产出不改风格，切换风格不改产出"
+    }
+   },
+   {
+    "id": "A-47",
+    "fields": [
+     "rule",
+     "expected"
+    ],
+    "from": {
+     "rule": "右栏是「选择与资产」：新建时页签为「风格 / 产物」，任务中为「本次 / 产物」；产物页签只列已生成的视频与网页，上方是选中产物的大图、风格、作者、时间与发布状态，下方按「我的 / 团队」和视频、网页浏览",
+     "expected": "产物页签首屏：选中产物大图带「视频 · 时长」，信息区写作者、时间、风格与「已发布」；筛选行有「我的 / 团队」与「全部 / 视频 / 网页」及数量；卡片写标题、风格、作者与时间"
+    },
+    "to": {
+     "rule": "历史就在新建页：「我的作品」列出全部任务（进行中、排队、需要处理、已发布都标在海报上），「全部」进作品列表；页头「我的作品」在新建页上直接滚到这里；任务中右栏仍有「本次 / 产物」页签可回看",
+     "expected": "新建页下方「我的作品」网格：海报、标题、时间，左上角写生成中 / 排队中 / 需要处理；点页头「我的作品 30」滚到这一区"
+    }
+   },
+   {
+    "id": "A-48",
+    "fields": [
+     "rule",
+     "expected"
+    ],
+    "from": {
+     "rule": "从产物复用：「用这个风格」把风格带回输入框（任务中则新建并带上风格），「打开」回到原任务，已发布的可去网页托管；当前正在用的风格不重复带回",
+     "expected": "选同事的「新版 OKR 填写指南」点「用这个风格」→ 风格按钮变为「中国水墨」并提示；任务中点「打开」→ 进入该产物的任务"
+    },
+    "to": {
+     "rule": "团队成品可复用：「团队在做」列出同事做好的视频与网页，点开看大图与信息，「用这个风格」把风格带回输入框，「打开看看」进入原任务，已发布的可去网页托管；当前正在用的风格不重复带回",
+     "expected": "点「团队在做」→ 选林夏的「新版 OKR 填写指南」→ 浮层写作者、时长、风格与时间，点「用这个风格」后风格按钮变为「中国水墨」"
+    }
+   }
+  ]
+ },
+ "screens": {
+  "added": [
+   {
+    "id": "duration-picker",
+    "name": "开工前定时长：「做成什么」按钮的面板里，自动写出估算值，可选 1 / 3 / 5 / 10 分钟",
+    "route": "#/quick-creation-agent",
+    "viewport": "desktop",
+    "entryActions": [
+     "[data-qc=sample-doc]",
+     "[data-qc=output-chip]"
+    ]
+   },
+   {
+    "id": "export-done",
+    "name": "成片导出完成，可下载",
+    "route": "#/quick-creation-agent?run=run-done",
+    "viewport": "desktop",
+    "entryActions": [
+     "[data-qc=export-start]"
+    ]
+   },
+   {
+    "id": "export-progress",
+    "name": "成片在浏览器里导出：帧数进度与还需时间",
+    "route": "#/quick-creation-agent?run=run-done",
+    "viewport": "desktop",
+    "entryActions": [
+     "[data-qc=export-start]"
+    ]
+   },
+   {
+    "id": "export-unsupported",
+    "name": "浏览器不能本机合成：换浏览器或请服务器导出",
+    "route": "#/quick-creation-agent?run=run-done&export=unsupported",
+    "viewport": "desktop"
+   },
+   {
+    "id": "trial-ready",
+    "name": "试看好了：先看片头和第 1 幕，满意再做完",
+    "route": "#/quick-creation-agent?run=run-trial",
+    "viewport": "desktop"
+   }
+  ],
+  "removed": [],
+  "changed": [
+   {
+    "id": "assets",
+    "fields": [
+     "name",
+     "entryActions"
+    ],
+    "from": {
+     "name": "右栏产物：回看我生成过的视频与网页",
+     "entryActions": [
+      "[aria-label=选择与资产] button:nth-child(2)"
+     ]
+    },
+    "to": {
+     "name": "新建页的最近作品：历史就在这里（含进行中与失败）",
+     "entryActions": [
+      "[data-qc=works-link]"
+     ]
+    }
+   },
+   {
+    "id": "assets-team",
+    "fields": [
+     "name",
+     "entryActions"
+    ],
+    "from": {
+     "name": "右栏产物 · 团队：同事用其他风格做的成品",
+     "entryActions": [
+      "[aria-label=选择与资产] button:nth-child(2)",
+      "[aria-label=产物范围] button:nth-child(2)"
+     ]
+    },
+    "to": {
+     "name": "团队在做：同事的成品，点开可把风格带回来",
+     "entryActions": [
+      "[data-qc=recent-tab-team]",
+      "[data-qc=team-assets] [data-asset=a-t1]"
+     ]
+    }
+   },
+   {
+    "id": "compose-web",
+    "fields": [
+     "entryActions"
+    ],
+    "from": {
+     "entryActions": [
+      "[aria-label=选择产出] button:nth-child(2)"
+     ]
+    },
+    "to": {
+     "entryActions": [
+      "[data-qc=output-chip]",
+      "[aria-label=选择产出] button:nth-child(2)"
+     ]
+    }
+   },
+   {
+    "id": "phone-assets",
+    "fields": [
+     "name",
+     "entryActions"
+    ],
+    "from": {
+     "name": "手机 · 预览页签里的产物",
+     "entryActions": [
+      "[aria-label=对话与预览] button:nth-child(2)",
+      "[aria-label=选择与资产] button:nth-child(2)"
+     ]
+    },
+    "to": {
+     "name": "手机 · 新建页的最近作品",
+     "entryActions": [
+      "[data-qc=works-link]"
+     ]
+    }
+   },
+   {
+    "id": "phone-style",
+    "fields": [
+     "name",
+     "entryActions"
+    ],
+    "from": {
+     "name": "手机 · 「视频 · 风格」按钮：产出切换在面板顶部",
+     "entryActions": [
+      "[data-qc=style-chip]"
+     ]
+    },
+    "to": {
+     "name": "手机 · 「做成什么」按钮：产出、时长与先试看",
+     "entryActions": [
+      "[data-qc=output-chip]"
+     ]
+    }
+   }
+  ]
+ },
+ "docs": {
+  "added": [],
+  "removed": []
+ },
+ "meta": {},
+ "files": {
+  "added": [
+   {
+    "path": "src/added/pages/quick-creation-agent/BrowserExport.tsx",
+    "area": "源码"
+   },
+   {
+    "path": "src/added/pages/quick-creation-agent/Duration.tsx",
+    "area": "源码"
+   },
+   {
+    "path": "src/added/pages/quick-creation-agent/Landing.tsx",
+    "area": "源码"
+   },
+   {
+    "path": "src/added/pages/quick-creation-agent/browserExport.ts",
+    "area": "源码"
+   },
+   {
+    "path": "src/estimate.ts",
+    "area": "源码"
+   },
+   {
+    "path": "设计文档/成片时长与浏览器渲染.md",
+    "area": "文档"
+   }
+  ],
+  "removed": [],
+  "changed": [
+   {
+    "path": "checks/handoff-local.json",
+    "area": "自检"
+   },
+   {
+    "path": "checks/result.json",
+    "area": "自检"
+   },
+   {
+    "path": "design.json",
+    "area": "其他"
+   },
+   {
+    "path": "dist/index.html",
+    "area": "原型"
+   },
+   {
+    "path": "src/added/pages/quick-creation-agent/BriefChat.tsx",
+    "area": "源码"
+   },
+   {
+    "path": "src/added/pages/quick-creation-agent/Conversation.tsx",
+    "area": "源码"
+   },
+   {
+    "path": "src/added/pages/quick-creation-agent/QuickCreationAgentPage.tsx",
+    "area": "源码"
+   },
+   {
+    "path": "src/added/pages/quick-creation-agent/ResultPanel.tsx",
+    "area": "源码"
+   },
+   {
+    "path": "src/added/pages/quick-creation-agent/RunProgress.tsx",
+    "area": "源码"
+   },
+   {
+    "path": "src/added/pages/quick-creation-agent/StyleLibrary.tsx",
+    "area": "源码"
+   },
+   {
+    "path": "src/added/pages/quick-creation-agent/quickCreation.css",
+    "area": "源码"
+   },
+   {
+    "path": "src/added/pages/quick-creation-agent/types.ts",
+    "area": "源码"
+   },
+   {
+    "path": "src/added/services/real/quickCreation.ts",
+    "area": "源码"
+   },
+   {
+    "path": "src/briefEngine.ts",
+    "area": "源码"
+   },
+   {
+    "path": "src/env.ts",
+    "area": "源码"
+   },
+   {
+    "path": "src/fixtures.ts",
+    "area": "源码"
+   },
+   {
+    "path": "tools/manifest-src.mjs",
+    "area": "工具"
+   },
+   {
+    "path": "tools/self-check.mjs",
+    "area": "工具"
+   },
+   {
+    "path": "tools/walkthrough.json",
+    "area": "工具"
+   },
+   {
+    "path": "versions.json",
+    "area": "其他"
+   },
+   {
+    "path": "交付说明.md",
+    "area": "文档"
+   },
+   {
+    "path": "交接清单.md",
+    "area": "文档"
+   },
+   {
+    "path": "思路.md",
+    "area": "文档"
+   },
+   {
+    "path": "设计文档/源码差异.diff",
+    "area": "文档"
+   },
+   {
+    "path": "设计文档/演示数据.json",
+    "area": "文档"
+   },
+   {
+    "path": "设计文档/验收计划.md",
+    "area": "文档"
+   }
+  ]
+ },
+ "checks": {
+  "from": {
+   "passed": 55,
+   "total": 55,
+   "failed": []
+  },
+  "to": {
+   "passed": 60,
+   "total": 60,
+   "failed": []
+  }
+ },
+ "source": {
+  "files": 17,
+  "bytes": 159977
+ }
+}

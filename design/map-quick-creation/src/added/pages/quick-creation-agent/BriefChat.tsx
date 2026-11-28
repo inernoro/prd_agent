@@ -104,9 +104,9 @@ function AgentMessage({ m, latest, revealing, templates, session, busy, onReply,
             const chosen = session.styleId === st.id && session.brief.fields.find(f => f.key === 'style')?.source === 'chat';
             return (
               <div key={r.templateId} data-qc="rec-style" data-style={r.templateId}
-                className={cn('flex flex-col overflow-hidden rounded-[12px] border bg-[var(--bg-input)] max-sm:flex-row', chosen ? 'border-[color:var(--accent-primary)] shadow-[0_0_0_1px_var(--accent-primary)]' : 'border-token-subtle')}>
-                <div className="max-sm:w-28 max-sm:shrink-0 max-sm:self-stretch max-sm:[&>div]:!aspect-auto max-sm:[&>div]:!h-full"><StyleFrame template={{ ...st, frame: undefined }} /></div>
-                <div className="flex min-w-0 flex-1 flex-col gap-1 p-2.5">
+                className="flex flex-col gap-2 max-sm:flex-row max-sm:gap-3">
+                <div className={cn('overflow-hidden rounded-xl max-sm:w-28 max-sm:shrink-0 max-sm:self-start', chosen ? 'shadow-[0_0_0_2px_var(--accent-primary)]' : 'shadow-[var(--shadow-card-sm)]')}><StyleFrame template={{ ...st, frame: undefined }} /></div>
+                <div className="flex min-w-0 flex-1 flex-col gap-1">
                   <div className="flex items-center gap-1.5 text-[13px] font-medium text-token-primary"><span className="tabular-nums text-token-muted">{i + 1}</span>{st.name}</div>
                   <p className="m-0 flex-1 text-[12px] leading-[18px] text-token-secondary">{r.reason}</p>
                   {latest && (

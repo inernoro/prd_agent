@@ -77,10 +77,10 @@ export function ProgressPreview({ run, template }: { run: QcRun; template: QcTem
                 {focus.status === 'voicing' && <Wave />}{SCENE_STATUS[focus.status]}
               </span>
             </>
-          ) : <span className="text-token-muted">排队中 · 轮到后从第 1 幕开始画</span>}
+          ) : null}
         </div>
-        <div className={cn('relative overflow-hidden rounded-[12px] border shadow-[var(--shadow-card-sm)]',
-          focus?.status === 'failed' ? 'border-[color:var(--accent-fg-error)]' : 'border-token-subtle')}>
+        <div className={cn('relative overflow-hidden rounded-[14px] shadow-[var(--shadow-card-sm)]',
+          focus?.status === 'failed' && 'shadow-[0_0_0_2px_var(--accent-fg-error)]')}>
           {focus ? (
             <div key={focus.index} className={cn('qc-rise', focus.status === 'drawing' && 'qc-shimmer')}><StyleFrame template={template} scene={focus.frameScene} /></div>
           ) : <FrameSkeleton big />}
@@ -97,23 +97,20 @@ export function ProgressPreview({ run, template }: { run: QcRun; template: QcTem
         </div>
       </div>
       <div>
-        <div className="mb-2 flex items-center justify-between text-[12px]">
-          <span className="font-medium text-token-secondary">分镜 · {started} / {scenes.length} 幕已出</span>
-          <span className="text-token-muted">配音完成的幕标为已完成，全部完成后合成成片</span>
-        </div>
+        <div className="mb-2 text-[12px] tabular-nums text-token-muted">{started} / {scenes.length} 幕</div>
         <div className="grid grid-cols-3 gap-2.5 xl:grid-cols-6">
           {scenes.map(s => {
             const on = s.index === focus?.index;
             return (
               <figure key={s.index} className="m-0" data-scene={s.index} data-scene-status={s.status}>
-                <div className={cn('overflow-hidden rounded-[8px] border',
-                  s.status === 'failed' ? 'border-[color:var(--accent-fg-error)]' : on ? 'border-[color:var(--accent-primary)] shadow-[0_0_0_1px_var(--accent-primary)]' : 'border-token-subtle',
+                <div title={s.title} className={cn('overflow-hidden rounded-[8px]',
+                  s.status === 'failed' ? 'shadow-[0_0_0_2px_var(--accent-fg-error)]' : on ? 'shadow-[0_0_0_2px_var(--accent-primary)]' : '',
                   s.status === 'drawing' && 'qc-shimmer')}>
                   {s.status === 'waiting' ? <FrameSkeleton /> : <div className={cn(s.status === 'drawn' && 'opacity-80')}><StyleFrame template={template} scene={s.frameScene} /></div>}
                 </div>
-                <figcaption className="mt-1.5 px-0.5 text-[11.5px] leading-4">
-                  <span className="block truncate text-token-secondary"><span className="tabular-nums text-token-muted">{s.index}</span> {s.title}</span>
-                  <span className="mt-0.5 flex items-center gap-1" style={{ color: s.status === 'ready' ? 'var(--accent-fg-success)' : s.status === 'failed' ? 'var(--accent-fg-error)' : s.status === 'voicing' || s.status === 'drawing' ? 'var(--accent-primary)' : 'var(--text-muted)' }}>
+                <figcaption className="mt-1.5 flex items-center gap-1.5 px-0.5 text-[11.5px] leading-4">
+                  <span className="tabular-nums text-token-muted">{s.index}</span>
+                  <span className="flex min-w-0 items-center gap-1 truncate" style={{ color: s.status === 'ready' ? 'var(--accent-fg-success)' : s.status === 'failed' ? 'var(--accent-fg-error)' : s.status === 'voicing' || s.status === 'drawing' ? 'var(--accent-primary)' : 'var(--text-muted)' }}>
                     {s.status === 'voicing' && <Wave />}{SCENE_STATUS[s.status]}
                   </span>
                 </figcaption>

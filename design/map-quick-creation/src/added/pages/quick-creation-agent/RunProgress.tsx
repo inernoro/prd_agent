@@ -4,10 +4,9 @@
  * 下方是任务清单；进行中的那一步高亮、带流动的进度条，其余步骤一行一项。
  */
 import { useState } from 'react';
-import { AlertTriangle, ChevronDown, Circle, CircleCheck, Clock3, Globe, RotateCcw, Users, Video } from 'lucide-react';
+import { AlertTriangle, ChevronDown, Circle, CircleCheck, Clock3, Globe, RotateCcw, Video } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { Button } from '@/components/design/Button';
-import { MapSpinner } from '@/components/ui/VideoLoader';
 import type { OutputKind, QcFailure, QcRun } from './types';
 import { formatDuration, formatRemain } from './format';
 
@@ -39,76 +38,58 @@ function KindMark({ kind }: { kind: OutputKind }) {
 }
 
 /**
- * 排队卡：先说清楚为什么在等（团队同时生成的上限满了，不是稿件或操作的问题），
- * 再列出正在生成的是谁、各还要多久，排在前面的是谁、各自预计何时开始，最后是你自己。
+ * 排队：大字说第几位、多久后开始；一句话说原因（团队同时生成的上限满了，与稿件无关）；
+ * 排在你前面的人直接列出（谁、做什么、预计何时开始），正在生成的几位收在「正在生成」里，需要时展开。
+ * 不套卡片：靠字号与留白分层，不靠边框。
  */
 export function QueueCard({ run }: { run: QcRun }) {
   const q = run.queue;
+  const [showRunning, setShowRunning] = useState(false);
   if (!q) return null;
   const runningItems = q.runningItems ?? [];
   const aheadItems = q.aheadItems ?? [];
   return (
-    <section className="qc-card qc-rise p-4" data-qc="queue-card" data-position={q.position}>
-      <div className="flex items-start gap-3">
-        <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-[var(--selection-bg)] text-[color:var(--accent-primary)]"><Users size={17} aria-hidden /></span>
-        <div className="min-w-0 flex-1">
-          <div className="text-[15px] font-semibold text-token-primary">排队中 · 第 {q.position} 位</div>
-          <div className="mt-0.5 text-[12.5px] text-token-secondary">
-            {q.ahead ? `前面还有 ${q.ahead} 人，` : '下一个就是你，'}预计 {mins(q.startInSec)}后开始
-          </div>
-        </div>
+    <section className="qc-rise" data-qc="queue-card" data-position={q.position}>
+      <div className="flex items-baseline justify-between gap-3">
+        <div className="text-[22px] font-semibold tracking-tight text-token-primary">排队中 · 第 {q.position} 位</div>
+        <div className="shrink-0 text-[13px] tabular-nums text-token-secondary">约 {mins(q.startInSec)}后开始</div>
       </div>
-      <p className="m-0 mt-3 text-[12.5px] leading-5 text-token-secondary" data-qc="queue-reason">
-        团队同时最多生成 {q.capacity} 个，现在 {q.running} 个都在生成，所以要排队；这和你的稿件、操作无关。轮到你会自动开始，开始和完成时都会通知你。
+      <p className="m-0 mt-1.5 text-[13px] leading-5 text-token-secondary" data-qc="queue-reason">
+        团队同时最多生成 {q.capacity} 个，现在都在用，所以要等一等；这和你的稿件无关，轮到你会自动开始。
       </p>
-      <div className="mt-3 rounded-[10px] bg-[var(--bg-secondary)] px-3 py-2">
-        <div className="flex items-center justify-between pb-1 text-[11.5px] font-medium text-token-secondary">
-          <span>正在生成 · {q.running} / {q.capacity}</span><span className="font-normal text-token-muted">还需</span>
-        </div>
+      <ol className="m-0 mt-4 list-none p-0" aria-label="排队顺序">
+        {aheadItems.map((a, i) => (
+          <li key={a.ownerName + a.title} className="flex items-center gap-2.5 py-1.5 text-[13px]" data-queue-ahead={i + 1}>
+            <Initial name={a.ownerName} />
+            <span className="shrink-0 text-token-primary">{a.ownerName}</span>
+            <span className="min-w-0 flex-1 truncate text-token-muted">{a.title}</span>
+            <span className="shrink-0 tabular-nums text-token-muted">{mins(a.startInSec ?? 0)}后</span>
+          </li>
+        ))}
+        <li className="flex items-center gap-2.5 py-1.5 text-[13px]" data-queue-me>
+          <Initial name="你" me />
+          <span className="shrink-0 font-semibold text-token-primary">你</span>
+          <span className="min-w-0 flex-1 truncate text-token-secondary">{run.title}</span>
+          <span className="shrink-0 font-medium tabular-nums text-[color:var(--accent-primary)]">{mins(q.startInSec)}后</span>
+        </li>
+      </ol>
+      <button type="button" aria-expanded={showRunning} onClick={() => setShowRunning(v => !v)} data-qc="queue-running-toggle"
+        className="mt-2 inline-flex min-h-8 items-center gap-1 rounded-md text-[12.5px] text-token-muted hover:text-token-primary max-md:min-h-11">
+        正在生成的 {q.running} 个<ChevronDown size={13} className={cn('transition-transform', showRunning && 'rotate-180')} aria-hidden />
+      </button>
+      {showRunning && (
         <ul className="m-0 list-none p-0" aria-label="正在生成的任务">
-          {runningItems.map(r => {
-            const done = (r.elapsedSec ?? 0) / Math.max(1, (r.elapsedSec ?? 0) + (r.remainSec ?? 0));
-            return (
-              <li key={r.ownerName + r.title} className="py-1.5" data-queue-running={r.ownerName}>
-                <div className="flex items-center gap-2 text-[12.5px]">
-                  <Initial name={r.ownerName} />
-                  <span className="shrink-0 font-medium text-token-primary">{r.ownerName}</span>
-                  <KindMark kind={r.kind} />
-                  <span className="min-w-0 flex-1 truncate text-token-secondary">{r.title}</span>
-                  <span className="shrink-0 tabular-nums text-token-primary">约 {mins(r.remainSec ?? 0)}</span>
-                </div>
-                <div className="ml-8 mt-1 h-1 overflow-hidden rounded-full bg-[var(--bg-tertiary)]" aria-hidden>
-                  <div className="qc-bar-live h-full rounded-full" style={{ width: `${Math.round(done * 100)}%` }} />
-                </div>
-              </li>
-            );
-          })}
-        </ul>
-        <div className="mt-1.5 flex items-center justify-between border-t border-token-subtle pb-1 pt-2 text-[11.5px] font-medium text-token-secondary">
-          <span>排在你前面 · {q.ahead} 人</span><span className="font-normal text-token-muted">预计开始</span>
-        </div>
-        <ol className="m-0 list-none p-0" aria-label="排队顺序">
-          {aheadItems.map((a, i) => (
-            <li key={a.ownerName + a.title} className="flex items-center gap-2 py-1.5 text-[12.5px]" data-queue-ahead={i + 1}>
-              <span className="w-3 shrink-0 text-center tabular-nums text-token-muted">{i + 1}</span>
-              <Initial name={a.ownerName} />
-              <span className="shrink-0 font-medium text-token-primary">{a.ownerName}</span>
-              <KindMark kind={a.kind} />
-              <span className="min-w-0 flex-1 truncate text-token-secondary">{a.title}</span>
-              <span className="shrink-0 tabular-nums text-token-muted">{mins(a.startInSec ?? 0)}后</span>
+          {runningItems.map(r => (
+            <li key={r.ownerName + r.title} className="flex items-center gap-2.5 py-1.5 text-[12.5px]" data-queue-running={r.ownerName}>
+              <Initial name={r.ownerName} />
+              <span className="shrink-0 text-token-primary">{r.ownerName}</span>
+              <KindMark kind={r.kind} />
+              <span className="min-w-0 flex-1 truncate text-token-muted">{r.title}</span>
+              <span className="shrink-0 tabular-nums text-token-muted">还需约 {mins(r.remainSec ?? 0)}</span>
             </li>
           ))}
-          <li className="-mx-1.5 flex items-center gap-2 rounded-lg bg-[var(--selection-bg)] px-1.5 py-1.5 text-[12.5px]" data-queue-me>
-            <span className="w-3 shrink-0 text-center font-semibold tabular-nums text-[color:var(--accent-primary)]">{q.position}</span>
-            <Initial name="你" me />
-            <span className="shrink-0 font-semibold text-token-primary">你</span>
-            <KindMark kind={run.kind} />
-            <span className="min-w-0 flex-1 truncate text-token-primary">{run.title}</span>
-            <span className="shrink-0 font-medium tabular-nums text-[color:var(--accent-primary)]">{mins(q.startInSec)}后</span>
-          </li>
-        </ol>
-      </div>
-      <p className="m-0 mt-2.5 text-[12px] leading-5 text-token-muted">排队不是失败。一支片子通常要 30–60 分钟，可以离开，完成后到「我的作品」或通知里打开。</p>
+        </ul>
+      )}
     </section>
   );
 }
@@ -160,66 +141,49 @@ export function RunProgress({ run }: { run: QcRun }) {
     );
   }
 
-  const title = finished ? '全部完成' : failed ? `停在「${current?.label ?? ''}」` : current?.status === 'running' ? `正在${current.label}` : '正在准备';
+  const title = finished ? '全部完成' : failed ? `停在${current?.label ?? ''}` : current?.status === 'running' ? `正在${current.label}` : '正在准备';
+  /* 总进度：已完成的阶段 + 当前阶段的进度（「已生成」不算一段） */
+  const work = steps.filter(s => s.key !== 'done');
+  const overall = Math.round(((work.filter(s => s.status === 'done').length + ((current?.status === 'running' ? current.progress ?? 30 : 0) / 100)) / Math.max(1, work.length)) * 100);
   return (
-    <section className="qc-card qc-rise overflow-hidden" data-qc="run-progress">
-      <div className="flex items-start justify-between gap-3 px-4 pb-3 pt-3.5">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2 text-[15px] font-semibold text-token-primary">
-            {!finished && !failed && <MapSpinner size={14} />}
-            {failed && <AlertTriangle size={15} style={{ color: 'var(--accent-fg-error)' }} aria-hidden />}
-            {finished && <CircleCheck size={15} className="text-[color:var(--accent-fg-success)]" aria-hidden />}
-            {title}
-          </div>
-          {current?.detail && !finished && !failed && <div className="mt-1 text-[12.5px] leading-5 text-token-secondary">{current.detail}</div>}
+    <section className="qc-rise" data-qc="run-progress">
+      <div className="flex items-baseline justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-2 text-[22px] font-semibold tracking-tight text-token-primary">
+          {failed && <AlertTriangle size={18} className="shrink-0" style={{ color: 'var(--accent-fg-error)' }} aria-hidden />}
+          <span className="truncate">{title}</span>
         </div>
-        <div className="shrink-0 text-right">
-          <div className="font-[var(--font-code)] text-[18px] font-semibold tabular-nums leading-6 text-token-primary">{clock(run.elapsedSec)}</div>
-          <div className="text-[11px] text-token-muted">
-            {finished ? '总用时' : failed ? '运行后停下' : run.remainSec != null ? `还需${formatRemain(run.remainSec)}` : '正在估算'}
-          </div>
+        <div className="shrink-0 text-[13px] tabular-nums text-token-secondary">
+          {failed ? `运行 ${formatDuration(run.elapsedSec)}后停下` : run.remainSec != null ? `还需${formatRemain(run.remainSec)}` : `已用 ${clock(run.elapsedSec)}`}
         </div>
       </div>
-      {/* 分段总进度：每段一个阶段，进行中那段流动 */}
-      <div className="flex gap-1 px-4" aria-hidden>
-        {steps.map(s => (
-          <span key={s.key} className="h-1.5 flex-1 overflow-hidden rounded-full bg-[var(--bg-tertiary)]">
-            {s.status === 'done' && <span className="block h-full w-full rounded-full bg-[color:var(--accent-fg-success)] opacity-70" />}
-            {s.status === 'running' && <span className="qc-bar-live block h-full rounded-full transition-[width] duration-700" style={{ width: `${Math.max(8, s.progress ?? 30)}%` }} />}
-            {s.status === 'failed' && <span className="block h-full w-full rounded-full" style={{ background: 'var(--accent-fg-error)' }} />}
-          </span>
-        ))}
+      {current?.detail && !failed && <div className="mt-1 truncate text-[13px] text-token-secondary">{current.detail}</div>}
+      <div className="mt-3 h-1 overflow-hidden rounded-full bg-[var(--bg-tertiary)]" role="progressbar" aria-valuenow={overall} aria-valuemin={0} aria-valuemax={100} aria-label="总进度">
+        <div className={cn('h-full rounded-full transition-[width] duration-700', failed ? '' : 'qc-bar-live')} style={{ width: `${Math.max(4, overall)}%`, ...(failed ? { background: 'var(--accent-fg-error)' } : {}) }} />
       </div>
-      <div className="mx-4 mb-3 mt-3 rounded-[10px] bg-[var(--bg-secondary)] px-3 py-1.5">
-        <div className="flex items-center justify-between border-b border-token-subtle pb-1.5 pt-0.5 text-[11.5px]">
-          <span className="font-medium text-token-secondary">任务清单</span>
-          <span className="flex items-center gap-2 tabular-nums text-token-muted">
-            {doneCount} / {steps.length}
-            {finished && <button type="button" onClick={() => setShowSteps(false)} className="rounded px-1 hover:text-token-primary">收起</button>}
-          </span>
-        </div>
-        <ol aria-label="生成步骤">
-          {steps.map(s => {
-            const live = s.status === 'running';
-            return (
-              <li key={s.key} data-stage={s.key} data-stage-status={s.status} aria-current={live ? 'step' : undefined}
-                className="flex min-h-8 items-center gap-2 text-[12.5px]">
-                <span className="flex h-4 w-4 shrink-0 items-center justify-center" style={{ color: s.status === 'done' ? 'var(--accent-fg-success)' : live ? 'var(--accent-primary)' : s.status === 'failed' ? 'var(--accent-fg-error)' : 'var(--text-muted)' }}>
-                  {s.status === 'done' ? <CircleCheck size={14} /> : live ? <Clock3 size={14} /> : s.status === 'failed' ? <AlertTriangle size={13} /> : <Circle size={14} />}
-                </span>
-                <span className={cn('min-w-0 flex-1 truncate', s.status === 'pending' ? 'text-token-muted' : 'text-token-primary', live && 'font-medium')}>
-                  {s.label}
-                  {s.status === 'done' && s.detail && <span className="text-token-muted"> · {s.detail}</span>}
-                </span>
-                {live && <span className="shrink-0 text-[11px] font-semibold tabular-nums text-[color:var(--accent-primary)]">{s.progress != null ? `${s.progress}%` : '进行中'}</span>}
-                {s.status === 'failed' && <span className="shrink-0 text-[11px] font-semibold" style={{ color: 'var(--accent-fg-error)' }}>未完成</span>}
-              </li>
-            );
-          })}
-        </ol>
-      </div>
-      {run.estimateBasis && !finished && !failed && <div className="px-4 pb-3 text-[11px] text-token-muted">预计依据：{run.estimateBasis}</div>}
+      <button type="button" aria-expanded={showSteps} onClick={() => setShowSteps(v => !v)} data-qc="process-toggle"
+        className="mt-2 inline-flex min-h-8 items-center gap-1 rounded-md text-[12.5px] text-token-muted hover:text-token-primary max-md:min-h-11">
+        过程 · {doneCount} / {steps.length}<ChevronDown size={13} className={cn('transition-transform', showSteps && 'rotate-180')} aria-hidden />
+      </button>
+      {/* 步骤列表默认收起；data-stage 一直在，供程序判断 */}
+      <ol aria-label="生成步骤" className={cn('m-0 list-none p-0', !showSteps && 'hidden')}>
+        {steps.map(s => {
+          const live = s.status === 'running';
+          return (
+            <li key={s.key} data-stage={s.key} data-stage-status={s.status} aria-current={live ? 'step' : undefined}
+              className="flex min-h-8 items-center gap-2.5 text-[13px]">
+              <span className="flex h-4 w-4 shrink-0 items-center justify-center" style={{ color: s.status === 'done' ? 'var(--accent-fg-success)' : live ? 'var(--accent-primary)' : s.status === 'failed' ? 'var(--accent-fg-error)' : 'var(--text-muted)' }}>
+                {s.status === 'done' ? <CircleCheck size={14} /> : live ? <Clock3 size={14} /> : s.status === 'failed' ? <AlertTriangle size={13} /> : <Circle size={14} />}
+              </span>
+              <span className={cn('min-w-0 flex-1 truncate', s.status === 'pending' ? 'text-token-muted' : 'text-token-primary')}>
+                {s.label}{s.status === 'done' && s.detail && <span className="text-token-muted"> · {s.detail}</span>}
+              </span>
+              {live && <span className="shrink-0 text-[12px] tabular-nums text-[color:var(--accent-primary)]">{s.progress != null ? `${s.progress}%` : '进行中'}</span>}
+              {s.status === 'failed' && <span className="shrink-0 text-[12px]" style={{ color: 'var(--accent-fg-error)' }}>未完成</span>}
+            </li>
+          );
+        })}
+      </ol>
+      {showSteps && run.estimateBasis && !finished && !failed && <div className="pt-1 text-[12px] text-token-muted">预计依据：{run.estimateBasis}</div>}
     </section>
   );
 }
-

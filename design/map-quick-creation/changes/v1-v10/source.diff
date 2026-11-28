@@ -647,9 +647,9 @@ new file mode 100644
 +            const chosen = session.styleId === st.id && session.brief.fields.find(f => f.key === 'style')?.source === 'chat';
 +            return (
 +              <div key={r.templateId} data-qc="rec-style" data-style={r.templateId}
-+                className={cn('flex flex-col overflow-hidden rounded-[12px] border bg-[var(--bg-input)] max-sm:flex-row', chosen ? 'border-[color:var(--accent-primary)] shadow-[0_0_0_1px_var(--accent-primary)]' : 'border-token-subtle')}>
-+                <div className="max-sm:w-28 max-sm:shrink-0 max-sm:self-stretch max-sm:[&>div]:!aspect-auto max-sm:[&>div]:!h-full"><StyleFrame template={{ ...st, frame: undefined }} /></div>
-+                <div className="flex min-w-0 flex-1 flex-col gap-1 p-2.5">
++                className="flex flex-col gap-2 max-sm:flex-row max-sm:gap-3">
++                <div className={cn('overflow-hidden rounded-xl max-sm:w-28 max-sm:shrink-0 max-sm:self-start', chosen ? 'shadow-[0_0_0_2px_var(--accent-primary)]' : 'shadow-[var(--shadow-card-sm)]')}><StyleFrame template={{ ...st, frame: undefined }} /></div>
++                <div className="flex min-w-0 flex-1 flex-col gap-1">
 +                  <div className="flex items-center gap-1.5 text-[13px] font-medium text-token-primary"><span className="tabular-nums text-token-muted">{i + 1}</span>{st.name}</div>
 +                  <p className="m-0 flex-1 text-[12px] leading-[18px] text-token-secondary">{r.reason}</p>
 +                  {latest && (
@@ -853,7 +853,7 @@ new file mode 100644
 +    );
 +  }
 +  return (
-+    <div className="mt-3 border-t border-token-subtle pt-3" data-qc="export-idle">
++    <div className="mt-4" data-qc="export-idle">
 +      {container === undefined && <div className="flex h-8 items-center gap-2 text-[12px] text-token-muted"><MapSpinner size={12} />正在看这个浏览器能不能合成视频…</div>}
 +      {container && (
 +        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
@@ -875,7 +875,7 @@ diff --git a/src/added/pages/quick-creation-agent/Conversation.tsx b/src/added/p
 new file mode 100644
 --- /dev/null
 +++ b/src/added/pages/quick-creation-agent/Conversation.tsx
-@@ -0,0 +1,34 @@
+@@ -0,0 +1,35 @@
 +/**
 + * 对话的两种说话人，一眼分得清：
 + * - 你：靠右的主色浅底气泡，资料卡收在气泡里，下方一行写产出与模板；
@@ -905,7 +905,8 @@ new file mode 100644
 +export function UserTurn({ children, meta }: { children: ReactNode; meta?: ReactNode }) {
 +  return (
 +    <div className="qc-rise ml-auto flex w-full max-w-[92%] flex-col items-end gap-1.5" data-turn="user">
-+      <div className="flex w-full flex-col gap-2.5 rounded-[16px_16px_4px_16px] bg-[var(--selection-bg)] p-2.5">{children}</div>
++      {/* 气泡按内容收宽：一句话就一句话的宽，带资料卡时才撑开 */}
++      <div className="flex w-fit max-w-full flex-col gap-2.5 rounded-[18px_18px_4px_18px] bg-[var(--selection-bg)] px-3 py-2.5">{children}</div>
 +      {meta && <div className="flex items-center gap-1.5 px-1 text-[11.5px] text-token-muted">{meta}</div>}
 +    </div>
 +  );
@@ -991,10 +992,205 @@ new file mode 100644
 +    </button>
 +  );
 +}
+diff --git a/src/added/pages/quick-creation-agent/Landing.tsx b/src/added/pages/quick-creation-agent/Landing.tsx
+new file mode 100644
+--- /dev/null
++++ b/src/added/pages/quick-creation-agent/Landing.tsx
+@@ -0,0 +1,190 @@
++/**
++ * 新建页（还没开始对话、也没有任务时）：居中一列，输入框是主角。
++ * - 输入框下面：几个起头（放稿件或直接开聊），安静的文字按钮；
++ * - 风格灵感：一排大海报，点一下就换成这个风格；「全部 99 种」打开风格库浮层；
++ * - 最近作品：历史就在这里，不用去右上角找。「我的」列出全部任务（含进行中、失败），「团队」列出同事的成品。
++ * 不套卡片：海报自己就是视觉重点，文字直接排在下面，靠留白分组。
++ */
++import { useEffect, useState } from 'react';
++import * as Dialog from '@radix-ui/react-dialog';
++import { ArrowRight, ExternalLink, FolderOpen, Globe, Palette, Video, X } from 'lucide-react';
++import { cn } from '@/lib/cn';
++import { MapSpinner } from '@/components/ui/VideoLoader';
++import { listQuickCreationAssets } from '@/services/real/quickCreation';
++import { StyleFrame } from './TemplateFrames';
++import { formatClock } from './format';
++import type { QcAsset, QcTemplate, QcWork } from './types';
++
++/** 通用浮层：风格库、资料管理、团队成品详情都用它；不另起页面，关掉就回到原处 */
++export function Sheet({ open, onOpenChange, title, qc, wide, attrs, children }: { open: boolean; onOpenChange: (v: boolean) => void; title: string; qc: string; wide?: boolean; attrs?: Record<string, string | undefined>; children: React.ReactNode }) {
++  return (
++    <Dialog.Root open={open} onOpenChange={onOpenChange}>
++      <Dialog.Portal>
++        <Dialog.Overlay className="fixed inset-0 z-[100] bg-[var(--dialog-overlay)]" />
++        <Dialog.Content data-qc={qc} aria-describedby={undefined} {...attrs}
++          className={cn('qc-menu-surface fixed left-1/2 top-1/2 z-[101] flex -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-2xl shadow-2xl',
++            wide ? 'h-[min(86vh,820px)] w-[min(1100px,calc(100vw-24px))]' : 'max-h-[86vh] w-[min(720px,calc(100vw-24px))]')}>
++          <div className="flex shrink-0 items-center justify-between gap-3 px-5 pb-2 pt-4">
++            <Dialog.Title className="m-0 text-[16px] font-semibold text-token-primary">{title}</Dialog.Title>
++            <Dialog.Close className="qc-icon-btn" aria-label="关闭"><X size={17} /></Dialog.Close>
++          </div>
++          <div className="min-h-0 flex-1 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>{children}</div>
++        </Dialog.Content>
++      </Dialog.Portal>
++    </Dialog.Root>
++  );
++}
++
++/** 起头：放稿件的两种方式 + 直接开聊的三句话 */
++export function Starters({ onSample, onKnowledge, onSay, showSay }: { onSample: () => void; onKnowledge: () => void; onSay: (t: string) => void; showSay: boolean }) {
++  const chip = 'qc-face qc-face-quiet relative inline-flex items-center px-3 text-[13px] text-token-secondary';
++  return (
++    <div className="mt-4 flex flex-wrap items-center justify-center gap-x-1.5 gap-y-1" aria-label="从这里开始">
++      <button type="button" data-qc="sample-doc" className={chip} onClick={onSample}>用示例稿件试一下</button>
++      <button type="button" data-qc="pick-knowledge" className={chip} onClick={onKnowledge}>从知识库选</button>
++      {showSay && ['我想做一个宣传片', '给新同事做个培训短片', '不知道选什么风格'].map(t => (
++        <button key={t} type="button" data-qc="starter" data-value={t} className={chip} onClick={() => onSay(t)}>{t}</button>
++      ))}
++    </div>
++  );
++}
++
++function SectionHead({ title, action }: { title: string; action?: React.ReactNode }) {
++  return (
++    <div className="mb-3 flex items-end justify-between gap-3">
++      <h2 className="m-0 text-[15px] font-semibold text-token-primary">{title}</h2>
++      {action}
++    </div>
++  );
++}
++
++const linkCls = 'inline-flex min-h-8 items-center gap-1 rounded-md text-[13px] text-token-secondary hover:text-token-primary max-md:min-h-11';
++
++/** 风格灵感：每类取一种做海报，横向滑动；点一下换风格 */
++export function StyleInspiration({ templates, selectedId, onSelect, onBrowseAll }: { templates: QcTemplate[]; selectedId?: string; onSelect: (id: string) => void; onBrowseAll: () => void }) {
++  const picks: QcTemplate[] = [];
++  for (const t of templates) if (!picks.some(p => p.categoryId === t.categoryId)) picks.push(t);
++  return (
++    <section className="mt-14" aria-label="风格灵感" data-qc="style-inspiration">
++      <SectionHead title="风格灵感" action={<button type="button" className={linkCls} data-qc="style-library-open" onClick={onBrowseAll}>全部 {templates.length} 种<ArrowRight size={14} /></button>} />
++      <div role="radiogroup" aria-label="挑一个风格" className="flex snap-x gap-4 overflow-x-auto pb-2" style={{ scrollbarWidth: 'none' }}>
++        {picks.slice(0, 10).map(t => {
++          const on = t.id === selectedId;
++          return (
++            <button key={t.id} type="button" role="radio" aria-checked={on} data-style={t.id} onClick={() => onSelect(t.id)}
++              className="group w-[200px] shrink-0 snap-start text-left max-md:w-[160px]">
++              <span className={cn('block overflow-hidden rounded-xl transition-[box-shadow,transform] duration-200 group-hover:-translate-y-0.5', on ? 'shadow-[0_0_0_2px_var(--accent-primary)]' : 'shadow-[var(--shadow-card-sm)]')}>
++                <StyleFrame template={{ ...t, frame: undefined }} />
++              </span>
++              <span className={cn('mt-2 block truncate text-[13px]', on ? 'font-semibold text-token-primary' : 'text-token-primary')}>{t.name}</span>
++              <span className="block truncate text-[12px] text-token-muted">{t.line}</span>
++            </button>
++          );
++        })}
++      </div>
++    </section>
++  );
++}
++
++function workStatus(w: QcWork): { text: string; tone: 'live' | 'warn' | 'muted' } | null {
++  if (w.status === 'queued') return { text: '排队中', tone: 'live' };
++  if (w.status === 'running') return { text: '生成中', tone: 'live' };
++  if (w.status === 'failed') return { text: '需要处理', tone: 'warn' };
++  if (w.publishStatus === 'done') return { text: '已发布', tone: 'muted' };
++  return null;
++}
++
++function Poster({ template }: { template?: QcTemplate }) {
++  return template ? <StyleFrame template={{ ...template, frame: undefined }} /> : <span className="block aspect-video bg-[var(--bg-tertiary)]" />;
++}
++
++/** 最近作品：历史就在新建页上。我的 = 全部任务；团队 = 同事做好的成品（点开可以把风格带回来） */
++export function RecentWorks({ works, templates, onOpenWork, onAllWorks, onUseStyle, onOpenAsset, onOpenHosting, currentStyleId }: {
++  works: QcWork[];
++  templates: QcTemplate[];
++  onOpenWork: (runId: string) => void;
++  onAllWorks: () => void;
++  onUseStyle: (a: QcAsset) => void;
++  onOpenAsset: (a: QcAsset) => void;
++  onOpenHosting: (a: QcAsset) => void;
++  currentStyleId?: string;
++}) {
++  const [tab, setTab] = useState<'mine' | 'team'>('mine');
++  const [team, setTeam] = useState<QcAsset[] | null>(null);
++  const [detail, setDetail] = useState<QcAsset | null>(null);
++  useEffect(() => {
++    if (tab !== 'team' || team) return;
++    void listQuickCreationAssets('team').then(res => setTeam(res.success ? res.data.items.filter(a => !a.mine) : []));
++  }, [tab, team]);
++  const style = (id: string) => templates.find(t => t.id === id);
++  const tabCls = (on: boolean) => cn('relative inline-flex min-h-8 items-center text-[15px] max-md:min-h-11', on ? 'font-semibold text-token-primary' : 'text-token-muted hover:text-token-secondary');
++  const detailStyle = detail ? style(detail.templateId) : undefined;
++  return (
++    <section className="mt-12" aria-label="最近作品" data-qc="recent-works" data-tab={tab}>
++      <div className="mb-3 flex items-end justify-between gap-3">
++        <div role="tablist" aria-label="最近作品" className="flex items-center gap-5">
++          <button type="button" role="tab" aria-selected={tab === 'mine'} data-qc="recent-tab-mine" className={tabCls(tab === 'mine')} onClick={() => setTab('mine')}>我的作品</button>
++          <button type="button" role="tab" aria-selected={tab === 'team'} data-qc="recent-tab-team" className={tabCls(tab === 'team')} onClick={() => setTab('team')}>团队在做</button>
++        </div>
++        {tab === 'mine' && <button type="button" className={linkCls} data-qc="all-works" onClick={onAllWorks}>全部 {works.length}<ArrowRight size={14} /></button>}
++      </div>
++      {tab === 'mine' ? (
++        works.length ? (
++          <div className="grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-3 lg:grid-cols-4">
++            {works.slice(0, 8).map(w => {
++              const st = workStatus(w);
++              return (
++                <button key={w.runId} type="button" data-work={w.runId} onClick={() => onOpenWork(w.runId)} className="group min-w-0 text-left">
++                  <span className="relative block overflow-hidden rounded-xl shadow-[var(--shadow-card-sm)] transition-transform duration-200 group-hover:-translate-y-0.5">
++                    <Poster template={style(w.templateId)} />
++                    {st && (
++                      <span className={cn('qc-menu-surface absolute left-2 top-2 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium shadow-sm',
++                        st.tone === 'live' ? 'text-[color:var(--accent-primary)]' : st.tone === 'warn' ? 'text-[color:var(--semantic-warning-text)]' : 'text-token-secondary')}>
++                        {st.tone === 'live' && <span className="qc-pulse h-1.5 w-1.5 rounded-full bg-current" aria-hidden />}{st.text}
++                      </span>
++                    )}
++                  </span>
++                  <span className="mt-2 block truncate text-[13px] text-token-primary">{w.title}</span>
++                  <span className="flex items-center gap-1 truncate text-[12px] text-token-muted">
++                    {w.kind === 'video' ? <Video size={11} className="shrink-0" aria-label="视频" /> : <Globe size={11} className="shrink-0" aria-label="网页" />}
++                    <span className="truncate">{w.updatedAt}</span>
++                  </span>
++                </button>
++              );
++            })}
++          </div>
++        ) : <p className="m-0 py-6 text-[13px] text-token-muted">做好的视频和网页会出现在这里。</p>
++      ) : !team ? (
++        <div className="flex items-center gap-2 py-6 text-[13px] text-token-muted"><MapSpinner size={13} />正在读取团队的成品</div>
++      ) : (
++        <div className="grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-3 lg:grid-cols-4" data-qc="team-assets">
++          {team.slice(0, 8).map(a => (
++            <button key={a.id} type="button" data-asset={a.id} onClick={() => setDetail(a)} className="group min-w-0 text-left">
++              <span className="block overflow-hidden rounded-xl shadow-[var(--shadow-card-sm)] transition-transform duration-200 group-hover:-translate-y-0.5"><Poster template={style(a.templateId)} /></span>
++              <span className="mt-2 block truncate text-[13px] text-token-primary">{a.title}</span>
++              <span className="block truncate text-[12px] text-token-muted">{a.ownerName} · {style(a.templateId)?.name ?? ''}</span>
++            </button>
++          ))}
++        </div>
++      )}
++      <Sheet open={!!detail} onOpenChange={v => { if (!v) setDetail(null); }} title={detail?.title ?? ''} qc="asset-detail" attrs={{ 'data-asset-id': detail?.id }}>
++        {detail && detailStyle && (
++          <div className="px-5 pb-5">
++            <div className="overflow-hidden rounded-xl"><StyleFrame template={detailStyle} scene={2} /></div>
++            <div className="mt-3 text-[13px] text-token-secondary">
++              {detail.ownerName} 做的 · {detail.kind === 'video' ? `视频 ${formatClock(detail.durationSec ?? 0)}` : `网页 ${detail.sections ?? 0} 节`} · 风格 {detailStyle.name} · {detail.updatedAt}
++            </div>
++            <div className="mt-4 flex flex-wrap gap-2">
++              <button type="button" data-qc="asset-use-style" disabled={currentStyleId === detailStyle.id} onClick={() => { onUseStyle(detail); setDetail(null); }}
++                className="qc-face qc-face-primary-plain relative inline-flex items-center gap-1.5 px-3.5 text-[13px] font-medium disabled:opacity-50"><Palette size={14} />{currentStyleId === detailStyle.id ? '正在用这个风格' : '用这个风格'}</button>
++              <button type="button" data-qc="asset-open" onClick={() => onOpenAsset(detail)} className="qc-face qc-face-chip relative inline-flex items-center gap-1.5 px-3.5 text-[13px] text-token-primary"><FolderOpen size={14} />打开看看</button>
++              {detail.publishStatus === 'done' && detail.siteId && (
++                <button type="button" data-qc="asset-hosting" onClick={() => onOpenHosting(detail)} className="qc-face qc-face-quiet relative inline-flex items-center gap-1.5 px-3 text-[13px] text-token-secondary"><ExternalLink size={14} />网页托管</button>
++              )}
++            </div>
++          </div>
++        )}
++      </Sheet>
++    </section>
++  );
++}
 diff --git a/src/added/pages/quick-creation-agent/QuickCreationAgentPage.tsx b/src/added/pages/quick-creation-agent/QuickCreationAgentPage.tsx
 --- a/src/added/pages/quick-creation-agent/QuickCreationAgentPage.tsx
 +++ b/src/added/pages/quick-creation-agent/QuickCreationAgentPage.tsx
-@@ -1,30 +1,35 @@
+@@ -1,30 +1,36 @@
  /**
   * 快速创作智能体：一份文档 + 一个模板 → 能播放的视频或能浏览的网页，并发布到网页托管。
   * - 生成在服务端排队执行，离开页面不取消；地址里的 ?run= 让用户回到同一个任务。
@@ -1007,7 +1203,7 @@ diff --git a/src/added/pages/quick-creation-agent/QuickCreationAgentPage.tsx b/s
  import { useNavigate, useSearchParams } from 'react-router-dom';
 -import { BookOpen, Check, ChevronLeft, ExternalLink, Globe, LayoutList, Paperclip, Plus, Send, Video } from 'lucide-react';
 -import { cn } from '@/lib/cn';
-+import { ArrowUp, BookOpen, Check, ChevronLeft, ChevronRight, CircleCheck, ExternalLink, FileText, Globe, LayoutList, Mic, Paperclip, Plus, Send, Upload, Video } from 'lucide-react';
++import { ArrowUp, BookOpen, Check, ChevronDown, ChevronLeft, CircleCheck, ExternalLink, FileText, Globe, LayoutList, Mic, Paperclip, Plus, Send, Video } from 'lucide-react';
 +import * as Popover from '@radix-ui/react-popover';
 +import { useSpeechInput } from '@/lib/useSpeechInput';
  import { toast } from '@/lib/toast';
@@ -1036,14 +1232,14 @@ diff --git a/src/added/pages/quick-creation-agent/QuickCreationAgentPage.tsx b/s
 +import { DurationOptions, TrialToggle, durationShort, minutesLabel } from './Duration';
 +import { BrowserExport } from './BrowserExport';
  import { WorksList } from './WorksList';
--import { MAX_ATTACHMENTS, formatClock, summarizeAttachments } from './format';
++import { RecentWorks, Sheet, Starters, StyleInspiration } from './Landing';
+ import { MAX_ATTACHMENTS, formatClock, summarizeAttachments } from './format';
 -import type { OutputKind, QcAttachment, QcFailure, QcRun, QcTemplate, QcWork } from './types';
-+import { MAX_ATTACHMENTS, formatChars, formatClock, summarizeAttachments } from './format';
 +import type { AssetScope, BriefContext, DurationChoice, OutputKind, QcAsset, QcAttachment, QcBriefSession, QcEstimate, QcFailure, QcRun, QcTemplate, QcTemplateCategory, QcTemplateSource, QcWork } from './types';
  import './quickCreation.css';
  
  const OUTPUT_LABEL: Record<OutputKind, string> = { video: '视频', web: '网页' };
-@@ -32,6 +37,7 @@ const SAMPLE_KB_ENTRY = 'sample-review-habits';
+@@ -32,6 +38,7 @@ const SAMPLE_KB_ENTRY = 'sample-review-habits';
  
  function runBadge(run: QcRun) {
    if (run.status === 'queued') return { label: `排队中 · 第 ${run.queue?.position ?? '-'} 位`, variant: 'new' as const };
@@ -1051,7 +1247,7 @@ diff --git a/src/added/pages/quick-creation-agent/QuickCreationAgentPage.tsx b/s
    if (run.status === 'running') return { label: `生成中 · ${run.stages.find(s => s.status === 'running')?.label ?? ''}`, variant: 'new' as const };
    if (run.status === 'failed') return { label: '需要处理', variant: 'danger' as const };
    if (run.publish.status === 'done') return { label: '已发布', variant: 'success' as const };
-@@ -46,6 +52,8 @@ export function QuickCreationAgentPage() {
+@@ -46,6 +53,8 @@ export function QuickCreationAgentPage() {
    const view = params.get('view');
  
    const [templates, setTemplates] = useState<QcTemplate[]>([]);
@@ -1060,11 +1256,13 @@ diff --git a/src/added/pages/quick-creation-agent/QuickCreationAgentPage.tsx b/s
    const [works, setWorks] = useState<QcWork[]>([]);
    const [run, setRun] = useState<QcRun | null>(null);
    const [runError, setRunError] = useState<string | null>(null);
-@@ -54,44 +62,97 @@ export function QuickCreationAgentPage() {
+@@ -54,44 +63,99 @@ export function QuickCreationAgentPage() {
    const [templateId, setTemplateId] = useState<string>('');
    const [attachments, setAttachments] = useState<QcAttachment[]>([]);
    const [ask, setAsk] = useState('');
 +  const [plusOpen, setPlusOpen] = useState(false);
++  const [outputOpen, setOutputOpen] = useState(false);
++  const [styleSheetOpen, setStyleSheetOpen] = useState(false);
 +  /* 成片时长：默认自动，按内容估算；估算值由服务端给出 */
 +  const [duration, setDuration] = useState<DurationChoice>('auto');
 +  const [estimate, setEstimate] = useState<QcEstimate | null>(null);
@@ -1177,7 +1375,7 @@ diff --git a/src/added/pages/quick-creation-agent/QuickCreationAgentPage.tsx b/s
  
    /* ---------- 附件 ---------- */
    const addFile = async (file: File) => {
-@@ -108,11 +169,23 @@ export function QuickCreationAgentPage() {
+@@ -108,11 +172,23 @@ export function QuickCreationAgentPage() {
    const retryRead = async (id: string) => {
      setAttachments(list => list.map(a => (a.id === id ? { ...a, status: 'reading', progress: 0, error: undefined } : a)));
      const res = await retryAttachmentRead(id);
@@ -1199,11 +1397,11 @@ diff --git a/src/added/pages/quick-creation-agent/QuickCreationAgentPage.tsx b/s
    const sum = summarizeAttachments(attachments);
    const hasText = attachments.some(a => a.status === 'ready' && a.kind !== 'image');
 -  const blockReason = !hasText ? '放进至少一份稿件或知识库文档后即可生成' : sum.reading ? '还有附件在读取，读完即可生成' : null;
-+  const blockReason = !hasText ? '放进稿件才能快捷生成，或者直接说想做什么' : sum.reading ? '还有附件在读取，读完即可生成' : null;
++  const blockReason = !hasText ? '放进稿件才能生成，或者直接说想做什么' : sum.reading ? '还有附件在读取，读完即可生成' : null;
    const draftTitle = attachments.find(a => a.status === 'ready' && a.kind !== 'image')?.name.replace(/\.(md|markdown|txt)$/i, '') ?? (template ? `未命名 · ${template.name}` : '未命名');
  
    const submit = async () => {
-@@ -120,13 +193,85 @@ export function QuickCreationAgentPage() {
+@@ -120,13 +196,87 @@ export function QuickCreationAgentPage() {
      setSubmitting(true);
      const res = await createQuickCreationRun({
        kind, templateId: template.id, ask: ask.trim(),
@@ -1284,13 +1482,15 @@ diff --git a/src/added/pages/quick-creation-agent/QuickCreationAgentPage.tsx b/s
 +    openRun(res.data.id);
 +  };
 +  const hasBriefCard = !!briefSession?.messages.some(m => m.ready || m.script);
++  /* 开聊后新建页换成对话：居中一列，输入框在底部 */
++  const chatting = !!briefSession?.messages.length || !!pendingText;
 +  const conversationEnd = useRef<HTMLDivElement>(null);
 +  useEffect(() => { conversationEnd.current?.scrollIntoView({ block: 'end', behavior: 'smooth' }); }, [briefSession?.messages.length, pendingText]);
 +
    /* ---------- 任务动作 ---------- */
    const onRecover = async (action: QcFailure['actions'][number]) => {
      if (!run) return;
-@@ -134,6 +279,21 @@ export function QuickCreationAgentPage() {
+@@ -134,6 +284,21 @@ export function QuickCreationAgentPage() {
      if (res.success) { setRun(res.data); setParams({ run: run.id }, { replace: true }); }
      else toast.error('没有重新开始', res.error?.message || '请稍后再试');
    };
@@ -1312,7 +1512,38 @@ diff --git a/src/added/pages/quick-creation-agent/QuickCreationAgentPage.tsx b/s
    const onPublish = async () => {
      if (!run) return;
      setRun({ ...run, publish: { ...run.publish, status: 'publishing', error: undefined } });
-@@ -177,186 +337,350 @@ export function QuickCreationAgentPage() {
+@@ -144,21 +309,26 @@ export function QuickCreationAgentPage() {
+ 
+   const badge = run && view !== 'works' ? runBadge(run) : null;
+   const header = (
+-    <header className="flex min-h-14 shrink-0 items-center gap-2 border-b border-token-subtle px-2 py-2 md:gap-3 md:px-5">
++    <header className={`flex min-h-14 shrink-0 items-center gap-2 px-2 py-2 md:gap-3 md:px-5 ${run || view === 'works' ? 'border-b border-token-subtle' : ''}`}>
+       <button type="button" aria-label="返回百宝箱" onClick={() => navigate('/ai-toolbox')} className="qc-icon-btn"><ChevronLeft size={18} /></button>
+       <div className="min-w-0 flex-1">
+-        <div className="flex items-center gap-2">
++        <div className={`flex items-center gap-2 ${run ? '' : 'hidden'}`}>
+           <span className="text-[11px] text-token-muted">快速创作</span>
+           {/* 窄屏把状态放到标题上方这一行，标题保持完整宽度 */}
+           {badge && <span className="md:hidden"><Badge size="sm" variant={badge.variant}>{badge.label}</Badge></span>}
+         </div>
+         <div className="truncate text-[15px] font-semibold text-token-primary" data-qc="project-title">
+-          {view === 'works' ? '我的作品' : run?.title ?? draftTitle}
++          {view === 'works' ? '我的作品' : run?.title ?? '快速创作'}
+         </div>
+       </div>
+       {badge && <span className="hidden md:inline-flex"><Badge variant={badge.variant}>{badge.label}</Badge></span>}
+       {view !== 'works' && (
+-        <Button variant="ghost" size="sm" className="max-md:min-h-11" onClick={() => setParams({ view: 'works' })} aria-label={`我的作品，共 ${works.length} 个`}>
++        <Button variant="ghost" size="sm" className="max-md:min-h-11" data-qc="works-link" aria-label={`我的作品，共 ${works.length} 个`}
++          onClick={() => {
++            /* 新建页上历史就在下面：滚到「我的作品」；其他时候打开作品列表 */
++            const recent = !run && !chatting ? document.querySelector('[data-qc=recent-works]') : null;
++            if (recent) recent.scrollIntoView({ block: 'start' }); else setParams({ view: 'works' });
++          }}>
+           <LayoutList size={15} /><span className="hidden sm:inline">我的作品</span> {works.length}
+         </Button>
+       )}
+@@ -177,188 +347,348 @@ export function QuickCreationAgentPage() {
      );
    }
  
@@ -1350,73 +1581,12 @@ diff --git a/src/added/pages/quick-creation-agent/QuickCreationAgentPage.tsx b/s
 -                  <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-token-primary">{t.name}</span>
 -                  {on && <Check size={14} className="text-[color:var(--accent-primary)]" aria-hidden />}
 -                </span>
--              </button>
--            );
--          })}
 +  const openManage = () => { setPanel(p => (p?.mode === 'manage' ? null : { mode: 'manage' })); setPane('preview'); };
 +  const openReview = (id?: string) => { setPanel({ mode: 'review', id }); setPane('preview'); };
 +
-+  /* ---------- 左栏 · 新建：助手的开场 + 输入框 ---------- */
-+  const startOptions = (
-+    <div className="overflow-hidden rounded-[12px] border border-token-subtle bg-[var(--bg-input)] shadow-[var(--shadow-site-card)]">
-+      {[
-+        { key: 'sample', icon: FileText, title: '用示例稿件试一下', sub: '需求评审的三个习惯 · Markdown', qc: 'sample-doc', on: () => void addKnowledge(SAMPLE_KB_ENTRY) },
-+        /* 手机上这两项已经在输入框左下的「+」里，开场不再重复 */
-+        { key: 'kb', icon: BookOpen, title: '从知识库选择', sub: '引用个人或团队知识库里的文档', on: () => void addKnowledge('kb-picker'), desktopOnly: true },
-+        { key: 'upload', icon: Upload, title: '上传稿件', sub: 'Markdown、TXT；图片作为画面参考', on: () => fileInput.current?.click(), desktopOnly: true },
-+      ].map((o, i) => (
-+        <button key={o.key} type="button" data-qc={o.qc} onClick={o.on}
-+          className={`flex min-h-[52px] w-full items-center gap-3 px-3 py-2 text-left hover-bg-soft ${i ? 'border-t border-token-subtle' : ''} ${o.desktopOnly ? 'max-md:hidden' : ''}`}>
-+          <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-[9px] bg-[var(--selection-bg)] text-[color:var(--accent-primary)]"><o.icon size={15} aria-hidden /></span>
-+          <span className="min-w-0 flex-1">
-+            <span className="block text-[13px] font-medium text-token-primary">{o.title}</span>
-+            <span className="block truncate text-[11.5px] text-token-muted">{o.sub}</span>
-+          </span>
-+          <ChevronRight size={15} className="shrink-0 text-token-muted" aria-hidden />
-+        </button>
-+      ))}
-+    </div>
-+  );
-+  const composeConversation = (
-+    <AgentTurn>
-+      <div>
-+        <p className="m-0 text-[15px] font-semibold leading-6 text-token-primary">把一份文档交给我</p>
-+        <p className="m-0 mt-1 text-[13px] leading-6 text-token-secondary">选视频或网页、挑一个风格（{templates.length} 种），我来出成片，做完可以直接发布。</p>
-+      </div>
-+      {!attachments.length ? (
-+        <>
-+          {startOptions}
-+          <p className="m-0 text-[12px] leading-5 text-token-muted max-md:hidden">长正文直接粘贴进来，会自动变成稿件。</p>
-+          {!briefSession?.messages.length && !pendingText && (
-+            <div>
-+              <p className="m-0 text-[12.5px] text-token-secondary">还没想好？直接说想做什么：</p>
-+              <div className="mt-1.5 flex flex-wrap gap-1.5" aria-label="从一句话开始">
-+                {['我想做一个宣传片', '给新同事做个培训短片', '不知道选什么风格'].map(t => (
-+                  <button key={t} type="button" data-qc="starter" data-value={t} onClick={() => void sendChat(t)}
-+                    className="qc-face qc-face-chip relative inline-flex items-center px-3 text-[12.5px] text-token-primary">
-+                    {t}
-+                  </button>
-+                ))}
-+              </div>
-+            </div>
-+          )}
-+        </>
-+      ) : (
-+        <div className="qc-card px-3.5 py-3 text-[13px] leading-6 text-token-secondary" data-qc="materials-note">
-+          收到 <span className="font-medium text-token-primary">{sum.total} 份资料</span>，可用 {formatChars(sum.chars)} 字。
-+          {sum.failed > 0 && <>{sum.failed} 份读取失败，不会用于生成，点资料栏的「管理」重试或移除。</>}
-+          {sum.reading > 0 ? <>{sum.reading} 份还在读取，读完就能生成。</> : sum.failed === 0 && <>确认风格后点「快捷生成」；拿不准的话直接问我。</>}
-         </div>
--        {!attachments.length && (
--          <div className="rounded-[var(--radius-card)] border border-dashed border-token-subtle p-3.5 text-[12.5px] leading-6 text-token-secondary">
--            稿件支持 Markdown、TXT，也可以从知识库选择或直接粘贴正文。项目名默认取稿件标题。
--            <button type="button" data-qc="sample-doc" className="ml-1 font-medium text-[color:var(--accent-primary)] hover:underline" onClick={() => void addKnowledge(SAMPLE_KB_ENTRY)}>用示例稿件试一下</button>
-+      )}
-+    </AgentTurn>
-+  );
-+  const composeFeed = (
++  /* ---------- 新建：居中一列。还没开聊是新建页（输入框 + 起头 + 风格灵感 + 最近作品），开聊后是对话 ---------- */
++  const chatFeed = (
 +    <>
-+      {composeConversation}
 +      <BriefConversation session={briefSession} pendingText={pendingText} revealId={revealId} templates={templates} busy={briefBusy}
 +        onReply={t => void sendChat(t)} onUseStyle={pickRecommendedStyle} onStart={() => void startBriefScript()}
 +        onSkipScript={() => void startFromBrief(false)} onConfirmScript={() => void startFromBrief(true)} onAdjustScript={a => void startBriefScript(a)}
@@ -1425,72 +1595,101 @@ diff --git a/src/added/pages/quick-creation-agent/QuickCreationAgentPage.tsx b/s
 +    </>
 +  );
 +
-+  /* 手机上：左下「+」（上传、知识库）与「视频 · 风格」，右下语音与一个动作。
-+     这个动作随输入变化：有字时是发送；没字、稿件齐了时是「生成」；都不满足时是灰的发送 */
-+  const mobileGenerate = !ask.trim() && !blockReason && !hasBriefCard;
++  /* 输入框右下只有一个动作：
++     - 还没有稿件、输入框有字：发送（发给快速创作，开始对话）；
++     - 有稿件：「生成」，输入框里的字作为补充要求；想问问题按 Enter 一样发给快速创作；
++     - 都没有：灰的「生成」，提示里说原因 */
++  const showSend = !!ask.trim() && !hasText;
 +  const outputSwitch = (
 +    /* 公共组件 Segmented 沿用正式实现（28px），触控高度差异记为框架债务，不在单页改 */
-+    <span data-qc-touch-exempt className="shrink-0">
++    <span data-qc-touch-exempt className="inline-flex shrink-0">
 +      <Segmented<OutputKind> label="选择产出" value={kind} onChange={setKind}
 +        options={[{ value: 'video', label: '视频', title: '能播放的成片：配音、字幕与画面' }, { value: 'web', label: '网页', title: '能浏览的网页：桌面与手机都能读' }]} />
 +    </span>
 +  );
 +  const durationLabel = durationShort(duration, estimate);
-+  const phonePanelHeader = (
-+    <div className="flex flex-col gap-2">
-+      <div className="md:hidden">{outputSwitch}</div>
-+      {kind === 'video' && <DurationOptions compact value={duration} estimate={estimate} onChange={setDuration} />}
-+      {kind === 'video' && <TrialToggle on={trialOn} estimate={estimate} onChange={setTrialPref} />}
-+    </div>
++  /* 「做成什么」按钮：产出、时长、先试看都收在这里，输入框上只露一个词 */
++  const outputChip = (
++    <Popover.Root open={outputOpen} onOpenChange={setOutputOpen}>
++      <Popover.Trigger asChild>
++        <button type="button" data-qc="output-chip" data-output={kind} data-duration={kind === 'video' ? String(duration) : undefined}
++          aria-label={`做成${OUTPUT_LABEL[kind]}${kind === 'video' ? `，${durationLabel}` : ''}，点此更换`}
++          className="inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-2 text-[13px] text-token-primary hover-bg-soft max-md:h-11">
++          {kind === 'video' ? <Video size={15} className="text-token-muted" aria-hidden /> : <Globe size={15} className="text-token-muted" aria-hidden />}
++          {OUTPUT_LABEL[kind]}{kind === 'video' && <span className="text-token-muted">{durationLabel.replace(/^约 /, '')}</span>}
++          <ChevronDown size={13} className="text-token-muted" aria-hidden />
++        </button>
++      </Popover.Trigger>
++      <Popover.Portal>
++        <Popover.Content side="top" align="start" sideOffset={8} collisionPadding={12} data-qc="output-popover"
++          className="qc-menu-surface z-[110] w-[360px] max-w-[calc(100vw-24px)] rounded-2xl border border-[var(--border-default)] p-4 shadow-lg">
++          <div className="text-[12.5px] text-token-muted">做成什么</div>
++          <div className="mt-2">{outputSwitch}</div>
++          {kind === 'video' ? (
++            <>
++              <div className="mt-4 text-[12.5px] text-token-muted">多长</div>
++              <div className="mt-2"><DurationOptions compact value={duration} estimate={estimate} onChange={setDuration} /></div>
++              <div className="mt-2"><TrialToggle on={trialOn} estimate={estimate} onChange={setTrialPref} /></div>
++            </>
++          ) : <p className="m-0 mt-3 text-[12.5px] leading-5 text-token-secondary">网页按内容分 4–5 节，桌面和手机都能读。</p>}
++        </Popover.Content>
++      </Popover.Portal>
++    </Popover.Root>
 +  );
++  const placeholder = speech.listening ? '正在听，直接说…' : hasText ? '补充要求（可不填）；想问问题按 Enter' : '说说想做什么，或者放进一份稿件';
 +  const composer = (
 +    <div>
-+      {briefSession && <BriefStrip brief={briefSession.brief} />}
-+      <div className="relative flex flex-col rounded-2xl border border-[var(--border-default)] bg-[var(--bg-input)] shadow-[var(--shadow-input-inset)] transition-[border-color,box-shadow] has-[textarea:focus]:border-[color:var(--accent-primary)] has-[textarea:focus]:shadow-[0_0_0_3px_var(--selection-bg)]"
-+        data-listening={speech.listening ? 'true' : undefined}>
++      {chatting && briefSession && <BriefStrip brief={briefSession.brief} />}
++      <div className="qc-composer relative flex flex-col" data-listening={speech.listening ? 'true' : undefined}>
 +        <AttachmentTray items={attachments} managing={panel?.mode === 'manage'} onRemove={id => setAttachments(l => l.filter(a => a.id !== id))} onManage={openManage} />
-+        {attachments.length > 0 && <div className="mx-3 h-px bg-[var(--border-subtle)]" />}
 +        <label htmlFor="qc-ask" className="sr-only">说说想做什么</label>
-+        <textarea id="qc-ask" ref={askRef} rows={1} value={ask} onChange={e => void onAskChange(e.target.value)}
++        <textarea id="qc-ask" ref={askRef} rows={chatting ? 1 : 2} value={ask} onChange={e => void onAskChange(e.target.value)}
 +          onKeyDown={e => {
 +            if (e.key !== 'Enter' || e.nativeEvent.isComposing) return;
 +            if (e.metaKey || e.ctrlKey) { e.preventDefault(); void submit(); return; }
 +            if (!e.shiftKey && ask.trim()) { e.preventDefault(); void sendChat(ask); }
 +          }}
-+          title="Enter 发给快速创作；Ctrl / ⌘ + Enter 快捷生成"
-+          placeholder={speech.listening ? '正在听，直接说…' : '说说想做什么'}
-+          className="block w-full resize-none overflow-y-auto bg-transparent pb-1 pl-3.5 pt-3 text-base leading-relaxed text-token-primary outline-none placeholder:text-token-muted sm:text-[14px] md:pr-12 max-md:pr-3.5" />
-+        {/* 发送：桌面在文字区右下角；手机在工具行最右 */}
-+        <button type="button" data-qc="send" aria-label="发给快速创作" title="发给快速创作（Enter）" disabled={!ask.trim() || briefBusy} onClick={() => void sendChat(ask)}
-+          className={`qc-face qc-face-send absolute right-2 inline-flex items-center justify-center md:bottom-[50px] max-md:bottom-2 max-md:right-1.5 ${mobileGenerate ? 'max-md:hidden' : ''}`}>
-+          {briefBusy ? <MapSpinner size={13} /> : <ArrowUp size={16} strokeWidth={2.4} />}
-+        </button>
-+        <div className={`flex items-center gap-1 px-2 pb-2 pt-1 ${mobileGenerate ? '' : 'max-md:pr-[52px]'}`}>
++          title="Enter 发给快速创作；Ctrl / ⌘ + Enter 直接生成"
++          placeholder={placeholder}
++          className="block w-full resize-none overflow-y-auto bg-transparent px-4 pb-1 pt-3.5 text-base leading-relaxed text-token-primary outline-none placeholder:text-token-muted sm:text-[15px]" />
++        <div className="flex items-center gap-0.5 px-2 pb-2 pt-1">
 +          <input ref={fileInput} type="file" accept=".md,.markdown,.txt,image/*" multiple hidden data-qc="file-input"
 +            onChange={e => { const files = Array.from(e.target.files ?? []); e.target.value = ''; files.forEach(f => void addFile(f)); }} />
-+          {/* 手机：上传与知识库收进「+」 */}
 +          <Popover.Root open={plusOpen} onOpenChange={setPlusOpen}>
 +            <Popover.Trigger asChild>
-+              <button type="button" aria-label="添加稿件" title="添加稿件" data-qc="composer-plus" className="qc-icon-btn md:hidden"><Plus size={20} /></button>
++              <button type="button" aria-label="放进稿件" title="放进稿件" data-qc="composer-plus" className="qc-icon-btn"><Plus size={19} /></button>
 +            </Popover.Trigger>
 +            <Popover.Portal>
 +              <Popover.Content side="top" align="start" sideOffset={6} collisionPadding={12} data-qc="plus-menu"
-+                className="qc-menu-surface z-[110] flex w-56 flex-col rounded-xl border border-[var(--border-default)] p-1 shadow-lg">
-+                <button type="button" data-qc="plus-upload" className="flex h-11 items-center gap-2.5 rounded-lg px-2.5 text-left text-[14px] text-token-primary hover-bg-soft"
-+                  onClick={() => { setPlusOpen(false); fileInput.current?.click(); }}><Paperclip size={16} className="text-token-secondary" />上传稿件或图片</button>
-+                <button type="button" data-qc="plus-knowledge" className="flex h-11 items-center gap-2.5 rounded-lg px-2.5 text-left text-[14px] text-token-primary hover-bg-soft"
-+                  onClick={() => { setPlusOpen(false); void addKnowledge('kb-picker'); }}><BookOpen size={16} className="text-token-secondary" />从知识库选择</button>
++                className="qc-menu-surface z-[110] flex w-60 flex-col rounded-xl border border-[var(--border-default)] p-1 shadow-lg">
++                {[
++                  { qc: 'plus-upload', icon: Paperclip, label: '上传稿件或图片', on: () => fileInput.current?.click() },
++                  { qc: 'plus-knowledge', icon: BookOpen, label: '从知识库选择', on: () => void addKnowledge('kb-picker') },
++                  { qc: 'plus-sample', icon: FileText, label: '用示例稿件试一下', on: () => void addKnowledge(SAMPLE_KB_ENTRY) },
++                ].map(o => (
++                  <button key={o.qc} type="button" data-qc={o.qc} className="flex h-11 items-center gap-2.5 rounded-lg px-2.5 text-left text-[14px] text-token-primary hover-bg-soft md:h-10"
++                    onClick={() => { setPlusOpen(false); o.on(); }}><o.icon size={16} className="text-token-secondary" aria-hidden />{o.label}</button>
++                ))}
 +              </Popover.Content>
 +            </Popover.Portal>
 +          </Popover.Root>
-+          <button type="button" aria-label="上传稿件或图片" title="上传稿件或图片" className="qc-icon-btn max-md:hidden" onClick={() => fileInput.current?.click()}><Paperclip size={16} /></button>
-+          <button type="button" aria-label="从知识库选择" title="从知识库选择" data-qc="pick-knowledge" className="qc-icon-btn max-md:hidden" onClick={() => void addKnowledge('kb-picker')}><BookOpen size={16} /></button>
-+          {/* 产出与风格在输入框里决定：将来和其他输入集成时，这一组跟着输入框走，不依赖右栏 */}
-+          <div className="flex min-w-0 items-center gap-1.5 md:ml-1 md:border-l md:border-[var(--border-subtle)] md:pl-2">
-+            <span className="shrink-0 max-md:hidden">{outputSwitch}</span>
-+            <StylePickerChip templates={templates} categories={categories} selected={template} onSelect={id => { setTemplateId(id); setPanel(null); }}
-+              onBrowse={() => { setPanel(null); setPane('preview'); }} outputLabel={OUTPUT_LABEL[kind]} durationLabel={kind === 'video' ? durationLabel.replace(/^约 /, '') : undefined} header={phonePanelHeader} />
-           </div>
++          {outputChip}
++          <StylePickerChip templates={templates} categories={categories} selected={template} onSelect={id => { setTemplateId(id); setPanel(null); }}
++            onBrowse={() => setStyleSheetOpen(true)} />
++          <div className="ml-auto flex shrink-0 items-center gap-1">
++            {speech.supported && (
++              <button type="button" data-qc="voice" aria-label={speech.listening ? '停止语音输入' : '语音输入'} title={speech.listening ? '停止语音输入' : '语音输入'} aria-pressed={speech.listening}
++                className={`qc-icon-btn ${speech.listening ? 'text-[color:var(--accent-primary)]' : ''}`} onClick={toggleVoice}>
++                {speech.listening ? <span className="qc-wave" aria-hidden><i /><i /><i /><i /></span> : <Mic size={17} />}
+               </button>
+-            );
+-          })}
+-        </div>
+-        {!attachments.length && (
+-          <div className="rounded-[var(--radius-card)] border border-dashed border-token-subtle p-3.5 text-[12.5px] leading-6 text-token-secondary">
+-            稿件支持 Markdown、TXT，也可以从知识库选择或直接粘贴正文。项目名默认取稿件标题。
+-            <button type="button" data-qc="sample-doc" className="ml-1 font-medium text-[color:var(--accent-primary)] hover:underline" onClick={() => void addKnowledge(SAMPLE_KB_ENTRY)}>用示例稿件试一下</button>
+-          </div>
 -        )}
 -      </div>
 -      <div className="shrink-0 border-t border-token-subtle px-3 pb-3 pt-2.5 md:px-5">
@@ -1509,24 +1708,25 @@ diff --git a/src/added/pages/quick-creation-agent/QuickCreationAgentPage.tsx b/s
 -            <Badge size="sm" icon={kind === 'video' ? <Video size={11} /> : <Globe size={11} />}>{OUTPUT_LABEL[kind]} · {template?.name ?? ''}</Badge>
 -            <Button variant="primary" className="ml-auto" disabled={!!blockReason || submitting} onClick={() => void submit()} data-qc="submit">
 -              {submitting ? <MapSpinner size={13} /> : <Send size={14} />}快捷生成
-+          <div className="ml-auto flex shrink-0 items-center gap-1">
-+            {speech.supported && (
-+              <button type="button" data-qc="voice" aria-label={speech.listening ? '停止语音输入' : '语音输入'} title={speech.listening ? '停止语音输入' : '语音输入'} aria-pressed={speech.listening}
-+                className={`qc-icon-btn ${speech.listening ? 'text-[color:var(--accent-primary)]' : ''}`} onClick={toggleVoice}>
-+                {speech.listening ? <span className="qc-wave" aria-hidden><i /><i /><i /><i /></span> : <Mic size={17} />}
-+              </button>
+-            </Button>
 +            )}
-+            {/* 对话里出现「准备好了」卡后，开工由卡片的主按钮负责，这里降为次要，保持一屏一个主动作 */}
-+            <Button variant={hasBriefCard ? 'secondary' : 'primary'} size="sm" className={`qc-face relative shrink-0 ${hasBriefCard ? 'qc-face-secondary' : 'qc-face-primary'} ${mobileGenerate ? '' : 'max-md:hidden'}`}
-+              disabled={!!blockReason || submitting} onClick={() => void submit()} data-qc="submit" title="快捷生成（Ctrl / ⌘ + Enter）">
-+              {submitting ? <MapSpinner size={13} /> : <Send size={13} />}<span className="max-md:hidden">快捷生成</span><span className="md:hidden">生成</span>
-             </Button>
++            {showSend ? (
++              <button type="button" data-qc="send" aria-label="发给快速创作" title="发给快速创作（Enter）" disabled={briefBusy} onClick={() => void sendChat(ask)}
++                className="qc-face qc-face-send relative inline-flex items-center justify-center">
++                {briefBusy ? <MapSpinner size={13} /> : <ArrowUp size={16} strokeWidth={2.4} />}
++              </button>
++            ) : (
++              /* 对话里出现「准备好了」卡后，开工由卡片的主按钮负责，这里降为次要，保持一屏一个主动作 */
++              <Button variant={hasBriefCard ? 'secondary' : 'primary'} size="sm" className={`qc-face relative shrink-0 px-3.5 ${hasBriefCard ? 'qc-face-secondary' : 'qc-face-primary'}`}
++                disabled={!!blockReason || submitting} onClick={() => void submit()} data-qc="submit" data-block-reason={blockReason ?? undefined}
++                title={blockReason ?? '直接生成（Ctrl / ⌘ + Enter）'} aria-label={blockReason ? `生成：${blockReason}` : '生成'}>
++                {submitting ? <MapSpinner size={13} /> : <Send size={13} />}生成
++              </Button>
++            )}
            </div>
          </div>
 -        {blockReason && <div className="mt-1.5 px-1 text-[11.5px] text-token-muted" data-qc="block-reason">{blockReason}</div>}
        </div>
-+      {/* 输入框下只在不能生成时说一句原因（手机不显示：按钮本身是灰的，开场已经说了怎么开始） */}
-+      {blockReason && <p className="m-0 px-2 pt-1.5 text-[11.5px] text-token-muted max-md:hidden" data-qc="block-reason">{blockReason}</p>}
      </div>
    );
  
@@ -1542,46 +1742,10 @@ diff --git a/src/added/pages/quick-creation-agent/QuickCreationAgentPage.tsx b/s
 -          <Check size={14} className="shrink-0 text-[color:var(--accent-fg-success)]" aria-hidden />
 -          稿件和要求已保存。生成在后台进行，离开页面也会继续。
 -        </div>
-+  /* ---------- 左栏 · 任务：你的那一条 + 助手这一轮 ---------- */
-+  const runTemplate = templates.find(t => t.id === run?.templateId);
-+  const agentStatus = !run ? null : run.status === 'queued' ? '已排队 · 后台进行' : run.status === 'running' && run.trial?.status === 'ready' ? '试看好了 · 等你确认' : run.status === 'running' ? '后台进行中 · 可以离开' : run.status === 'failed' ? '需要你处理' : '已完成';
-+  const runConversation = run && (
-+    <>
-+      <UserTurn meta={<>{run.kind === 'video' ? <Video size={12} aria-hidden /> : <Globe size={12} aria-hidden />}{OUTPUT_LABEL[run.kind]}{run.targetSec ? <span data-qc="run-target"> · 约 {minutesLabel(run.targetSec)}</span> : null} · {runTemplate?.name}</>}>
-+        <p className="m-0 px-1 text-[14px] leading-6 text-token-primary">{run.ask || '没有补充要求，按模板默认节奏生成'}</p>
-+        {run.attachments.some(x => x.status === 'ready')
-+          ? <SentAttachments items={run.attachments} onOpenAll={() => openReview()} onOpen={id => openReview(id)} />
-+          : <p className="m-0 px-1 text-[12px] text-token-secondary">没有稿件：内容来自和快速创作的对话，文案按对话先写。</p>}
-+      </UserTurn>
-+      <AgentTurn status={agentStatus}>
-+        <p className="m-0 flex items-center gap-1.5 text-[12.5px] text-token-secondary" data-qc="saved-notice">
-+          <Check size={14} className="shrink-0 text-[color:var(--accent-fg-success)]" aria-hidden />稿件和要求已保存。{run.trial?.status === 'ready' ? '' : run.status === 'queued' || run.status === 'running' ? '一支通常要 30–60 分钟，在后台进行，离开页面也会继续，完成后会通知你。' : ''}
-+        </p>
-         {run.status === 'queued' && <QueueCard run={run} />}
+-        {run.status === 'queued' && <QueueCard run={run} />}
 -        <RunProgress run={run} />
-+        {run.status !== 'queued' && run.trial?.status !== 'ready' && <RunProgress run={run} />}
-+        {run.trial?.status === 'making' && (
-+          <p className="m-0 text-[12.5px] leading-5 text-token-secondary" data-qc="trial-note">先做试看：片头和第 1 幕，带配音。做好后在右边播放给你看，满意再做完剩下的 {run.trial.restScenes} 幕。</p>
-+        )}
-+        {run.trial?.status === 'ready' && (
-+          <section className="qc-card qc-rise p-3.5" data-qc="trial-card">
-+            <div className="text-[14px] font-semibold text-token-primary">试看好了：片头和第 1 幕（约 {run.trial.seconds} 秒）</div>
-+            <p className="m-0 mt-1 text-[12.5px] leading-5 text-token-secondary">
-+              在右边播放。满意就接着做完剩下的 {run.trial.restScenes} 幕（约 {run.trial.restMin[0]}–{run.trial.restMin[1]} 分钟），试看的两幕直接沿用；等你确认时不占排队名额。
-+            </p>
-+            <div className="mt-3 flex flex-wrap items-center gap-2">
-+              <Button variant="primary" className="qc-face qc-face-primary relative px-3.5" data-qc="trial-approve" disabled={approving} onClick={() => void onApproveTrial()}>
-+                {approving ? <MapSpinner size={13} /> : <Check size={14} />}满意，继续做完
-+              </Button>
-+              <Button variant="ghost" size="sm" className="max-md:min-h-11" data-qc="trial-back" onClick={backFromTrial}>不满意，回去换风格或改要求</Button>
-+            </div>
-+          </section>
-+        )}
-+        {run.trial?.status === 'approved' && run.status !== 'done' && (
-+          <p className="m-0 flex items-center gap-1.5 text-[12.5px] text-token-secondary" data-qc="trial-approved"><Check size={14} className="shrink-0 text-[color:var(--accent-fg-success)]" aria-hidden />试看已确认，接着做剩下的 {run.trial.restScenes} 幕。</p>
-+        )}
-         {run.status === 'failed' && run.failure && <FailureCard failure={run.failure} onAction={a => void onRecover(a)} />}
-         {run.status === 'done' && (
+-        {run.status === 'failed' && run.failure && <FailureCard failure={run.failure} onAction={a => void onRecover(a)} />}
+-        {run.status === 'done' && (
 -          <div className="qc-rise space-y-2.5 rounded-[var(--radius-card)] border border-token-subtle bg-[var(--bg-card)] p-3.5" data-qc="done-card">
 -            <div className="flex flex-wrap items-center gap-2">
 -              <span className="text-[14px] font-semibold text-token-primary">{run.kind === 'video' ? '成片已生成' : '网页已生成'}</span>
@@ -1597,15 +1761,7 @@ diff --git a/src/added/pages/quick-creation-agent/QuickCreationAgentPage.tsx b/s
 -                <div className="text-[13px] font-medium text-[color:var(--accent-fg-error)]">发布没有完成</div>
 -                <div className="text-[12px] leading-5 text-token-secondary">{run.publish.error}。{run.kind === 'video' ? '成片' : '网页'}已保存在作品里，右侧照常可看；重试只上传，不会重新生成。</div>
 -                <Button size="sm" variant="primary" className="max-md:min-h-11" onClick={() => void onPublish()}>重试发布</Button>
-+          <section className="qc-card qc-rise p-4" data-qc="done-card">
-+            <div className="flex items-start gap-3">
-+              <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-[var(--semantic-success-soft)] text-[color:var(--accent-fg-success)]"><CircleCheck size={17} aria-hidden /></span>
-+              <div className="min-w-0 flex-1">
-+                <div className="text-[15px] font-semibold text-token-primary">{run.kind === 'video' ? '成片已生成' : '网页已生成'}</div>
-+                <div className="mt-0.5 text-[12.5px] leading-5 text-token-secondary">
-+                  {run.kind === 'video' ? `${formatClock(run.durationSec ?? 0)}${run.targetSec ? `（目标约 ${minutesLabel(run.targetSec)}）` : ''} · ${run.scenes?.length ?? 0} 幕 · 1080p` : `${run.sections?.length ?? 0} 节 · 适配手机`}，右边可以直接{run.kind === 'video' ? '播放' : '浏览'}。
-+                </div>
-               </div>
+-              </div>
 -            )}
 -            {run.publish.status === 'done' && (
 -              <div className="flex flex-wrap items-center gap-2 rounded-[var(--radius-field)] border border-[color:var(--accent-fg-success)]/35 bg-[color:var(--accent-fg-success)]/[0.06] p-3" data-qc="published">
@@ -1618,7 +1774,18 @@ diff --git a/src/added/pages/quick-creation-agent/QuickCreationAgentPage.tsx b/s
 -            )}
 -          </div>
 -        )}
--      </div>
++  const landingBody = (
++    <div className="h-full overflow-y-auto" data-qc="landing">
++      <div className="mx-auto w-full max-w-[780px] px-4 pb-24 pt-[min(13vh,112px)] max-md:pt-8">
++        <h1 className="m-0 text-center text-[32px] font-semibold leading-tight tracking-tight text-token-primary max-md:text-[24px]">把一份文档，变成视频或网页</h1>
++        <div className="mt-8 max-md:mt-6">{composer}</div>
++        <Starters onSample={() => void addKnowledge(SAMPLE_KB_ENTRY)} onKnowledge={() => void addKnowledge('kb-picker')} onSay={t => void sendChat(t)} showSay={!attachments.length} />
++        <StyleInspiration templates={templates} selectedId={template?.id} onSelect={setTemplateId} onBrowseAll={() => setStyleSheetOpen(true)} />
++        <RecentWorks works={works} templates={templates} onOpenWork={openRun} onAllWorks={() => setParams({ view: 'works' })} currentStyleId={template?.id}
++          onUseStyle={a => { setTemplateId(a.templateId); toast.info(`已换成「${templates.find(t => t.id === a.templateId)?.name ?? ''}」风格`, '放进你自己的稿件就能用这个风格生成'); }}
++          onOpenAsset={a => setParams({ run: a.runId })}
++          onOpenHosting={a => navigate(`/web-pages?focusSite=${encodeURIComponent(a.siteId ?? '')}`)} />
+       </div>
 -      <div className="flex shrink-0 flex-wrap items-center gap-2 border-t border-token-subtle px-4 py-3 text-[12px] text-token-muted md:px-5">
 -        {run.status === 'queued' || run.status === 'running' ? (
 -          <>
@@ -1634,6 +1801,101 @@ diff --git a/src/added/pages/quick-creation-agent/QuickCreationAgentPage.tsx b/s
 -              用这份稿件做{run.kind === 'video' ? '网页' : '视频'}
 -            </Button>
 -          </>
+-        )}
++    </div>
++  );
++  const chatBody = (
++    <div className="flex h-full min-h-0 flex-col" data-qc="chat">
++      <div className="min-h-0 flex-1 overflow-y-auto">
++        <div className="mx-auto flex w-full max-w-[780px] flex-col gap-6 px-4 py-8">{chatFeed}</div>
+       </div>
++      <div className="mx-auto w-full max-w-[780px] shrink-0 px-4 pb-4 pt-2">{composer}</div>
+     </div>
+   );
++  /* 新建时的两个浮层：风格库（全部 99 种）与资料管理 */
++  const composeSheets = (
++    <>
++      <Sheet open={styleSheetOpen} onOpenChange={setStyleSheetOpen} title={`风格库 · ${templates.length} 种`} qc="style-sheet" wide>
++        {template && <StyleLibrary templates={templates} categories={categories} source={styleSource} selected={template} onSelect={setTemplateId} kind={kind} />}
++      </Sheet>
++      <Sheet open={!run && panel?.mode === 'manage'} onOpenChange={v => { if (!v) setPanel(null); }} title={`资料 · ${sum.total} 份`} qc="materials-sheet" wide>
++        <MaterialsPanel mode="manage" items={attachments} activeId={panel?.id} onSelect={id => setPanel({ mode: 'manage', id })}
++          onRemove={id => setAttachments(l => l.filter(a => a.id !== id))} onRetry={id => void retryRead(id)} onClearFailed={() => setAttachments(l => l.filter(a => a.status !== 'failed'))} />
++      </Sheet>
++    </>
++  );
+ 
+-  /* ---------- 右栏：预览 ---------- */
+-  const rightTitle = review.open ? '附件回看' : !run ? '模板预览'
+-    : run.status === 'done' ? (run.kind === 'video' ? '成片预览' : '网页预览')
+-      : run.kind === 'video' ? '分镜预览' : '大纲预览';
+-  const right = (
+-    <div className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto px-4 py-4 md:px-6">
+-      <div className="flex flex-wrap items-center gap-2">
+-        <span className="text-[12px] font-medium text-token-secondary">{rightTitle}</span>
+-        {run?.status === 'done' && !review.open && (
+-          <span className="ml-auto flex flex-wrap justify-end gap-1.5">
+-            <button type="button" className="inline-flex items-center max-md:min-h-11" onClick={() => setReview({ open: true })}><Badge size="sm" icon={<Paperclip size={11} />}>原稿 · {run.attachments.filter(a => a.status === 'ready').length} 个附件</Badge></button>
+-            <Badge size="sm">模板 · {template?.name}</Badge>
+-            {run.voice && <Badge size="sm">配音 · {run.voice}</Badge>}
+-          </span>
++  /* ---------- 左栏 · 任务：你的那一条 + 助手这一轮 ---------- */
++  const runTemplate = templates.find(t => t.id === run?.templateId);
++  const agentStatus = !run ? null : run.status === 'queued' || run.status === 'done' || (run.status === 'running' && run.trial?.status !== 'ready') ? null : run.status === 'running' && run.trial?.status === 'ready' ? '试看好了 · 等你确认' : run.status === 'running' ? '后台进行中 · 可以离开' : run.status === 'failed' ? '需要你处理' : '已完成';
++  const runConversation = run && (
++    <>
++      <UserTurn meta={<>{run.kind === 'video' ? <Video size={12} aria-hidden /> : <Globe size={12} aria-hidden />}{OUTPUT_LABEL[run.kind]}{run.targetSec ? <span data-qc="run-target"> · 约 {minutesLabel(run.targetSec)}</span> : null} · {runTemplate?.name}</>}>
++        <p className="m-0 px-1 text-[14px] leading-6 text-token-primary">{run.ask || '没有补充要求，按模板默认节奏生成'}</p>
++        {run.attachments.some(x => x.status === 'ready')
++          ? <SentAttachments items={run.attachments} onOpenAll={() => openReview()} onOpen={id => openReview(id)} />
++          : <p className="m-0 px-1 text-[12px] text-token-secondary">没有稿件：内容来自和快速创作的对话，文案按对话先写。</p>}
++      </UserTurn>
++      <AgentTurn status={agentStatus}>
++        {run.status === 'queued' && <QueueCard run={run} />}
++        {run.status !== 'queued' && run.trial?.status !== 'ready' && <RunProgress run={run} />}
++        {run.status !== 'done' && <p className="m-0 flex items-center gap-1.5 text-[12.5px] text-token-muted" data-qc="saved-notice">
++          <Check size={13} className="shrink-0 text-[color:var(--accent-fg-success)]" aria-hidden />{run.status === 'queued' || (run.status === 'running' && run.trial?.status !== 'ready') ? '已保存，可以离开，做好了会通知你' : run.trial?.status === 'ready' ? '已保存，试看会一直保留' : '稿件和要求已保存'}
++        </p>}
++        {run.trial?.status === 'making' && (
++          <p className="m-0 text-[12.5px] leading-5 text-token-secondary" data-qc="trial-note">先做试看：片头和第 1 幕，带配音。做好后在右边播放给你看，满意再做完剩下的 {run.trial.restScenes} 幕。</p>
+         )}
+-      </div>
+-      {runError && <div className="rounded-[var(--radius-field)] border border-token-subtle p-4 text-[13px] text-token-secondary">{runError}。可以从「我的作品」重新进入，或新建一个。</div>}
+-      {!runError && review.open && run && (
+-        <AttachmentReview items={run.attachments} activeId={review.id} onSelect={id => setReview({ open: true, id })} onBack={() => setReview({ open: false })} />
+-      )}
+-      {!runError && !review.open && template && (
+-        !run ? <TemplatePreview template={template} />
+-          : run.status === 'done' ? (run.kind === 'video' ? <VideoPlayer run={run} template={template} /> : <WebPreview run={run} template={template} />)
+-            : <ProgressPreview run={run} template={template} />
++        {run.trial?.status === 'ready' && (
++          <section className="qc-rise" data-qc="trial-card">
++            <div className="text-[22px] font-semibold tracking-tight text-token-primary">试看好了</div>
++            <div className="mt-1 text-[13px] text-token-secondary">片头和第 1 幕，约 {run.trial.seconds} 秒</div>
++            <p className="m-0 mt-3 text-[13px] leading-5 text-token-secondary">
++              满意就接着做完剩下的 {run.trial.restScenes} 幕（约 {run.trial.restMin[0]}–{run.trial.restMin[1]} 分钟），试看的两幕直接沿用；等你确认时不占排队名额。
++            </p>
++            <div className="mt-3 flex flex-wrap items-center gap-2">
++              <Button variant="primary" className="qc-face qc-face-primary relative px-3.5" data-qc="trial-approve" disabled={approving} onClick={() => void onApproveTrial()}>
++                {approving ? <MapSpinner size={13} /> : <Check size={14} />}满意，继续做完
++              </Button>
++              <Button variant="ghost" size="sm" className="max-md:min-h-11" data-qc="trial-back" onClick={backFromTrial}>不满意，回去换风格或改要求</Button>
++            </div>
++          </section>
++        )}
++        {run.trial?.status === 'approved' && run.status !== 'done' && (
++          <p className="m-0 flex items-center gap-1.5 text-[12.5px] text-token-secondary" data-qc="trial-approved"><Check size={14} className="shrink-0 text-[color:var(--accent-fg-success)]" aria-hidden />试看已确认，接着做剩下的 {run.trial.restScenes} 幕。</p>
++        )}
++        {run.status === 'failed' && run.failure && <FailureCard failure={run.failure} onAction={a => void onRecover(a)} />}
++        {run.status === 'done' && (
++          <section className="qc-rise" data-qc="done-card">
++            <div>
++              <div className="min-w-0">
++                <div className="flex items-center gap-2 text-[22px] font-semibold tracking-tight text-token-primary"><CircleCheck size={19} className="shrink-0 text-[color:var(--accent-fg-success)]" aria-hidden />{run.kind === 'video' ? '成片好了' : '网页好了'}</div>
++                <div className="mt-1 text-[13px] leading-5 text-token-secondary">
++                  {run.kind === 'video' ? `${formatClock(run.durationSec ?? 0)}${run.targetSec ? `（目标约 ${minutesLabel(run.targetSec)}）` : ''} · ${run.scenes?.length ?? 0} 幕 · 1080p` : `${run.sections?.length ?? 0} 节 · 适配手机`}，右边可以直接{run.kind === 'video' ? '播放' : '浏览'}。
++                </div>
++              </div>
 +            </div>
 +            <div className="mt-3.5">
 +              {run.publish.status === 'none' && (
@@ -1664,53 +1926,20 @@ diff --git a/src/added/pages/quick-creation-agent/QuickCreationAgentPage.tsx b/s
 +            </div>
 +            <BrowserExport run={run} />
 +          </section>
-         )}
--      </div>
--    </div>
++        )}
 +      </AgentTurn>
 +    </>
-   );
--
--  /* ---------- 右栏：预览 ---------- */
--  const rightTitle = review.open ? '附件回看' : !run ? '模板预览'
--    : run.status === 'done' ? (run.kind === 'video' ? '成片预览' : '网页预览')
--      : run.kind === 'video' ? '分镜预览' : '大纲预览';
--  const right = (
--    <div className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto px-4 py-4 md:px-6">
--      <div className="flex flex-wrap items-center gap-2">
--        <span className="text-[12px] font-medium text-token-secondary">{rightTitle}</span>
--        {run?.status === 'done' && !review.open && (
--          <span className="ml-auto flex flex-wrap justify-end gap-1.5">
--            <button type="button" className="inline-flex items-center max-md:min-h-11" onClick={() => setReview({ open: true })}><Badge size="sm" icon={<Paperclip size={11} />}>原稿 · {run.attachments.filter(a => a.status === 'ready').length} 个附件</Badge></button>
--            <Badge size="sm">模板 · {template?.name}</Badge>
--            {run.voice && <Badge size="sm">配音 · {run.voice}</Badge>}
--          </span>
--        )}
--      </div>
--      {runError && <div className="rounded-[var(--radius-field)] border border-token-subtle p-4 text-[13px] text-token-secondary">{runError}。可以从「我的作品」重新进入，或新建一个。</div>}
--      {!runError && review.open && run && (
--        <AttachmentReview items={run.attachments} activeId={review.id} onSelect={id => setReview({ open: true, id })} onBack={() => setReview({ open: false })} />
--      )}
--      {!runError && !review.open && template && (
--        !run ? <TemplatePreview template={template} />
--          : run.status === 'done' ? (run.kind === 'video' ? <VideoPlayer run={run} template={template} /> : <WebPreview run={run} template={template} />)
--            : <ProgressPreview run={run} template={template} />
++  );
 +  const runFooter = run && (
-+    <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-secondary)] px-3.5 py-2.5 text-[12px] leading-5 text-token-secondary">
++    <div className="flex items-center justify-end gap-2 px-1">
 +      {run.status === 'queued' || run.status === 'running' ? (
-+        <>
-+          <span className="min-w-0 flex-1">{run.trial?.status === 'ready' ? '可以离开，试看会一直保留；回来在「我的作品」里确认即可。' : '可以离开，完成后会发站内通知，也能在「我的作品」找到它。'}</span>
-+          <Button size="sm" variant="secondary" className="max-md:min-h-11" data-qc="leave" onClick={() => setParams({ view: 'works' })}>离开，稍后回来</Button>
-+        </>
++        <Button size="sm" variant="ghost" className="max-md:min-h-11" data-qc="leave" onClick={() => setParams({ view: 'works' })}>离开，稍后回来</Button>
 +      ) : run.status === 'failed' ? (
-+        <span className="min-w-0 flex-1">已完成的部分都已保存，可以现在处理，也可以稍后在「我的作品」里继续。</span>
++        <span className="text-[12px] text-token-muted">已完成的部分都已保存，也可以稍后在「我的作品」里继续。</span>
 +      ) : (
-+        <>
-+          <span className="min-w-0 flex-1">想换个模板或产出？用同一份稿件再做一个。</span>
-+          <Button size="sm" variant="secondary" className="max-md:min-h-11" data-qc="redo-other" onClick={() => { setAttachments(run.attachments.filter(a => a.status === 'ready')); setAsk(run.ask); setKind(run.kind === 'video' ? 'web' : 'video'); setTemplateId(run.templateId); setParams({}); setPane('chat'); }}>
-+            用这份稿件做{run.kind === 'video' ? '网页' : '视频'}
-+          </Button>
-+        </>
++        <Button size="sm" variant="ghost" className="max-md:min-h-11" data-qc="redo-other" onClick={() => { setAttachments(run.attachments.filter(a => a.status === 'ready')); setAsk(run.ask); setKind(run.kind === 'video' ? 'web' : 'video'); setTemplateId(run.templateId); setParams({}); setPane('chat'); }}>
++          用这份稿件做{run.kind === 'video' ? '网页' : '视频'}
++        </Button>
        )}
      </div>
    );
@@ -1722,7 +1951,6 @@ diff --git a/src/added/pages/quick-creation-agent/QuickCreationAgentPage.tsx b/s
 +  let toolbar: ReactNode = null;
 +  let actions: ReactNode = null;
 +  let body: ReactNode = null;
-+  const liveStage = run?.stages.find(s => s.status === 'running' || s.status === 'failed');
 +
 +  if (runError) {
 +    previewTitle = '没有找到任务'; previewNote = runError; nextHint = '';
@@ -1759,17 +1987,17 @@ diff --git a/src/added/pages/quick-creation-agent/QuickCreationAgentPage.tsx b/s
 +    if (run.trial?.status === 'ready' && run.kind === 'video') {
 +      previewTitle = '试看';
 +      previewNote = `片头和第 1 幕 · 约 ${run.trial.seconds} 秒 · 配音 ${run.voice ?? '女声'} · 风格 ${runTemplate.name}`;
-+      nextHint = '满意就在左边点「满意，继续做完」；不满意回去换风格或改要求，只花了一成的时间。';
++      nextHint = '';
 +      body = <VideoPlayer run={run} template={runTemplate} />;
 +    } else if (run.status === 'done') {
 +      previewTitle = run.kind === 'video' ? '成片' : '网页';
 +      previewNote = `${run.kind === 'video' ? `${formatClock(run.durationSec ?? 0)} · ${run.scenes?.length ?? 0} 幕 · 1080p${run.voice ? ` · 配音 ${run.voice}` : ''}` : `${run.sections?.length ?? 0} 节 · 桌面与手机都能读`} · 风格 ${runTemplate.name}`;
-+      nextHint = run.publish.status === 'done' ? '已发布，网页托管里能找到它；改了稿件可以用同一份资料再做一个。' : '满意的话在左边发布到网页托管；发布只上传，不会重新生成。';
++      nextHint = '';
 +      body = run.kind === 'video' ? <VideoPlayer run={run} template={runTemplate} /> : <WebPreview run={run} template={runTemplate} />;
 +    } else {
 +      previewTitle = run.kind === 'video' ? '分镜' : '页面';
-+      previewNote = run.status === 'queued' ? '排到后先出分镜，这里会逐幕亮起' : run.status === 'failed' ? `${run.failure?.message ?? '没有完成'} · 已完成的部分保留` : liveStage?.detail ?? '正在生成';
-+      nextHint = run.status === 'failed' ? '恢复后只重做没完成的部分，这里会接着亮起。' : run.kind === 'video' ? '每幕配完音就标为已完成，全部完成后自动合成成片。' : '每写好一节就出现在页面里，全部完成后可以发布。';
++      previewNote = run.status === 'failed' ? '已完成的部分保留' : '';
++      nextHint = '';
 +      body = <ProgressPreview run={run} template={runTemplate} />;
 +    }
 +  }
@@ -1797,13 +2025,13 @@ diff --git a/src/added/pages/quick-creation-agent/QuickCreationAgentPage.tsx b/s
 +    <div className="flex h-full min-h-0 flex-col" data-qc-ready={ready} data-output={run?.kind ?? kind} data-run-id={run?.id ?? ''}>
        {header}
 +      {/* 窄屏：对话 / 预览切换（公共组件 PaneTabs，32px 触控高度记为框架债务） */}
-+      <div className="flex shrink-0 items-center border-b border-token-subtle px-3 py-1.5 lg:hidden" data-qc-touch-exempt>
++      {run && <div className="flex shrink-0 items-center border-b border-token-subtle px-3 py-1.5 lg:hidden" data-qc-touch-exempt>
 +        <PaneTabs pane={pane} onChange={setPane} previewBadge={run?.status === 'done' ? (run.kind === 'video' ? '成片' : '网页') : undefined} />
-+      </div>
++      </div>}
        <div className="min-h-0 flex-1">
          {loading ? (
            <div className="flex h-full items-center justify-center gap-2 text-[13px] text-token-muted"><MapSpinner size={14} />正在打开任务…</div>
-         ) : (
+-        ) : (
 -          <SplitToTabLayout
 -            gap="gap-0"
 -            className="h-full"
@@ -1813,14 +2041,19 @@ diff --git a/src/added/pages/quick-creation-agent/QuickCreationAgentPage.tsx b/s
 -              { key: 'preview', label: run?.status === 'done' ? `预览 · ${run.kind === 'video' ? '成片' : '网页'}` : '预览', desktopWidth: 'flex-1 min-w-0', content: right },
 -            ]}
 -          />
-+          <WorkbenchLayout pane={pane} conversation={run ? runConversation : composeFeed} composer={run ? runFooter : composer} preview={preview} />
-         )}
+-        )}
++        ) : run ? (
++          <WorkbenchLayout pane={pane} conversation={runConversation} composer={runFooter} preview={preview} />
++        ) : chatting ? chatBody : landingBody}
        </div>
++      {!run && composeSheets}
      </div>
+   );
+ }
 diff --git a/src/added/pages/quick-creation-agent/ResultPanel.tsx b/src/added/pages/quick-creation-agent/ResultPanel.tsx
 --- a/src/added/pages/quick-creation-agent/ResultPanel.tsx
 +++ b/src/added/pages/quick-creation-agent/ResultPanel.tsx
-@@ -1,135 +1,218 @@
+@@ -1,135 +1,215 @@
 -import { useEffect, useMemo, useRef, useState } from 'react';
 -import { Captions, Maximize, Monitor, Pause, Play, SkipBack, SkipForward, Smartphone, Volume2 } from 'lucide-react';
 +import { useMemo, useRef, useState } from 'react';
@@ -1939,10 +2172,10 @@ diff --git a/src/added/pages/quick-creation-agent/ResultPanel.tsx b/src/added/pa
 +                {focus.status === 'voicing' && <Wave />}{SCENE_STATUS[focus.status]}
 +              </span>
 +            </>
-+          ) : <span className="text-token-muted">排队中 · 轮到后从第 1 幕开始画</span>}
++          ) : null}
 +        </div>
-+        <div className={cn('relative overflow-hidden rounded-[12px] border shadow-[var(--shadow-card-sm)]',
-+          focus?.status === 'failed' ? 'border-[color:var(--accent-fg-error)]' : 'border-token-subtle')}>
++        <div className={cn('relative overflow-hidden rounded-[14px] shadow-[var(--shadow-card-sm)]',
++          focus?.status === 'failed' && 'shadow-[0_0_0_2px_var(--accent-fg-error)]')}>
 +          {focus ? (
 +            <div key={focus.index} className={cn('qc-rise', focus.status === 'drawing' && 'qc-shimmer')}><StyleFrame template={template} scene={focus.frameScene} /></div>
 +          ) : <FrameSkeleton big />}
@@ -1966,23 +2199,20 @@ diff --git a/src/added/pages/quick-creation-agent/ResultPanel.tsx b/src/added/pa
 +        </div>
 +      </div>
 +      <div>
-+        <div className="mb-2 flex items-center justify-between text-[12px]">
-+          <span className="font-medium text-token-secondary">分镜 · {started} / {scenes.length} 幕已出</span>
-+          <span className="text-token-muted">配音完成的幕标为已完成，全部完成后合成成片</span>
-+        </div>
++        <div className="mb-2 text-[12px] tabular-nums text-token-muted">{started} / {scenes.length} 幕</div>
 +        <div className="grid grid-cols-3 gap-2.5 xl:grid-cols-6">
 +          {scenes.map(s => {
 +            const on = s.index === focus?.index;
 +            return (
 +              <figure key={s.index} className="m-0" data-scene={s.index} data-scene-status={s.status}>
-+                <div className={cn('overflow-hidden rounded-[8px] border',
-+                  s.status === 'failed' ? 'border-[color:var(--accent-fg-error)]' : on ? 'border-[color:var(--accent-primary)] shadow-[0_0_0_1px_var(--accent-primary)]' : 'border-token-subtle',
++                <div title={s.title} className={cn('overflow-hidden rounded-[8px]',
++                  s.status === 'failed' ? 'shadow-[0_0_0_2px_var(--accent-fg-error)]' : on ? 'shadow-[0_0_0_2px_var(--accent-primary)]' : '',
 +                  s.status === 'drawing' && 'qc-shimmer')}>
 +                  {s.status === 'waiting' ? <FrameSkeleton /> : <div className={cn(s.status === 'drawn' && 'opacity-80')}><StyleFrame template={template} scene={s.frameScene} /></div>}
 +                </div>
-+                <figcaption className="mt-1.5 px-0.5 text-[11.5px] leading-4">
-+                  <span className="block truncate text-token-secondary"><span className="tabular-nums text-token-muted">{s.index}</span> {s.title}</span>
-+                  <span className="mt-0.5 flex items-center gap-1" style={{ color: s.status === 'ready' ? 'var(--accent-fg-success)' : s.status === 'failed' ? 'var(--accent-fg-error)' : s.status === 'voicing' || s.status === 'drawing' ? 'var(--accent-primary)' : 'var(--text-muted)' }}>
++                <figcaption className="mt-1.5 flex items-center gap-1.5 px-0.5 text-[11.5px] leading-4">
++                  <span className="tabular-nums text-token-muted">{s.index}</span>
++                  <span className="flex min-w-0 items-center gap-1 truncate" style={{ color: s.status === 'ready' ? 'var(--accent-fg-success)' : s.status === 'failed' ? 'var(--accent-fg-error)' : s.status === 'voicing' || s.status === 'drawing' ? 'var(--accent-primary)' : 'var(--text-muted)' }}>
 +                    {s.status === 'voicing' && <Wave />}{SCENE_STATUS[s.status]}
 +                  </span>
 +                </figcaption>
@@ -2114,7 +2344,7 @@ diff --git a/src/added/pages/quick-creation-agent/ResultPanel.tsx b/src/added/pa
                    current && k.atSec != null && current.startSec === k.atSec ? 'border-[color:var(--accent-primary)]/60' : 'border-token-subtle')}>
                  <span className="font-[var(--font-code)] text-[color:var(--accent-primary)]">{formatClock(k.atSec ?? 0)}</span>
                  <span className="text-token-primary">{k.text}</span>
-@@ -147,19 +230,19 @@ export function WebPreview({ run, template }: { run: QcRun; template: QcTemplate
+@@ -147,19 +227,19 @@ export function WebPreview({ run, template }: { run: QcRun; template: QcTemplate
    const [anchor, setAnchor] = useState<string | undefined>();
    const sections = run.sections ?? [];
    return (
@@ -2139,7 +2369,7 @@ diff --git a/src/added/pages/quick-creation-agent/ResultPanel.tsx b/src/added/pa
            </div>
          </div>
        </div>
-@@ -168,8 +251,8 @@ export function WebPreview({ run, template }: { run: QcRun; template: QcTemplate
+@@ -168,8 +248,8 @@ export function WebPreview({ run, template }: { run: QcRun; template: QcTemplate
            <div className="mb-2 text-[12px] text-token-muted">页首导读的 {run.keyPoints.length} 个重点 · 点击定位</div>
            <div className="grid gap-2 sm:grid-cols-3">
              {run.keyPoints.map((k, i) => (
@@ -2153,7 +2383,7 @@ diff --git a/src/added/pages/quick-creation-agent/ResultPanel.tsx b/src/added/pa
 diff --git a/src/added/pages/quick-creation-agent/RunProgress.tsx b/src/added/pages/quick-creation-agent/RunProgress.tsx
 --- a/src/added/pages/quick-creation-agent/RunProgress.tsx
 +++ b/src/added/pages/quick-creation-agent/RunProgress.tsx
-@@ -1,115 +1,225 @@
+@@ -1,115 +1,189 @@
 +/**
 + * 对话里助手一侧的过程卡：排队、生成进度、失败恢复、完成。
 + * 写法对齐网页生成工作台的 RunProgressCard：标题行说「此刻在做什么」，右上角是走动的计时，
@@ -2161,11 +2391,10 @@ diff --git a/src/added/pages/quick-creation-agent/RunProgress.tsx b/src/added/pa
 + */
  import { useState } from 'react';
 -import { AlertTriangle, Check, ChevronDown, Clock, RotateCcw } from 'lucide-react';
-+import { AlertTriangle, ChevronDown, Circle, CircleCheck, Clock3, Globe, RotateCcw, Users, Video } from 'lucide-react';
++import { AlertTriangle, ChevronDown, Circle, CircleCheck, Clock3, Globe, RotateCcw, Video } from 'lucide-react';
  import { cn } from '@/lib/cn';
  import { Button } from '@/components/design/Button';
 -import type { QcFailure, QcRun, QcStage } from './types';
-+import { MapSpinner } from '@/components/ui/VideoLoader';
 +import type { OutputKind, QcFailure, QcRun } from './types';
  import { formatDuration, formatRemain } from './format';
  
@@ -2203,11 +2432,13 @@ diff --git a/src/added/pages/quick-creation-agent/RunProgress.tsx b/src/added/pa
 +}
 +
 +/**
-+ * 排队卡：先说清楚为什么在等（团队同时生成的上限满了，不是稿件或操作的问题），
-+ * 再列出正在生成的是谁、各还要多久，排在前面的是谁、各自预计何时开始，最后是你自己。
++ * 排队：大字说第几位、多久后开始；一句话说原因（团队同时生成的上限满了，与稿件无关）；
++ * 排在你前面的人直接列出（谁、做什么、预计何时开始），正在生成的几位收在「正在生成」里，需要时展开。
++ * 不套卡片：靠字号与留白分层，不靠边框。
 + */
  export function QueueCard({ run }: { run: QcRun }) {
    const q = run.queue;
++  const [showRunning, setShowRunning] = useState(false);
    if (!q) return null;
 -  const cells = Array.from({ length: q.running + q.ahead + 1 + 2 }, (_, i) => (i < q.running ? 'run' : i < q.running + q.ahead ? 'wait' : i === q.running + q.ahead ? 'me' : 'after'));
 +  const runningItems = q.runningItems ?? [];
@@ -2217,7 +2448,11 @@ diff --git a/src/added/pages/quick-creation-agent/RunProgress.tsx b/src/added/pa
 -      <div className="flex items-baseline gap-2">
 -        <span className="text-[13px] font-medium text-token-primary">排队中 · 第 {q.position} 位</span>
 -        <span className="text-[12px] text-token-muted">前面 {q.ahead} 个，{formatRemain(q.startInSec)}后开始</span>
--      </div>
++    <section className="qc-rise" data-qc="queue-card" data-position={q.position}>
++      <div className="flex items-baseline justify-between gap-3">
++        <div className="text-[22px] font-semibold tracking-tight text-token-primary">排队中 · 第 {q.position} 位</div>
++        <div className="shrink-0 text-[13px] tabular-nums text-token-secondary">约 {mins(q.startInSec)}后开始</div>
+       </div>
 -      <div className="mt-2.5 flex gap-1" aria-hidden>
 -        {cells.map((c, i) => (
 -          <span key={i} className={cn('h-1.5 flex-1 rounded-full',
@@ -2225,71 +2460,47 @@ diff --git a/src/added/pages/quick-creation-agent/RunProgress.tsx b/src/added/pa
 -            c === 'wait' && 'bg-[color:var(--accent-fg-info)]/40',
 -            c === 'me' && 'bg-[color:var(--accent-primary)]',
 -            c === 'after' && 'bg-token-nested border border-dashed border-token-subtle')} />
--        ))}
-+    <section className="qc-card qc-rise p-4" data-qc="queue-card" data-position={q.position}>
-+      <div className="flex items-start gap-3">
-+        <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-[var(--selection-bg)] text-[color:var(--accent-primary)]"><Users size={17} aria-hidden /></span>
-+        <div className="min-w-0 flex-1">
-+          <div className="text-[15px] font-semibold text-token-primary">排队中 · 第 {q.position} 位</div>
-+          <div className="mt-0.5 text-[12.5px] text-token-secondary">
-+            {q.ahead ? `前面还有 ${q.ahead} 人，` : '下一个就是你，'}预计 {mins(q.startInSec)}后开始
-+          </div>
-+        </div>
-       </div>
++      <p className="m-0 mt-1.5 text-[13px] leading-5 text-token-secondary" data-qc="queue-reason">
++        团队同时最多生成 {q.capacity} 个，现在都在用，所以要等一等；这和你的稿件无关，轮到你会自动开始。
++      </p>
++      <ol className="m-0 mt-4 list-none p-0" aria-label="排队顺序">
++        {aheadItems.map((a, i) => (
++          <li key={a.ownerName + a.title} className="flex items-center gap-2.5 py-1.5 text-[13px]" data-queue-ahead={i + 1}>
++            <Initial name={a.ownerName} />
++            <span className="shrink-0 text-token-primary">{a.ownerName}</span>
++            <span className="min-w-0 flex-1 truncate text-token-muted">{a.title}</span>
++            <span className="shrink-0 tabular-nums text-token-muted">{mins(a.startInSec ?? 0)}后</span>
++          </li>
+         ))}
+-      </div>
 -      <div className="mt-2 text-[12px] leading-5 text-token-secondary">
 -        团队同时最多 {q.capacity} 个在生成，现在 {q.running} 个在跑。排队不是失败，轮到会自动开始；可以离开，完成后会发通知。
-+      <p className="m-0 mt-3 text-[12.5px] leading-5 text-token-secondary" data-qc="queue-reason">
-+        团队同时最多生成 {q.capacity} 个，现在 {q.running} 个都在生成，所以要排队；这和你的稿件、操作无关。轮到你会自动开始，开始和完成时都会通知你。
-+      </p>
-+      <div className="mt-3 rounded-[10px] bg-[var(--bg-secondary)] px-3 py-2">
-+        <div className="flex items-center justify-between pb-1 text-[11.5px] font-medium text-token-secondary">
-+          <span>正在生成 · {q.running} / {q.capacity}</span><span className="font-normal text-token-muted">还需</span>
-+        </div>
+-      </div>
+-    </div>
++        <li className="flex items-center gap-2.5 py-1.5 text-[13px]" data-queue-me>
++          <Initial name="你" me />
++          <span className="shrink-0 font-semibold text-token-primary">你</span>
++          <span className="min-w-0 flex-1 truncate text-token-secondary">{run.title}</span>
++          <span className="shrink-0 font-medium tabular-nums text-[color:var(--accent-primary)]">{mins(q.startInSec)}后</span>
++        </li>
++      </ol>
++      <button type="button" aria-expanded={showRunning} onClick={() => setShowRunning(v => !v)} data-qc="queue-running-toggle"
++        className="mt-2 inline-flex min-h-8 items-center gap-1 rounded-md text-[12.5px] text-token-muted hover:text-token-primary max-md:min-h-11">
++        正在生成的 {q.running} 个<ChevronDown size={13} className={cn('transition-transform', showRunning && 'rotate-180')} aria-hidden />
++      </button>
++      {showRunning && (
 +        <ul className="m-0 list-none p-0" aria-label="正在生成的任务">
-+          {runningItems.map(r => {
-+            const done = (r.elapsedSec ?? 0) / Math.max(1, (r.elapsedSec ?? 0) + (r.remainSec ?? 0));
-+            return (
-+              <li key={r.ownerName + r.title} className="py-1.5" data-queue-running={r.ownerName}>
-+                <div className="flex items-center gap-2 text-[12.5px]">
-+                  <Initial name={r.ownerName} />
-+                  <span className="shrink-0 font-medium text-token-primary">{r.ownerName}</span>
-+                  <KindMark kind={r.kind} />
-+                  <span className="min-w-0 flex-1 truncate text-token-secondary">{r.title}</span>
-+                  <span className="shrink-0 tabular-nums text-token-primary">约 {mins(r.remainSec ?? 0)}</span>
-+                </div>
-+                <div className="ml-8 mt-1 h-1 overflow-hidden rounded-full bg-[var(--bg-tertiary)]" aria-hidden>
-+                  <div className="qc-bar-live h-full rounded-full" style={{ width: `${Math.round(done * 100)}%` }} />
-+                </div>
-+              </li>
-+            );
-+          })}
-+        </ul>
-+        <div className="mt-1.5 flex items-center justify-between border-t border-token-subtle pb-1 pt-2 text-[11.5px] font-medium text-token-secondary">
-+          <span>排在你前面 · {q.ahead} 人</span><span className="font-normal text-token-muted">预计开始</span>
-+        </div>
-+        <ol className="m-0 list-none p-0" aria-label="排队顺序">
-+          {aheadItems.map((a, i) => (
-+            <li key={a.ownerName + a.title} className="flex items-center gap-2 py-1.5 text-[12.5px]" data-queue-ahead={i + 1}>
-+              <span className="w-3 shrink-0 text-center tabular-nums text-token-muted">{i + 1}</span>
-+              <Initial name={a.ownerName} />
-+              <span className="shrink-0 font-medium text-token-primary">{a.ownerName}</span>
-+              <KindMark kind={a.kind} />
-+              <span className="min-w-0 flex-1 truncate text-token-secondary">{a.title}</span>
-+              <span className="shrink-0 tabular-nums text-token-muted">{mins(a.startInSec ?? 0)}后</span>
++          {runningItems.map(r => (
++            <li key={r.ownerName + r.title} className="flex items-center gap-2.5 py-1.5 text-[12.5px]" data-queue-running={r.ownerName}>
++              <Initial name={r.ownerName} />
++              <span className="shrink-0 text-token-primary">{r.ownerName}</span>
++              <KindMark kind={r.kind} />
++              <span className="min-w-0 flex-1 truncate text-token-muted">{r.title}</span>
++              <span className="shrink-0 tabular-nums text-token-muted">还需约 {mins(r.remainSec ?? 0)}</span>
 +            </li>
 +          ))}
-+          <li className="-mx-1.5 flex items-center gap-2 rounded-lg bg-[var(--selection-bg)] px-1.5 py-1.5 text-[12.5px]" data-queue-me>
-+            <span className="w-3 shrink-0 text-center font-semibold tabular-nums text-[color:var(--accent-primary)]">{q.position}</span>
-+            <Initial name="你" me />
-+            <span className="shrink-0 font-semibold text-token-primary">你</span>
-+            <KindMark kind={run.kind} />
-+            <span className="min-w-0 flex-1 truncate text-token-primary">{run.title}</span>
-+            <span className="shrink-0 font-medium tabular-nums text-[color:var(--accent-primary)]">{mins(q.startInSec)}后</span>
-+          </li>
-+        </ol>
-       </div>
--    </div>
-+      <p className="m-0 mt-2.5 text-[12px] leading-5 text-token-muted">排队不是失败。一支片子通常要 30–60 分钟，可以离开，完成后到「我的作品」或通知里打开。</p>
++        </ul>
++      )}
 +    </section>
    );
  }
@@ -2359,7 +2570,10 @@ diff --git a/src/added/pages/quick-creation-agent/RunProgress.tsx b/src/added/pa
      );
    }
 +
-+  const title = finished ? '全部完成' : failed ? `停在「${current?.label ?? ''}」` : current?.status === 'running' ? `正在${current.label}` : '正在准备';
++  const title = finished ? '全部完成' : failed ? `停在${current?.label ?? ''}` : current?.status === 'running' ? `正在${current.label}` : '正在准备';
++  /* 总进度：已完成的阶段 + 当前阶段的进度（「已生成」不算一段） */
++  const work = steps.filter(s => s.key !== 'done');
++  const overall = Math.round(((work.filter(s => s.status === 'done').length + ((current?.status === 'running' ? current.progress ?? 30 : 0) / 100)) / Math.max(1, work.length)) * 100);
    return (
 -    <div className="rounded-[var(--radius-card)] border border-token-subtle bg-[var(--bg-card)] px-3.5 pb-1.5 pt-3" data-qc="run-progress">
 -      <div className="mb-3 flex items-center gap-2">
@@ -2371,29 +2585,33 @@ diff --git a/src/added/pages/quick-creation-agent/RunProgress.tsx b/src/added/pa
 -            <>已用 {formatDuration(run.elapsedSec)}{run.remainSec != null ? ` · 预计还需 ${formatRemain(run.remainSec)}` : ' · 正在估算剩余时间'}</>
 -          )}
 -        </span>
-+    <section className="qc-card qc-rise overflow-hidden" data-qc="run-progress">
-+      <div className="flex items-start justify-between gap-3 px-4 pb-3 pt-3.5">
-+        <div className="min-w-0">
-+          <div className="flex items-center gap-2 text-[15px] font-semibold text-token-primary">
-+            {!finished && !failed && <MapSpinner size={14} />}
-+            {failed && <AlertTriangle size={15} style={{ color: 'var(--accent-fg-error)' }} aria-hidden />}
-+            {finished && <CircleCheck size={15} className="text-[color:var(--accent-fg-success)]" aria-hidden />}
-+            {title}
-+          </div>
-+          {current?.detail && !finished && !failed && <div className="mt-1 text-[12.5px] leading-5 text-token-secondary">{current.detail}</div>}
++    <section className="qc-rise" data-qc="run-progress">
++      <div className="flex items-baseline justify-between gap-3">
++        <div className="flex min-w-0 items-center gap-2 text-[22px] font-semibold tracking-tight text-token-primary">
++          {failed && <AlertTriangle size={18} className="shrink-0" style={{ color: 'var(--accent-fg-error)' }} aria-hidden />}
++          <span className="truncate">{title}</span>
 +        </div>
-+        <div className="shrink-0 text-right">
-+          <div className="font-[var(--font-code)] text-[18px] font-semibold tabular-nums leading-6 text-token-primary">{clock(run.elapsedSec)}</div>
-+          <div className="text-[11px] text-token-muted">
-+            {finished ? '总用时' : failed ? '运行后停下' : run.remainSec != null ? `还需${formatRemain(run.remainSec)}` : '正在估算'}
-+          </div>
++        <div className="shrink-0 text-[13px] tabular-nums text-token-secondary">
++          {failed ? `运行 ${formatDuration(run.elapsedSec)}后停下` : run.remainSec != null ? `还需${formatRemain(run.remainSec)}` : `已用 ${clock(run.elapsedSec)}`}
 +        </div>
        </div>
 -      <ol>
 -        {run.stages.map((s, i) => {
 -          const last = i === run.stages.length - 1;
 -          const active = s.status === 'running' || s.status === 'failed';
--          return (
++      {current?.detail && !failed && <div className="mt-1 truncate text-[13px] text-token-secondary">{current.detail}</div>}
++      <div className="mt-3 h-1 overflow-hidden rounded-full bg-[var(--bg-tertiary)]" role="progressbar" aria-valuenow={overall} aria-valuemin={0} aria-valuemax={100} aria-label="总进度">
++        <div className={cn('h-full rounded-full transition-[width] duration-700', failed ? '' : 'qc-bar-live')} style={{ width: `${Math.max(4, overall)}%`, ...(failed ? { background: 'var(--accent-fg-error)' } : {}) }} />
++      </div>
++      <button type="button" aria-expanded={showSteps} onClick={() => setShowSteps(v => !v)} data-qc="process-toggle"
++        className="mt-2 inline-flex min-h-8 items-center gap-1 rounded-md text-[12.5px] text-token-muted hover:text-token-primary max-md:min-h-11">
++        过程 · {doneCount} / {steps.length}<ChevronDown size={13} className={cn('transition-transform', showSteps && 'rotate-180')} aria-hidden />
++      </button>
++      {/* 步骤列表默认收起；data-stage 一直在，供程序判断 */}
++      <ol aria-label="生成步骤" className={cn('m-0 list-none p-0', !showSteps && 'hidden')}>
++        {steps.map(s => {
++          const live = s.status === 'running';
+           return (
 -            <li key={s.key} className="flex gap-3">
 -              <div className="flex flex-col items-center">
 -                <StageDot stage={s} index={i} />
@@ -2408,55 +2626,26 @@ diff --git a/src/added/pages/quick-creation-agent/RunProgress.tsx b/src/added/pa
 -                  </div>
 -                )}
 -              </div>
--            </li>
--          );
--        })}
--      </ol>
++            <li key={s.key} data-stage={s.key} data-stage-status={s.status} aria-current={live ? 'step' : undefined}
++              className="flex min-h-8 items-center gap-2.5 text-[13px]">
++              <span className="flex h-4 w-4 shrink-0 items-center justify-center" style={{ color: s.status === 'done' ? 'var(--accent-fg-success)' : live ? 'var(--accent-primary)' : s.status === 'failed' ? 'var(--accent-fg-error)' : 'var(--text-muted)' }}>
++                {s.status === 'done' ? <CircleCheck size={14} /> : live ? <Clock3 size={14} /> : s.status === 'failed' ? <AlertTriangle size={13} /> : <Circle size={14} />}
++              </span>
++              <span className={cn('min-w-0 flex-1 truncate', s.status === 'pending' ? 'text-token-muted' : 'text-token-primary')}>
++                {s.label}{s.status === 'done' && s.detail && <span className="text-token-muted"> · {s.detail}</span>}
++              </span>
++              {live && <span className="shrink-0 text-[12px] tabular-nums text-[color:var(--accent-primary)]">{s.progress != null ? `${s.progress}%` : '进行中'}</span>}
++              {s.status === 'failed' && <span className="shrink-0 text-[12px]" style={{ color: 'var(--accent-fg-error)' }}>未完成</span>}
+             </li>
+           );
+         })}
+       </ol>
 -      {run.estimateBasis && !finished && run.status !== 'failed' && <div className="pb-2 text-[11px] text-token-muted">预计依据：{run.estimateBasis}</div>}
 -    </div>
-+      {/* 分段总进度：每段一个阶段，进行中那段流动 */}
-+      <div className="flex gap-1 px-4" aria-hidden>
-+        {steps.map(s => (
-+          <span key={s.key} className="h-1.5 flex-1 overflow-hidden rounded-full bg-[var(--bg-tertiary)]">
-+            {s.status === 'done' && <span className="block h-full w-full rounded-full bg-[color:var(--accent-fg-success)] opacity-70" />}
-+            {s.status === 'running' && <span className="qc-bar-live block h-full rounded-full transition-[width] duration-700" style={{ width: `${Math.max(8, s.progress ?? 30)}%` }} />}
-+            {s.status === 'failed' && <span className="block h-full w-full rounded-full" style={{ background: 'var(--accent-fg-error)' }} />}
-+          </span>
-+        ))}
-+      </div>
-+      <div className="mx-4 mb-3 mt-3 rounded-[10px] bg-[var(--bg-secondary)] px-3 py-1.5">
-+        <div className="flex items-center justify-between border-b border-token-subtle pb-1.5 pt-0.5 text-[11.5px]">
-+          <span className="font-medium text-token-secondary">任务清单</span>
-+          <span className="flex items-center gap-2 tabular-nums text-token-muted">
-+            {doneCount} / {steps.length}
-+            {finished && <button type="button" onClick={() => setShowSteps(false)} className="rounded px-1 hover:text-token-primary">收起</button>}
-+          </span>
-+        </div>
-+        <ol aria-label="生成步骤">
-+          {steps.map(s => {
-+            const live = s.status === 'running';
-+            return (
-+              <li key={s.key} data-stage={s.key} data-stage-status={s.status} aria-current={live ? 'step' : undefined}
-+                className="flex min-h-8 items-center gap-2 text-[12.5px]">
-+                <span className="flex h-4 w-4 shrink-0 items-center justify-center" style={{ color: s.status === 'done' ? 'var(--accent-fg-success)' : live ? 'var(--accent-primary)' : s.status === 'failed' ? 'var(--accent-fg-error)' : 'var(--text-muted)' }}>
-+                  {s.status === 'done' ? <CircleCheck size={14} /> : live ? <Clock3 size={14} /> : s.status === 'failed' ? <AlertTriangle size={13} /> : <Circle size={14} />}
-+                </span>
-+                <span className={cn('min-w-0 flex-1 truncate', s.status === 'pending' ? 'text-token-muted' : 'text-token-primary', live && 'font-medium')}>
-+                  {s.label}
-+                  {s.status === 'done' && s.detail && <span className="text-token-muted"> · {s.detail}</span>}
-+                </span>
-+                {live && <span className="shrink-0 text-[11px] font-semibold tabular-nums text-[color:var(--accent-primary)]">{s.progress != null ? `${s.progress}%` : '进行中'}</span>}
-+                {s.status === 'failed' && <span className="shrink-0 text-[11px] font-semibold" style={{ color: 'var(--accent-fg-error)' }}>未完成</span>}
-+              </li>
-+            );
-+          })}
-+        </ol>
-+      </div>
-+      {run.estimateBasis && !finished && !failed && <div className="px-4 pb-3 text-[11px] text-token-muted">预计依据：{run.estimateBasis}</div>}
++      {showSteps && run.estimateBasis && !finished && !failed && <div className="pt-1 text-[12px] text-token-muted">预计依据：{run.estimateBasis}</div>}
 +    </section>
    );
  }
-+
 diff --git a/src/added/pages/quick-creation-agent/StyleLibrary.tsx b/src/added/pages/quick-creation-agent/StyleLibrary.tsx
 new file mode 100644
 --- /dev/null
@@ -2841,7 +3030,7 @@ diff --git a/src/added/pages/quick-creation-agent/quickCreation.css b/src/added/
  
  .qc-range { appearance: none; background: transparent; cursor: pointer; margin: 0; }
  .qc-range::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: var(--border-default); }
-@@ -27,9 +37,96 @@
+@@ -27,9 +37,112 @@
  .qc-pulse { animation: qc-pulse 1.4s ease-in-out infinite; }
  @keyframes qc-rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
  .qc-rise { animation: qc-rise .32s ease-out both; }
@@ -2939,6 +3128,22 @@ diff --git a/src/added/pages/quick-creation-agent/quickCreation.css b/src/added/
 +/* 弹出菜单的底：浅色主题 --bg-input 是实色（白），深色主题它是半透明，叠在 --bg-elevated 上才不透出下面的字 */
 +.qc-menu-surface { background: linear-gradient(var(--bg-input), var(--bg-input)), var(--bg-elevated); }
 +.qc-face-chip[aria-checked="true"] { --qc-face-ring: inset 0 0 0 1.5px var(--accent-primary); }
++
++/* V10：安静的文字按钮（起头、次要动作）：平时没有底和框，悬停才出一层浅底 */
++.qc-face-quiet { --qc-face-h: 32px; --qc-face-bg: transparent; }
++.qc-face-quiet:hover:not(:disabled) { --qc-face-bg: var(--bg-tertiary); color: var(--text-primary); }
++/* 不依赖 Button 组件的主按钮（浮层里用） */
++.qc-face-primary-plain { --qc-face-h: 34px; --qc-face-r: 10px; --qc-face-bg: var(--button-primary-bg); color: var(--button-primary-fg); }
++.qc-face-primary-plain:hover:not(:disabled) { --qc-face-bg: var(--button-primary-bg-hover); }
++
++/* V10 输入框：一块面，不套框；靠一圈极淡的轮廓和柔和的投影浮起来，聚焦时轮廓变成主色 */
++.qc-composer {
++  background: var(--bg-input);
++  border-radius: 22px;
++  box-shadow: 0 0 0 1px var(--border-subtle), 0 16px 40px -24px var(--border-default);
++  transition: box-shadow .2s;
++}
++.qc-composer:focus-within { box-shadow: 0 0 0 1.5px var(--accent-primary), 0 16px 40px -24px var(--border-default); }
 diff --git a/src/added/pages/quick-creation-agent/types.ts b/src/added/pages/quick-creation-agent/types.ts
 --- a/src/added/pages/quick-creation-agent/types.ts
 +++ b/src/added/pages/quick-creation-agent/types.ts
@@ -3492,7 +3697,7 @@ new file mode 100644
 +    s.slots.tone = /科技/.test(t) ? '科技感' : /活泼|有趣/.test(t) ? '活泼有趣' : '稳重专业';
 +    s.slots.recs = REC[s.slots.tone];
 +    s.slots.awaiting = 'style';
-+    return agent({ text: `按「${s.slots.tone}」挑了 3 个风格，点「用这个」，或者说「第二个」。也可以在右栏风格库里看全部 99 种。`, recommendations: s.slots.recs });
++    return agent({ text: `按「${s.slots.tone}」挑了 3 个风格，点「用这个风格」，或者说「第二个」。想看全部，点「全部 99 种」。`, recommendations: s.slots.recs });
 +  }
 +  if (/风格|推荐|不知道/.test(t)) return next(s);
 +  return next(s);

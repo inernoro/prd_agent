@@ -187,7 +187,7 @@ function reply(s: Session, text: string): QcChatMessage {
     s.slots.tone = /科技/.test(t) ? '科技感' : /活泼|有趣/.test(t) ? '活泼有趣' : '稳重专业';
     s.slots.recs = REC[s.slots.tone];
     s.slots.awaiting = 'style';
-    return agent({ text: `按「${s.slots.tone}」挑了 3 个风格，点「用这个」，或者说「第二个」。也可以在右栏风格库里看全部 99 种。`, recommendations: s.slots.recs });
+    return agent({ text: `按「${s.slots.tone}」挑了 3 个风格，点「用这个风格」，或者说「第二个」。想看全部，点「全部 99 种」。`, recommendations: s.slots.recs });
   }
   if (/风格|推荐|不知道/.test(t)) return next(s);
   return next(s);

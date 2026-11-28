@@ -88,7 +88,7 @@ export function BrowserExport({ run }: { run: QcRun }) {
     );
   }
   return (
-    <div className="mt-3 border-t border-token-subtle pt-3" data-qc="export-idle">
+    <div className="mt-4" data-qc="export-idle">
       {container === undefined && <div className="flex h-8 items-center gap-2 text-[12px] text-token-muted"><MapSpinner size={12} />正在看这个浏览器能不能合成视频…</div>}
       {container && (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
