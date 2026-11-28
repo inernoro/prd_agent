@@ -2175,9 +2175,21 @@ describe('工程规划与设计 V2 前端回归', () => {
 
   it('A-40 对文件的反馈带当前版路径，保存诉求和验收标准', async () => {
     await withDesignBrowser(() => workspace, async (page, commands) => {
-      await page.goto(browserDesignUrl({ design: bound.id, version: '2', tab: 'delivery', part: 'files', file: 'artifact-doc' }));
-      await page.getByRole('button', { name: '对这个文件提反馈' }).click();
+      let releaseAssignees!: () => void;
+      const waitForAssignees = new Promise<void>(resolve => { releaseAssignees = resolve; });
+      await page.route(url => url.pathname.endsWith('/design') && url.searchParams.get('view') === 'assignees', async route => {
+        await waitForAssignees;
+        await route.fallback();
+      });
       const form = page.locator('.dw-dl-detail form');
+      try {
+        await page.goto(browserDesignUrl({ design: bound.id, version: '2', tab: 'delivery', part: 'files', file: 'artifact-doc' }));
+        await page.getByRole('button', { name: '对这个文件提反馈' }).click();
+        await form.getByRole('status', { name: '正在读取可接手的项目成员和智能体' }).waitFor({ state: 'visible' });
+        expect(await form.getByRole('button', { name: '提交反馈' }).isDisabled()).toBe(true);
+      } finally {
+        releaseAssignees();
+      }
       await form.locator('textarea[name="ask"]').fill('可以直接读到交付说明的结尾');
       await form.locator('textarea[name="done"]').fill('下一段打开后看到文档尾注');
       await form.getByLabel('交接方').selectOption('fixture-handler');
