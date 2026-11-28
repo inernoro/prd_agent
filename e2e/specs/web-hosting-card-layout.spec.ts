@@ -6,7 +6,7 @@ import type { QcAttachment } from '../../prd-admin/src/pages/quick-creation-agen
 // 布局与阅读回归使用静止背景；动态画布单独由三档演示用例验证。
 test.beforeEach(async ({ page }) => { await page.emulateMedia({ reducedMotion: 'reduce' }); });
 
-test('网页托管生成入口与 V8 手机输入框', async ({ page }, testInfo) => {
+test('网页托管生成入口与 V9 手机输入框', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.addInitScript(() => {
     localStorage.setItem('prd-admin-auth', JSON.stringify({ state: {
@@ -35,8 +35,19 @@ test('网页托管生成入口与 V8 手机输入框', async ({ page }, testInfo
       source: { name: 'Lemo-Opuscar by Lemomo (LemoLab)', url: 'https://example.invalid/', posterLicense: 'CC BY 4.0' },
     };
     if (path === `${base}/attachments/knowledge`) data = {
-      id: 'a'.repeat(32), name: '需求评审的三个习惯.md', kind: 'kb', status: 'ready', meta: '示例稿件', chars: 193,
+      id: 'a'.repeat(32), name: '需求评审的三个习惯.md', kind: 'kb', status: 'ready', meta: '示例稿件', chars: 1840,
     } satisfies QcAttachment;
+    if (path === `${base}/estimate`) {
+      const { attachmentIds } = route.request().postDataJSON() as { attachmentIds: string[] };
+      data = attachmentIds.length ? {
+        choice: 'auto', targetSec: 180, autoSec: 180, fullSec: 438, chars: 1840, scenes: 13,
+        generateMin: [35, 54], basis: '稿件 1,840 字，全文照念约 7 分钟；自动取约 3 分钟讲重点',
+        trialDefault: true, trialMin: [4, 8],
+      } : {
+        choice: 'auto', targetSec: 60, autoSec: 60, fullSec: null, chars: null, scenes: 4,
+        generateMin: [25, 38], basis: '内容来自对话；自动取约 1 分钟', trialDefault: false, trialMin: [3, 6],
+      };
+    }
     await route.fulfill({ json: { success: true, data, error: null } });
   });
   await page.goto('/web-pages');
@@ -75,9 +86,10 @@ test('网页托管生成入口与 V8 手机输入框', async ({ page }, testInfo
   await expect(output).toBeVisible();
   await testInfo.attach('手机切换产出和风格', { body: await page.screenshot(), contentType: 'image/png' });
   await output.getByRole('radio', { name: '视频', exact: true }).click();
-  await expect(tools.locator('[data-qc=style-chip]')).toContainText('视频 · 视觉笔记');
+  await expect(tools.locator('[data-qc=style-chip]')).toContainText(/(?:时长|约 1 分钟) · 视觉笔记/);
   await page.keyboard.press('Escape');
   await page.locator('[data-qc=sample-doc]').click();
+  await expect(tools.locator('[data-qc=style-chip]')).toContainText('约 3 分钟 · 视觉笔记');
   await expect(tools.getByRole('button', { name: '生成', exact: true })).toBeEnabled();
   await expect(tools.locator('[data-qc=brief-send]')).toHaveCount(0);
   await tools.getByRole('button', { name: '语音输入', exact: true }).click();

@@ -143,7 +143,9 @@ export function FailureCard({ failure, onAction }: { failure: QcFailure; onActio
 }
 
 export function RunProgress({ run }: { run: QcRun }) {
-  const finished = run.status === 'done';
+  const trialReady = run.status === 'trial-ready';
+  const finished = run.status === 'done' || trialReady;
+  const completionLabel = trialReady ? '试看已完成' : '全部完成';
   const failed = run.status === 'failed';
   const [showSteps, setShowSteps] = useState(false);
   const steps = run.stages;
@@ -156,13 +158,13 @@ export function RunProgress({ run }: { run: QcRun }) {
       <button type="button" onClick={() => setShowSteps(true)} data-qc="run-progress"
         className="flex w-full items-center gap-2 rounded-[10px] px-1 py-1.5 text-left text-[12.5px] hover-bg-soft max-md:min-h-11">
         <CircleCheck size={15} className="shrink-0 text-[color:var(--accent-fg-success)]" aria-hidden />
-        <span className="min-w-0 truncate text-token-secondary">{steps.slice(0, -1).map(s => s.label).join(' · ')} 全部完成，用时 {formatDuration(run.elapsedSec)}</span>
+        <span className="min-w-0 truncate text-token-secondary">{[...steps.slice(0, -1).map(s => s.label), completionLabel].join(' · ')}，用时 {formatDuration(run.elapsedSec)}</span>
         <span className="ml-auto inline-flex shrink-0 items-center gap-0.5 text-token-muted">过程<ChevronDown size={13} /></span>
       </button>
     );
   }
 
-  const title = finished ? '全部完成' : failed ? `停在「${current?.label ?? ''}」` : current?.status === 'running' ? `正在${current.label}` : '正在准备';
+  const title = finished ? completionLabel : failed ? `停在「${current?.label ?? ''}」` : current?.status === 'running' ? `正在${current.label}` : '正在准备';
   return (
     <section className="qc-card qc-rise overflow-hidden" data-qc="run-progress">
       <div className="flex items-start justify-between gap-3 px-4 pb-3 pt-3.5">

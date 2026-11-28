@@ -612,7 +612,7 @@ export function QuickCreationAgentPage() {
 
   /* ---------- 左栏 · 任务：你的那一条 + 助手这一轮 ---------- */
   const runTemplate = templates.find(t => t.id === run?.templateId);
-  const agentStatus = !run ? null : run.status === 'queued' ? '已排队 · 后台进行' : run.status === 'running' ? '后台进行中 · 可以离开' : run.status === 'failed' ? '需要你处理' : '已完成';
+  const agentStatus = !run ? null : run.status === 'queued' ? '已排队 · 后台进行' : run.status === 'running' ? '后台进行中 · 可以离开' : run.status === 'failed' ? '需要你处理' : run.status === 'trial-ready' ? '等你确认试看' : '已完成';
   const runConversation = run && (
     <>
       <UserTurn meta={<>{run.kind === 'video' ? <Video size={12} aria-hidden /> : <Globe size={12} aria-hidden />}{OUTPUT_LABEL[run.kind]}{run.targetDurationSec ? ` · 约 ${minutesLabel(run.targetDurationSec)}` : ''} · {runTemplate?.name}</>}>
