@@ -531,7 +531,8 @@ async function verifyPreview(page, view, row) {
 
 const browser = await chromium.launch();
 try {
-  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const page = await context.newPage();
   page.setDefaultTimeout(55_000);
   const version = await data(await page.request.get(new URL('/api/version', origin).href), 'MAP version');
   assert.equal(version.actualCommit, commit);
