@@ -8,7 +8,7 @@ import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import { apiRequest, apiUrl } from '@/lib/api';
 import { requestAgentAccess } from '@/lib/agent-onboarding';
 import type { DesignComment, DesignEntry, DesignReviewer, DesignScreen, DesignTheme, DesignVersion, DesignViewerState, DesignWorkspace } from '../../../src/shared/design-workspace';
-import { adoptedFrameworkVersion, currentDesignRun, designProgramEvidenceRequired, frameworkInUse, frameworkMaterialCandidates, latestDesignFeedbackAt, latestDesignRecordAt, type DesignMaterialKey, type FrameworkResolutions } from '../../../src/shared/design-workspace';
+import { adoptedFrameworkVersion, currentDesignRun, designProgramEvidenceRequired, frameworkInUse, frameworkMaterialCandidates, isDesignRecordDelivery, latestDesignFeedbackAt, latestDesignRecordAt, type DesignMaterialKey, type FrameworkResolutions } from '../../../src/shared/design-workspace';
 import { type PlanningProject, usePlanningRead } from './engineering-planning/planning-ui';
 import { DesignCanvas, DesignReviewDialog, type SidePin } from './design-workspace/DesignCanvas';
 import { DesignAcceptancePanel } from './design-workspace/DesignAcceptancePanel';
@@ -139,18 +139,16 @@ export function DesignWorkspacePage() {
   const requestedTab = params.get('tab');
   /* V26（用户：反馈和资料不应该在交付，而是在记录；记录里要有一个能点进去看真正反馈的地方）：
    * 记录页两个视图——按版本（log 不写）和反馈和资料（log=delivery，part/fb/file 照旧）。旧地址 tab=delivery&full=delivery&part=… 打开记录里的反馈和资料。 */
-  const legacyDelivery = requestedTab === 'delivery' && params.get('part') !== 'checks'
-    && (params.get('full') === 'delivery' || params.has('part') || params.has('fb') || params.has('file') || hash.startsWith('#dw-'));
+  const recordDelivery = isDesignRecordDelivery(params, hash);
   const tab = requestedTab === 'accept' || requestedTab === 'delivery' && params.get('part') === 'checks' ? 'accept'
-    : requestedTab === 'log' || legacyDelivery ? 'log' : 'delivery';
-  const logView = tab === 'log' && (legacyDelivery || params.get('log') === 'delivery') ? 'delivery' : 'versions';
+    : requestedTab === 'log' || recordDelivery ? 'log' : 'delivery';
+  const logView = recordDelivery ? 'delivery' : 'versions';
   const comparing = tab === 'delivery' && (requestedTab === 'diff' || params.get('compare') === '1');
   const requestedFull = params.get('full');
   const fullView: DesignFullView | undefined = tab !== 'delivery' ? undefined
     : requestedFull === 'need' || requestedFull === 'notes' || requestedFull === 'delivery' ? requestedFull
     : requestedTab === 'need' ? 'need'
-    : requestedTab === 'rationale' || requestedTab === 'notes' || requestedTab === 'spec' ? 'notes'
-    : requestedTab === 'delivery' && (params.has('part') || params.has('fb') || params.has('file') || hash.startsWith('#dw-')) ? 'delivery' : undefined;
+    : requestedTab === 'rationale' || requestedTab === 'notes' || requestedTab === 'spec' ? 'notes' : undefined;
   const sideClosed = params.get('side') === 'off';
   const pane = params.get('pane');
   const sideTab: SideTab = pane === 'comments' || pane === 'points' || pane === 'deliver' ? pane : 'demo';
@@ -184,7 +182,6 @@ export function DesignWorkspacePage() {
   const viewer = read?.key === readKey && read ? read.viewer : workspace?.viewer ?? emptyDesignViewer;
   const viewedVersion = draftVisible ? version?.version : undefined;
   const viewedDesign = draftVisible ? entry?.id : undefined;
-  const recordDelivery = tab === 'log' && logView === 'delivery';
   const viewedFeedback = recordDelivery && draftVisible && entry
     && (params.get('part') !== 'files' && !params.has('file')) ? latestDesignFeedbackAt(entry) || undefined : undefined;
   const viewedRecord = tab === 'log' && draftVisible && entry ? latestDesignRecordAt(entry) || undefined : undefined;
