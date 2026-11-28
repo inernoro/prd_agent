@@ -3,6 +3,9 @@ import type { IShellExecutor } from '../types.js';
 import type { DesignHandoffCaseResult } from '../shared/design-handoff.js';
 import type { DesignCoverCapture, DesignReferenceCapture } from './design-framework-browser.js';
 import type { DesignHandoffExecutor } from './design-handoff-browser.js';
+import { fingerprintInstalledDesignBuild, type DesignAcceptanceCapture,
+  type InstalledDesignCaptureReply, type InstalledDesignCaptureRequest } from './design-acceptance-browser.js';
+import { rejectPlanning } from './engineering-planning-input.js';
 import { shellQuoteArg } from './secure-database-cli.js';
 
 type Shell = Pick<IShellExecutor, 'exec'>;
@@ -120,5 +123,40 @@ export function createDesignReferenceContainer(shell: Shell, resolveImage: Image
       }
       offset += references.length;
     }
+  };
+}
+
+const captureFailureStatus = {
+  design_capture_build_mismatch: 409, design_capture_commit_changed: 409,
+  design_capture_missing_fixture: 422, design_capture_invalid_scene: 422, design_capture_binding_mismatch: 422,
+  design_capture_reference_unavailable: 422, design_capture_implementation_unavailable: 422,
+  design_capture_incomplete: 422,
+} as const;
+
+export function createDesignAcceptanceContainer(shell: Shell, resolveImage: Image, webDist: string): DesignAcceptanceCapture {
+  return async ({ prototype, preview, version, ...input }) => {
+    if (preview) return rejectPlanning(409, 'design_capture_preview_build_unavailable', '当前隔离浏览器支持对主用 CDS 已部署构建取证。');
+    const buildDigest = await fingerprintInstalledDesignBuild(webDist, input.commit).catch(() => undefined);
+    if (!buildDigest) return rejectPlanning(409, 'design_capture_commit_changed', '无法核对当前已部署前端产物，请确认正式构建后重试。');
+    const request: InstalledDesignCaptureRequest = {
+      ...input, kind: 'installed-acceptance', prototype: prototype.toString('base64'), buildDigest,
+      version: { createdAt: version.createdAt, delivery: version.delivery && { files: version.delivery.files.map(({ path }) => ({ path })) } },
+    };
+    const { output } = await runDesignBrowserContainer(shell, resolveImage, request, 45_000);
+    const unavailable = () => rejectPlanning(503, 'design_capture_unavailable', '隔离取证浏览器暂不可用，请确认同提交渲染产物并重试。');
+    if (!output || output.length > 6 * 1024 * 1024) return unavailable();
+    let reply: InstalledDesignCaptureReply;
+    try { reply = JSON.parse(output); }
+    catch { return unavailable(); }
+    if (reply?.ok === false && Object.hasOwn(captureFailureStatus, reply.code)
+      && typeof reply.message === 'string' && reply.message.length <= 250) {
+      return rejectPlanning(captureFailureStatus[reply.code as keyof typeof captureFailureStatus], reply.code, reply.message);
+    }
+    if (reply?.ok !== true || !reply.result || !/^[0-9a-f]{64}$/.test(reply.result.fixtureDigest)) return unavailable();
+    const { reference, implementation, checks, rules, fixtureDigest } = reply.result;
+    const validImage = (image: unknown): image is string => typeof image === 'string' && image.length <= 2 * 1024 * 1024
+      && /^[A-Za-z0-9+/]+={0,2}$/.test(image);
+    if (!validImage(reference) || !validImage(implementation) || !checks || !rules) return unavailable();
+    return { reference: Buffer.from(reference, 'base64'), implementation: Buffer.from(implementation, 'base64'), checks, rules, fixtureDigest };
   };
 }

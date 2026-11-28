@@ -1,8 +1,9 @@
-import { readFile, realpath } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { readFile, readdir, realpath } from 'node:fs/promises';
 import { extname, resolve, sep } from 'node:path';
 import type { Browser, Page, Route } from 'playwright';
 import { designPixelDifference } from '../shared/design-pixels.js';
-import { designViewports, isDesignRecordDelivery, type DesignRule, type DesignScreen, type DesignTheme, type DesignVersion } from '../shared/design-workspace.js';
+import { designViewports, isDesignRecordDelivery, type DesignRule, type DesignScreen, type DesignTheme } from '../shared/design-workspace.js';
 import { designBrowserPath, launchDesignBrowser, readPrototypeScreen } from './design-framework-browser.js';
 import { designDigest, localDesignPath } from './design-package.js';
 import { decorateDesignPrototype, designPrototypeCsp } from './design-prototype.js';
@@ -15,13 +16,20 @@ export type OpenDesignPreviewBuild = (input: PreviewBuildInput) => Promise<Desig
 
 type ProgramCaptureInput = {
   prototype: Buffer; screen: DesignScreen; theme: DesignTheme; rules: DesignRule[];
-  commit: string; version: DesignVersion; projectId: string; preview?: PreviewBuildInput['preview'];
+  commit: string; projectId: string; preview?: PreviewBuildInput['preview'];
+  version: { createdAt: string; delivery?: { files: Array<{ path: string }> } };
 };
 type ProgramCapture = {
   fixtureDigest: string; reference: Buffer; implementation: Buffer;
   checks: ReturnType<typeof compareDesignObservations>; rules: ReturnType<typeof observeDesignRules>;
 };
 export type DesignAcceptanceCapture = (input: ProgramCaptureInput) => Promise<ProgramCapture | undefined>;
+export type InstalledDesignCaptureRequest = Omit<ProgramCaptureInput, 'prototype' | 'preview'> & {
+  kind: 'installed-acceptance'; prototype: string; buildDigest: string;
+};
+type EncodedCapture = Omit<ProgramCapture, 'reference' | 'implementation'> & { reference: string; implementation: string };
+export type InstalledDesignCaptureReply = { ok: true; result: EncodedCapture }
+  | { ok: false; code: string; message: string };
 
 const renderOrigin = 'https://cds-design-implementation.invalid';
 const snapshotLimit = 2 * 1024 * 1024;
@@ -157,6 +165,32 @@ async function openInstalledBuild(webDist: string, commit: string): Promise<Desi
   return { read, current: async () => (await read('.build-sha'))?.toString('utf8').trim() === commit };
 }
 
+// Compare the actual installed output with the immutable renderer image without a host mount.
+export async function fingerprintInstalledDesignBuild(webDist: string, commit: string): Promise<string | undefined> {
+  const build = await openInstalledBuild(webDist, commit);
+  if (!build || !await build.current() || !await build.read('index.html')) return undefined;
+  const root = await realpath(webDist);
+  const readAsset = build.read;
+  const digest = createHash('sha256');
+  async function visit(directory: string) {
+    const entries = await readdir(resolve(root, directory), { withFileTypes: true });
+    for (const entry of entries.sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0)) {
+      const key = directory ? directory + '/' + entry.name : entry.name;
+      // Source-mode installs add bookkeeping that is never served as a frontend asset.
+      if (key === '.build-sha' || key === '.web-input-sha') continue;
+      if (entry.isDirectory()) {
+        await visit(key);
+      } else {
+        const file = entry.isFile() && await readAsset(key);
+        if (!file) throw new Error('Invalid installed build asset');
+        digest.update(JSON.stringify([key, designDigest(file)]) + '\n');
+      }
+    }
+  }
+  await visit('');
+  return await build.current() ? digest.digest('hex') : undefined;
+}
+
 async function serveImplementation(route: Route, target: URL, build: DesignBuild, project: string, fixtures: FixtureSnapshot) {
   const request = route.request();
   const url = new URL(request.url());
@@ -279,7 +313,7 @@ async function readImplementation(browser: Browser, build: DesignBuild, target: 
 }
 
 export function createDesignAcceptanceBrowser(webDist: string, executablePath?: string,
-  openPreviewBuild?: OpenDesignPreviewBuild): DesignAcceptanceCapture | undefined {
+  openPreviewBuild?: OpenDesignPreviewBuild, launchBrowser = launchDesignBrowser): DesignAcceptanceCapture | undefined {
   const executable = designBrowserPath(executablePath);
   if (!executable) return undefined;
   return async input => {
@@ -310,7 +344,7 @@ export function createDesignAcceptanceBrowser(webDist: string, executablePath?: 
       if (preview) return rejectPlanning(409, 'design_capture_preview_build_unavailable', '当前 PR 预览的 CDS 构建无法核对。请从同一提交部署受管的 CDS 预览后重试。');
       return undefined;
     }
-    const browser = await launchDesignBrowser(executable, evidenceRenderArgs);
+    const browser = await launchBrowser(executable, evidenceRenderArgs);
     const expires = setTimeout(() => { void browser.close().catch(() => {}); }, 24_000);
     try {
       let referenceFailure = '原型未到达声明画面。';
