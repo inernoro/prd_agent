@@ -853,6 +853,26 @@ describe('V17 交付工作区', () => {
 });
 
 describe('已发布的演示、评论和交付布局', () => {
+  it('V-07 深色反馈中退回和严重停滞的文字达到 4.5:1', async () => {
+    const markup = `<main class="dw-workspace"><div class="dr-delivery"><button class="dw-fl-row" aria-current="true" type="button">
+      <span class="dw-fl-l2"><span class="dw-fl-stage" data-stage="returned">退回重做</span>
+      <span class="dw-fl-stall" data-stall="bad">停了 8 天</span></span>
+    </button></div></main>`;
+    const css = await layoutStyles(markup, [...draftHeaderStyles, 'web/src/pages/design-workspace/design-v25.css',
+      'web/src/pages/design-workspace/design-v26-record.css']);
+    const page = await fixturePage({ colorScheme: 'dark' });
+    try {
+      await page.setContent('<!doctype html><html data-theme="dark"><body>' + markup + '</body></html>');
+      await applyFixtureStyles(page, css);
+      await page.screenshot({ animations: 'disabled' });
+      const { darkText } = await measureDesignPage(page, 'dark');
+      expect(darkText).toMatchObject({ measured: 2, low: 0 });
+      expect(darkText?.lowest).toBeGreaterThanOrEqual(4.5);
+    } finally {
+      await page.close();
+    }
+  });
+
   it('A-51 只有上次访问时间的旧稿仍可打开按版本记录', () => {
     const html = design(`&design=${guidedDraft.id}&version=18&tab=log`, {
       ...guidedWorkspace, viewer: { lastVisitAt: '2026-11-18T00:00:00.000Z' } as DesignViewerState,

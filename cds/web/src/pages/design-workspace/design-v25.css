@@ -235,6 +235,8 @@
 .dw-fl-stage[data-stage=done] { background: color-mix(in srgb, var(--dw-ok) 15%, transparent); color: var(--dw-ok); }
 .dw-fl-stall { padding: 0 6px; border-radius: 4px; font-size: 11.5px; font-weight: 600; line-height: 18px; background: color-mix(in srgb, var(--dw-warn) 15%, transparent); color: var(--dw-warn); white-space: nowrap; }
 .dw-fl-stall[data-stall=bad] { background: hsl(var(--destructive) / .12); color: hsl(var(--destructive)); }
+[data-theme=dark] .dw-fl-stage[data-stage=returned],
+[data-theme=dark] .dw-fl-stall[data-stall=bad] { color: color-mix(in srgb, var(--dw-danger) 62%, var(--dw-ink)); }
 .dw-fl-gl.bad { background: hsl(var(--destructive)); border-radius: 1.5px; transform: rotate(45deg) scale(.85); }
 .dw-fl-hand { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dw-fl-done summary span { margin-left: auto; font-weight: 400; }
