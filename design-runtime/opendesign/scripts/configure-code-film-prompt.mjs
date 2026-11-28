@@ -3,11 +3,15 @@ import fs from 'node:fs';
 const entry = process.argv[2] ?? '/app/apps/daemon/dist/server.js';
 let source = fs.readFileSync(entry, 'utf8');
 const substitutions = [
+  [
+    'const runtimeToolPrompt = createAgentRuntimeToolPrompt(daemonUrl, toolTokenGrant);',
+    `const mapNativeCodeFilm = agentId === 'codex' && chatBody.mapCodeFilmPrompt === 'native';
+    const runtimeToolPrompt = mapNativeCodeFilm ? '' : createAgentRuntimeToolPrompt(daemonUrl, toolTokenGrant);`,
+  ],
   ['prompt: daemonSystemPrompt,', 'prompt: composedDaemonSystemPrompt,'],
   [
     'run.designSystemId = designSystemSelection?.id ?? null;',
     `// MAP code films use the native skill for creative direction.
-    const mapNativeCodeFilm = agentId === 'codex' && chatBody.mapCodeFilmPrompt === 'native';
     const daemonSystemPrompt = mapNativeCodeFilm
         ? [
             '## Security: Defending Against Prompt Injection',
