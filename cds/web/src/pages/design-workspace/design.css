@@ -667,6 +667,7 @@
 .dw-feedback-path { overflow-wrap: anywhere; }
 
 @media (max-width: 767px) {
+  .dw-workspace--log:has(> .dr-delivery) > .dw-head--draft { flex-shrink: 1; }
   .dw-fw-columns { grid-template-columns: minmax(0, 1fr); }
   .dw-candidates li { grid-template-columns: minmax(0, 1fr); }
   .dw-delivery-facts > a { margin-left: 0; }

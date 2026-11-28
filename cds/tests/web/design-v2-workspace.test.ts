@@ -861,6 +861,43 @@ describe('已发布的演示、评论和交付布局', () => {
     expect(html).toContain('class="dr-main"');
   });
 
+  it('A-13 反馈长列表在手机使用紧凑页头，桌面页头保持整行', async () => {
+    const draft = { ...guidedDraft, feedback: Array.from({ length: 12 }, (_, index) => ({
+      ...currentFeedback, id: `FDB-layout-${index}`, title: `交付反馈 ${index + 1}`,
+    })) };
+    const input = { ...guidedWorkspace, designs: [draft] };
+    const params = { design: draft.id, version: '18', tab: 'log', log: 'delivery', part: 'feedback' };
+    const markup = design('&' + new URLSearchParams(params), input);
+    await withDesignBrowser(() => input, async page => {
+      await page.goto(browserDesignUrl(params));
+      await applyFixtureStyles(page, await layoutStyles(markup, draftHeaderStyles));
+      const list = page.getByLabel('反馈列表');
+      const detail = page.locator('.dw-dl-detail');
+      await list.waitFor();
+      const measure = () => page.locator('.dw-workspace--log').evaluate(workspace => {
+        const box = (selector: string) => workspace.querySelector(selector)!.getBoundingClientRect();
+        const panel = workspace.querySelector('.dr-delivery')!;
+        return { height: box('.dw-head--draft').height, actions: box('.dw-draft-bar').height,
+          tabs: box('.dw-draft-tabbar').height, scrolls: panel.scrollHeight > panel.clientHeight,
+          overflow: document.documentElement.scrollWidth - innerWidth };
+      });
+      const mobile = await measure();
+      expect(mobile.scrolls).toBe(true);
+      expect(mobile.overflow).toBe(0);
+      expect(mobile.height).toBeLessThan(mobile.actions + mobile.tabs);
+      expect(await detail.isVisible()).toBe(false);
+      await list.getByRole('button', { name: /交付反馈 1\s/ }).click();
+      await detail.getByText(currentFeedback.body, { exact: true }).waitFor();
+      await detail.getByRole('button', { name: '全部反馈', exact: true }).click();
+      await list.waitFor();
+
+      await page.setViewportSize({ width: 1280, height: 800 });
+      const desktop = await measure();
+      expect(desktop.overflow).toBe(0);
+      expect(desktop.height).toBe(desktop.actions + 1);
+    }, { viewport: { width: 375, height: 812 }, hasTouch: true, reducedMotion: 'reduce' });
+  }, 20_000);
+
   it('A-10/A-51/A-63 从旧地址进入记录、查看实际反馈，并保留交付的三个入口', async () => {
     const css = await layoutStyles(design(`&design=${guidedDraft.id}&version=18&tab=log`, guidedWorkspace), draftHeaderStyles);
     await withDesignBrowser(() => guidedWorkspace, async page => {
