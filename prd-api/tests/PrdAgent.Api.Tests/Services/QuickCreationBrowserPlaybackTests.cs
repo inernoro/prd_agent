@@ -16,5 +16,8 @@ public sealed class QuickCreationBrowserPlaybackTests
         Assert.Contains("""{"aac":"++++","captions":""", html);
         Assert.Contains("""\u003c/script>\u003cimg src=x>""", html);
         Assert.DoesNotContain("</script><img", html);
+        Assert.Contains("""id="start">播放视频</button>""", html);
+        Assert.Contains("object-fit:contain", html);
+        Assert.Contains(".controls{flex:none", html);
     }
 }

@@ -90,9 +90,23 @@ internal static class QuickCreationBrowserPlayback
         <!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
         <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' blob:; style-src 'unsafe-inline'; img-src data: blob:; media-src data: blob:; font-src data: blob:; connect-src 'none'; form-action 'none'; base-uri 'none'">
         <meta name="viewport" content="width=device-width, initial-scale=1"><title>影片播放器</title>
-        <style>html{color-scheme:dark;background:#131416;color:#fff}body{font:14px system-ui;margin:0}main{margin:auto;max-width:1200px}figure{margin:0;position:relative}canvas{width:100%;height:auto;display:block;aspect-ratio:16/9}figcaption{position:absolute;bottom:5%;left:8%;right:8%;text-align:center;white-space:pre-line}figcaption span{background:#171819e6;padding:.3em .65em;border-radius:.4em}.controls{display:flex;align-items:center;gap:.5rem;padding:.55rem}audio{width:100%}button{padding:.35rem .55rem;white-space:nowrap}#status{padding:0 .6rem}</style></head>
-        <body><main><figure><canvas aria-label="影片画面"></canvas><figcaption><span hidden></span></figcaption></figure>
-        <div class="controls"><audio controls preload="metadata" aria-label="影片播放"></audio><button type="button" aria-pressed="true">字幕</button></div>
+        <style>
+          html,body{height:100%;margin:0;color-scheme:dark;background:#131416;color:#fff}
+          body{font:14px system-ui}
+          main{box-sizing:border-box;height:100%;display:flex;flex-direction:column;padding:.4rem}
+          figure{flex:1;min-height:0;margin:0;position:relative}
+          canvas{display:block;width:100%;height:100%;object-fit:contain}
+          figcaption{position:absolute;bottom:5%;left:8%;right:8%;text-align:center;white-space:pre-line}
+          figcaption span{background:#171819e6;padding:.3em .65em;border-radius:.4em}
+          .controls{flex:none;display:flex;align-items:center;gap:.5rem;padding:.35rem}
+          audio{flex:1;min-width:0;width:100%}
+          button{padding:.35rem .55rem;white-space:nowrap}
+          #start{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);padding:.55rem 1rem;cursor:pointer}
+          #status{margin:0;padding:0 .35rem}
+        </style></head>
+        <body><main><figure><canvas aria-label="影片画面"></canvas><figcaption><span hidden></span></figcaption>
+        <button type="button" id="start">播放视频</button></figure>
+        <div class="controls"><audio controls preload="metadata" aria-label="影片播放"></audio><button type="button" id="captions" aria-pressed="true">字幕</button></div>
         <p id="status" role="status"></p></main><script type="application/json" id="film">__MAP_FILM_DATA__</script>
         <script type="module">
         const film=JSON.parse(document.querySelector('#film').textContent);
@@ -100,7 +114,8 @@ internal static class QuickCreationBrowserPlayback
         const audio=document.querySelector('audio');
         const status=document.querySelector('#status');
         const caption=document.querySelector('figcaption span');
-        const toggle=document.querySelector('button');
+        const start=document.querySelector('#start');
+        const toggle=document.querySelector('#captions');
         const aac=audio.canPlayType('audio/mp4; codecs="mp4a.40.2"');
         audio.src=aac?'data:audio/mp4;base64,'+film.aac:'data:audio/webm;base64,'+film.opus;
         let showCaptions=true, raf=0, rendering=false, asked=false, activeScene=-1, duration=film.durationSec;
@@ -129,8 +144,10 @@ internal static class QuickCreationBrowserPlayback
           try{await draw(audio.currentTime,showCaptions);}catch{status.textContent='这一幕暂时无法显示';audio.pause();}
           finally{rendering=false;if(!audio.paused&&!asked)raf=requestAnimationFrame(paint);}
         }
-        audio.addEventListener('play',()=>{cancelAnimationFrame(raf);paint();});
+        start.onclick=()=>{audio.play().catch(()=>{status.textContent='配音暂时无法播放';});};
+        audio.addEventListener('play',()=>{start.hidden=true;cancelAnimationFrame(raf);paint();});
         audio.addEventListener('pause',()=>cancelAnimationFrame(raf));
+        audio.addEventListener('ended',()=>{start.hidden=false;});
         audio.addEventListener('seeked',paint);
         audio.addEventListener('error',()=>{status.textContent='配音暂时无法播放';});
         toggle.onclick=()=>{showCaptions=!showCaptions;toggle.setAttribute('aria-pressed',String(showCaptions));paint();};

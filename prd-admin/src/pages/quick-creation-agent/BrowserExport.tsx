@@ -21,9 +21,9 @@ export function BrowserFilmPlayer({ run }: { run: QcRun }) {
     return () => { current = false; };
   }, [attempt, run.id]);
   return (
-    <div className="space-y-3 p-3 sm:p-5" data-qc="browser-player">
+    <div className="h-full min-h-0 p-3 sm:p-5" data-qc="browser-player">
       {html ? <iframe title={run.status === 'trial-ready' ? '试看' : run.title} sandbox="allow-scripts" srcDoc={html}
-        className="aspect-[16/10] w-full rounded-xl border border-token-subtle bg-[var(--bg-secondary)]" />
+        className="block h-full w-full rounded-xl border border-token-subtle bg-[var(--bg-secondary)]" />
         : error ? <p role="status" className="flex items-center gap-2 text-sm">{error}<Button size="sm" variant="secondary" onClick={() => setAttempt(n => n + 1)}>重新打开</Button></p>
           : <p role="status" className="flex items-center gap-2 text-sm"><MapSpinner size={14} />正在读影片画面和配音</p>}
     </div>
