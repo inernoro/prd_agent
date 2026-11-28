@@ -4421,7 +4421,9 @@ def _design_git_package(directory: Path, *, allow_root: bool = True) -> tuple[st
         if not prefix and not allow_root:
             die("私有归档须指定稿件子目录")
         tree = f"{commit}:{prefix}" if prefix else commit
-        archive = subprocess.run(["git", "-C", root, "archive", "--format=zip", tree],
+        # 按提交里的原始字节打包：Windows 上 core.autocrlf=true 时 git archive 会把文本转成 CRLF，
+        # 包里 source.diff 的字节数就和差异摘要对不上（CDS G-07，2026-11-27 DSN-2A3B7293 V2 被拒）
+        archive = subprocess.run(["git", "-c", "core.autocrlf=false", "-c", "core.eol=lf", "-C", root, "archive", "--format=zip", tree],
                                  check=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=20).stdout
         limit = 4 * 1024 * 1024
         if len(archive) > limit:
@@ -5033,6 +5035,8 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
             (directory / "changes").mkdir()
             (directory / "交付说明.md").write_text(guide, encoding="utf-8", newline="\n")
             (directory / "src" / "overrides").mkdir(parents=True)
+            # 有源码目录就要声明：CDS 按 source 算源码差异，不写时本地和服务端的差异摘要对不上（G-07 拒绝）
+            scaffold_manifest["source"] = "src"
             try:
                 baseline = subprocess.run(["git", "-C", str(directory), "rev-parse", "HEAD"],
                                           capture_output=True, text=True, check=True).stdout.strip()

@@ -243,13 +243,36 @@ def test_release_check_blocks_missing_plan_and_passes_the_repaired_draft(tmp_pat
     assert 'register --workspace-credential' in repaired.stdout
 
 
-@pytest.mark.skipif(not shutil.which('node') or not shutil.which('git'), reason='registration uses Node.js and Git')
-@pytest.mark.parametrize('explicit, bound', [(True, True), (True, False), (False, True)])
-def test_release_register_targets_the_explicit_workspace_binding(tmp_path, explicit, bound):
-    env = {**isolated_env(), 'CDS_HOST': 'https://inherited.example', 'CDS_PROJECT_ID': 'unrelated-project'}
+STUB_CLI = r"""
+import hashlib, json, os, subprocess, sys
+args = sys.argv[1:]
+action = args[args.index('design') + 1]
+mode = os.environ.get('STUB_MODE', 'ok')
+commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+names = subprocess.check_output(['git', '-c', 'core.quotePath=false', 'ls-tree', '-r', '-z', '--name-only', commit, '--', 'draft'], text=True).split('\0')
+files = []
+for name in filter(None, names):
+    data = subprocess.check_output(['git', '-c', 'core.autocrlf=false', 'show', commit + ':' + name])
+    digest = hashlib.sha256(data).hexdigest()
+    if mode == 'mismatch' and name.endswith('design.json'):
+        digest = '0' * 64
+    files.append({'path': name[len('draft/'):], 'sha256': digest})
+if action == 'delivery':
+    print(json.dumps({'ok': True, 'data': {'sourceCommit': commit, 'delivery': {'files': files}}}))
+else:
+    print(json.dumps({'ok': True, 'data': {'handoff': {'status': 'failed' if mode == 'handoff-failed' else 'passed'}}}))
+"""
+
+
+def register_fixture(tmp_path, env, manifest=None):
     artifact = tmp_path / 'draft'
     artifact.mkdir()
-    (artifact / 'design.json').write_text(json.dumps({'project': PROJECT}), encoding='utf-8')
+    (artifact / 'design.json').write_text(json.dumps(manifest or {'project': PROJECT}), encoding='utf-8')
+    (artifact / '交付说明.md').write_text('# 中文文件名也要能回读\n', encoding='utf-8')
+    stub = tmp_path / 'stub_cdscli.py'
+    stub.write_text(STUB_CLI, encoding='utf-8')
+    env['CDS_DESIGN_CLI'] = str(stub)
+    env['CDSCLI_PYTHON'] = sys.executable
 
     def git(*args):
         return subprocess.check_output(['git', *args], cwd=tmp_path, env=env, text=True).strip()
@@ -257,6 +280,14 @@ def test_release_register_targets_the_explicit_workspace_binding(tmp_path, expli
     git('init', '--quiet')
     git('add', 'draft')
     git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '--quiet', '-m', 'fixture')
+    return artifact, git
+
+
+@pytest.mark.skipif(not shutil.which('node') or not shutil.which('git'), reason='registration uses Node.js and Git')
+@pytest.mark.parametrize('explicit, bound', [(True, True), (True, False), (False, True)])
+def test_release_register_targets_the_explicit_workspace_binding(tmp_path, explicit, bound):
+    env = {**isolated_env(), 'CDS_HOST': 'https://inherited.example', 'CDS_PROJECT_ID': 'unrelated-project'}
+    artifact, git = register_fixture(tmp_path, env)
     if bound:
         credentials = tmp_path / '.cds/credentials.json'
         credentials.parent.mkdir()
@@ -266,7 +297,7 @@ def test_release_register_targets_the_explicit_workspace_binding(tmp_path, expli
     options = ['--workspace-credential'] if explicit else []
     result = subprocess.run(['node', str(RELEASE), 'register', *options, '--dir', 'draft',
                              '--commit', git('rev-parse', 'HEAD'), '--design', 'DSN-0123ABCD'],
-                            cwd=tmp_path, env=env, capture_output=True, text=True, timeout=15)
+                            cwd=tmp_path, env=env, capture_output=True, text=True, timeout=30)
     assert 'synthetic-never-print' not in result.stdout + result.stderr
     if explicit and not bound:
         assert result.returncode != 0
@@ -275,6 +306,24 @@ def test_release_register_targets_the_explicit_workspace_binding(tmp_path, expli
         return
 
     assert result.returncode == 0, result.stdout + result.stderr
+    assert '"readback":"identical"' in result.stdout
     origin, project = ('https://bound.example', PROJECT) if explicit else (
         'https://inherited.example', 'unrelated-project')
     assert f'{origin}/design?project={project}&design=DSN-0123ABCD&version=1' in result.stdout
+
+
+@pytest.mark.skipif(not shutil.which('node') or not shutil.which('git'), reason='registration uses Node.js and Git')
+@pytest.mark.parametrize('mode, interaction, message', [
+    ('mismatch', False, '回读不一致'),
+    ('handoff-failed', True, '交接检查'),
+])
+def test_release_register_refuses_an_incomplete_version(tmp_path, mode, interaction, message):
+    """「完成」由程序判定：回读对不上，或有交互验收项而交接回执不是「通过」，都不登记。"""
+    env = {**isolated_env(), 'CDS_HOST': 'https://inherited.example', 'CDS_PROJECT_ID': PROJECT, 'STUB_MODE': mode}
+    manifest = {'project': PROJECT, 'acceptance': [{'id': 'A-01', 'interaction': True}] if interaction else []}
+    artifact, git = register_fixture(tmp_path, env, manifest)
+    result = subprocess.run(['node', str(RELEASE), 'register', '--dir', 'draft', '--commit', git('rev-parse', 'HEAD'), '--design', 'DSN-0123ABCD'],
+                            cwd=tmp_path, env=env, capture_output=True, text=True, timeout=30)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert message in result.stderr
+    assert not (artifact / 'versions.json').exists()

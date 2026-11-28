@@ -85,6 +85,7 @@ def test_scaffold_pins_framework_and_preserves_rule_check_modes(workspace, monke
     assert manifest['acceptance'][0]['expected'] == '检查：measure the same page header'
     assert {row['screenId'] for row in manifest['acceptance']} == {'home'}
     assert manifest['screens'][0]['entryReadySelector'] == '.cds-main'
+    assert manifest['source'] == 'src'
     result = json.loads((destination / 'checks/result.json').read_text())
     assert result['passed'] == 0
     assert [(row['id'], row['ruleId']) for row in result['items']] == [('A-01', 'R-01'), ('A-02', 'R-02'), ('A-03', 'R-03')]
