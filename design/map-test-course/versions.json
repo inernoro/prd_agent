@@ -16,6 +16,13 @@
    "tag": "design/DSN-4B17A376/v2",
    "committedAt": "2026-11-28T11:41:45+00:00",
    "subject": "docs(design): 自动化测试实践课程稿件 V2，全新「检验台」视觉"
+  },
+  {
+   "version": 3,
+   "commit": "96caf9e6dfa6100c7f035a46194067f60edce574",
+   "tag": "design/DSN-4B17A376/v3",
+   "committedAt": "2026-11-28T12:21:23+00:00",
+   "subject": "docs(design): 自动化测试实践课程稿件 V3，按排版刻度重排"
   }
  ]
 }
