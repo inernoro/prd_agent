@@ -8,6 +8,7 @@ WORKDIR /app
 COPY package.json pnpm-lock.yaml ./
 RUN pnpm install --prod --frozen-lockfile
 COPY dist ./dist
+COPY web/dist ./web/dist
 ENV HOME=/tmp
 USER 1000:1000
 ENTRYPOINT ["node", "dist/workers/design-cover.js"]

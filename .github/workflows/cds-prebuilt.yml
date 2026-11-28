@@ -124,6 +124,7 @@ jobs:
             "schema": 1
           }
           JSON
+          printf '%s\n' "$GITHUB_SHA" > cds/web/dist/.build-sha
 
       - name: Log in to GHCR
         uses: docker/login-action@v3

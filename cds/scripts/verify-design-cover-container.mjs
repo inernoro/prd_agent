@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
-import { createDesignCoverContainer, createDesignHandoffContainer, createDesignReferenceContainer } from '../dist/services/design-cover-container.js';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { createDesignAcceptanceContainer, createDesignCoverContainer, createDesignHandoffContainer, createDesignReferenceContainer } from '../dist/services/design-cover-container.js';
 import { designPngDimensions } from '../dist/services/design-package.js';
 import { IsolatedShellExecutor } from '../dist/services/isolated-shell-executor.js';
 import { ShellExecutor } from '../dist/services/shell-executor.js';
@@ -89,4 +93,59 @@ async function verify() {
     { caseId: 'blocked', status: 'failed', step: 1, code: 'expectation' },
   ]);
   console.log('Verified gallery batches and handoff outcomes using the same isolated renderer');
+  await verifyInstalledAcceptance(checkedShell, resolveImage);
+}
+
+function installedCaptureFixture(commit) {
+  const demo = 'fixture-evidence-demo';
+  const projectId = 'fixture-evidence-project';
+  const auth = { authenticated: true, mode: 'disabled' };
+  const fixtures = {
+    '/api/auth/status': auth,
+    '/api/auth/public-status': auth,
+    '/api/instance-mode': { previewInstance: false },
+    '/api/projects': { projects: [{ id: demo, name: 'Fixture project' }] },
+    ['/api/projects/' + demo + '/design']: {
+      projectId: demo, designs: [], frameworks: [], permissions: { write: false, review: false, visual: false },
+    },
+  };
+  const prototype = Buffer.from(`<!doctype html><html><body>
+    <main data-cds-design-ready="fixture"><h1>Fixture design library</h1></main>
+    <script>
+      const fixtures = ${JSON.stringify(fixtures)};
+      window.fetch = async path => {
+        const key = new URL(path, location.href).pathname;
+        return Object.hasOwn(fixtures, key)
+          ? new Response(JSON.stringify(fixtures[key]), { headers: { 'content-type': 'application/json' } })
+          : new Response('', { status: 404 });
+      };
+    </script>
+  </body></html>`);
+  const screen = { id: 'fixture-library', name: 'Fixture design library', route: '#/design?project=' + demo,
+    viewport: 'desktop', themes: ['light'], impl: '/design?project=' + projectId,
+    entryReadySelector: '[data-cds-design-ready="fixture"]' };
+  return { prototype, screen, theme: 'light', commit, projectId, rules: [],
+    version: { createdAt: '2026-11-28T00:00:00Z', delivery: { files: [{ path: 'src/fixtures.ts' }, { path: 'src/data-design.ts' }] } } };
+}
+
+async function verifyInstalledAcceptance(checkedShell, resolveImage) {
+  const { sha } = JSON.parse(await readFile(new URL('../cds-prebuilt-manifest.json', import.meta.url), 'utf8'));
+  const webDist = fileURLToPath(new URL('../web/dist', import.meta.url));
+  const capture = createDesignAcceptanceContainer(checkedShell, resolveImage, webDist);
+  const fixture = installedCaptureFixture(sha);
+  const pair = await capture(fixture);
+  assert.deepEqual(designPngDimensions(pair.reference), { width: 1280, height: 800 });
+  assert.deepEqual(designPngDimensions(pair.implementation), { width: 1280, height: 800 });
+  assert.match(pair.fixtureDigest, /^[a-f0-9]{64}$/);
+  await assert.rejects(capture({ ...fixture, commit: '0'.repeat(40) }), { code: 'design_capture_commit_changed' });
+  const mismatchedBuild = await mkdtemp(path.join(os.tmpdir(), 'cds-evidence-mismatch-'));
+  try {
+    await writeFile(path.join(mismatchedBuild, '.build-sha'), sha + '\n');
+    await writeFile(path.join(mismatchedBuild, 'index.html'), '<!doctype html><title>Different deployed build</title>');
+    const mismatched = createDesignAcceptanceContainer(checkedShell, resolveImage, mismatchedBuild);
+    await assert.rejects(mismatched(fixture), { code: 'design_capture_build_mismatch' });
+  } finally {
+    await rm(mismatchedBuild, { force: true, recursive: true });
+  }
+  console.log('Verified paired acceptance of the deployed frontend, offline and pinned to the same build bytes');
 }
