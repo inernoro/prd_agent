@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Api.Services;
@@ -12,6 +13,7 @@ using PrdAgent.Core.LlmGateway;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.Services;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -20,9 +22,10 @@ namespace PrdAgent.Api.Controllers.Api;
 [Route("api/design-artifacts")]
 [Authorize]
 [AdminController("web-pages", AdminPermissionCatalog.WebPagesRead, WritePermission = AdminPermissionCatalog.WebPagesWrite)]
-public sealed class DesignArtifactsController : ControllerBase
+public sealed partial class DesignArtifactsController : ControllerBase
 {
     private static readonly TimeSpan RunTtl = TimeSpan.FromHours(24);
+    private const int MaxInlineInstructionChars = 4000;
     private static readonly HashSet<string> ExportableRuntimeFailureCodes = new(StringComparer.Ordinal)
     {
         "design_output_invalid",
@@ -126,6 +129,7 @@ public sealed class DesignArtifactsController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new
         {
             defaultRuntime = WebPageDesignRuntimePolicy.RequiredRuntime,
+            codeFilmEnabled = CodeFilmEnabled(),
             runtimes = runtimes.Select(ToPublicCapability).ToList(),
         }));
     }
@@ -184,9 +188,19 @@ public sealed class DesignArtifactsController : ControllerBase
     }
 
     [HttpPost("runs")]
-    public async Task<IActionResult> CreateRun([FromBody] CreateDesignArtifactRunRequest request)
+    public Task<IActionResult> CreateRun([FromBody] CreateDesignArtifactRunRequest request) =>
+        CreateRunCoreAsync(request);
+
+    private async Task<IActionResult> CreateRunCoreAsync(
+        CreateDesignArtifactRunRequest request, QuickCreationInput? quickCreation = null,
+        List<DesignReferenceImage>? quickImages = null, DesignArtifactDesignDirection? quickDirection = null,
+        string? retryOfRunId = null, DesignArtifactRun? resumeFilm = null, int? retryFilmScene = null)
     {
         var userId = this.GetRequiredUserId();
+        var taskPermitId = TaskExecutionContext.Current?.PermitId;
+        if (quickCreation != null && string.IsNullOrWhiteSpace(taskPermitId))
+            throw new TaskExecutionAdmissionException("TASK_EXECUTION_NOT_ADMITTED",
+                "任务未能取得执行许可，稿件仍保留，请重新提交。");
         var protectedOverrides = DesignArtifactRequestAuthorityGuard.FindProtectedOverrides(
             request.AdditionalProperties?.Keys);
         if (protectedOverrides.Count > 0)
@@ -199,12 +213,22 @@ public sealed class DesignArtifactsController : ControllerBase
                 DesignArtifactRequestAuthorityGuard.ErrorCode,
                 "运行时模型、网关地址和审计归属由 MAP 统一配置，请移除覆盖字段后重试"));
         }
-        var instruction = (request.Instruction ?? string.Empty).Trim();
-        if (instruction.Length == 0)
+        var isCodeFilm = request.ArtifactType == DesignArtifactTypes.CodeFilm;
+        var instruction = request.Instruction ?? string.Empty;
+        if (!isCodeFilm) instruction = instruction.Trim();
+        if (string.IsNullOrWhiteSpace(instruction))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请用两句话说明网页用途和期望效果"));
-        if (instruction.Length > 4000)
+        if (instruction.Length > MaxInlineInstructionChars)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "设计要求不能超过 4000 个字符"));
-        if (!string.Equals(request.ArtifactType, DesignArtifactTypes.WebPage, StringComparison.OrdinalIgnoreCase))
+        if (isCodeFilm && quickCreation == null && (!LegacyCodeFilmEnabled() || request.AttachmentIds?.Count != 1
+                || !string.IsNullOrWhiteSpace(request.DestinationTeamId)
+                || !string.IsNullOrWhiteSpace(request.ReferenceSiteId)
+                || !string.IsNullOrWhiteSpace(request.StyleId)
+                || !string.IsNullOrWhiteSpace(request.DesignSystemId)
+                || request.KnowledgeReferences is { Count: > 0 }))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
+                "请在 CDS 影片隔离分支提交一份 Markdown 原文"));
+        if (!isCodeFilm && !string.Equals(request.ArtifactType, DesignArtifactTypes.WebPage, StringComparison.OrdinalIgnoreCase))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "当前统一入口只支持生成网页，HTML PPT 请从对应工作台生成"));
 
         // 目标空间在这一刻就定下来：用户还在场，权限不通过可以当场告诉他。等到建站时才校验，
@@ -239,12 +263,18 @@ public sealed class DesignArtifactsController : ControllerBase
 
         var references = request.KnowledgeReferences ?? new List<DesignKnowledgeReferenceRequest>();
         List<DesignUploadedSource> uploadedSources;
-        DesignArtifactDesignDirection? designDirection = null;
+        DesignArtifactDesignDirection? designDirection = quickDirection;
         try
         {
             uploadedSources = await DesignRunInputAttachments.ResolveSourcesAsync(
-                _db, userId, request.AttachmentIds, CancellationToken.None);
-            if (!string.IsNullOrWhiteSpace(request.ReferenceSiteId))
+                _db, userId, request.AttachmentIds, CancellationToken.None, quickCreation: quickCreation != null);
+            if (isCodeFilm && quickCreation == null)
+            {
+                if (uploadedSources.Count != 1
+                    || !Path.GetExtension(uploadedSources[0].FileName).Equals(".md", StringComparison.OrdinalIgnoreCase))
+                    return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请上传一份 Markdown 原文"));
+            }
+            else if (!string.IsNullOrWhiteSpace(request.ReferenceSiteId))
             {
                 if (!string.IsNullOrWhiteSpace(request.StyleId) || !string.IsNullOrWhiteSpace(request.DesignSystemId))
                     return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "参考网页和其他风格只能选一种"));
@@ -257,7 +287,7 @@ public sealed class DesignArtifactsController : ControllerBase
             }
             else if (!string.IsNullOrWhiteSpace(request.StyleId) && !string.IsNullOrWhiteSpace(request.DesignSystemId))
                 return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "风格只能选一种，请重新选择"));
-            else if (_generationSettings != null)
+            else if (_generationSettings != null && quickCreation == null)
                 designDirection = await _generationSettings.FreezeForRunAsync(
                     userId, request.StyleId, request.DesignSystemId, CancellationToken.None);
         }
@@ -300,7 +330,8 @@ public sealed class DesignArtifactsController : ControllerBase
             return KnowledgeReferenceFailure(ex);
         }
 
-        var sourceSurface = string.Equals(request.SourceSurface, DesignArtifactSourceSurfaces.KnowledgeBase, StringComparison.OrdinalIgnoreCase)
+        var sourceSurface = quickCreation != null ? DesignArtifactSourceSurfaces.QuickCreation
+            : string.Equals(request.SourceSurface, DesignArtifactSourceSurfaces.KnowledgeBase, StringComparison.OrdinalIgnoreCase)
             ? DesignArtifactSourceSurfaces.KnowledgeBase
             : DesignArtifactSourceSurfaces.WebHosting;
         var runId = Guid.NewGuid().ToString("N");
@@ -308,8 +339,23 @@ public sealed class DesignArtifactsController : ControllerBase
         DesignArtifactLlmRequestPolicy requestPolicy;
         try
         {
-            requestPolicy = await DesignArtifactModelSelection.CaptureForWebPageAsync(_configuration,
+            requestPolicy = resumeFilm?.LlmRequestPolicy ?? await DesignArtifactModelSelection.CaptureForWebPageAsync(_configuration,
                 _modelResolver, request.ModelOptionId, DesignArtifactOperations.Generate, CancellationToken.None);
+            if (quickCreation != null && resumeFilm?.LlmRequestPolicy == null && QuickCreationModel() is { Length: > 0 } model)
+            {
+                requestPolicy.Model = model;
+                requestPolicy.ModelPoolId = null;
+                requestPolicy.PinnedPlatformId = null;
+                requestPolicy.PinnedModelId = null;
+            }
+            if (isCodeFilm && resumeFilm?.LlmRequestPolicy == null
+                && _configuration["DesignRuntime:OpenDesign:CodeFilmReasoningEffort"] is { Length: > 0 } effort)
+            {
+                if (effort is not ("low" or "medium"))
+                    throw new InvalidOperationException("代码视频推理档位须为 low 或 medium");
+                requestPolicy.ReasoningMode = "effort";
+                requestPolicy.ReasoningEffort = effort;
+            }
         }
         catch (DesignArtifactModelUnavailableException ex)
         {
@@ -321,12 +367,12 @@ public sealed class DesignArtifactsController : ControllerBase
         }
         var run = new DesignArtifactRun
         {
-            TaskPermitId = TaskExecutionContext.Current?.PermitId,
+            TaskPermitId = taskPermitId,
             Id = runId,
             DeploymentSlug = DeploymentScope.Current,
             UserId = userId,
             Status = RunStatuses.Queued,
-            ArtifactType = DesignArtifactTypes.WebPage,
+            ArtifactType = isCodeFilm ? DesignArtifactTypes.CodeFilm : DesignArtifactTypes.WebPage,
             Operation = DesignArtifactOperations.Generate,
             SourceSurface = sourceSurface,
             DestinationTeamId = destinationTeamId,
@@ -339,6 +385,12 @@ public sealed class DesignArtifactsController : ControllerBase
             KnowledgeReferences = snapshots.ToList(),
             KnowledgeOriginals = originals,
             UploadedSources = uploadedSources.Count > 0 ? uploadedSources : null,
+            ReferenceImages = quickImages,
+            QuickCreation = quickCreation,
+            RetryOfRunId = retryOfRunId,
+            ResumeFilmFromRunId = resumeFilm?.Id,
+            RetryFilmSceneIndex = retryFilmScene,
+            CodeFilmRuntimeSlot = resumeFilm?.CodeFilmRuntimeSlot,
             DesignDirection = designDirection,
             InputAuthority = snapshots.Count > 0 || uploadedSources.Count > 0
                 ? DesignArtifactInputAuthorities.MixedUserAndServerKnowledge
@@ -347,14 +399,23 @@ public sealed class DesignArtifactsController : ControllerBase
                 SHA256.HashData(Encoding.UTF8.GetBytes(instruction))).ToLowerInvariant(),
             Progress = 2,
             PhaseCode = DesignArtifactPhaseCodes.Queued,
-            Phase = "网页生成任务已进入队列",
+            Phase = isCodeFilm ? "影片生成任务已进入队列" : "网页生成任务已进入队列",
             FirstVisibleFeedbackAt = createdAt,
             LastProgressAt = createdAt,
             CreatedAt = createdAt,
             UpdatedAt = createdAt,
         };
-        DesignArtifactBriefFactory.Freeze(run, currentHtml: null);
-        WebPageDesignArtifactLifecycleAdapter.InitializeNewRun(run, capability, currentHtml: null);
+        if (!isCodeFilm)
+        {
+            DesignArtifactBriefFactory.Freeze(run, currentHtml: null);
+            WebPageDesignArtifactLifecycleAdapter.InitializeNewRun(run, capability, currentHtml: null);
+        }
+        // MongoDB 的 16 MiB 上限也适用于后续写入。按实际序列化体积检查，
+        // 预留后续写入的预览、阶段状态和结果元数据，避免生成成功却无法保存。
+        const long maxInitialRunBytes = 14L * 1024 * 1024;
+        if (quickCreation != null && run.ToBson().LongLength > maxInitialRunBytes)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
+                "这次稿件打包后超出任务存储容量，请减少文件体积后再提交"));
         await _db.DesignArtifactRuns.InsertOneAsync(run, cancellationToken: CancellationToken.None);
 
         var meta = new RunMeta
@@ -384,14 +445,14 @@ public sealed class DesignArtifactsController : ControllerBase
         }
         try
         {
-            await _queue.EnqueueAsync(RunKinds.DesignArtifact, runId, CancellationToken.None);
+            await _queue.EnqueueAsync(OpenDesignTransportResolver.QueueForRun(run, OpenDesignTransportResolver.CodeFilmSlots(_configuration)), runId, CancellationToken.None);
         }
         catch (Exception ex)
         {
             // Mongo queued 记录是权威入队意图，恢复器会重试；客户端仍拿到唯一 runId，避免未知副作用后重建任务。
             _logger?.LogWarning(ex, "设计任务即时入队失败，等待 Mongo 恢复器重试 runId={RunId}", runId);
         }
-        return Accepted(ApiResponse<object>.Ok(ToDto(run)));
+        return Accepted(ApiResponse<object>.Ok(quickCreation == null ? ToDto(run) : await ToQuickRunAsync(run, CancellationToken.None)));
     }
 
     /// <summary>
@@ -696,7 +757,7 @@ public sealed class DesignArtifactsController : ControllerBase
         }
         try
         {
-            await _queue.EnqueueAsync(RunKinds.DesignArtifact, restarted.Id, CancellationToken.None);
+            await _queue.EnqueueAsync(OpenDesignTransportResolver.QueueForRun(restarted, OpenDesignTransportResolver.CodeFilmSlots(_configuration)), restarted.Id, CancellationToken.None);
         }
         catch (Exception ex)
         {
@@ -715,6 +776,123 @@ public sealed class DesignArtifactsController : ControllerBase
             : Ok(ApiResponse<object>.Ok(ToDto(run)));
     }
 
+    private static bool LegacyCodeFilmEnabled() =>
+        DeploymentScope.Current != null
+        && Environment.GetEnvironmentVariable("VITE_GIT_BRANCH") == "codex/opendesign-sketchnote-film";
+
+    private bool CodeFilmEnabled() => LegacyCodeFilmEnabled() || QuickCreationEnabled();
+
+    [HttpGet("code-films")]
+    public async Task<IActionResult> ListCodeFilms(CancellationToken ct)
+    {
+        if (!CodeFilmEnabled() || DeploymentScope.CurrentDurable is not { } branchScope) return NotFound();
+        var runs = await _db.DesignArtifactRuns.Find(CodeFilmOwnerFilter(this.GetRequiredUserId(), branchScope))
+            .SortByDescending(run => run.CreatedAt)
+            .Limit(20)
+            .ToListAsync(ct);
+        return Ok(ApiResponse<object>.Ok(new { items = runs.Select(ToDto).ToList() }));
+    }
+
+    private static FilterDefinition<DesignArtifactRun> CodeFilmOwnerFilter(string userId, string? branchScope)
+    {
+        if (branchScope == null)
+            return Builders<DesignArtifactRun>.Filter.Where(run => run.UserId == userId
+                && run.ArtifactType == DesignArtifactTypes.CodeFilm && run.DeploymentSlug == null);
+        var revisionPrefix = branchScope + "::revision::";
+        return Builders<DesignArtifactRun>.Filter.Where(run => run.UserId == userId
+            && run.ArtifactType == DesignArtifactTypes.CodeFilm
+            && (run.DeploymentSlug == branchScope
+                || (run.DeploymentSlug != null && run.DeploymentSlug.StartsWith(revisionPrefix))));
+    }
+
+    [HttpGet("runs/{runId}/film.mp4")]
+    public async Task<IActionResult> GetCodeFilm(
+        string runId,
+        [FromServices] IDesignArtifactWorkspaceBroker workspace,
+        [FromServices] OpenDesignServiceArtifactExecutor recovery,
+        CancellationToken ct, [FromQuery] bool preview = false)
+    {
+        if (!CodeFilmEnabled()) return NotFound();
+        var branchScope = DeploymentScope.CurrentDurable;
+        var run = await _db.DesignArtifactRuns.Find(CodeFilmOwnerFilter(this.GetRequiredUserId(), branchScope)
+                & Builders<DesignArtifactRun>.Filter.Eq(item => item.Id, runId))
+            .FirstOrDefaultAsync(ct);
+        if (run == null && QuickCreationEnabled()) run = await FindSharedQuickRunAsync(runId, ct);
+        if (run?.ArtifactType != DesignArtifactTypes.CodeFilm || run.Status == RunStatuses.Cancelled) return NotFound();
+        if (preview && run.QuickCreationMedia?.HasSubtitleFreePreview != true) return NotFound();
+        try
+        {
+            var bytes = await ReadCodeFilmAsync(run, workspace, recovery, ct, preview);
+            if (bytes == null) return NotFound();
+            Response.Headers.CacheControl = "private, no-store";
+            return File(bytes, "video/mp4", enableRangeProcessing: true);
+        }
+        catch (Exception error) when (IsCodeFilmReadFailure(error, ct))
+        {
+            _logger?.LogWarning(error, "影片取回失败 runId={RunId}", runId);
+            return StatusCode(503, ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, "影片暂时无法取回，请稍后再次打开这条任务"));
+        }
+    }
+
+    [HttpPost("runs/{runId}/save-film")]
+    public async Task<IActionResult> SaveCodeFilm(
+        string runId,
+        [FromServices] IDesignArtifactWorkspaceBroker workspace,
+        [FromServices] OpenDesignServiceArtifactExecutor recovery,
+        CancellationToken ct)
+    {
+        if (!CodeFilmEnabled()) return NotFound();
+        var branchScope = DeploymentScope.CurrentDurable;
+        var userId = this.GetRequiredUserId();
+        var run = await _db.DesignArtifactRuns.Find(CodeFilmOwnerFilter(userId, branchScope)
+                & Builders<DesignArtifactRun>.Filter.Eq(item => item.Id, runId))
+            .FirstOrDefaultAsync(ct);
+        if (run == null || run.Status == RunStatuses.Cancelled) return NotFound();
+
+        var sourceRef = $"code-film:{run.Id}";
+        try
+        {
+            await using var lease = await VideoAssetMutationLease.AcquireAsync(_db, sourceRef, ct);
+            var existing = await _db.HostedSites.Find(site => site.OwnerUserId == userId && site.SourceRef == sourceRef)
+                .FirstOrDefaultAsync(ct);
+            if (existing != null) return Ok(ApiResponse<object>.Ok(new { siteId = existing.Id }));
+
+            var bytes = await ReadCodeFilmAsync(run, workspace, recovery, ct);
+            if (bytes == null)
+                return Conflict(ApiResponse<object>.Fail("FILM_NOT_AVAILABLE", "这条任务还没有可保存的成片，请查看任务状态"));
+
+            var title = string.IsNullOrWhiteSpace(run.Title) ? "视觉笔记" : run.Title;
+            var zip = WebPagesController.BuildWrapperZip("film.mp4", bytes, ".mp4", title);
+            // 客户端断线时允许这次保存收尾，重试会返回同一个站点。
+            var site = await _sites.CreateFromZipAsync(userId, zip, title, null, null, null, "video",
+                CancellationToken.None, sourceRef: sourceRef);
+            return Ok(ApiResponse<object>.Ok(new { siteId = site.Id }));
+        }
+        catch (Exception error) when (IsCodeFilmReadFailure(error, ct) || error is TimeoutException or InvalidOperationException)
+        {
+            _logger?.LogWarning(error, "影片保存失败 runId={RunId}", runId);
+            return StatusCode(503, ApiResponse<object>.Fail(ErrorCodes.INTERNAL_ERROR, "暂时无法保存影片，请稍后在同一任务重试"));
+        }
+    }
+
+    private static bool IsCodeFilmReadFailure(Exception error, CancellationToken ct) =>
+        error is HttpRequestException or InvalidDataException
+        || (error is OperationCanceledException && !ct.IsCancellationRequested);
+
+    private static async Task<byte[]?> ReadCodeFilmAsync(DesignArtifactRun run, IDesignArtifactWorkspaceBroker workspace,
+        OpenDesignServiceArtifactExecutor recovery, CancellationToken ct, bool preview = false)
+    {
+        if (string.IsNullOrWhiteSpace(run.WorkspaceResultAssetKey))
+            return preview ? null : await recovery.ReadRetainedFilmAsync(run.Id, ct, run.CodeFilmRuntimeSlot);
+        var package = await workspace.ReadCommittedCodeFilmAsync(run, ct);
+        var master = package.Files.SingleOrDefault(file => file.Path == "film.mp4");
+        if (master == null) return null;
+        if (!preview) return Convert.FromBase64String(master.ContentBase64);
+        var alternate = package.Files.SingleOrDefault(file => file.Path == "film-preview.mp4");
+        return alternate == null || string.Equals(alternate.Sha256, master.Sha256, StringComparison.OrdinalIgnoreCase)
+            ? null : Convert.FromBase64String(alternate.ContentBase64);
+    }
+
     [HttpPost("runs/{runId}/cancel")]
     public async Task<IActionResult> CancelRun(string runId)
     {
@@ -725,7 +903,8 @@ public sealed class DesignArtifactsController : ControllerBase
             .Find(run => run.Id == runId
                          && run.UserId == userId
                          && (run.ArtifactType == DesignArtifactTypes.WebPage
-                             || run.ArtifactType == DesignArtifactTypes.HtmlPpt)
+                             || run.ArtifactType == DesignArtifactTypes.HtmlPpt
+                             || run.ArtifactType == DesignArtifactTypes.CodeFilm)
                          && (run.Operation == DesignArtifactOperations.Generate
                              || run.Operation == DesignArtifactOperations.Edit))
             .FirstOrDefaultAsync(CancellationToken.None);

@@ -138,7 +138,7 @@ export function validateModelAuthority(
   }
 }
 
-export function normalizeWorkspaceTransfer(value: unknown): WorkspaceTransferRequest {
+export function normalizeWorkspaceTransfer(value: unknown, codeFilm = false, browserFilm = false): WorkspaceTransferRequest {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new AgentWorkspaceRuntimeError('workspace_transfer_required', 'workspaceTransfer is required for OpenDesign');
   }
@@ -177,7 +177,15 @@ export function normalizeWorkspaceTransfer(value: unknown): WorkspaceTransferReq
     );
   }
   for (const pattern of allowedOutputPaths) validateOutputPattern(pattern);
-  if (!allowedOutputPaths.includes('index.html') || !allowedOutputPaths.includes('manifest.json')) {
+  if (browserFilm && (allowedOutputPaths.length !== 2 || !allowedOutputPaths.includes('film-bundle.json') || !allowedOutputPaths.includes('film.json'))) {
+    throw new AgentWorkspaceRuntimeError('workspace_transfer_invalid', 'browser film requires a playable bundle and metadata');
+  }
+  if (codeFilm && !browserFilm && (!allowedOutputPaths.includes('film.mp4') || new Set(allowedOutputPaths).size !== allowedOutputPaths.length
+      || allowedOutputPaths.some(file => !['film.mp4', 'film.json', 'film-preview.mp4'].includes(file))
+      || (allowedOutputPaths.includes('film-preview.mp4') && !allowedOutputPaths.includes('film.json')))) {
+    throw new AgentWorkspaceRuntimeError('workspace_transfer_invalid', 'a code film may return film.mp4 and film.json, with film-preview.mp4 only alongside metadata');
+  }
+  if (!codeFilm && (!allowedOutputPaths.includes('index.html') || !allowedOutputPaths.includes('manifest.json'))) {
     throw new AgentWorkspaceRuntimeError(
       'workspace_transfer_invalid',
       'workspaceTransfer.allowedOutputPaths must include index.html and manifest.json',
@@ -304,8 +312,32 @@ export function parseWorkspacePackage(bytes: Buffer, transfer: WorkspaceTransfer
       : 'application/octet-stream';
     return { path: relativePath, bytes: content, sha256: expectedSha, mediaType };
   });
-  validateDesignTaskContract(runId, transfer.baseRevision, files);
+  if (transfer.allowedOutputPaths.includes('film-bundle.json') || (transfer.allowedOutputPaths.includes('film.mp4')
+      && transfer.allowedOutputPaths.includes('film.json'))) {
+    validateQuickCreationFilmFiles(files);
+  } else if (!transfer.allowedOutputPaths.includes('film.mp4')) {
+    validateDesignTaskContract(runId, transfer.baseRevision, files);
+  } else if (files.length !== 1 || files[0].mediaType !== 'text/markdown'
+      || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,100}\.md$/.test(files[0].path)) {
+    throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'a code film requires one original Markdown file');
+  }
   return { runId, files };
+}
+
+function validateQuickCreationFilmFiles(files: ParsedWorkspacePackage['files']): void {
+  const guideIndex = files.findIndex(file =>
+    file.mediaType === 'text/markdown' && /^styles\/[a-z0-9-]+\/STYLE\.md$/.test(file.path));
+  const sources = files.slice(0, guideIndex);
+  const additions = files.slice(guideIndex + 1);
+  if (guideIndex < 1 || !sources.every((file, index) =>
+    file.path === `source-${index + 1}.md` && file.mediaType === 'text/markdown')
+    || !additions.every(file =>
+      (['brief/user-requests.txt', 'brief/creation-request.txt'].includes(file.path) && file.mediaType === 'text/plain')
+      || (/^reference\/screenshot-[0-9]+\.(png|jpg|webp)$/.test(file.path)
+        && ['image/png', 'image/jpeg', 'image/webp'].includes(file.mediaType)))) {
+    throw new AgentWorkspaceRuntimeError('workspace_package_invalid',
+      'a quick creation film requires the original Markdown sources, one original STYLE.md and optional reference images');
+  }
 }
 
 export const PREVIEW_CHECK_INTERVAL_MS = 8_000;

@@ -89,6 +89,8 @@ public sealed class ReasoningChatBudgetCompatibilityTests
     [InlineData("o3")]
     [InlineData("gpt-6.1-sol")]
     [InlineData("openai/gpt-6.1-sol")]
+    [InlineData("gpt-6.2-sol")]
+    [InlineData("openai/gpt-6.2-sol")]
     [InlineData("openai/o3-mini-2025-01-31")]
     [InlineData("o4-mini-2025-04-16")]
     public async Task ArenaClientDefaults_SendOneCompatibleRequestToResolvedReasoningModel(string upstreamModel)
@@ -176,11 +178,13 @@ public sealed class ReasoningChatBudgetCompatibilityTests
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task Gpt61Sol_RawAndOrdinaryChatNormalizeWithoutInjectingNone(bool raw)
+    [InlineData(false, "gpt-6.1-sol")]
+    [InlineData(true, "gpt-6.1-sol")]
+    [InlineData(false, "gpt-6.2-sol")]
+    [InlineData(true, "gpt-6.2-sol")]
+    public async Task Sol_RawAndOrdinaryChatNormalizeWithoutInjectingNone(bool raw, string model)
     {
-        var transport = new StrictReasoningUpstream(); var gateway = Gateway(transport, "gpt-6.1-sol");
+        var transport = new StrictReasoningUpstream(); var gateway = Gateway(transport, model);
         var body = JsonNode.Parse("{\"messages\":[{\"role\":\"user\",\"content\":\"验收\"}],\"max_tokens\":64,\"temperature\":0.2,\"top_p\":0.8,\"logprobs\":true,\"top_logprobs\":2}")!.AsObject();
         var original = body.ToJsonString();
         if (raw)
@@ -188,7 +192,7 @@ public sealed class ReasoningChatBudgetCompatibilityTests
             var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
             { AppCallerCode = AppCallerRegistry.Desktop.Arena.BattleChat, ModelType = ModelTypes.Chat,
                 HttpMethod = "POST", EndpointPath = "/v1/chat/completions", RequestBody = body },
-                new GatewayModelResolution { Success = true, ActualModel = "gpt-6.1-sol", ActualPlatformId = "synthetic-platform",
+                new GatewayModelResolution { Success = true, ActualModel = model, ActualPlatformId = "synthetic-platform",
                     ApiUrl = "https://api.openai.com/v1", ApiKey = "synthetic", PlatformType = "openai", Protocol = "openai", MaxTokens = 1024 });
             Assert.True(response.Success, response.ErrorMessage);
         }
@@ -223,26 +227,28 @@ public sealed class ReasoningChatBudgetCompatibilityTests
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task Gpt61Sol_ChatToolsRequireResponsesEvenWhenCapabilityMetadataClaimsSupport(bool raw)
+    [InlineData(false, "gpt-6.1-sol", "GPT61_TOOLS_REQUIRE_RESPONSES")]
+    [InlineData(true, "gpt-6.1-sol", "GPT61_TOOLS_REQUIRE_RESPONSES")]
+    [InlineData(false, "gpt-6.2-sol", "GPT62_TOOLS_REQUIRE_RESPONSES")]
+    [InlineData(true, "gpt-6.2-sol", "GPT62_TOOLS_REQUIRE_RESPONSES")]
+    public async Task Sol_ChatToolsRequireResponsesEvenWhenCapabilityMetadataClaimsSupport(bool raw, string model, string errorCode)
     {
-        var transport = new StrictReasoningUpstream(); var gateway = Gateway(transport, "gpt-6.1-sol");
+        var transport = new StrictReasoningUpstream(); var gateway = Gateway(transport, model);
         var body = JsonNode.Parse("{\"messages\":[{\"role\":\"user\",\"content\":\"验收\"}],\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"test\"}}]}")!.AsObject();
         if (raw)
         {
             var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
             { AppCallerCode = AppCallerRegistry.Desktop.Arena.BattleChat, ModelType = ModelTypes.Chat,
                 HttpMethod = "POST", EndpointPath = "/v1/chat/completions", RequestBody = body },
-                new GatewayModelResolution { Success = true, ActualModel = "gpt-6.1-sol", ActualPlatformId = "synthetic-platform",
+                new GatewayModelResolution { Success = true, ActualModel = model, ActualPlatformId = "synthetic-platform",
                     ApiUrl = "https://api.openai.com/v1", ApiKey = "synthetic", PlatformType = "openai", Protocol = "openai", SupportsFunctionCalling = true });
-            Assert.False(response.Success); Assert.Equal("GPT61_TOOLS_REQUIRE_RESPONSES", response.ErrorCode);
+            Assert.False(response.Success); Assert.Equal(errorCode, response.ErrorCode);
         }
         else
         {
             var response = await gateway.SendAsync(new GatewayRequest { AppCallerCode = AppCallerRegistry.Desktop.Arena.BattleChat,
                 ModelType = ModelTypes.Chat, RequestBody = body });
-            Assert.False(response.Success); Assert.Equal("GPT61_TOOLS_REQUIRE_RESPONSES", response.ErrorCode);
+            Assert.False(response.Success); Assert.Equal(errorCode, response.ErrorCode);
         }
         Assert.Equal(0, transport.Calls);
     }

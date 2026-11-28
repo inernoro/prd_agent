@@ -15,6 +15,7 @@
 //
 // 任务结束后的清空（隔离方案 A）不在这里做，由 tasks.ts 统一负责：无论成功、失败、取消还是超时，
 // 都走同一条「停引擎 → 清空目录 → 核对为空 → 重新拉起」的路径。
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -31,6 +32,11 @@ import {
 } from './artifact/public-package.js';
 import { runtimeDiagnosticPreview } from './diagnostics.js';
 import { OpenDesignClient, signalForDeadline, type OpenDesignRunOutcome } from './engine/client.js';
+import { findBrowserFilm, makeBrowserFilmContract, packageBrowserFilm } from './engine/browser-film.js';
+import { codeFilmDefaultAnswers, collectCodeFilm, collectCodeFilmMetadata, registerCodeFilmSkill, verifyCodeFilmInput } from './engine/code-film.js';
+import { observeCodeFilmWork } from './engine/code-film-timing.js';
+import type { FilmRecoveryStore } from './engine/film-recovery.js';
+import { FilmProjectCheckpointStore, filmProjectInputHash } from './engine/film-project-checkpoint.js';
 import type { EngineDaemon } from './engine/daemon.js';
 import { startEgressRelay, type EgressRelay, type EgressRelayOptions } from './engine/egress-relay.js';
 import { registerPresentationSkill } from './engine/presentation-skill.js';
@@ -170,12 +176,19 @@ export interface ExecutorOptions {
   startRelay?: (options: EgressRelayOptions) => Promise<EgressRelay>;
   /** 浏览器检查在独立子进程执行；测试注入确定性 runner。 */
   browserQualityRunner?: BrowserQualityRunner;
+  filmRecovery?: FilmRecoveryStore;
+  filmProjects?: FilmProjectCheckpointStore;
+  log?: (message: string) => void;
 }
 
 export interface DesignTaskInput {
   taskId: string;
   transfer: WorkspaceTransferRequest;
   previewUrl?: string;
+  codeFilm?: boolean;
+  resumeFilmFrom?: string;
+  retryFilmScene?: number;
+  browserFilm?: { target: number; scenes: number; trial: boolean };
   model: OpenDesignModelAuthority;
   timeoutSeconds: number;
   /** 交给 OpenDesign 的第一轮指令：MAP 的任务信封（map-design-artifact-command-v2）序列化文本。 */
@@ -209,6 +222,7 @@ export class DesignTaskExecutor {
   private readonly pollIntervalMs: number;
   private readonly startRelay: (options: EgressRelayOptions) => Promise<EgressRelay>;
   private readonly browserQualityRunner: BrowserQualityRunner;
+  private captureInterruptedFilm?: () => void;
 
   constructor(private readonly options: ExecutorOptions) {
     this.fetchImpl = options.fetchImpl || fetch;
@@ -216,6 +230,14 @@ export class DesignTaskExecutor {
     this.startRelay = options.startRelay || startEgressRelay;
     this.browserQualityRunner = options.browserQualityRunner
       || new SubprocessBrowserQualityRunner(options.engineUid, options.engineGid);
+  }
+
+  retainInterruptedFilm(): void {
+    try {
+      this.captureInterruptedFilm?.();
+    } catch {
+      this.options.log?.('[code-film] interrupted film could not be retained');
+    }
   }
 
   async run(
@@ -342,7 +364,9 @@ export class DesignTaskExecutor {
       repairCandidateRestored: repairCandidateSeed !== undefined,
     });
     const isPresentation = collectDesignTaskContext(workspaceDir).presentation !== undefined;
-    if (isPresentation) {
+    if (task.codeFilm) {
+      registerCodeFilmSkill(this.options.paths.dataDir, (target) => this.chownForEngine(target));
+    } else if (isPresentation) {
       registerPresentationSkill(
         {
           sourceDir: this.options.paths.presentationSkillSourceDir,
@@ -395,6 +419,29 @@ export class DesignTaskExecutor {
     if (!transferToken || transferToken.length > 8192) {
       throw new AgentWorkspaceRuntimeError('workspace_transfer_invalid', 'workspace transfer token is missing');
     }
+    const filmInputHash = task.codeFilm ? filmProjectInputHash(instruction, prepared.inputFiles) : undefined;
+    const restoredFilm = task.resumeFilmFrom && filmInputHash
+      ? this.options.filmProjects?.restore(task.resumeFilmFrom, model.userId, filmInputHash, workspaceDir)
+      : undefined;
+    const filmCheckpointPath = 'brief/film-checkpoint.json';
+    if (task.resumeFilmFrom) {
+      if (!restoredFilm) throw new AgentWorkspaceRuntimeError('code_film_checkpoint_unavailable', 'The original project checkpoint is unavailable');
+      if (task.retryFilmScene !== undefined && task.retryFilmScene !== restoredFilm.incompleteScene)
+        throw new AgentWorkspaceRuntimeError('code_film_checkpoint_unavailable', 'The saved scene plan does not match the requested retry');
+      this.chownForEngine(restoredFilm.root);
+      const checkpointFile = path.join(workspaceDir, filmCheckpointPath);
+      fs.mkdirSync(path.dirname(checkpointFile), { recursive: true });
+      fs.writeFileSync(checkpointFile, JSON.stringify({
+        action: task.retryFilmScene === undefined ? 'resume' : 'retry-scene',
+        projectPath: path.basename(restoredFilm.root),
+        scene: task.retryFilmScene,
+        retainedMedia: restoredFilm.protectedMedia.map(file => ({ path: path.relative(restoredFilm.root, file.absolute), sha256: file.sha })),
+      }), { flag: 'wx', mode: 0o644 });
+      this.chownForEngine(checkpointFile);
+      onStage('code_film_workspace_restored', {
+        previousTaskId: task.resumeFilmFrom, completedScenes: restoredFilm.completedScenes, narrationClips: restoredFilm.narrationClips,
+      });
+    }
     const designContext = collectDesignTaskContext(workspaceDir);
     const browserEvidenceDir = path.join(
       path.dirname(this.options.paths.outputDir),
@@ -414,9 +461,7 @@ export class DesignTaskExecutor {
     }
     const referenceBrief = visualReferenceBrief(referenceStyle ?? []);
     const isPresentation = designContext.presentation !== undefined;
-    const requiredSkillId = isPresentation
-      ? OPEN_DESIGN_PRESENTATION_SKILL
-      : OPEN_DESIGN_WEB_PROTOTYPE_SKILL;
+    const requiredSkillId = isPresentation ? OPEN_DESIGN_PRESENTATION_SKILL : OPEN_DESIGN_WEB_PROTOTYPE_SKILL;
     validatePresentationSourcePlanIdentity(workspaceDir, designContext.presentation?.sourcePlan);
     const daemonHandle = this.options.daemon.current();
     const client = this.daemonClient();
@@ -426,7 +471,7 @@ export class DesignTaskExecutor {
       body: {
         baseDir: workspaceDir,
         name: `MAP design ${sessionId.slice(-12)}`,
-        skillId: requiredSkillId,
+        ...(task.codeFilm ? {} : { skillId: requiredSkillId }),
         orchestratorWorkspace: {
           kind: 'scratch',
           sourceLabel: 'MAP design workspace',
@@ -443,7 +488,7 @@ export class DesignTaskExecutor {
     if (!projectId || !conversationId) {
       throw new AgentWorkspaceRuntimeError('open_design_contract_mismatch', 'OpenDesign folder import returned no project identity');
     }
-    if (project?.skillId !== requiredSkillId) {
+    if (!task.codeFilm && project?.skillId !== requiredSkillId) {
       throw new AgentWorkspaceRuntimeError('open_design_contract_mismatch', 'OpenDesign folder import did not retain the required task skill');
     }
     const relayClientToken = daemonHandle?.modelPlaceholderToken || '';
@@ -498,6 +543,198 @@ export class DesignTaskExecutor {
     let previewPusher: PreviewPusher | undefined;
     try {
       this.writeCodexConfig(buildOpenDesignCodexConfig(relay.proxiedBaseUrl, model.model));
+      if (task.codeFilm) {
+        const inputs = prepared.inputFiles;
+        // Folder import defaults to the browser-prototype surface. Use the
+        // freeform project kind with Codex's isolated native Skills catalogue.
+        const switched = await client.odJson(`/api/projects/${encodeURIComponent(projectId)}`, {
+          method: 'PATCH',
+          body: { metadata: { ...(project?.metadata as object), kind: 'other' } },
+          signal: signalForDeadline(executionDeadline, signal),
+        });
+        const updatedProject = (switched.project ?? switched) as { metadata?: { kind?: string } };
+        if (updatedProject.metadata?.kind !== 'other') {
+          throw new AgentWorkspaceRuntimeError('open_design_contract_mismatch', 'OpenDesign did not retain the freeform coding project');
+        }
+        const dataDir = this.options.paths.dataDir;
+        const proof = verifyCodeFilmInput(dataDir, workspaceDir, inputs);
+        const startFilmTurn = async (message: string, assistantMessageId: string, attachments: string[]) => {
+          const started = await client.odJson('/api/runs', {
+            method: 'POST',
+            body: {
+              projectId,
+              conversationId,
+              agentId: 'codex',
+              model: model.model,
+              message,
+              currentPrompt: message,
+              userMessageId: randomUUID(),
+              assistantMessageId,
+              attachments,
+            },
+            signal: signalForDeadline(executionDeadline, signal),
+            acceptedStatuses: [200, 202],
+          });
+          const id = typeof started.runId === 'string' ? started.runId
+            : typeof started.id === 'string' ? started.id : undefined;
+          if (!id) {
+            throw new AgentWorkspaceRuntimeError('open_design_contract_mismatch', 'OpenDesign did not return a film run identity');
+          }
+          activeRunId = id;
+          return id;
+        };
+        const daemon = this.options.daemon;
+        const getBrowserProject = () => {
+          if (!task.browserFilm) return undefined;
+          const project = findBrowserFilm(workspaceDir);
+          const resumingTwoSceneTrial = !task.browserFilm.trial && restoredFilm?.completedScenes === 2;
+          return resumingTwoSceneTrial && project?.indexes.length === 2 ? undefined : project;
+        };
+        const getFilm = () => {
+          daemon.freeze();
+          try {
+            verifyCodeFilmInput(dataDir, workspaceDir, inputs);
+            const film = collectCodeFilm(workspaceDir, transfer.maxOutputBytes);
+            if (film && restoredFilm && (path.dirname(film.source) !== restoredFilm.root
+              || (task.retryFilmScene !== undefined && !FilmProjectCheckpointStore.hasCompletedScene(restoredFilm.root, task.retryFilmScene))
+              || restoredFilm.protectedMedia.some(file => fs.realpathSync(file.absolute) !== file.absolute
+                || sha256(readRegularFileNoFollow(file.absolute, file.size)) !== file.sha))) {
+              throw new AgentWorkspaceRuntimeError('code_film_checkpoint_changed', 'The resumed run modified already completed media');
+            }
+            return film;
+          } finally {
+            daemon.thaw();
+          }
+        };
+        onStage('open_design_run_starting', { projectId });
+        const assistantMessageId = randomUUID();
+        const attachments = inputs.map(input => input.path);
+        if (restoredFilm) attachments.push(filmCheckpointPath);
+        if (transfer.allowedOutputPaths.includes('film-preview.mp4')) {
+          const deliveryPath = 'brief/film-delivery.json';
+          const deliveryFile = path.join(workspaceDir, deliveryPath);
+          fs.mkdirSync(path.dirname(deliveryFile), { recursive: true });
+          // The user's command, skill and style stay byte-for-byte identical.
+          // This separate delivery descriptor is about the player's media formats.
+          fs.writeFileSync(deliveryFile, JSON.stringify({
+            master: '<film-name>.mp4', timedCaptions: '<film-name>.srt or subtitles_<language>.srt',
+            previewIfMasterHasBurnedCaptions: { file: '<film-name>.preview.mp4', captions: 'off', audio: 'same encoded audio stream as master' },
+            resumableProject: {
+              treatment: 'TREATMENT.md', narration: 'voice/out/<line-id>.wav',
+              independentScenes: { order: 'scenes/plan.json', orderFormat: [1, 2, 3], clip: 'scenes/<scene-number>.mp4' },
+            },
+          }), { flag: 'wx', mode: 0o644 });
+          this.chownForEngine(deliveryFile);
+          attachments.push(deliveryPath);
+        }
+        if (task.browserFilm) {
+          const deliveryPath = 'brief/film-delivery.json';
+          const deliveryFile = path.join(workspaceDir, deliveryPath);
+          fs.mkdirSync(path.dirname(deliveryFile), { recursive: true });
+          const { target, scenes, trial } = task.browserFilm;
+          fs.writeFileSync(deliveryFile, JSON.stringify(makeBrowserFilmContract(target, scenes, trial)), { flag: 'wx', mode: 0o644 });
+          this.chownForEngine(deliveryFile);
+          attachments.push(deliveryPath);
+        }
+        const firstRunId = await startFilmTurn(instruction, assistantMessageId, attachments);
+        onStage('code_film_input_verified', { ...proof, runId: firstRunId, instructionSha256: sha256(instruction) });
+        const retainFilm = (film: WorkspacePackageFile): boolean => {
+          try {
+            if (this.options.filmRecovery?.retain(sessionId, film)) {
+              onStage('code_film_retained', { sha256: film.sha256, bytes: film.size });
+              return true;
+            }
+          } catch {
+            this.options.log?.(`[code-film] failed to retain task ${sessionId}`);
+          }
+          return false;
+        };
+        this.captureInterruptedFilm = () => {
+          try {
+            const film = getFilm();
+            if (film && retainFilm(film.film)) return;
+          } catch {
+            // A partial final render must not prevent retaining its source and finished clips.
+          }
+          if (!filmInputHash) return;
+          daemon.freeze();
+          try {
+            verifyCodeFilmInput(dataDir, workspaceDir, inputs);
+            if (this.options.filmProjects?.capture(sessionId, model.userId, filmInputHash, workspaceDir)) {
+              onStage('code_film_workspace_retained');
+            }
+          } finally {
+            daemon.thaw();
+          }
+        };
+        let finalRunId = firstRunId;
+        const startedAt = performance.now();
+        const stopTiming = observeCodeFilmWork(this.options.daemon.describe().pid ?? undefined);
+        try {
+          await client.waitForRun(firstRunId, budget.finalizationDeadline, signal, onStage);
+          let film = task.browserFilm ? undefined : getFilm();
+          let browserProject = getBrowserProject();
+          if (!film && !browserProject) {
+            const conversation = await client.odJson(
+              `/api/projects/${encodeURIComponent(projectId)}/conversations/${encodeURIComponent(conversationId)}/messages`,
+              { method: 'GET', signal: signalForDeadline(executionDeadline, signal) },
+            );
+            const assistant = Array.isArray(conversation.messages)
+              ? conversation.messages.find(item => item?.id === assistantMessageId && item.role === 'assistant')
+              : undefined;
+            const answers = typeof assistant?.content === 'string' ? codeFilmDefaultAnswers(assistant.content) : undefined;
+            if (answers) {
+              finalRunId = await startFilmTurn(answers, randomUUID(), []);
+              onStage('code_film_form_answered', { runId: finalRunId, previousRunId: firstRunId });
+              await client.waitForRun(finalRunId, budget.finalizationDeadline, signal, onStage);
+              film = task.browserFilm ? undefined : getFilm();
+              browserProject = getBrowserProject();
+            }
+          }
+          if (task.browserFilm) {
+            if (!browserProject) throw new AgentWorkspaceRuntimeError('design_output_missing', 'OpenDesign did not return a playable browser film project');
+            daemon.freeze();
+            try {
+              verifyCodeFilmInput(dataDir, workspaceDir, inputs);
+              if (restoredFilm && (browserProject.root !== restoredFilm.root || restoredFilm.protectedMedia.some(file =>
+                fs.realpathSync(file.absolute) !== file.absolute || sha256(readRegularFileNoFollow(file.absolute, file.size)) !== file.sha))) {
+                throw new AgentWorkspaceRuntimeError('code_film_checkpoint_changed', 'Completed browser film scenes changed after approval');
+              }
+              onStage('code_film_packaging', { scenes: browserProject.indexes.length });
+              const outputs = await packageBrowserFilm(browserProject, task.browserFilm.target, task.browserFilm.trial,
+                signalForDeadline(executionDeadline, signal));
+              if (task.browserFilm.trial && (!filmInputHash || !this.options.filmProjects?.capture(sessionId, model.userId, filmInputHash, workspaceDir))) {
+                throw new AgentWorkspaceRuntimeError('code_film_checkpoint_unavailable', 'Cannot retain the trial so the same scenes can be resumed');
+              }
+              return await this.commitOutputs(task, prepared, outputs, finalRunId, executionDeadline, signal, onStage);
+            } finally {
+              daemon.thaw();
+            }
+          }
+          if (!film) {
+            throw new AgentWorkspaceRuntimeError('design_output_missing', 'OpenDesign completed its conversation without a final MP4');
+          }
+          retainFilm(film.film);
+          this.captureInterruptedFilm = undefined;
+          const outputs = [film.film];
+          if (transfer.allowedOutputPaths.includes('film.json')) {
+            const limit = transfer.allowedOutputPaths.includes('film-preview.mp4')
+              ? Math.floor(transfer.maxOutputBytes * 0.75) - film.film.size - 512 * 1024 : 0;
+            outputs.push(...collectCodeFilmMetadata(film.source, limit));
+          }
+          return await this.commitOutputs(task, prepared, outputs, finalRunId, executionDeadline, signal, onStage);
+        } catch (error) {
+          this.retainInterruptedFilm();
+          onStage('code_film_run_diagnostic',
+            await client.captureRunTranscriptDigest([firstRunId, finalRunId], () => Math.max(0, executionDeadline - Date.now())));
+          throw error;
+        } finally {
+          this.captureInterruptedFilm = undefined;
+          const timing = { totalMs: Math.round(performance.now() - startedAt), ...stopTiming() };
+          this.options.log?.(`[code-film-timing] ${JSON.stringify({runId: sessionId, ...timing})}`);
+          onStage('code_film_timing', timing);
+        }
+      }
       const designDirection = designContext.direction;
       const reviewMode = designDirection?.reviewMode ?? 'light';
       // PPT 的终审由所选 deck skill 承担，固定一轮；MAP 的 off/strict 不得跳过或叠加自研审美轮次。
@@ -748,80 +985,94 @@ export class DesignTaskExecutor {
       if (totalOutputBytes > transfer.maxPublicOutputBytes) {
         throw new AgentWorkspaceRuntimeError('design_output_too_large', 'OpenDesign output and CDS manifest exceed maxPublicOutputBytes');
       }
-      const commitBody = {
-        schemaVersion: MAP_DESIGN_WORKSPACE_SCHEMA,
-        sessionId,
-        runId: prepared.mapRunId,
-        baseRevision: transfer.baseRevision,
-        files,
-      };
-      const serialized = JSON.stringify(commitBody);
-      if (Buffer.byteLength(serialized, 'utf8') > transfer.maxOutputBytes) {
-        throw new AgentWorkspaceRuntimeError('design_output_too_large', 'Serialized public output exceeds maxOutputBytes');
-      }
-      assertExecutionDeadline(executionDeadline);
-      onStage('workspace_committing', { fileCount: files.length });
-      const commitDeadline = Math.min(
-        executionDeadline,
-        Date.now() + Math.min(task.timeoutSeconds * 1000, 60_000),
-      );
-      const commitResponse = await this.fetchPartnerTransfer(transfer.resultCommitUrl, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${transferToken}`,
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-        },
-        body: serialized,
-        signal: signalForDeadline(commitDeadline, signal),
-      }, 'workspaceTransfer.resultCommitUrl');
-      const commitBytes = await readResponseLimited(commitResponse, MAX_COMMIT_RESPONSE_BYTES);
-      assertExecutionDeadline(executionDeadline);
-      let commit: Record<string, unknown> = {};
-      try {
-        commit = commitBytes.length ? JSON.parse(commitBytes.toString('utf8')) as Record<string, unknown> : {};
-      } catch {
-        throw new AgentWorkspaceRuntimeError('workspace_commit_invalid_response', 'MAP result commit returned invalid JSON');
-      }
-      if (!commitResponse.ok) {
-        throw new AgentWorkspaceRuntimeError(
-          'workspace_commit_failed',
-          typeof commit.message === 'string'
-            ? commit.message
-            : `MAP result commit failed with status ${commitResponse.status}`,
-          commitResponse.status >= 500,
-        );
-      }
-      const artifactRef = typeof commit.artifactRef === 'string' ? commit.artifactRef : '';
-      if (!artifactRef) {
-        throw new AgentWorkspaceRuntimeError('workspace_commit_invalid_response', 'MAP result commit returned no artifactRef');
-      }
-      const resultSha256 = typeof commit.resultSha256 === 'string'
-        ? commit.resultSha256.toLowerCase()
-        : '';
-      if (!SHA256_RE.test(resultSha256)) {
-        throw new AgentWorkspaceRuntimeError(
-          'workspace_commit_invalid_response',
-          'MAP result commit returned no valid resultSha256',
-        );
-      }
-      return {
-        artifactRef,
-        resultSha256,
-        files: files.map(({ path: filePath, sha256: fileSha, size, mediaType }) => ({
-          path: filePath,
-          sha256: fileSha,
-          size,
-          mediaType,
-        })),
-        openDesignRunId: finalRunId,
-      };
+      return await this.commitOutputs(task, prepared, files, finalRunId, executionDeadline, signal, onStage);
     } finally {
       previewPusher?.close();
       if (activeRunId) await client.cancelRun(activeRunId);
       await relay.close().catch(() => undefined);
       fs.rmSync(browserEvidenceDir, { recursive: true, force: true });
     }
+  }
+
+  private async commitOutputs(
+    task: DesignTaskInput,
+    prepared: PreparedWorkspace,
+    files: WorkspacePackageFile[],
+    finalRunId: string,
+    executionDeadline: number,
+    signal: AbortSignal,
+    onStage: StageReporter,
+  ): Promise<DesignTaskResult> {
+    const { transfer, taskId: sessionId } = task;
+    const { transferToken } = transfer;
+    const commitBody = {
+      schemaVersion: MAP_DESIGN_WORKSPACE_SCHEMA,
+      sessionId,
+      runId: prepared.mapRunId,
+      baseRevision: transfer.baseRevision,
+      files,
+    };
+    const serialized = JSON.stringify(commitBody);
+    if (Buffer.byteLength(serialized, 'utf8') > transfer.maxOutputBytes) {
+      throw new AgentWorkspaceRuntimeError('design_output_too_large', 'Serialized public output exceeds maxOutputBytes');
+    }
+    assertExecutionDeadline(executionDeadline);
+    onStage('workspace_committing', { fileCount: files.length });
+    const commitDeadline = Math.min(
+      executionDeadline,
+      Date.now() + Math.min(task.timeoutSeconds * 1000, 60_000),
+    );
+    const commitResponse = await this.fetchPartnerTransfer(transfer.resultCommitUrl, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${transferToken}`,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: serialized,
+      signal: signalForDeadline(commitDeadline, signal),
+    }, 'workspaceTransfer.resultCommitUrl');
+    const commitBytes = await readResponseLimited(commitResponse, MAX_COMMIT_RESPONSE_BYTES);
+    assertExecutionDeadline(executionDeadline);
+    let commit: Record<string, unknown> = {};
+    try {
+      commit = commitBytes.length ? JSON.parse(commitBytes.toString('utf8')) as Record<string, unknown> : {};
+    } catch {
+      throw new AgentWorkspaceRuntimeError('workspace_commit_invalid_response', 'MAP result commit returned invalid JSON');
+    }
+    if (!commitResponse.ok) {
+      throw new AgentWorkspaceRuntimeError(
+        'workspace_commit_failed',
+        typeof commit.message === 'string'
+          ? commit.message
+          : `MAP result commit failed with status ${commitResponse.status}`,
+        commitResponse.status >= 500,
+      );
+    }
+    const artifactRef = typeof commit.artifactRef === 'string' ? commit.artifactRef : '';
+    if (!artifactRef) {
+      throw new AgentWorkspaceRuntimeError('workspace_commit_invalid_response', 'MAP result commit returned no artifactRef');
+    }
+    const resultSha256 = typeof commit.resultSha256 === 'string'
+      ? commit.resultSha256.toLowerCase()
+      : '';
+    if (!SHA256_RE.test(resultSha256)) {
+      throw new AgentWorkspaceRuntimeError(
+        'workspace_commit_invalid_response',
+        'MAP result commit returned no valid resultSha256',
+      );
+    }
+    return {
+      artifactRef,
+      resultSha256,
+      files: files.map(({ path: filePath, sha256: fileSha, size, mediaType }) => ({
+        path: filePath,
+        sha256: fileSha,
+        size,
+        mediaType,
+      })),
+      openDesignRunId: finalRunId,
+    };
   }
 
   /**

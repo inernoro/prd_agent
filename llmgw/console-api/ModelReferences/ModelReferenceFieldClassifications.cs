@@ -77,6 +77,7 @@ public static class ModelReferenceFieldClassifications
         ["PrdAgent.Core.Models.MultiImage.VisionResponse.Model"] = "request-dto:validated-before-run",
         ["PrdAgent.Core.Models.PmBriefing.Model"] = "snapshot:never-rewrite",
         ["PrdAgent.Core.Models.ProjectRoutePlan.Model"] = "snapshot:never-rewrite",
+        ["PrdAgent.Core.Models.QuickCreationBriefMessage.Model"] = "snapshot:never-rewrite",
         ["PrdAgent.Core.Models.SkillExecutionConfig.ExpectedModel"] = "metadata:non-routing-or-specialized-catalog",
         ["PrdAgent.Core.Models.SpeechAgent.SpeechDeck.Model"] = "snapshot:never-rewrite",
         ["PrdAgent.Core.Models.SpeechProfile.Model"] = "handler:map.speech-profiles",

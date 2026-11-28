@@ -28,23 +28,24 @@ public static class DesignRunInputAttachments
     };
 
     public static async Task<List<DesignUploadedSource>> ResolveSourcesAsync(
-        MongoDbContext db, string userId, IReadOnlyList<string>? attachmentIds, CancellationToken ct)
+        MongoDbContext db, string userId, IReadOnlyList<string>? attachmentIds, CancellationToken ct, bool quickCreation = false)
     {
         var ids = Normalize(attachmentIds);
         if (ids.Count == 0) return new List<DesignUploadedSource>();
-        if (ids.Count > MaxUploadedSources)
+        if (!quickCreation && ids.Count > MaxUploadedSources)
             throw new DesignRunInputException($"一次最多直接上传 {MaxUploadedSources} 个文件");
         var found = await LoadOwnedAsync(db, userId, ids, ct);
         var result = new List<DesignUploadedSource>();
-        var total = 0;
+        long total = 0;
         foreach (var id in ids)
         {
             var attachment = found[id];
-            var text = (attachment.ExtractedText ?? string.Empty).Trim();
-            if (text.Length == 0)
+            var text = attachment.ExtractedText ?? string.Empty;
+            if (!quickCreation) text = text.Trim();
+            if (string.IsNullOrWhiteSpace(text))
                 throw new DesignRunInputException($"文件「{attachment.FileName}」没有可读取的文字内容，请上传 Markdown、Word、PDF 或纯文本文件");
             total += text.Length;
-            if (total > MaxUploadedCharacters)
+            if (!quickCreation && total > MaxUploadedCharacters)
                 throw new DesignRunInputException($"上传文件的正文合计超过 {MaxUploadedCharacters / 10000} 万字，请精简或分次生成");
             result.Add(new DesignUploadedSource
             {
@@ -59,11 +60,11 @@ public static class DesignRunInputAttachments
     }
 
     public static async Task<List<DesignReferenceImage>> ResolveImagesAsync(
-        MongoDbContext db, string userId, IReadOnlyList<string>? attachmentIds, CancellationToken ct)
+        MongoDbContext db, string userId, IReadOnlyList<string>? attachmentIds, CancellationToken ct, bool quickCreation = false)
     {
         var ids = Normalize(attachmentIds);
         if (ids.Count == 0) return new List<DesignReferenceImage>();
-        if (ids.Count > MaxReferenceImages)
+        if (!quickCreation && ids.Count > MaxReferenceImages)
             throw new DesignRunInputException($"一次最多附 {MaxReferenceImages} 张截图");
         var found = await LoadOwnedAsync(db, userId, ids, ct);
         return ids.Select(id =>
@@ -90,6 +91,18 @@ public static class DesignRunInputAttachments
     /// <summary>直连执行器的提示词与 OpenDesign 的工作区共用这一份文字形态，避免两边各拼各的。</summary>
     public static string ToMarkdown(DesignUploadedSource source)
         => $"# {source.FileName}\n\n{source.Content}";
+
+    public static async Task<(string Path, string Key, long Size)> ResolveFilmSourceAsync(
+        MongoDbContext db, string userId, string attachmentId, CancellationToken ct)
+    {
+        var owned = await LoadOwnedAsync(db, userId, [attachmentId], ct);
+        var attachment = owned[attachmentId];
+        var name = Path.GetFileName(attachment.FileName);
+        if (name == null || !System.Text.RegularExpressions.Regex.IsMatch(name, @"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,100}\.md$")
+            || string.IsNullOrWhiteSpace(attachment.StorageKey) || attachment.Size is <= 0 or > 1024 * 1024)
+            throw new DesignRunInputException("请使用 1 MB 内的 Markdown 原件和英文文件名");
+        return (name, attachment.StorageKey, attachment.Size);
+    }
 
     private static List<string> Normalize(IReadOnlyList<string>? ids)
         => (ids ?? Array.Empty<string>())

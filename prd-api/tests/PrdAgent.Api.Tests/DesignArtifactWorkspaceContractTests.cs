@@ -25,6 +25,24 @@ namespace PrdAgent.Api.Tests;
 
 public sealed class DesignArtifactWorkspaceContractTests
 {
+    [Fact]
+    public void CodeFilmResult_AcceptsMasterAboveWebPackageLimitAndKeepsOriginalBytes()
+    {
+        var video = new byte[16 * 1024 * 1024];
+        "ftyp"u8.CopyTo(video.AsSpan(4));
+        var film = DesignArtifactWorkspaceContract.ToFile("film.mp4", "video/mp4", video);
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(
+            new DesignWorkspacePackage(DesignArtifactWorkspaceBroker.SchemaVersion, "film-run", "film-base", [film]),
+            DesignArtifactWorkspaceContract.JsonOptions);
+
+        Assert.Throws<InvalidOperationException>(() => DesignArtifactWorkspaceContract.ParseAndValidateResult(
+            bytes, "film-run", "film-base", DesignArtifactWorkspaceBroker.MaxOutputBytes));
+        var accepted = DesignArtifactWorkspaceContract.ParseAndValidateResult(
+            bytes, "film-run", "film-base", DesignArtifactWorkspaceBroker.MaxCodeFilmOutputBytes, isCodeFilm: true);
+        Assert.Equal(film, Assert.Single(accepted.Files));
+        Assert.Empty(accepted.IndexHtml);
+    }
+
     [Theory]
     [InlineData(DesignArtifactOperations.Generate)]
     [InlineData(DesignArtifactOperations.Edit)]
@@ -1269,6 +1287,26 @@ public sealed class DesignArtifactWorkspaceContractTests
                 DesignArtifactWorkspaceBroker.MaxInputBytes));
 
         Assert.Contains("打包后超过远程工作区 1MB 上限", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void QuickCreationInputRetainsLongManuscriptAndMoreThanThreeImages()
+    {
+        var run = BuildRun();
+        run.QuickCreation = new QuickCreationInput { TemplateId = "sketchnote" };
+        var imageBytes = new byte[DesignRunInputAttachments.MaxReferenceImageBytes];
+        new Random(2).NextBytes(imageBytes);
+        var references = Enumerable.Range(1, 4).Select(index => DesignArtifactWorkspaceContract.ToFile(
+            $"reference/screenshot-{index:D2}.png", "image/png", imageBytes)).ToList();
+        var source = DesignArtifactWorkspaceContract.ToFile("source-1.md", "text/markdown", Encoding.UTF8.GetBytes(new string('稿', 21_000) + "完整结尾"));
+        var package = new DesignWorkspacePackage(DesignArtifactWorkspaceBroker.SchemaVersion, run.Id, "revision", [source, .. references]);
+        var bytes = DesignArtifactWorkspaceContract.ValidateInputPackageSize(package, DesignArtifactWorkspaceBroker.InputLimit(run));
+
+        Assert.True(bytes.LongLength > DesignArtifactWorkspaceBroker.MaxInputBytes);
+        var roundTrip = JsonSerializer.Deserialize<DesignWorkspacePackage>(bytes, DesignArtifactWorkspaceContract.JsonOptions)!;
+        Assert.Equal(package.Files.Select(file => file.Sha256), roundTrip.Files.Select(file => file.Sha256));
+        Assert.Equal(Convert.FromBase64String(source.ContentBase64), Convert.FromBase64String(roundTrip.Files[0].ContentBase64));
+        Assert.All(roundTrip.Files.Skip(1), reference => Assert.Equal(imageBytes, Convert.FromBase64String(reference.ContentBase64)));
     }
 
     [Fact]

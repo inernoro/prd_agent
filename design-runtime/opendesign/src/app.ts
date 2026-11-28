@@ -1,12 +1,15 @@
 // 组装：配置 → 引擎进程 → 生命周期（隔离方案 A）→ 执行器 → 任务槽 → HTTP。
 // 入口 index.ts 与协议层测试走同一个组装函数，测试只替换引擎进程与 fetch，不另拼一套接线。
 import type http from 'node:http';
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import type { ServiceConfig } from './config.js';
 import { OpenDesignDaemon, type EngineDaemon } from './engine/daemon.js';
 import type { EgressRelay, EgressRelayOptions } from './engine/egress-relay.js';
 import { EngineLifecycle } from './engine/lifecycle.js';
+import { FilmRecoveryStore } from './engine/film-recovery.js';
+import { FilmProjectCheckpointStore } from './engine/film-project-checkpoint.js';
 import { runEngineSelfCheck, type EngineSelfCheck } from './engine/self-check.js';
 import { DesignTaskExecutor } from './executor.js';
 import { SubprocessBrowserQualityRunner, type BrowserQualityRunner } from './quality/browser-runner.js';
@@ -35,6 +38,8 @@ export interface DesignRuntime {
 
 export async function createDesignRuntime(config: ServiceConfig, overrides: DesignRuntimeOverrides = {}): Promise<DesignRuntime> {
   const log = overrides.log ?? ((line: string) => console.log(line));
+  const filmRecovery = new FilmRecoveryStore(path.join(path.dirname(config.outputDir), 'film-recovery'));
+  const filmProjects = new FilmProjectCheckpointStore(path.join(filmRecovery.directory, 'projects'));
   const daemon = overrides.daemon ?? new OpenDesignDaemon({
     command: config.odCommand,
     cwd: config.odCwd,
@@ -60,7 +65,7 @@ export async function createDesignRuntime(config: ServiceConfig, overrides: Desi
     engineUid: config.engineUid,
     engineGid: config.engineGid,
     // 服务自己的代码目录（镜像里是 /opt/map-design-runtime/dist）、工作目录与只读资源都不许落进任务目录。
-    protectedPaths: [fileURLToPath(new URL('.', import.meta.url)), process.cwd(), config.webPrototypeSourceDir, config.presentationSkillSourceDir, config.designSystemsDir],
+    protectedPaths: [fileURLToPath(new URL('.', import.meta.url)), process.cwd(), config.webPrototypeSourceDir, config.presentationSkillSourceDir, config.designSystemsDir, filmRecovery.directory],
   });
   const executor = new DesignTaskExecutor({
     paths: {
@@ -79,6 +84,9 @@ export async function createDesignRuntime(config: ServiceConfig, overrides: Desi
     engineUid: config.engineUid,
     engineGid: config.engineGid,
     startRelay: overrides.startRelay,
+    filmRecovery,
+    filmProjects,
+    log,
     browserQualityRunner: overrides.browserQualityRunner
       ?? new SubprocessBrowserQualityRunner(config.engineUid, config.engineGid, config.engineHome),
   });
@@ -104,6 +112,10 @@ export async function createDesignRuntime(config: ServiceConfig, overrides: Desi
     selfCheck,
     lifecycle,
     tasks,
+    filmRecovery,
+    filmProjects,
+    exportIsolation: config.engineUid == null ? undefined
+      : { uid: config.engineUid, gid: config.engineGid ?? config.engineUid, home: config.engineHome },
   });
   return {
     server,
@@ -111,6 +123,7 @@ export async function createDesignRuntime(config: ServiceConfig, overrides: Desi
     lifecycle,
     start: () => tasks.start(),
     shutdown: async () => {
+      executor.retainInterruptedFilm();
       await tasks.shutdown();
       await new Promise<void>((resolve) => {
         server.closeAllConnections?.();

@@ -50,7 +50,7 @@ public interface IDesignArtifactWorkspaceBroker
     Task<byte[]> ReadInputPackageAsync(string runId, string token, CancellationToken ct);
 
     /// <summary>校验 CDS 推来的实时预览：同一张工作区凭证、任务仍在运行窗口内。</summary>
-    Task ValidatePreviewAsync(string runId, string token, CancellationToken ct);
+    Task<long> ValidatePreviewAsync(string runId, string token, CancellationToken ct);
 
     Task<DesignArtifactResultCommit> CommitResultAsync(
         string runId,
@@ -61,6 +61,8 @@ public interface IDesignArtifactWorkspaceBroker
     Task<string> ReadResultHtmlAsync(string runId, CancellationToken ct);
 
     Task<ParsedDesignWorkspaceResult> ReadResultAsync(string runId, CancellationToken ct);
+
+    Task<ParsedDesignWorkspaceResult> ReadCommittedCodeFilmAsync(DesignArtifactRun ownedRun, CancellationToken ct);
 
     Task<DesignArtifactRun> ReserveModelCallAsync(string runId, string token, CancellationToken ct);
 
@@ -80,10 +82,13 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
     public const string SchemaVersion = "map-design-workspace-v1";
     public const string ManifestSchemaVersion = "map-design-artifact-public-manifest-v2";
     public const long MaxInputBytes = 1_048_576;
+    // 与 OpenDesign 工作区协议允许的包大小一致。按完整 JSON 包的实际字节校验。
+    internal const long MaxQuickCreationInputBytes = 64L * 1024 * 1024;
     // The runtime result is a JSON envelope whose file payloads are base64 encoded. Keep the
     // published-file contract at 6 MiB while allowing that same package to cross the runtime API.
     public const long MaxPublicOutputBytes = 6_291_456;
     public const long MaxOutputBytes = 20L * 1024 * 1024;
+    public const long MaxCodeFilmOutputBytes = 80L * 1024 * 1024;
     private static readonly TimeSpan TicketTtl = TimeSpan.FromMinutes(25);
     internal static string CurrentProcessEpoch { get; } = $"{Environment.ProcessId}:{Guid.NewGuid():N}";
     private static readonly string[] AllowedOutputPaths = ["index.html", "manifest.json", "assets/**"];
@@ -151,7 +156,10 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
     {
         var publicBaseUrl = ResolvePublicBaseUrl(_configuration)
             ?? throw new InvalidOperationException("远程设计入口尚未配置，请先补齐当前 CDS 预览地址后重试");
-        var expiresAt = DateTime.UtcNow.Add(TicketTtl);
+        var isCodeFilm = run.ArtifactType == DesignArtifactTypes.CodeFilm;
+        var expiresAt = DateTime.UtcNow.Add(isCodeFilm
+            ? TimeSpan.FromSeconds((run.QuickCreation?.FilmTimeoutSeconds ?? 3300) + 600)
+            : TicketTtl);
         var currentFiles = await ReadCurrentFilesAsync(run, currentHtml, ct);
         IReadOnlyList<DesignWorkspaceFile>? originals = null;
         if (run.KnowledgeOriginals != null)
@@ -161,8 +169,45 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
             originals = await _knowledge.ReadWorkspaceOriginalsAsync(run.UserId, run.KnowledgeReferences, run.KnowledgeOriginals, ct);
         }
         var referenceFiles = await ReadReferenceImagesAsync(run, ct);
-        var package = DesignArtifactWorkspaceContract.BuildInputPackage(run, currentHtml, currentFiles, originals, referenceFiles);
-        var bytes = DesignArtifactWorkspaceContract.ValidateInputPackageSize(package, MaxInputBytes);
+        DesignWorkspacePackage package;
+        if (isCodeFilm && run.QuickCreation is { } quickCreation)
+        {
+            var files = (run.UploadedSources ?? []).Select((source, index) => DesignArtifactWorkspaceContract.ToFile(
+                $"source-{index + 1}.md", "text/markdown", Encoding.UTF8.GetBytes(source.Content))).ToList();
+            files.Add(QuickCreationCatalog.FreezeWorkspaceGuide(quickCreation));
+            if (referenceFiles != null) files.AddRange(referenceFiles);
+            package = new DesignWorkspacePackage(SchemaVersion, run.Id, $"film-{run.Id}", files);
+        }
+        else if (isCodeFilm)
+        {
+            var source = await DesignRunInputAttachments.ResolveFilmSourceAsync(
+                _db, run.UserId, run.UploadedSources!.Single().AttachmentId, ct);
+            var original = await _storage.TryDownloadBytesAsync(source.Key, ct);
+            if (original == null || original.LongLength != source.Size)
+                throw new InvalidOperationException("无法读取完整 Markdown 原件，请重新上传");
+            package = new DesignWorkspacePackage(SchemaVersion, run.Id, $"film-{run.Id}",
+                [DesignArtifactWorkspaceContract.ToFile(source.Path, "text/markdown", original)]);
+        }
+        else
+        {
+            package = DesignArtifactWorkspaceContract.BuildInputPackage(run, currentHtml, currentFiles, originals, referenceFiles);
+            if (run.QuickCreation is { } webInput)
+                package = package with { Files = [.. package.Files, QuickCreationCatalog.FreezeWorkspaceGuide(webInput)] };
+        }
+        if (run.QuickCreation?.BriefUserRequests is { Length: > 0 } userRequests)
+        {
+            var briefFile = DesignArtifactWorkspaceContract.ToFile(
+                QuickCreationInput.BriefUserRequestsPath, "text/plain", Encoding.UTF8.GetBytes(userRequests));
+            package = package with { Files = [.. package.Files, briefFile] };
+        }
+        if (run.QuickCreation is { UseWorkspaceRequest: true } request)
+        {
+            var requestFile = DesignArtifactWorkspaceContract.ToFile(
+                QuickCreationInput.WorkspaceRequestPath, "text/plain", Encoding.UTF8.GetBytes(request.Ask));
+            package = package with { Files = [.. package.Files, requestFile] };
+        }
+        var inputLimit = InputLimit(run);
+        var bytes = DesignArtifactWorkspaceContract.ValidateInputPackageSize(package, inputLimit);
         var inputSha256 = Sha256Hex(bytes);
         var inputAssetKey = _storage.TryBuildContentAddressedKey(
             bytes,
@@ -232,7 +277,7 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
                 ProtectTicket(run, "model", expiresAt),
                 "map-managed",
                 package.BaseRevision,
-                MaxInputBytes,
+                inputLimit,
                 MaxOutputBytes,
                 AllowedOutputPaths,
                 MaxPublicOutputBytes);
@@ -249,10 +294,11 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
             modelGrant.ApiKey,
             modelGrant.Model,
             package.BaseRevision,
-            MaxInputBytes,
-            MaxOutputBytes,
-            AllowedOutputPaths,
-            MaxPublicOutputBytes);
+            inputLimit,
+            ResultLimit(run),
+            isCodeFilm ? run.QuickCreation is { BrowserFilm: true } ? ["film-bundle.json", "film.json"]
+                : run.QuickCreation == null ? ["film.mp4"] : ["film.mp4", "film.json", "film-preview.mp4"] : AllowedOutputPaths,
+            isCodeFilm ? MaxCodeFilmOutputBytes : MaxPublicOutputBytes);
     }
 
     private async Task<IReadOnlyList<DesignWorkspaceFile>?> ReadCurrentFilesAsync(
@@ -391,14 +437,18 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
     {
         if (run.ReferenceImages is not { Count: > 0 } images) return null;
         var files = new List<DesignWorkspaceFile>();
+        var remaining = InputLimit(run);
         for (var index = 0; index < images.Count; index++)
         {
             var image = images[index];
+            if (image.Size > remaining)
+                throw new InvalidOperationException("参考图总体积超出工作区传输容量，请压缩图片后重试");
             byte[]? bytes;
             try { bytes = string.IsNullOrWhiteSpace(image.StorageKey) ? null : await _storage.TryDownloadBytesAsync(image.StorageKey, ct); }
             catch (Exception error) when (error is not OperationCanceledException) { bytes = null; }
-            if (bytes == null || bytes.LongLength == 0)
+            if (bytes == null || bytes.LongLength == 0 || bytes.LongLength != image.Size)
                 throw new InvalidOperationException($"截图「{image.FileName}」读取失败，请重新上传后再试");
+            remaining -= bytes.LongLength;
             var extension = image.MimeType switch
             {
                 "image/jpeg" => ".jpg",
@@ -469,18 +519,24 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
             throw new InvalidOperationException("设计任务输入尚未准备完成，请稍后重试");
         var bytes = await _storage.TryDownloadBytesAsync(run.WorkspaceInputAssetKey, CancellationToken.None)
             ?? throw new InvalidOperationException("设计任务输入暂时无法读取，请稍后重试");
-        if (bytes.LongLength > MaxInputBytes
+        if (bytes.LongLength > InputLimit(run)
             || !FixedEquals(run.WorkspaceInputSha256, Sha256Hex(bytes)))
             throw new InvalidOperationException("设计任务输入校验失败，请重新发起任务");
         return bytes;
     }
 
-    public async Task ValidatePreviewAsync(string runId, string token, CancellationToken ct)
+    private static long ResultLimit(DesignArtifactRun run) =>
+        run.ArtifactType == DesignArtifactTypes.CodeFilm ? MaxCodeFilmOutputBytes : MaxOutputBytes;
+
+    internal static long InputLimit(DesignArtifactRun run) => run.QuickCreation == null ? MaxInputBytes : MaxQuickCreationInputBytes;
+
+    public async Task<long> ValidatePreviewAsync(string runId, string token, CancellationToken ct)
     {
         ValidateTicket(token, runId, "workspace");
         var run = await _db.DesignArtifactRuns.Find(item => item.DeploymentSlug == DeploymentScope.Current && (item.Id == runId)).FirstOrDefaultAsync(ct)
             ?? throw new KeyNotFoundException("设计任务不存在");
         EnsureActiveWorkspaceWindow(run);
+        return ResultLimit(run);
     }
 
     public async Task<DesignArtifactResultCommit> CommitResultAsync(
@@ -490,8 +546,6 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
         CancellationToken ct)
     {
         ValidateTicket(token, runId, "workspace");
-        if (packageBytes.LongLength == 0 || packageBytes.LongLength > MaxOutputBytes)
-            throw new InvalidOperationException("远程设计结果大小不符合要求，请重新生成");
         var run = await _db.DesignArtifactRuns.Find(item => item.DeploymentSlug == DeploymentScope.Current && (item.Id == runId)).FirstOrDefaultAsync(ct)
             ?? throw new KeyNotFoundException("设计任务不存在");
         EnsureActiveWorkspaceWindow(run);
@@ -499,9 +553,11 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
             packageBytes,
             runId,
             run.WorkspaceBaseRevision ?? string.Empty,
-            MaxOutputBytes);
+            ResultLimit(run),
+            run.ArtifactType == DesignArtifactTypes.CodeFilm, run.QuickCreation?.BrowserFilm == true);
         var packageSha = Sha256Hex(packageBytes);
-        var manifestSha = parsed.Files.Single(file => file.Path == "manifest.json").Sha256;
+        var manifestSha = parsed.Files.Single(file => file.Path ==
+            (run.ArtifactType == DesignArtifactTypes.CodeFilm ? run.QuickCreation?.BrowserFilm == true ? "film-bundle.json" : "film.mp4" : "manifest.json")).Sha256;
         if (!string.IsNullOrWhiteSpace(run.WorkspaceResultAssetKey))
         {
             if (FixedEquals(run.WorkspaceResultSha256, packageSha))
@@ -699,6 +755,24 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
     {
         var run = await _db.DesignArtifactRuns.Find(item => item.DeploymentSlug == DeploymentScope.Current && (item.Id == runId)).FirstOrDefaultAsync(ct)
             ?? throw new KeyNotFoundException("设计任务不存在");
+        return await ReadCommittedResultAsync(run, ct);
+    }
+
+    // The owner-authorized download can reference a film from an older revision
+    // of the same CDS branch. Keep the normal worker read fenced to its revision.
+    public Task<ParsedDesignWorkspaceResult> ReadCommittedCodeFilmAsync(DesignArtifactRun ownedRun, CancellationToken ct)
+    {
+        var scope = DeploymentScope.CurrentDurable;
+        if (ownedRun.ArtifactType != DesignArtifactTypes.CodeFilm || (scope == null
+                ? ownedRun.DeploymentSlug != null
+                : (ownedRun.DeploymentSlug != scope
+                   && ownedRun.DeploymentSlug?.StartsWith(scope + "::revision::", StringComparison.Ordinal) != true)))
+            throw new KeyNotFoundException("影片任务不存在");
+        return ReadCommittedResultAsync(ownedRun, ct);
+    }
+
+    private async Task<ParsedDesignWorkspaceResult> ReadCommittedResultAsync(DesignArtifactRun run, CancellationToken ct)
+    {
         if (string.IsNullOrWhiteSpace(run.WorkspaceResultAssetKey))
             throw new InvalidOperationException("远程设计任务没有提交可用页面，请重试");
         var bytes = await _storage.TryDownloadBytesAsync(run.WorkspaceResultAssetKey, CancellationToken.None)
@@ -707,9 +781,10 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
             throw new InvalidOperationException("远程设计结果校验失败，请重新发起任务");
         var parsed = DesignArtifactWorkspaceContract.ParseAndValidateResult(
                 bytes,
-                runId,
+                run.Id,
                 run.WorkspaceBaseRevision ?? string.Empty,
-                MaxOutputBytes);
+                ResultLimit(run),
+                run.ArtifactType == DesignArtifactTypes.CodeFilm, run.QuickCreation?.BrowserFilm == true);
         return parsed with
         {
             IndexHtml = HostedSiteRevisionRules.StripSingleTrustedSystemCspEnvelope(parsed.IndexHtml),
@@ -1511,7 +1586,8 @@ public static class DesignArtifactWorkspaceContract
         byte[] bytes,
         string runId,
         string baseRevision,
-        long maxBytes)
+        long maxBytes,
+        bool isCodeFilm = false, bool browserFilm = false)
     {
         if (bytes.LongLength == 0 || bytes.LongLength > maxBytes)
             throw new InvalidOperationException("远程设计结果大小不符合要求，请重新生成");
@@ -1530,6 +1606,35 @@ public static class DesignArtifactWorkspaceContract
             || !string.Equals(package.BaseRevision, baseRevision, StringComparison.Ordinal)
             || package.Files.Count is 0 or > 100)
             throw new InvalidOperationException("远程设计结果版本不匹配，请重新生成");
+
+        if (isCodeFilm && browserFilm)
+        {
+            if (package.Files.Count != 2 || package.Files[0] is not { Path: "film-bundle.json", MediaType: "application/json" } bundle)
+                throw new InvalidOperationException("影片任务没有提交浏览器播放包");
+            var metadata = ParseQuickCreationMedia(package.Files[1]);
+            QuickCreationBrowserPlayback.Validate(bundle, metadata);
+            return new ParsedDesignWorkspaceResult(string.Empty, package.Files);
+        }
+        if (isCodeFilm)
+        {
+            if (package.Files.Count is < 1 or > 3 || package.Files[0] is not
+                { Path: "film.mp4", MediaType: "video/mp4" } film)
+                throw new InvalidOperationException("影片任务必须返回一份 MP4 成片");
+            ValidateCodeFilmFile(film);
+            if (package.Files.Count >= 2)
+            {
+                var metadata = ParseQuickCreationMedia(package.Files[1]);
+                if (metadata.HasSubtitleFreePreview != (package.Files.Count == 3))
+                    throw new InvalidOperationException("成片字幕摘要与播放文件不一致");
+                if (metadata.HasSubtitleFreePreview)
+                {
+                    if (package.Files[2] is not { Path: "film-preview.mp4", MediaType: "video/mp4" } preview)
+                        throw new InvalidOperationException("字幕预览文件格式不正确");
+                    ValidateCodeFilmFile(preview);
+                }
+            }
+            return new ParsedDesignWorkspaceResult(string.Empty, package.Files);
+        }
 
         string? indexHtml = null;
         byte[]? manifestBytes = null;
@@ -1568,6 +1673,41 @@ public static class DesignArtifactWorkspaceContract
         return new ParsedDesignWorkspaceResult(
             indexHtml,
             verifiedFiles.Values.OrderBy(file => file.Path, StringComparer.Ordinal).ToArray());
+    }
+
+    private static void ValidateCodeFilmFile(DesignWorkspaceFile film)
+    {
+        byte[] video;
+        try { video = Convert.FromBase64String(film.ContentBase64); }
+        catch (FormatException) { throw new InvalidOperationException("影片文件编码不正确"); }
+        if (video.Length < 32 || !video.AsSpan(4, 4).SequenceEqual("ftyp"u8)
+            || video.LongLength != film.Size || !string.Equals(HashBytes(video), film.Sha256, StringComparison.Ordinal))
+            throw new InvalidOperationException("影片文件不完整或不是 MP4");
+    }
+
+    internal static QuickCreationMedia ParseQuickCreationMedia(DesignWorkspaceFile file)
+    {
+        if (file is not { Path: "film.json", MediaType: "application/json", Size: > 0 and <= 256 * 1024 }
+            || file.ContentBase64.Length > 350_000)
+            throw new InvalidOperationException("成片的音轨或字幕摘要不完整");
+        try
+        {
+            var bytes = Convert.FromBase64String(file.ContentBase64);
+            if (bytes.LongLength != file.Size || HashBytes(bytes) != file.Sha256)
+                throw new InvalidOperationException("成片的音轨或字幕摘要校验失败");
+            var media = JsonSerializer.Deserialize<QuickCreationMedia>(bytes, JsonOptions);
+            if (media is not { HasAudio: true, DurationSec: > 0 and <= 7200, Captions.Count: <= 500 }
+                || (media.HasSubtitleFreePreview && (!media.CaptionsBurnedIn || media.Captions.Count == 0))
+                || media.Captions.Any(cue => !double.IsFinite(cue.FromSec) || !double.IsFinite(cue.ToSec)
+                    || cue.FromSec < 0 || cue.ToSec <= cue.FromSec || cue.ToSec > media.DurationSec
+                    || cue.Text is not { Length: > 0 and <= 300 }))
+                throw new InvalidOperationException("成片的音轨或字幕摘要格式不正确");
+            return media;
+        }
+        catch (Exception error) when (error is FormatException or JsonException)
+        {
+            throw new InvalidOperationException("成片的音轨或字幕摘要不可读取", error);
+        }
     }
 
     private static void ValidateManifest(
@@ -1635,7 +1775,7 @@ public static class DesignArtifactWorkspaceContract
             includeInternalManifest: true);
     }
 
-    private static DesignWorkspaceFile ToFile(string path, string mediaType, byte[] content) =>
+    internal static DesignWorkspaceFile ToFile(string path, string mediaType, byte[] content) =>
         new(path, Convert.ToBase64String(content), HashBytes(content), content.LongLength, mediaType);
 
     private static string HashText(string content) => HashBytes(Encoding.UTF8.GetBytes(content));

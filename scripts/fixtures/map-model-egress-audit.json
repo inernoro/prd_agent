@@ -385,6 +385,13 @@
       },
       "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
     },
+    "prd-api/src/PrdAgent.Api/Services/QuickCreationExportWorker.cs": {
+      "calls": {
+        "call:CreateClient:f2ec97d348e378734e3ca2a5": 1,
+        "call:SendAsync:bbdf7970c3292c9a0e226152": 1
+      },
+      "purpose": "固定 OpenDesign 服务的已认证成片导出路由，仅从已保存的画面包和配音合成 MP4。复用受守卫的 HTTP 工厂，单次调用结果脱敏落库。"
+    },
     "prd-api/src/PrdAgent.Api/Services/OpenDesignServiceArtifactExecutor.cs": {
       "calls": {
         "call:CreateClient:3052ddbc8eb0d0a47c730678": 1

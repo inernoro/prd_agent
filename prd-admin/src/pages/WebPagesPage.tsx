@@ -115,6 +115,7 @@ import SiteWorkbench, { type WorkbenchTarget } from '@/components/web-hosting/wo
 import GenerateSiteMenu from '@/components/web-hosting/GenerateSiteMenu';
 import GenerationSettingsDrawer from '@/components/web-hosting/GenerationSettingsDrawer';
 import { parseDesignArtifactLaunch } from '@/lib/designArtifactLaunch';
+import { listQuickCreationTemplates } from '@/services/real/quickCreation';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { listMyTeams } from '@/services/real/teams';
 import { SiteEditCount, SiteNewBadge } from '@/components/web-hosting/SiteActivityMeta';
@@ -433,10 +434,17 @@ export default function WebPagesPage() {
     setEditItem(null);
     setShowUploadDialog(true);
   };
-  // 顶部「生成网页」主入口：与上传弹窗同一个空间快照口径（分组归属用它判定）。
-  const openGenerateDialog = () => {
-    uploadDialogSpaceRef.current = currentSpace;
-    setWorkbenchTarget({ kind: 'new' });
+  const openQuickCreation = async () => {
+    const space = currentSpace;
+    const result = await listQuickCreationTemplates();
+    if (!result.success) {
+      uploadDialogSpaceRef.current = space;
+      setWorkbenchTarget({ kind: 'new' });
+      return;
+    }
+    const query = new URLSearchParams({ from: 'web-pages' });
+    if (space.kind === 'team') query.set('destTeam', space.teamId);
+    navigate(`/quick-creation-agent?${query}`);
   };
 
   /**
@@ -471,6 +479,12 @@ export default function WebPagesPage() {
 
   useEffect(() => {
     if (!location.search || consumedLaunchRef.current === location.search) return;
+    if (new URLSearchParams(location.search).get('legacyCreate') === '1') {
+      consumedLaunchRef.current = location.search;
+      uploadDialogSpaceRef.current = currentSpace;
+      setWorkbenchTarget({ kind: 'new' });
+      return;
+    }
     const launch = parseDesignArtifactLaunch(location.search);
     if (!launch || launch.target !== 'web-page') return;
     consumedLaunchRef.current = location.search;
@@ -1538,11 +1552,9 @@ export default function WebPagesPage() {
                     「从个人空间添加」只留左栏底部那一处，不在两个地方各摆一遍。 */}
                 {(currentSpace.kind !== 'team' || canEditInWebHosting(myWebHostingRole)) && (
                   <div className="web-hosting-toolbar-actions">
-                    {/* 设计稿 Main：「生成网页」是主操作，下拉选素材来源，旁边齿轮进设置；「上传网页」退为次操作。 */}
                     <Button size="sm" variant="ghost" onClick={() => navigate("/web-pages/new-document")}>按模版新建文档</Button>
-                    <Button size="sm" variant="ghost" onClick={() => navigate("/web-pages/collections")}>合集</Button>
                     <GenerateSiteMenu
-                      onGenerate={openGenerateDialog}
+                      onGenerate={openQuickCreation}
                       onOpenSettings={() => setShowGenerationSettings(true)}
                     />
                     <Button data-tour-id="webpages-upload-primary" size="sm" variant="secondary" onClick={openCreateUploadDialog}>
@@ -1771,7 +1783,7 @@ export default function WebPagesPage() {
         ) : null}
 
         {isMobile && (currentSpace.kind !== 'team' || canEditInWebHosting(myWebHostingRole)) && (
-          <MobileFab onClick={openGenerateDialog} icon={Sparkles} label="生成网页" />
+          <MobileFab onClick={openQuickCreation} icon={Sparkles} label="生成" />
         )}
 
         {/* Batch actions */}

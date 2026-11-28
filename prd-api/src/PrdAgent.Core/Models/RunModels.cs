@@ -9,6 +9,21 @@ public static class RunKinds
     public const string VideoToDoc = "videoToDoc";
     public const string Arena = "arena";
     public const string DesignArtifact = "designArtifact";
+    public const string CodeFilm = "codeFilm";
+
+    private const string CodeFilmSlotPrefix = CodeFilm + ":slot:";
+
+    public static string CodeFilmSlotQueue(string slot)
+    {
+        var identity = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(slot));
+        return CodeFilmSlotPrefix + Convert.ToHexString(identity);
+    }
+
+    public static bool IsCodeFilmQueue(string kind) =>
+        kind == CodeFilm || kind.StartsWith(CodeFilmSlotPrefix, StringComparison.Ordinal);
+
+    public static string DesignArtifactQueue(string artifactType) =>
+        artifactType == DesignArtifactTypes.CodeFilm ? CodeFilm : DesignArtifact;
 }
 
 public static class RunStatuses

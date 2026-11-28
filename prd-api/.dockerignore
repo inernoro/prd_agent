@@ -9,4 +9,5 @@
 **/Dockerfile*
 **/docker-compose*
 **/*.md
+!src/PrdAgent.Api/Content/QuickCreation/styles/*.md
 **/tests

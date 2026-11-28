@@ -1,10 +1,17 @@
 // map-design-executor-v1 协议层测试：能力、鉴权、提交、忙时 409、幂等、事件续读（JSON 与 SSE）、取消、
 // 超时、失败，以及隔离方案 A 的核心不变量——任务无论怎样结束，工作目录与引擎数据都被清空、引擎换新令牌重启。
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { codeFilmDefaultAnswers, parseFilmCaptions, readFilmCaptionSidecar } from '../src/engine/code-film.js';
+import { MAX_BROWSER_FILM_EXPORT_REQUEST_BYTES, parseBrowserFilmExport } from '../src/engine/browser-film-export.js';
+import { FilmRecoveryStore } from '../src/engine/film-recovery.js';
+import { FilmProjectCheckpointStore, filmProjectInputHash } from '../src/engine/film-project-checkpoint.js';
 import { normalizeTaskRequest } from '../src/protocol.js';
+import { sha256 } from '../src/workspace/primitives.js';
+import { MAP_DESIGN_WORKSPACE_SCHEMA, parseWorkspacePackage } from '../src/workspace/transfer.js';
 import {
   API_KEY,
   auth,
@@ -55,6 +62,45 @@ async function cleanedUp(h: Harness, taskId: string) {
     return response.body.task?.cleanup === 'completed' && h.runtime.tasks.slotState() === 'idle' ? response.body.task : undefined;
   }, `task ${taskId} cleanup`);
 }
+
+describe('film recovery', () => {
+  it('serves only a complete retained MP4 after the OpenDesign workspace has been reset', async () => {
+    harness = await startHarness();
+    const recovery = new FilmRecoveryStore(path.join(harness.root, 'film-recovery'));
+    const box = (type: string) => {
+      const bytes = Buffer.alloc(12);
+      bytes.writeUInt32BE(bytes.length);
+      bytes.write(type, 4, 'ascii');
+      return bytes;
+    };
+    const movie = Buffer.concat([box('ftyp'), box('mdat'), box('moov')]);
+    const retain = (bytes: Buffer) => recovery.retain('film-recovery-test', {
+      path: 'film.mp4',
+      mediaType: 'video/mp4',
+      size: bytes.length,
+      sha256: sha256(bytes),
+      contentBase64: bytes.toString('base64'),
+    });
+    expect(retain(movie.subarray(0, -1))).toBe(false);
+    expect(retain(movie)).toBe(true);
+
+    await harness.runtime.lifecycle.reset();
+    expect(taskDirectoriesAreEmpty(harness)).toBe(true);
+    expect(harness.runtime.tasks.get('film-recovery-test')).toBeUndefined();
+    const url = harness.baseUrl + '/v1/tasks/film-recovery-test/film-recovery';
+    expect((await fetch(url)).status).toBe(401);
+    const response = await fetch(url, { headers: auth });
+    expect(response.status).toBe(200);
+    expect(response.headers.get('x-content-sha256')).toBe(sha256(movie));
+    expect(Buffer.from(await response.arrayBuffer())).toEqual(movie);
+
+    const persisted = path.join(recovery.directory, 'film-recovery-test.film');
+    const corrupted = fs.readFileSync(persisted);
+    corrupted[corrupted.length - 1] ^= 1;
+    fs.writeFileSync(persisted, corrupted);
+    expect((await fetch(url, { headers: auth })).status).toBe(404);
+  });
+});
 
 describe('GET /v1/capabilities', () => {
   it('reports protocol, engine, versions, design systems and a live healthy engine', async () => {
@@ -154,7 +200,280 @@ describe('authentication', () => {
   });
 });
 
+describe('native code film form continuation', () => {
+  const form = {
+    id: 'film-brief',
+    questions: [
+      { id: 'duration', type: 'radio', defaultValue: '60s', options: [{ label: '60 秒', value: '60s' }] },
+      { id: 'audio', type: 'radio', defaultValue: 'auto_voice', options: [{ label: '由你安排配音', value: 'auto_voice' }] },
+      { id: 'review', type: 'radio', defaultValue: 'direct', options: [{ label: '直接制作完整短片', value: 'direct' }] },
+    ],
+  };
+  const body = (value: unknown) => `<question-form>
+${JSON.stringify(value)}
+</question-form>`;
+
+  it('echoes the recommended choices through the native conversation protocol', () => {
+    expect(codeFilmDefaultAnswers(body(form))).toBe(
+      '[form answers — film-brief]\n- duration: 60s\n- audio: auto_voice\n- review: direct',
+    );
+  });
+
+  it('uses the native tagged form identity and leaves optional text unanswered', () => {
+    const questions = [
+      { ...form.questions[0], defaultValue: '90s', options: [{ label: '约 90 秒', value: '90s' }] },
+      { id: 'audio', type: 'textarea', defaultValue: '无，按默认方案制作。' },
+      { ...form.questions[2], id: 'storyboard' },
+    ];
+    const markup = `<question-form id="adr-film-brief" title="确认短片制作方向">
+${JSON.stringify({ questions })}
+</question-form>`;
+    expect(codeFilmDefaultAnswers(markup)).toBe(
+      '[form answers — adr-film-brief]\n- duration: 90s\n- audio: (skipped)\n- storyboard: direct',
+    );
+  });
+
+  it('skips custom questions, invalid choices and ambiguous forms', () => {
+    expect(codeFilmDefaultAnswers(body(form) + body(form))).toBeUndefined();
+    expect(codeFilmDefaultAnswers(body({ ...form, questions: [{ id: 'draft', type: 'textarea', required: true }] }))).toBeUndefined();
+    expect(codeFilmDefaultAnswers(body({
+      ...form, questions: [{ ...form.questions[0], defaultValue: '300s' }],
+    }))).toBeUndefined();
+  });
+});
+
 describe('POST /v1/tasks', () => {
+  it('preserves the exact film command and original text without using the HTML output contract', async () => {
+    const pkg = buildPackage([]);
+    map = await startFakeMap(pkg);
+    const source = Buffer.from('# ADR 原文\r\n\r\n  保留空白。\n');
+    const serialized = Buffer.from(JSON.stringify({
+      schemaVersion: MAP_DESIGN_WORKSPACE_SCHEMA,
+      runId: pkg.runId,
+      baseRevision: pkg.baseRevision,
+      files: [{
+        path: 'decisions.md', mediaType: 'text/markdown', sha256: sha256(source),
+        size: source.length, contentBase64: source.toString('base64'),
+      }],
+    }));
+    const command = '  用视觉笔记风格给我做一支关于架构决策记录的片子。\n';
+    const request = taskRequest(map, pkg);
+    const filmRequest = {
+      ...request,
+      envelope: { schemaVersion: 'map-code-film-command-v1', runId: pkg.runId, command },
+      transfer: { ...(request.transfer as object), inputSha256: sha256(serialized), allowedOutputPaths: ['film.mp4'] },
+    };
+    const normalized = normalizeTaskRequest(filmRequest);
+
+    expect(normalized.codeFilm).toBe(true);
+    expect(normalized.instruction).toBe(command);
+    expect(parseWorkspacePackage(serialized, normalized.transfer).files[0].bytes).toEqual(source);
+    expect(() => normalizeTaskRequest({ ...filmRequest, transfer: request.transfer })).toThrow('film.mp4 and film.json');
+    expect(normalizeTaskRequest({
+      ...filmRequest, transfer: { ...filmRequest.transfer, allowedOutputPaths: ['film.mp4', 'film.json'] },
+    }).transfer.allowedOutputPaths).toEqual(['film.mp4', 'film.json']);
+    expect(() => normalizeTaskRequest({ ...filmRequest, envelope: request.envelope })).toThrow('index.html');
+  });
+
+  it('accepts a quick creation film package with original sources, style and image references', async () => {
+    const pkg = buildPackage([]);
+    map = await startFakeMap(pkg);
+    const source = Buffer.from('# ADR 原文\r\n  保留空白\n');
+    const secondSource = Buffer.from('第二份稿件\n');
+    const guide = Buffer.from('# Sketchnote STYLE.md\n');
+    const reference = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+    const original = (filePath: string, mediaType: string, bytes: Buffer) => ({
+      path: filePath, mediaType, sha256: sha256(bytes), size: bytes.length, contentBase64: bytes.toString('base64'),
+    });
+    const files = [
+      original('source-1.md', 'text/markdown', source),
+      original('source-2.md', 'text/markdown', secondSource),
+      original('styles/sketchnote/STYLE.md', 'text/markdown', guide),
+      original('reference/screenshot-01.png', 'image/png', reference),
+    ];
+    const request = taskRequest(map, pkg);
+    const parse = (inputs: typeof files, browserFilm = false) => {
+      const bytes = Buffer.from(JSON.stringify({
+        schemaVersion: MAP_DESIGN_WORKSPACE_SCHEMA, runId: pkg.runId, baseRevision: pkg.baseRevision, files: inputs,
+      }));
+      const task = normalizeTaskRequest({
+        ...request,
+        envelope: { schemaVersion: 'map-code-film-command-v1', runId: pkg.runId, command: '制作视频',
+          ...(browserFilm ? { browserFilm: { target: 180, scenes: 13, trial: true } } : {}) },
+        transfer: { ...(request.transfer as object), inputSha256: sha256(bytes),
+          allowedOutputPaths: [browserFilm ? 'film-bundle.json' : 'film.mp4', 'film.json'] },
+      });
+      return parseWorkspacePackage(bytes, task.transfer).files;
+    };
+    expect(parse(files).map(file => file.bytes)).toEqual([source, secondSource, guide, reference]);
+    expect(parse(files, true).map(file => file.bytes)).toEqual([source, secondSource, guide, reference]);
+    expect(() => parse([files[0], files[1], files[3]], true)).toThrow('one original STYLE.md');
+    const userRequests = Buffer.from('只展示第二部分\n\n不要出现联系方式');
+    const brief = original('brief/user-requests.txt', 'text/plain', userRequests);
+    expect(parse([...files, brief]).map(file => file.bytes)).toEqual([source, secondSource, guide, reference, userRequests]);
+    const creationRequest = Buffer.from('保留完整创作要求。'.repeat(800));
+    const longRequest = original('brief/creation-request.txt', 'text/plain', creationRequest);
+    expect(parse([...files, brief, longRequest]).at(-1)?.bytes).toEqual(creationRequest);
+    expect(() => parse([...files, { ...brief, mediaType: 'text/markdown' }])).toThrow('optional reference images');
+    expect(() => parse([files[0], files[1], files[3]])).toThrow('one original STYLE.md');
+    expect(() => parse([...files, original('brief/task.json', 'application/json', Buffer.from('{}'))])).toThrow('optional reference images');
+  });
+
+  it('keeps real caption timing, clips it to measured duration and ignores malformed cues', () => {
+    const captions = parseFilmCaptions('1\n00:00:01,000 --> 00:00:03,600\n<i>架构决定</i>\n\n'
+      + '2\n00:00:06,000 --> 00:00:08,000\n超出成片\n\n不合法的字幕', 3);
+    expect(captions).toEqual([{ fromSec: 1, toSec: 3, text: '架构决定' }]);
+  });
+
+  it('reads the original skill subtitle filename without overlaying its burned captions', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'film-captions-'));
+    try {
+      const film = path.join(directory, 'review.mp4');
+      const sidecar = path.join(directory, 'subtitles_zh-CN.srt');
+      const separate = path.join(directory, 'review.srt');
+      fs.writeFileSync(separate, '1\n00:00:07,000 --> 00:00:09,000\n先画出边界');
+      const captions = [{ fromSec: 7, toSec: 9, text: '先画出边界' }];
+      fs.writeFileSync(sidecar, 'invalid');
+      expect(readFilmCaptionSidecar(film, 14)).toEqual({ captions, captionsBurnedIn: false });
+      fs.copyFileSync(separate, sidecar);
+      expect(readFilmCaptionSidecar(film, 14)).toEqual({ captions, captionsBurnedIn: true });
+      fs.rmSync(sidecar);
+      fs.symlinkSync(separate, sidecar);
+      expect(readFilmCaptionSidecar(film, 14)).toEqual({ captions, captionsBurnedIn: false });
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('restores a completed narration clip only for matching project owner and original inputs', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'film-project-'));
+    try {
+      const work = path.join(directory, 'work');
+      const next = path.join(directory, 'next');
+      fs.mkdirSync(next);
+      const project = path.join(work, 'review');
+      const voice = path.join(project, 'voice', 'out');
+      fs.mkdirSync(voice, { recursive: true });
+      fs.writeFileSync(path.join(project, 'TREATMENT.md'), '# Review');
+      const clip = Buffer.alloc(46);
+      clip.write('RIFF');
+      clip.writeUInt32LE(38, 4);
+      clip.write('WAVE', 8);
+      clip.write('fmt ', 12);
+      clip.writeUInt32LE(16, 16);
+      clip.writeUInt16LE(1, 20);
+      clip.writeUInt16LE(1, 22);
+      clip.writeUInt32LE(24000, 24);
+      clip.writeUInt32LE(48000, 28);
+      clip.writeUInt16LE(2, 32);
+      clip.writeUInt16LE(16, 34);
+      clip.write('data', 36);
+      clip.writeUInt32LE(2, 40);
+      fs.writeFileSync(path.join(voice, 'v01.wav'), clip);
+      fs.writeFileSync(path.join(voice, 'v02.wav'), clip.subarray(0, 20));
+      fs.symlinkSync('v01.wav', path.join(voice, 'external.wav'));
+      fs.writeFileSync(path.join(project, '.env'), 'not a checkpoint file');
+      const store = new FilmProjectCheckpointStore(path.join(directory, 'checkpoints'));
+      const hash = filmProjectInputHash('original', [{ path: 'source-1.md', sha256: 'source' }]);
+      expect(store.capture('first', 'owner', hash, work)).toBe(true);
+      fs.rmSync(work, { recursive: true });
+      expect(store.inspect('first')).toEqual({ completedScenes: 0, narrationClips: 1 });
+      expect(store.restore('first', 'someone-else', hash, next)).toBeUndefined();
+      expect(store.restore('first', 'owner', 'changed-input', next)).toBeUndefined();
+      const restored = store.restore('first', 'owner', hash, next);
+      expect(restored?.protectedMedia).toEqual([{ absolute: path.join(next, 'review', 'voice', 'out', 'v01.wav'), sha: sha256(clip), size: 46 }]);
+      expect(fs.readFileSync(restored!.protectedMedia[0].absolute)).toEqual(clip);
+      expect(fs.readdirSync(path.dirname(restored!.protectedMedia[0].absolute))).toEqual(['v01.wav']);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps partially written browser scenes editable and protects completed scene/audio pairs', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'browser-film-checkpoint-'));
+    try {
+      const work = path.join(directory, 'work');
+      const next = path.join(directory, 'next');
+      const root = path.join(work, 'review');
+      const scenes = path.join(root, 'scenes');
+      const voice = path.join(root, 'voice', 'out');
+      fs.mkdirSync(next);
+      fs.mkdirSync(scenes, { recursive: true });
+      fs.mkdirSync(voice, { recursive: true });
+      fs.writeFileSync(path.join(root, 'TREATMENT.md'), '# Review');
+      fs.writeFileSync(path.join(root, 'browser-film.json'), '{"scenes":[1,2,3]}');
+      const finished = 'export async function prepare(canvas) {} export function renderFrame(canvas, seconds) {}';
+      const partial = 'export async function prepare(';
+      fs.writeFileSync(path.join(scenes, '1.mjs'), finished);
+      fs.writeFileSync(path.join(scenes, '2.mjs'), partial);
+      fs.writeFileSync(path.join(scenes, '3.mjs'), finished);
+      const clip = Buffer.alloc(46);
+      clip.write('RIFF');
+      clip.writeUInt32LE(38, 4);
+      clip.write('WAVEfmt ', 8);
+      clip.writeUInt32LE(16, 16);
+      clip.write('data', 36);
+      clip.writeUInt32LE(2, 40);
+      fs.writeFileSync(path.join(voice, '1.wav'), clip);
+      fs.writeFileSync(path.join(voice, '2.wav'), clip);
+      const store = new FilmProjectCheckpointStore(path.join(directory, 'checkpoints'));
+      expect(store.capture('first', 'owner', 'inputs', work)).toBe(true);
+      expect(store.inspect('first')).toEqual({ completedScenes: 1, narrationClips: 2 });
+      const restored = store.restore('first', 'owner', 'inputs', next)!;
+      expect(restored.protectedMedia.filter(asset => asset.absolute.endsWith('.mjs'))
+        .map(asset => path.basename(asset.absolute))).toEqual(['1.mjs']);
+      const draft = path.join(restored.root, 'scenes', '2.mjs');
+      expect(fs.readFileSync(draft, 'utf8')).toBe(partial);
+      fs.writeFileSync(draft, finished);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('accepts the export request for a large committed playback bundle', () => {
+    const payload = { html: '<!doctype html>' + 'a'.repeat(35 * 1024 * 1024),
+      aac: 'A'.repeat(13 * 1024 * 1024), durationSec: 600 };
+    expect(Buffer.byteLength(JSON.stringify(payload))).toBeLessThan(MAX_BROWSER_FILM_EXPORT_REQUEST_BYTES);
+    expect(parseBrowserFilmExport(payload)).toEqual(payload);
+    expect(() => parseBrowserFilmExport({ ...payload, durationSec: 691 })).toThrow('input is invalid');
+  });
+
+  it('identifies one missing scene and keeps all completed clips beyond the former 16 MiB checkpoint ceiling', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'film-scene-'));
+    try {
+      const work = path.join(directory, 'work');
+      const next = path.join(directory, 'next');
+      fs.mkdirSync(next);
+      const project = path.join(work, 'review');
+      const scenes = path.join(project, 'scenes');
+      fs.mkdirSync(scenes, { recursive: true });
+      fs.writeFileSync(path.join(project, 'TREATMENT.md'), '# Review');
+      fs.writeFileSync(path.join(scenes, 'plan.json'), '[1,2,3,4,5,6]');
+      const box = (tag: string) => {
+        const value = Buffer.alloc(12);
+        value.writeUInt32BE(value.length);
+        value.write(tag, 4);
+        return value;
+      };
+      const media = Buffer.alloc(4 * 1024 * 1024);
+      media.writeUInt32BE(media.length);
+      media.write('mdat', 4);
+      const movie = Buffer.concat([box('ftyp'), media, box('moov')]);
+      for (const index of [1, 2, 3, 5, 6]) fs.writeFileSync(path.join(scenes, `${index}.mp4`), movie);
+      fs.writeFileSync(path.join(scenes, '4.mp4'), movie.subarray(0, movie.length - 12));
+      const store = new FilmProjectCheckpointStore(path.join(directory, 'checkpoints'));
+      expect(store.capture('first', 'owner', 'inputs', work)).toBe(true);
+      expect(store.inspect('first')).toEqual({ completedScenes: 5, narrationClips: 0, incompleteScene: 4 });
+      const restored = store.restore('first', 'owner', 'inputs', next)!;
+      expect(FilmProjectCheckpointStore.hasCompletedScene(restored.root, 4)).toBe(false);
+      fs.writeFileSync(path.join(restored.root, 'scenes', '4.mp4'), movie);
+      expect(FilmProjectCheckpointStore.hasCompletedScene(restored.root, 4)).toBe(true);
+      expect(restored.protectedMedia.map(file => file.sha)).toEqual(Array(5).fill(sha256(movie)));
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it('accepts only the configured direct LLMGW authority and binds its identity to the task', async () => {
     const pkg = buildPackage([]);
     map = await startFakeMap(pkg);

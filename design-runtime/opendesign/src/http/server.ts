@@ -8,12 +8,20 @@
 //   POST /v1/tasks/{taskId}/cancel              Bearer；取消（已结束的任务原样返回）
 import crypto from 'node:crypto';
 import http from 'node:http';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { pipeline } from 'node:stream/promises';
+import { MAX_BROWSER_FILM_EXPORT_REQUEST_BYTES, parseBrowserFilmExport, runBrowserFilmExport, type ExportIsolation } from '../engine/browser-film-export.js';
 
 import { describeCapabilities, type CapabilitiesContext } from '../capabilities.js';
 import { renderCondition } from '../conditions.js';
 import { AgentWorkspaceRuntimeError } from '../errors.js';
 import { normalizeTaskRequest } from '../protocol.js';
 import type { TaskManager } from '../tasks.js';
+import type { FilmRecoveryStore } from '../engine/film-recovery.js';
+import type { FilmProjectCheckpointStore } from '../engine/film-project-checkpoint.js';
+import { sha256 } from '../workspace/primitives.js';
 
 const MAX_REQUEST_BODY_BYTES = 256 * 1024;
 const SSE_KEEPALIVE_MS = 15_000;
@@ -22,6 +30,10 @@ export interface ServerContext extends CapabilitiesContext {
   apiKey: string;
   llmgwBaseUrl: string;
   tasks: TaskManager;
+  filmRecovery?: FilmRecoveryStore;
+  filmProjects?: FilmProjectCheckpointStore;
+  exportIsolation?: ExportIsolation;
+  exportBusy?: boolean;
 }
 
 function sendJson(res: http.ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}): void {
@@ -52,14 +64,14 @@ function authorized(req: http.IncomingMessage, apiKey: string): boolean {
   return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
 }
 
-async function readJsonBody(req: http.IncomingMessage): Promise<unknown> {
+async function readJsonBody(req: http.IncomingMessage, maxBytes = MAX_REQUEST_BODY_BYTES): Promise<unknown> {
   const chunks: Buffer[] = [];
   let total = 0;
   for await (const chunk of req) {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     total += buffer.byteLength;
-    if (total > MAX_REQUEST_BODY_BYTES) {
-      throw new AgentWorkspaceRuntimeError('request_too_large', `request body exceeds ${MAX_REQUEST_BODY_BYTES} bytes`);
+    if (total > maxBytes) {
+      throw new AgentWorkspaceRuntimeError('request_too_large', `request body exceeds ${maxBytes} bytes`);
     }
     chunks.push(buffer);
   }
@@ -101,8 +113,9 @@ async function handle(context: ServerContext, req: http.IncomingMessage, res: ht
     return;
   }
 
-  const taskMatch = /^\/v1\/tasks(?:\/([a-zA-Z0-9][a-zA-Z0-9_-]{0,127})(?:\/(events|cancel))?)?$/.exec(url.pathname);
-  if (!taskMatch) {
+  const taskMatch = /^\/v1\/tasks(?:\/([a-zA-Z0-9][a-zA-Z0-9_-]{0,127})(?:\/(events|cancel|film-recovery|film-project))?)?$/.exec(url.pathname);
+  const filmExport = method === 'POST' && url.pathname === '/v1/film-exports';
+  if (!taskMatch && !filmExport) {
     sendError(res, 404, { code: 'not_found', message: `没有这个接口：${method} ${url.pathname}` });
     return;
   }
@@ -125,7 +138,32 @@ async function handle(context: ServerContext, req: http.IncomingMessage, res: ht
     return;
   }
 
-  const [, taskId, action] = taskMatch;
+  if (filmExport) {
+    if (!context.exportIsolation) { sendError(res, 503, { code: 'export_unavailable', message: '云端导出未启用' }); return; }
+    if (context.exportBusy) { sendError(res, 409, { code: 'export_busy', message: '云端导出排队中' }); return; }
+    context.exportBusy = true;
+    let work: string | undefined;
+    const controller = new AbortController();
+    res.once('close', () => controller.abort());
+    try {
+      const payload = parseBrowserFilmExport(await readJsonBody(req, MAX_BROWSER_FILM_EXPORT_REQUEST_BYTES));
+      work = fs.mkdtempSync(path.join(os.tmpdir(), 'map-browser-export-'));
+      const output = await runBrowserFilmExport(payload, work, context.exportIsolation,
+        AbortSignal.any([controller.signal, AbortSignal.timeout(45 * 60 * 1000)]));
+      const file = fs.lstatSync(output);
+      if (!file.isFile() || file.size < 32 || file.size > 384 * 1024 * 1024) throw new Error('导出文件大小不符合要求');
+      res.writeHead(200, { 'Content-Type': 'video/mp4', 'Content-Length': file.size, 'Cache-Control': 'no-store' });
+      await pipeline(fs.createReadStream(output), res);
+    } catch (error) {
+      if (!res.headersSent && !res.destroyed) sendError(res, 422, { code: 'export_failed', message: error instanceof Error ? error.message : '云端导出未完成' });
+    } finally {
+      if (work) fs.rmSync(work, { recursive: true, force: true });
+      context.exportBusy = false;
+    }
+    return;
+  }
+
+  const [, taskId, action] = taskMatch!;
   const { tasks } = context;
 
   if (!taskId) {
@@ -179,6 +217,33 @@ async function handle(context: ServerContext, req: http.IncomingMessage, res: ht
         sendError(res, 503, outcome.error);
         return;
     }
+  }
+
+  if (action === 'film-recovery' && method === 'GET') {
+    const bytes = context.filmRecovery?.read(taskId);
+    if (!bytes) {
+      sendError(res, 404, { code: 'film_not_retained', message: '没有可恢复的完整影片' });
+      return;
+    }
+    res.writeHead(200, {
+      'Content-Type': 'video/mp4',
+      'Content-Length': bytes.length,
+      'Cache-Control': 'no-store',
+      'X-Content-Sha256': sha256(bytes),
+    });
+    res.end(bytes);
+    return;
+  }
+
+  if (action === 'film-project' && method === 'GET') {
+    const checkpoint = context.filmProjects?.inspect(taskId);
+    if (!checkpoint) {
+      sendError(res, 404, { code: 'checkpoint_not_retained', message: '没有可用的影片项目检查点' });
+      return;
+    }
+    res.setHeader('Cache-Control', 'no-store');
+    sendJson(res, 200, { checkpoint });
+    return;
   }
 
   const view = tasks.get(taskId);

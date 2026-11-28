@@ -94,7 +94,7 @@ function SmallButton({ children, onClick, disabled, danger }: {
 const fieldStyle = { background: 'var(--bg-input)', border: '1px solid var(--border-default)' } as const;
 
 /**
- * 网页生成设置（从网页托管顶部「生成网页」旁的齿轮进入）。
+ * 网页生成设置（从网页托管顶部「生成」旁的齿轮进入）。
  *
  * 管理员在这里改自查强度、风格预设与三段提示词；改完下一次运行生效，
  * 已经在跑的任务不受影响（运行时冻结进任务书）。canEdit=false 时整页只读，但复制照样可用——

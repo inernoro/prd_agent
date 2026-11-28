@@ -2082,7 +2082,7 @@ public sealed class DesignArtifactLifecycleServiceTests
 
         var broker = new Mock<IDesignArtifactWorkspaceBroker>(MockBehavior.Strict);
         broker.Setup(item => item.ValidatePreviewAsync(run.Id, "preview-ticket", It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+            .ReturnsAsync(DesignArtifactWorkspaceBroker.MaxOutputBytes);
         var controller = new DesignArtifactRuntimeController(
             broker.Object,
             new Mock<IHttpClientFactory>().Object,
