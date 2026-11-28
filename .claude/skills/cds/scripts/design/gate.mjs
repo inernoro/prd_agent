@@ -236,7 +236,7 @@ if (d?.framework) {
     const idOk = v => typeof v === 'string' && v.length <= 120 && /^[A-Za-z0-9_.-]+$/.test(v) && v !== '.' && v !== '..';
     if (plan !== undefined && (typeof plan !== 'object' || Object.keys(plan).some(k => k !== 'cases'))) reject('G-12', 'handoff 只能有 cases');
     if (!cases.length) reject('G-12', `有 ${interaction.length} 条交互验收项（${interaction.map(a => a.id).join('、')}），要在 design.json.handoff.cases 写能跑通的场景`);
-    if (cases.length > 24) reject('G-12', `交接场景 ${cases.length} 个，超过 CDS 上限 24`);
+    if (cases.length > 160) reject('G-12', `交接场景 ${cases.length} 个，超过 CDS 上限 160`);
     const caseIds = new Set();
     for (const c of cases) {
       const where = `场景 ${c?.id ?? '?'}`;
