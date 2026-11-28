@@ -7,6 +7,7 @@ using PrdAgent.Api.Extensions;
 using PrdAgent.Api.Services;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
+using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Services;
 using PrdAgent.Infrastructure.Services.AssetStorage;
@@ -240,12 +241,23 @@ public sealed partial class DesignArtifactsController
     }
 
     [HttpPost("/api/quick-creation/runs")]
-    public async Task<IActionResult> CreateQuickCreationRun([FromBody] QuickCreationRunRequest request, CancellationToken ct)
+    public async Task<IActionResult> CreateQuickCreationRun([FromBody] QuickCreationRunRequest request, CancellationToken ct,
+        [FromQuery] string? filmComparison = null)
     {
         if (!QuickCreationEnabled()) return NotFound();
         if (request.Kind is not ("video" or "web")) return QuickCreationError("请选择网页或视频");
         if (!QuickCreationDuration.TryRead(request.Duration, out var durationChoice))
             return QuickCreationError("请选择有效的成片时长");
+        if (filmComparison != null)
+        {
+            if (!User.HasClaim("permissions", AdminPermissionCatalog.Super)
+                && !User.HasClaim("permissions", AdminPermissionCatalog.LlmGatewayAccess))
+                return Forbid();
+            if (filmComparison is not ("charter-default" or "native-default" or "native-high" or "legacy-high")
+                || request.Kind != "video" || durationChoice != 60 || request.Trial != false
+                || request.BriefId != null || !string.IsNullOrWhiteSpace(request.Ask))
+                return QuickCreationError("视频对照需要 60 秒完整生成和同一份原稿");
+        }
         if (QuickCreationCatalog.Find(request.TemplateId) is not { } template)
             return QuickCreationError("这个风格不在当前目录，请重新选择");
         var ids = request.AttachmentIds?.Distinct(StringComparer.Ordinal).ToList() ?? [];
@@ -324,6 +336,7 @@ public sealed partial class DesignArtifactsController
             TargetDurationSec = duration?.TargetSec, DurationChoiceSec = duration is null ? null : effectiveDurationChoice,
             PlannedScenes = duration?.Scenes, BrowserFilm = browserFilm,
             Trial = browserFilm && (request.Trial ?? duration?.TrialDefault ?? false),
+            FilmComparison = filmComparison,
         };
         var instruction = film
             ? $"用原版 Lemo-Opuscar 技能把附件稿件做成代码视频。风格：{template.Name}（{template.Id}）。完整读取随任务提供的 {template.PromptRef}，按原样说明执行。使用中文配音和同步字幕。" +

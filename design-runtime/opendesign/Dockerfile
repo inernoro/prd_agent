@@ -63,6 +63,25 @@ RUN apk add --no-cache curl git ffmpeg python3 py3-pip libsndfile font-noto-cjk 
     && python3 -m venv /tmp/map-code-film-venv \
     && rm -rf /tmp/map-code-film-venv
 
+# Pin the complete official library snapshot, including Watercolor Brush demo
+# sources. The unmodified setup script recognizes an unpacked library and never
+# upgrades it at task time.
+COPY scripts/configure-code-film-prompt.mjs /tmp/configure-code-film-prompt.mjs
+RUN node /tmp/configure-code-film-prompt.mjs \
+    && rm /tmp/configure-code-film-prompt.mjs \
+    && mkdir -p /opt/map-design-runtime/opuscar-library \
+    && curl --retry 3 --connect-timeout 15 --max-time 180 --fail --silent --show-error \
+        https://codeload.github.com/lemomo-ai/lemo-opuscar/tar.gz/439b98af08b04400f8fd8a8dd19cd773c0c96532 \
+        -o /tmp/opuscar-library.tar.gz \
+    && printf '%s\n' '7ba429d3008b484534d50399e152ce58b8196980eccae075676af77fc68eca8f  /tmp/opuscar-library.tar.gz' | sha256sum -c - \
+    && tar -xzf /tmp/opuscar-library.tar.gz -C /opt/map-design-runtime/opuscar-library --strip-components=1 \
+    && rm /tmp/opuscar-library.tar.gz \
+    && cd /opt/map-design-runtime/opuscar-library \
+    && printf '%s\n' '662d57568408a7c82ef8f64980ca85798b8bb239df3dc3a6715283d7f4555ef0  styles/watercolor/STYLE.md' | sha256sum -c - \
+    && test -s styles/watercolor/DEMO.md \
+    && test -s styles/watercolor/demo/engine.js \
+    && LEMO_OPUSCAR_HOME="$PWD" sh /opt/map-design-runtime/lemo-opuscar/scripts/setup.sh demo watercolor
+
 COPY THIRD_PARTY_NOTICES.md /usr/share/doc/map-design-runtime/THIRD_PARTY_NOTICES.md
 COPY --from=build /build/dist /opt/map-design-runtime/dist
 COPY scripts/image-browser-smoke.mjs /opt/map-design-runtime/scripts/image-browser-smoke.mjs
