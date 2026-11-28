@@ -370,6 +370,10 @@ CDS 按以下规则校验稿件。驳回回执返回规则编号。用 `intake` 
 
 ## 双向反馈
 
+新交接反馈使用 `design feedback-assignees` 读取当前项目可接手的主体，登记时传 `feedback-create --handler-id <主体编号>`。智能体发起时用 `--confirmer-id` 指定另一位有权确认的同项目真人成员。用 `design inbox` 查看轮到当前身份处理的反馈。命令沿用已通过自检的项目授权。
+
+向新交接反馈回复时，`design feedback-reply --message-file <回复.json>` 携带 `kind`、`lead` 和对应字段。`answer` 提供验收编号数组 `items`，`propose` 提供 `conclusion` 和 `scope`，`evidence` 提供 `runId` 和 `commit`。`--body` 写正文或补充说明。使用 `design feedback-stage --action <take|deliver|confirm|return> --expected-stage <当前状态>` 推进，交付和完结提供同一次运行的 `--run`、`--screen` 和 `--slot`。完结由提出人或指定的真人确认人操作。重试使用原请求编号。
+
 1. 实现方先读 `intake`、固定版 `delivery` 和已有 `feedback`。用 `cds_design_feedback` 的 `feedback.create` 记录复用建议、实施做法、需求缺漏、落地约束或验收建议。提供稿件、版本、分类、标题、理由、改动依据和可核对证据。对整份稿件或特定画面都可以登记。
 2. 设计方通过 `cdscli design feedback <稿件编号>`（可选择版本，仍含未关闭的旧版反馈）读同一线程，调用 `design feedback-reply` 或 MCP `feedback.reply` 回复。需要改稿时按原稿 ID 和最新稿件版本续版，再在回复的 `revision` 引用自己发布的实际版号。只需解释、确认约束或说明方案取舍时，可以直接回复。
 3. 原反馈者回读新版和同一线程，按证据验证。用 `feedback.resolve` 的 `close` 或 `reopen` 加说明保留复核结果。项目管理者也可处理。发布、反馈、实际做法验收和人类签收各自按项目权限执行。重试沿用原请求编号。

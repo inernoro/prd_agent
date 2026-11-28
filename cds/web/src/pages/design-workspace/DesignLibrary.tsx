@@ -202,7 +202,7 @@ export function DesignLibrary({ workspace, query, onChange, mode, theme, viewer,
       <span className="dw-fwc-info">
         <strong>{latest.title}</strong>
         <span className="dw-fwc-meta"><FrameworkStatus revision={latest} /><code>{row.id} v{latest.version}</code>
-          <em>{used.length} 份稿件{outdated ? ` · ${outdated} 份可升级` : ''}</em></span>
+          <em>{used.length} 份稿件在用{outdated ? ` · ${outdated} 份可升级` : ''}</em></span>
       </span>
     </button>;
     return <button type="button" key={row.id} className="dw-surface dw-fw-tile" onClick={() => onFramework(row.id)}>
@@ -244,6 +244,7 @@ export function DesignLibrary({ workspace, query, onChange, mode, theme, viewer,
         </div>
         {/* V25（用户：「框架 2 套」直接放在标题旁不行）：框架是右上角的一个按钮，点开是右侧抽屉 */}
         {visibleFrameworks.length > 0 && <button type="button" className="ep-button dw-fw-open" data-action="frameworks" aria-expanded={frameworksOpen}
+          aria-label={`框架 ${visibleFrameworks.length}`}
           onClick={() => setFrameworksOpen(true)}><Layers />框架<small>{visibleFrameworks.length}</small></button>}
         {headerActions}
       </div>}

@@ -140,7 +140,7 @@ export function DesignWorkspacePage() {
   /* V26（用户：反馈和资料不应该在交付，而是在记录；记录里要有一个能点进去看真正反馈的地方）：
    * 记录页两个视图——按版本（log 不写）和反馈和资料（log=delivery，part/fb/file 照旧）。旧地址 tab=delivery&full=delivery&part=… 打开记录里的反馈和资料。 */
   const legacyDelivery = requestedTab === 'delivery' && params.get('part') !== 'checks'
-    && (params.get('full') === 'delivery' || params.has('part') || params.has('fb') || params.has('file'));
+    && (params.get('full') === 'delivery' || params.has('part') || params.has('fb') || params.has('file') || hash.startsWith('#dw-'));
   const tab = requestedTab === 'accept' || requestedTab === 'delivery' && params.get('part') === 'checks' ? 'accept'
     : requestedTab === 'log' || legacyDelivery ? 'log' : 'delivery';
   const logView = tab === 'log' && (legacyDelivery || params.get('log') === 'delivery') ? 'delivery' : 'versions';
@@ -555,6 +555,7 @@ export function DesignWorkspacePage() {
             <button type="button" role="tab" aria-label="反馈和资料" aria-selected={logView === 'delivery'} data-log="delivery"
               onClick={() => onChange({ ...deliveryQuery, tab: 'log', log: 'delivery', thread: '' }, true)}>反馈和资料
               {(entry.feedback ?? []).filter(row => row.status !== 'closed').length > 0 && <small>{(entry.feedback ?? []).filter(row => row.status !== 'closed').length} 条进行中</small>}</button>
+            {params.get('part') === 'handoff' && <button type="button" className="ep-button" onClick={closeFull}>回到画面</button>}
           </nav>}
           {tab === 'log' && logView === 'delivery' && permissions && <div className="dr-delivery">
               <DesignDeliveryPanel key={`${entry.id}/${version.version}`} entry={entry} version={version}

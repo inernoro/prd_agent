@@ -76,7 +76,8 @@ const missing = (message: string): never => rejectPlanning(404, 'design_not_foun
 const conflict = (message: string): never => rejectPlanning(409, 'design_conflict', message);
 const intakeConflict = (message: string): never => rejectPlanning(409, 'design_intake_conflict', message);
 const forbidden = (message: string): never => rejectPlanning(403, 'design_forbidden', message);
-const identity = ({ id, label, kind, designRole }: DesignActor): DesignAuthor =>
+const identity = ({ id, label }: DesignActor) => ({ id, label });
+const authorIdentity = ({ id, label, kind, designRole }: DesignActor): DesignAuthor =>
   ({ id, label, kind: kind === 'human' ? 'person' : designRole ?? 'agent' });
 const feedbackStages: Record<DesignFeedbackAction, { from: DesignFeedbackStage[]; to: DesignFeedbackStage; status: DesignFeedback['status'] }> = {
   take: { from: ['raised'], to: 'working', status: 'open' },
@@ -801,14 +802,17 @@ export class DesignWorkspaceService {
       const at = input.feedbackAt === undefined ? undefined : planningText(input.feedbackAt, '反馈时间', 30);
       if (at && (!/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(at) || !Number.isFinite(Date.parse(at))
         || new Date(at).toISOString() !== at)) invalidDesign('反馈时间不正确');
-      const recordAt = optionalText(input.recordAt, '记录阅读时间', 30);
-      if (recordAt && !Number.isFinite(Date.parse(recordAt))) invalidDesign('记录阅读时间不正确');
+      const recordTime = optionalText(input.recordAt, '记录阅读时间', 30);
+      if (recordTime && (!/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{3})?Z$/.test(recordTime)
+        || !Number.isFinite(Date.parse(recordTime)))) invalidDesign('记录阅读时间不正确');
+      const recordAt = recordTime ? new Date(recordTime).toISOString() : undefined;
       identity = ['design', id, String(version), at ?? '', ...(recordAt ? [recordAt] : [])];
       build = (state, next) => {
         const draft = state.designs.get(id) ?? missing('该稿件不存在');
         versionOf(draft, version);
         if (at && at > latestDesignFeedbackAt(draft)) invalidDesign('反馈阅读时间超出当前稿件记录');
-        if (recordAt && (Date.parse(recordAt) > Date.parse(latestDesignRecordAt(draft)) || !latestDesignRecordAt(draft))) {
+        const latestRecord = Date.parse(latestDesignRecordAt(draft));
+        if (recordAt && (!Number.isFinite(latestRecord) || Date.parse(recordAt) > latestRecord)) {
           invalidDesign('记录阅读时间超出当前稿件记录');
         }
         const stored = next.designs[id];
@@ -1052,7 +1056,7 @@ export class DesignWorkspaceService {
         const version: DesignVersion = { version: (previous?.version ?? 0) + 1, title, sourceCommit, sha256, prototypeId,
           prototypeSha256: byPath.get(prototype)!.sha256, delivery,
           sourcePath, sourceVerification: privateUpload ? 'private-upload' : source ? 'git' : 'declared',
-          createdAt: now, publisher: identity(actor), rationale, screens, acceptance, spec, checks, framework, frameworkVersion, group, tags, decisionIds, resolves, note,
+          createdAt: now, publisher: authorIdentity(actor), rationale, screens, acceptance, spec, checks, framework, frameworkVersion, group, tags, decisionIds, resolves, note,
           ...(scope ? { scope } : {}),
           ...(loaded.frameworkCharter ? { frameworkCharter: loaded.frameworkCharter } : {}),
           ...(loaded.acceptancePlan ? { acceptancePlan: loaded.acceptancePlan } : {}),
@@ -1290,9 +1294,9 @@ export class DesignWorkspaceService {
       proof = feedbackProgramProof(entry, thread, run, screenId, slot)
         ?? invalidDesign('请引用本稿相应画面的 CDS 程序截图');
     } else if (input.proof !== undefined) invalidDesign('接手与退回不提交截图');
-    if (action !== 'take' && owed > 1) conflict('请先回复尚未回答的往来消息');
+    if (action !== 'take' && owed > 0) conflict('请先回复尚未回答的往来消息');
     return { ...thread, stage: next.to, stageAt: now, status: next.status,
-      transitions: [...(thread.transitions ?? []), { action, body, author: identity(actor), at: now, ...(proof ? { proof } : {}) }] };
+      transitions: [...(thread.transitions ?? []), { action, body, author: authorIdentity(actor), at: now, ...(proof ? { proof } : {}) }] };
   }
 
   async feedback(projectId: string, actor: DesignActor, value: unknown): Promise<Receipt> {
@@ -1328,7 +1332,7 @@ export class DesignWorkspaceService {
         const requirement = state.requirements.get(designKey) ?? missing('请先读取接入清单中的设计需求');
         if (requirement.planVersion !== expectedVersion) conflict('需求已更新，请重新读取接入清单');
         const id = `BRP-${randomUUID()}`;
-        const reply = { id, author: identity(actor), body, at: now, planVersion: expectedVersion };
+        const reply = { id, author: authorIdentity(actor), body, at: now, planVersion: expectedVersion };
         return { result: { type, id, designKey, planId: requirement.planId, version: expectedVersion },
           changes: { brief: { designKey, value: { ...requirement, replies: [...(requirement.replies ?? []), reply] } } } };
       }, writeFeedback);
@@ -1342,7 +1346,7 @@ export class DesignWorkspaceService {
     return this.mutate(projectId, actor, requestId, input, async ({ state, now }) => {
       const entry = state.designs.get(designIdValue) ?? missing('该稿件不存在');
       if (type === 'feedback.create') {
-        designRecord(input, '提交设计反馈', [...common, 'version', 'category', 'title', 'body', 'screenId', 'filePath', 'evidence', 'handlerId']);
+        designRecord(input, '提交设计反馈', [...common, 'version', 'category', 'title', 'body', 'screenId', 'filePath', 'evidence', 'handlerId', 'confirmerId']);
         const version = versionOf(entry, input.version);
         const category = designFeedbackCategories.find(kind => kind === input.category) ?? invalidDesign('请选择有效的反馈分类');
         const screenId = input.screenId === undefined ? undefined : designId(input.screenId, '反馈画面');
@@ -1352,15 +1356,21 @@ export class DesignWorkspaceService {
         if (input.evidence !== undefined && (!Array.isArray(input.evidence) || input.evidence.length > 8)) invalidDesign('证据最多八条');
         const evidence = (input.evidence as unknown[] | undefined)?.map(row => planningText(row, '反馈证据', 1_000)) ?? [];
         const handlerId = input.handlerId === undefined ? undefined : designId(input.handlerId, '交接方');
-        const handler = handlerId ? (await this.feedbackAssignees(projectId, actor)).items.find(person => person.id === handlerId)
+        const candidates = handlerId ? (await this.feedbackAssignees(projectId, actor)).items : [];
+        const handler = handlerId ? candidates.find(person => person.id === handlerId)
           ?? invalidDesign('请选择当前项目中可接手的交接方') : undefined;
+        const delegated = handler && actor.kind === 'agent';
+        if (!delegated && input.confirmerId !== undefined) invalidDesign('只有智能体发起的交接反馈需要另指定确认人');
+        const confirmer = delegated ? candidates.find(person => person.id === input.confirmerId && person.kind === 'person' && person.id !== handlerId)
+          ?? invalidDesign('请指定当前项目中与交接方不同的真人确认人') : undefined;
         const body = planningText(input.body, '反馈正文', 4_000);
         if (handler && !completeFeedback(feedbackParts(body))) invalidDesign('请分别写明「诉求」和「怎么算解决」');
         const feedback: DesignFeedback = { id: `FDB-${randomUUID()}`, version: version.version, screenId, category, evidence,
           ...(filePath ? { filePath } : {}),
           ...(handler ? { handler, stage: 'raised', stageAt: now, transitions: [] } : {}),
+          ...(confirmer ? { confirmer } : {}),
           title: planningText(input.title, '反馈标题', 180), body,
-          author: identity(actor), createdAt: now, status: 'open', replies: [], decisions: [] };
+          author: authorIdentity(actor), createdAt: now, status: 'open', replies: [], decisions: [] };
         return { result: { type, designId: entry.id, id: feedback.id, version: version.version },
           changes: { design: { id: entry.id, feedback } } };
       }
@@ -1393,7 +1403,7 @@ export class DesignWorkspaceService {
         if (existing) return { result, changes: {} };
         if (attachments.length >= 32) conflict('此反馈已有 32 张证据图');
         return { result, changes: { assets: [asset], design: { id: entry.id, feedback: { ...thread, attachments: [...attachments,
-          { id: asset.id, title, size: content.length, sha256, author: identity(actor), at: now, version: version.version, screenId, slot }] } } } };
+          { id: asset.id, title, size: content.length, sha256, author: authorIdentity(actor), at: now, version: version.version, screenId, slot }] } } } };
       }
       const body = planningText(input.body, '处理说明', 4_000);
       const feedback = { ...thread };
@@ -1404,7 +1414,7 @@ export class DesignWorkspaceService {
           if (actor.kind !== 'human' || !actor.feedbackSupplement) authored(actor, thread.author);
           if (completeFeedback(feedbackParts(thread.body))) conflict('原反馈已经写明诉求和完成标准');
           if (!completeFeedback(feedbackParts(body))) invalidDesign('请分别写明「诉求」和「怎么算解决」');
-          feedback.replies = [...thread.replies, { body, supplement: true, author: identity(actor), at: now }];
+          feedback.replies = [...thread.replies, { body, supplement: true, author: authorIdentity(actor), at: now }];
         } else {
           if (thread.status === 'closed') conflict('请由反馈者或项目管理者重开后再回复');
           const revision = input.revision === undefined ? undefined : versionOf(entry, input.revision);
@@ -1414,8 +1424,10 @@ export class DesignWorkspaceService {
           if (thread.stage && input.message === undefined) invalidDesign('请为此交接反馈填写回复类型和一句话');
           const message = input.message === undefined ? undefined : this.feedbackMessage(entry, actor, input.message,
             revision ?? versionOf(entry, thread.version), body);
-          if (message?.kind === 'confirm' && thread.stage && actor.id !== thread.author.id) forbidden('请由反馈提出方确认约定');
-          feedback.replies = [...thread.replies, { body, revision: revision?.version, author: identity(actor), at: now,
+          if (message?.kind === 'confirm' && thread.stage && actor.id !== (thread.confirmer?.id ?? thread.author.id)) {
+            forbidden('请由反馈提出方或指定确认人确认约定');
+          }
+          feedback.replies = [...thread.replies, { body, revision: revision?.version, author: authorIdentity(actor), at: now,
             ...(message ? { message } : {}) }];
           if (!thread.stage && actor.id !== thread.author.id) feedback.status = 'responded';
         }
@@ -1427,7 +1439,7 @@ export class DesignWorkspaceService {
         if (decision !== 'close' && decision !== 'reopen') return invalidDesign('请选择确认关闭或重新打开');
         if ((decision === 'close') === (thread.status === 'closed')) conflict('反馈已是所选状态，请先回读当前反馈');
         feedback.status = decision === 'close' ? 'closed' : 'open';
-        feedback.decisions = [...thread.decisions, { decision, body, author: identity(actor), at: now }];
+        feedback.decisions = [...thread.decisions, { decision, body, author: authorIdentity(actor), at: now }];
       }
       return { result: { type, designId: entry.id, id: feedbackId, version: thread.version },
         changes: { design: { id: entry.id, feedback } } };
@@ -1731,7 +1743,7 @@ export class DesignWorkspaceService {
       const screenId = designId(input.screenId, '画面编号');
       if (!version.screens.some(screen => screen.id === screenId)) missing('该版本没有此画面');
       comment = { id: `C-${randomUUID()}`, version: version.version, screenId, body: planningText(input.body, '评论正文', 4000),
-        x: ratio(input.x), y: ratio(input.y), createdAt: now, author: identity(actor), closed: false, replies: [], reviews: [] };
+        x: ratio(input.x), y: ratio(input.y), createdAt: now, author: authorIdentity(actor), closed: false, replies: [], reviews: [] };
     } else {
       const id = designId(input.commentId, '评论编号');
       const original = entry.comments.find(row => row.id === id) ?? missing('该评论不存在');
@@ -1743,7 +1755,7 @@ export class DesignWorkspaceService {
         const body = planningText(input.body, '回复正文', 4000);
         const message = input.message === undefined ? undefined : this.feedbackMessage(entry, actor, input.message, versionOf(entry, comment.version), body);
         if (message?.kind === 'confirm') authored(actor, comment.author);
-        comment.replies.push({ body, author: identity(actor), createdAt: now, ...(message ? { message } : {}) });
+        comment.replies.push({ body, author: authorIdentity(actor), createdAt: now, ...(message ? { message } : {}) });
       } else if (type === 'comment.review') {
         designRecord(input, '核对评论请求', ['type', 'requestId', 'designId', 'commentId', 'version', 'decision', 'body']);
         review(actor);
@@ -1757,7 +1769,7 @@ export class DesignWorkspaceService {
         if (decision !== 'resolved' && decision !== 'rejected') return invalidDesign('请选择关闭或退回评论');
         const body = optionalText(input.body, '核对说明', 2000) ?? '';
         if (decision === 'rejected' && !body) invalidDesign('退回时请写明仍需修改的地方');
-        comment.reviews.push({ version: version.version, decision, body, at: now, by: actor.id, author: identity(actor) });
+        comment.reviews.push({ version: version.version, decision, body, at: now, by: actor.id, author: authorIdentity(actor) });
         comment.closed = decision === 'resolved';
       } else return invalidDesign('不支持的评论命令');
     }

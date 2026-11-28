@@ -20,8 +20,9 @@ export function feedbackProgramProof(entry: DesignEntry, thread: DesignFeedback,
   const key = `${screenId}/${slot}` as const;
   const observed = run.programEvidence?.[key];
   const image = run.visual?.[key];
-  const dataset = entry.versions.find(version => version.version === run.version)?.demoData?.sha256 ?? observed?.fixtureDigest;
-  if (!image?.imageId || !dataset || !observed || observed.review?.matched === false
+  const version = entry.versions.find(row => row.version === run.version);
+  const dataset = version?.demoData?.sha256 ?? observed?.fixtureDigest;
+  if (!version || !image?.imageId || !dataset || !observed || observed.review?.matched === false
     || [observed, image].some(row => row.capturedBy !== 'cds' || row.commit !== run.commit || row.dataset !== dataset)) return undefined;
   return { runId: run.id, screenId, slot, imageId: image.imageId, commit: run.commit };
 }
@@ -43,19 +44,23 @@ export function checkFeedbackLanguage(lead: string, body: string, checkLead = tr
 }
 
 export function feedbackHandover(row: DesignFeedback, now = Date.now()) {
-  const messages = [{ author: row.author, at: row.createdAt }, ...row.replies, ...row.decisions, ...(row.transitions ?? [])]
-    .sort((a, b) => a.at.localeCompare(b.at));
+  const messages = [{ author: row.author, at: row.createdAt, needsReply: true },
+    ...row.replies.map(reply => ({ ...reply, needsReply: !reply.supplement })),
+    ...[...row.decisions, ...(row.transitions ?? [])].map(event => ({ ...event, needsReply: false }))]
+    .sort((a, b) => (a.at ?? '').localeCompare(b.at ?? ''));
   const stage = row.stage ?? (row.status === 'closed' ? 'done' : row.status === 'responded' ? 'review'
     : row.replies.length ? 'working' : 'raised');
   const handler = row.handler ?? row.replies.find(item => item.author.id !== row.author.id)?.author;
-  const holder = stage === 'done' ? undefined : stage === 'review' ? row.author : handler;
+  const holder = stage === 'done' ? undefined : stage === 'review' ? row.confirmer ?? row.author : handler;
   const since = row.stageAt ?? messages.at(-1)!.at;
   const lastByHolder = holder && messages.reduce((last, item, index) => item.author.id === holder.id ? index : last, -1);
-  const owed = lastByHolder === undefined ? 0 : messages.length - 1 - lastByHolder;
+  const delegatedReview = stage === 'review' && row.confirmer !== undefined;
+  const owed = lastByHolder === undefined ? 0 : messages.slice(lastByHolder + 1)
+    .filter(message => message.needsReply && (!delegatedReview || message.at > since)).length;
   const days = Math.floor((now - Date.parse(since)) / 86_400_000);
   const stalledDays = stage === 'done' || !Number.isFinite(days) ? 0 : Math.max(0, days);
   const stall = stalledDays >= 7 ? 'bad' as const : stalledDays >= 3 ? 'warn' as const : undefined;
-  return { raiser: row.author, handler, stage, holder, since, owed, stalledDays, stall, evidence: (row.attachments?.length ?? 0) };
+  return { raiser: row.author, handler, confirmer: row.confirmer, stage, holder, since, owed, stalledDays, stall, evidence: (row.attachments?.length ?? 0) };
 }
 
 type FeedbackParts = { ask: string; done: string; problem: string; basis: string };

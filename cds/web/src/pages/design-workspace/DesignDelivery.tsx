@@ -4,12 +4,13 @@ import { useLocation, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Bot, Download, FileCode, FileImage, FileText, MessageSquare, Plus } from 'lucide-react';
 import { ContentLoading } from '@/components/skeletons/ContentLoading';
 import {
-  designFeedbackCategories, designSlots, type DesignAuthor, type DesignFeedbackAction, type DesignFeedbackAttachment, type DesignFeedbackProof, type DesignSlot, type DesignDeliveryFile, type DesignEntry, type DesignFeedback, type DesignVersion, type DesignWorkspace,
+  designFeedbackCategories, designSlots, type DesignAuthor, type DesignFeedbackAttachment, type DesignSlot, type DesignDeliveryFile, type DesignEntry, type DesignFeedback, type DesignVersion, type DesignWorkspace,
 } from '../../../../src/shared/design-workspace';
 import { designHandoffStatusNames } from '../../../../src/shared/design-handoff';
-import { feedbackActionLabels, feedbackMessageLabels, feedbackMessageText, feedbackProgramProof, feedbackSummary } from '../../../../src/shared/design-feedback';
+import { feedbackActionLabels, feedbackMessageLabels, feedbackMessageText, feedbackSummary } from '../../../../src/shared/design-feedback';
 import { usePlanningRead } from '../engineering-planning/planning-ui';
 import { ReadableNotes } from './DesignMarkdown';
+import { DesignFeedbackHandover } from './DesignFeedbackHandover';
 import { designArtifact, designDate, designFeedbackAwaitsViewer, designPath, designPublisherLabel, designSourceNames, slotNames, type DesignCommand } from './design-ui';
 import { actorNames, actorOf, DesignMessageForm, handoverOf, plainCheck, stageGlyph, stageNames, type Handover } from './DesignConversation';
 
@@ -114,7 +115,7 @@ function LongNotes({ source }: { source: string }) {
 }
 export function ActorTag({ author }: { author: { label: string; kind?: string } }) {
   const kind = actorOf(author);
-  return <span className="dw-fl-who" data-kind={kind}><b>{designPublisherLabel(author.label)}</b>{kind !== 'person' && <em>{actorNames[kind]}</em>}</span>;
+  return <span className="dw-fl-who" data-kind={kind}><b>{designPublisherLabel(author.label)}</b><em>{actorNames[kind]}</em></span>;
 }
 function FeedbackList({ rows, selected, onSelect, onCreate, entry, permissions }: {
   rows: DesignFeedback[]; selected?: string; filter: 'pending' | 'all'; setFilter: (value: 'pending' | 'all') => void;
@@ -224,50 +225,6 @@ function attachmentCaption(entry: DesignEntry, thread: DesignFeedback, shot: Fee
   return [shot.title, 'V' + revision, screen?.name, shot.slot && slotNames[shot.slot]].filter(Boolean).join(' · ');
 }
 
-/* 交接条：提出 → 接手 → 交付待确认 → 完结；写清球在谁手里、欠几句、停了几天；只给轮到的人对应的按钮（提议命令 feedback.stage） */
-const stageSteps: [Handover['stage'][], string][] = [[['raised'], '提出'], [['working', 'returned'], '处理'], [['review'], '待确认'], [['done'], '完结']];
-function HandoverBar({ hand, canAct, human, actorId, busy, proofs, figures, onStage }: {
-  hand: Handover; canAct: boolean; human: boolean; actorId?: string; busy: boolean; proofs: DesignFeedbackProof[]; figures: number;
-  onStage: (action: DesignFeedbackAction, body: string, proof?: DesignFeedbackProof) => Promise<boolean>;
-}) {
-  const [asking, setAsking] = useState<DesignFeedbackAction>();
-  const [note, setNote] = useState('');
-  const [imageId, setImageId] = useState('');
-  const at = stageSteps.findIndex(([stages]) => stages.includes(hand.stage));
-  const actions: DesignFeedbackAction[] = canAct && hand.holder?.id === actorId
-    ? hand.stage === 'raised' ? ['take'] : hand.stage === 'review' ? (human ? ['confirm', 'return'] : ['return']) : ['deliver'] : [];
-  const selection = asking && actions.includes(asking) ? asking : undefined;
-  const label = (action: DesignFeedbackAction) => action === 'confirm' ? '确认完结' : feedbackActionLabels[action];
-  const needProof = selection === 'confirm' || selection === 'deliver';
-  const proof = proofs.find(row => row.imageId === imageId) ?? (proofs.length === 1 ? proofs[0] : undefined);
-  const issue = note.trim() ? plainCheck(note, '').problems[0] : undefined;
-  return <div className="dw-fl-handover" data-stage={hand.stage}>
-    <ol className="dw-fl-steps">{stageSteps.map(([, label], index) => <li key={label} data-on={index === at || undefined} data-past={index < at || undefined}>
-      <b>{index < at ? '✓' : index + 1}</b>{hand.stage === 'returned' && index === 1 ? '退回重做' : label}</li>)}</ol>
-    <p className="dw-fl-who-line"><span>{designPublisherLabel(hand.raiser.label)} 提出</span><span aria-hidden>→</span>
-      <span>{hand.handler ? <>{designPublisherLabel(hand.handler.label)} 处理</> : '还没指定交接方'}</span>
-      {hand.holder ? <span className="dw-fl-ball">球在 <b>{designPublisherLabel(hand.holder.label)}</b>{hand.owed > 0 && ` · 欠 ${hand.owed} 句`}</span> : <span className="dw-fl-ball">完结，只留截图为证（{figures} 张）</span>}
-      {hand.stall && <span className="dw-fl-stall" data-stall={hand.stall}>{hand.stall === 'bad' ? `停了 ${hand.stalledDays} 天，需要人介入` : `停了 ${hand.stalledDays} 天`}</span>}</p>
-    {actions.length > 0 && !selection && <span className="dw-fl-acts">{actions.map(action => <button key={action} type="button"
-      className={action === 'return' ? 'ep-button' : 'ep-button ep-button--primary'} data-action={`stage-${action}`}
-      onClick={() => { setAsking(action); setNote(''); setImageId(''); }}>{label(action)}</button>)}</span>}
-    {selection && <form className="dw-fl-stage-form" onSubmit={async event => {
-      event.preventDefault();
-      if (issue || needProof && !proof) return;
-      if (await onStage(selection, note.trim(), needProof ? proof : undefined)) { setAsking(undefined); setNote(''); }
-    }}>
-      <label><span className="dw-fl-lab">{selection === 'take' ? '打算怎么处理' : selection === 'return' ? '哪里还需要修改' : '一句话结论'}</span>
-        <input value={note} onChange={event => setNote(event.target.value)} required maxLength={40} autoFocus /></label>
-      {issue && <p className="dw-fl-hint" role="status">{issue}</p>}
-      {needProof && (proofs.length ? <label>选择本次运行的程序截图<select required value={proof?.imageId ?? ''} onChange={event => setImageId(event.target.value)}>
-        <option value="">选择截图</option>{proofs.map(row => <option key={row.imageId} value={row.imageId}>{row.screenId} · {slotNames[row.slot]} · {row.commit.slice(0, 8)}</option>)}
-      </select></label> : <p className="dw-fl-hint" role="alert">还没有程序截图。请先到验收页为需要核对的画面取证。</p>)}
-      <span className="dw-dl-compose-actions"><button type="button" className="ep-button" onClick={() => setAsking(undefined)}>取消</button>
-        <button type="submit" className="ep-button ep-button--primary" disabled={busy || !note.trim() || Boolean(issue) || needProof && !proof}>{label(selection)}</button></span>
-    </form>}
-  </div>;
-}
-
 function FeedbackDetail({ row, entry, version, permissions, busy, command, openScreen, openVersion, onBack }: {
   row: DesignFeedback; entry: DesignEntry; version: DesignVersion; permissions: Permissions; busy: boolean; command: DesignCommand;
   openScreen: OpenScreen; openVersion: (version: number) => void; onBack: () => void;
@@ -292,13 +249,6 @@ function FeedbackDetail({ row, entry, version, permissions, busy, command, openS
   const people = [...new Map([row.author, ...history.map(item => item.author)].map(author => [author.id, author])).values()];
   const figures = figuresOf(row, entry);
   const hand = handoverOf(row);
-  const proofs = row.stage ? entry.runs.slice().reverse().flatMap(run =>
-    Object.keys(run.programEvidence ?? {}).flatMap(key => {
-      const [screenId, value] = key.split('/');
-      const slot = designSlots.find(item => item === value);
-      const proof = slot && feedbackProgramProof(entry, row, run, screenId, slot);
-      return proof ? [proof] : [];
-    })) : [];
   const { parts, legacy, supplemented } = feedbackSummary(row);
   const hasBasis = Boolean(row.evidence.length || figures.length || parts.basis);
   const leadCount = supplemented ? 2 : 0;
@@ -319,10 +269,7 @@ function FeedbackDetail({ row, entry, version, permissions, busy, command, openS
     <button type="button" className="ep-link dw-dl-back" onClick={onBack}><ArrowLeft />全部反馈</button>
     <header className="dw-dl-detail-head">
       <h3 id={`fb-title-${row.id}`} tabIndex={-1}>{row.title}</h3>
-      <HandoverBar key={hand.stage} hand={hand} canAct={Boolean(row.stage && permissions.feedback)} human={permissions.human ?? permissions.review}
-        actorId={permissions.actorId} busy={busy} proofs={proofs} figures={figures.length}
-        onStage={(action, body, proof) => command('feedback.stage', { designId: entry.id, feedbackId: row.id, body, action,
-          expectedStage: hand.stage, ...(proof ? { proof: { runId: proof.runId, screenId: proof.screenId, slot: proof.slot } } : {}) })} />
+      <DesignFeedbackHandover entry={entry} row={row} permissions={permissions} busy={busy} command={command} />
       <p><span className="dw-fl-stage" data-stage={hand.stage}>{stageNames[hand.stage]}</span>
         <span>{feedbackNames[row.category]}</span><span className="dw-fl-by"><ActorTag author={row.author} /> · {designDate(row.createdAt)} 提出</span>
         <span>{history.length} 条往来 · {people.length} 方参与{figures.length ? ` · ${figures.length} 张图` : ''}</span>

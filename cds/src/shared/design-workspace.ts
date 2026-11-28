@@ -123,6 +123,7 @@ export type DesignFeedback = {
   createdAt: string;
   status: 'open' | 'responded' | 'closed';
   handler?: DesignAuthor;
+  confirmer?: DesignAuthor;
   stage?: DesignFeedbackStage;
   stageAt?: string;
   transitions?: DesignFeedbackTransition[];

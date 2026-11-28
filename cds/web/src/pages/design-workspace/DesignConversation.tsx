@@ -8,12 +8,13 @@
  * - 从画面上发起的评论在这里写正文：点「在画面上评论」→ 点画面位置 → 这里出现输入框（不再在画布上弹浮层）。 */
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Bot, Check, ChevronDown, MapPin, MessageSquarePlus, Send, X } from 'lucide-react';
-import type { DesignAuthor, DesignComment, DesignEntry, DesignFeedbackMessage, DesignFeedbackStage, DesignVersion } from '../../../../src/shared/design-workspace';
+import type { DesignAuthor, DesignComment, DesignEntry, DesignFeedbackMessage, DesignFeedbackStage, DesignVersion, DesignWorkspace } from '../../../../src/shared/design-workspace';
 import {
   checkFeedbackLanguage, feedbackActionLabels, feedbackHandover, feedbackMessageLabels, feedbackMessageText,
 } from '../../../../src/shared/design-feedback';
 import type { DesignCommand } from './design-ui';
 import { designPublisherLabel } from './design-ui';
+import { DesignFeedbackHandover } from './DesignFeedbackHandover';
 
 type Feedback = NonNullable<DesignEntry['feedback']>[number];
 export type DesignMessage = { at: string; who: string; role: ActorKind | 'system'; authorId?: string; body: string; tag?: string; agree?: boolean };
@@ -114,9 +115,10 @@ function Who({ who, role }: { who: string; role: DesignMessage['role'] }) {
 }
 
 export function DesignConversation({ entry, version, threads, selected, onSelect, screenId, command, busy, canReply, canAgree, onLocate, onPin,
-  draft, onDraftCancel, onDraftSubmit, title = '评论' }: {
+  draft, onDraftCancel, onDraftSubmit, permissions, title = '评论' }: {
   entry: DesignEntry; version?: DesignVersion; threads: DesignThread[]; selected?: string; onSelect: (key?: string) => void; screenId?: string;
   command?: DesignCommand; busy?: boolean; canReply?: boolean; canAgree?: (thread: DesignThread) => boolean;
+  permissions?: DesignWorkspace['permissions'];
   onLocate?: (thread: DesignThread) => void; onPin?: () => void;
   draft?: CommentDraft; onDraftCancel?: () => void; onDraftSubmit?: (body: string) => Promise<boolean>; title?: string;
 }) {
@@ -138,20 +140,21 @@ export function DesignConversation({ entry, version, threads, selected, onSelect
         <button key={key} type="button" aria-pressed={filter === key} data-filter={key} onClick={() => setFilter(key)}>{label}<small>{n}</small></button>)}</nav>
     </header>
     {draft && (draft.placing || draft.point) && <DraftBox draft={draft} busy={busy} onCancel={onDraftCancel} onSubmit={onDraftSubmit} />}
-    {!shown.length && <p className="dw-ds-empty">{filter === 'closed' ? '还没有敲定的对话。' : filter === 'here' ? '这一屏还没有对话。'
+    {!shown.length && <p className="dw-ds-empty">{filter === 'closed' ? '还没有完结的对话。' : filter === 'here' ? '这一屏还没有对话。'
       : onPin ? '还没有对话。点「在画面上评论」，再点画面上要说的位置。' : '还没有对话。'}</p>}
     {groups.map(group => <div className="dw-cv-group" key={group.name}>
       {groups.length > 1 && <h4>{group.name}<small>{group.rows.length}</small></h4>}
       <ol className="dw-cv-cards">{group.rows.map(thread => <ThreadCard key={thread.key} entry={entry} thread={thread} screenName={screenName(thread.screenId)}
         expanded={thread.key === selected} onToggle={() => onSelect(thread.key === selected ? undefined : thread.key)}
-        version={version} command={command} busy={busy} canReply={canReply} canAgree={canAgree?.(thread)} onLocate={onLocate} />)}</ol>
+        version={version} command={command} busy={busy} canReply={canReply} canAgree={canAgree?.(thread)} onLocate={onLocate} permissions={permissions} />)}</ol>
     </div>)}
   </section>;
 }
 
-function ThreadCard({ entry, thread, screenName, expanded, onToggle, version, command, busy, canReply, canAgree, onLocate }: {
+function ThreadCard({ entry, thread, screenName, expanded, onToggle, version, command, busy, canReply, canAgree, onLocate, permissions }: {
   entry: DesignEntry; thread: DesignThread; screenName?: string; expanded: boolean; onToggle: () => void;
   version?: DesignVersion; command?: DesignCommand; busy?: boolean; canReply?: boolean; canAgree?: boolean; onLocate?: (thread: DesignThread) => void;
+  permissions?: DesignWorkspace['permissions'];
 }) {
   const facts = threadFacts(entry, thread);
   const handover = thread.feedback ? handoverOf(thread.feedback) : undefined;
@@ -175,9 +178,9 @@ function ThreadCard({ entry, thread, screenName, expanded, onToggle, version, co
         : <dd className="dw-cv-pending">{handover ? <>{stageNames[handover.stage]} · 球在 {handover.holder ? designPublisherLabel(handover.holder.label) : '—'}
           {handover.owed > 0 && ` · 欠 ${handover.owed} 句`}{handover.stall && <b className="dw-cv-stall" data-stall={handover.stall}>{handover.stall === 'bad' ? `停了 ${handover.stalledDays} 天，需要人介入` : `停了 ${handover.stalledDays} 天`}</b>}</>
           : `进行中 · ${facts.waitingOn}`}</dd>}
-      {!facts.last.agree && <><dt>最后一句</dt>
+      <dt>最后一句</dt>
         <dd><span className="dw-cv-when"><Who who={facts.last.who} role={facts.last.role} /> · {when(facts.last.at)}</span>
-          <span className="dw-cv-text">{plainLine(facts.last.body)}</span></dd></>}
+          <span className="dw-cv-text">{plainLine(facts.last.body)}</span></dd>
     </dl>
     <p className="dw-cv-card-foot">
       <span>V{thread.version} 提出{screenName ? ` · ${screenName}` : ''} · {facts.count} 句</span>
@@ -185,13 +188,15 @@ function ThreadCard({ entry, thread, screenName, expanded, onToggle, version, co
       <button type="button" className="ep-link dw-cv-toggle" data-action="thread-toggle" aria-expanded={expanded} onClick={onToggle}>
         {expanded ? '收起经过' : '看经过'}<ChevronDown aria-hidden /></button>
     </p>
-    {expanded && <Story entry={entry} thread={thread} version={version} command={command} busy={busy} canReply={canReply} canAgree={canAgree} />}
+    {expanded && <Story entry={entry} thread={thread} version={version} command={command} busy={busy}
+      canReply={canReply} canAgree={canAgree} permissions={permissions} />}
   </li>;
 }
 
 /* 经过：按版本分段，每句话谁、几点、说了什么；约定那一句单独标出 */
-function Story({ entry, thread, version, command, busy, canReply, canAgree }: {
+function Story({ entry, thread, version, command, busy, canReply, canAgree, permissions }: {
   entry: DesignEntry; thread: DesignThread; version?: DesignVersion; command?: DesignCommand; busy?: boolean; canReply?: boolean; canAgree?: boolean;
+  permissions?: DesignWorkspace['permissions'];
 }) {
   const [draft, setDraft] = useState('');
   const [agreeing, setAgreeing] = useState(false);
@@ -212,6 +217,8 @@ function Story({ entry, thread, version, command, busy, canReply, canAgree }: {
     if (ok) { setDraft(''); setAgreeing(false); }
   }
   return <div className="dw-cv-story">
+    {thread.feedback?.stage && thread.state !== 'closed' && permissions && command &&
+      <DesignFeedbackHandover entry={entry} row={thread.feedback} permissions={permissions} busy={Boolean(busy)} command={command} />}
     {sections.map(section => {
       const released = entry.versions.find(row => row.version === section.version);
       return <section key={section.version} className="dw-cv-ver">

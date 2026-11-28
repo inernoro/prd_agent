@@ -73,7 +73,10 @@ function collect(entry: DesignEntry) {
     const topic = topics.find(item => item.id === id);
     if (topic) said.push({ topic, act: '声明处理', who: designPublisherLabel(row.publisher.label), author: row.publisher, at: row.createdAt, body: text, extra: `V${row.version} 发布时写的` });
   }
-  const all: Said[] = said.map(item => ({ ...item, v: versionAt(item.at, item.topic.raisedIn) })).sort((a, b) => a.at.localeCompare(b.at));
+  const all: Said[] = said.map(item => {
+    const at = item.at || versions.find(version => version.version === item.topic.raisedIn)?.createdAt || '';
+    return { ...item, at, v: versionAt(at, item.topic.raisedIn) };
+  }).sort((a, b) => a.at.localeCompare(b.at));
   return { versions, topics, said: all };
 }
 

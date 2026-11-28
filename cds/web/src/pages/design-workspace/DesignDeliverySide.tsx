@@ -60,13 +60,13 @@ export function DesignDeliverySide({ entry, version, screenId, permissions, tab,
   return <aside className="dw-sp dw-sp25 dw-sp26" aria-label="画面、要点和评论" data-pane={pane}>
     <header className="dw-sp-head">
       <nav className="dw-sp-tabs" role="tablist" aria-label="右侧面板">{tabs.map(([key, label, n]) =>
-        <button key={key} type="button" role="tab" aria-selected={pane === key} data-pane={key} onClick={() => onTab(key)}>{label}{n ? <small>{n}</small> : null}</button>)}</nav>
+        <button key={key} type="button" role="tab" aria-label={label} aria-selected={pane === key} data-pane={key} onClick={() => onTab(key)}>{label}{n ? <small>{n}</small> : null}</button>)}</nav>
       <button type="button" className="ep-button ep-icon-button" aria-label="收起右栏" data-action="side-collapse" onClick={onCollapse}><PanelRightClose /></button>
     </header>
     <div className="dw-sp-body">
       {pane === 'demo' && <Flow entry={entry} version={version} screenId={screenId} theme={theme} onScreen={onScreen} />}
       {pane === 'points' && <Points entry={entry} version={version} screenId={screenId} open={open} onAccept={onAccept} />}
-      {pane === 'comments' && <DesignConversation entry={entry} version={version} threads={threads} selected={thread} onSelect={onThread}
+      {pane === 'comments' && <DesignConversation entry={entry} version={version} threads={threads} selected={thread} onSelect={onThread} permissions={permissions}
         screenId={screenId} command={command} busy={busy} canReply={Boolean(permissions?.feedback || permissions?.write)} canAgree={canAgree}
         onLocate={row => row.screenId && onScreen(row.screenId)} onPin={permissions?.review ? onPin : undefined}
         draft={draft} onDraftCancel={onDraftCancel} onDraftSubmit={onDraftSubmit} />}
