@@ -101,6 +101,37 @@ export async function verifyWatercolor({page, api, data, match, openV9Run, verif
   if (original.trial === null) {
     const finalRow = { id, kind: 'full-only' };
     receipt.runs.push(finalRow);
+    if (original.status === 'done' && original.publish?.siteId) {
+      finalRow.siteId = original.publish.siteId;
+      await page.locator('[data-qc=open-hosting]').click();
+      await page.locator('[data-hosted-site-id="' + finalRow.siteId + '"]').waitFor();
+      const link = new URL(page.url());
+      link.searchParams.set('openSite', finalRow.siteId);
+      await page.goto(link.href);
+      const player = page.frameLocator('[role=dialog][data-review-layout] iframe').first();
+      const audio = player.locator('audio');
+      await player.locator('canvas').waitFor();
+      await audio.waitFor();
+      const durationSec = await audio.evaluate(async media => {
+        if (media.readyState === 0) {
+          await new Promise((resolve, reject) => {
+            media.addEventListener('loadedmetadata', resolve, { once: true });
+            media.addEventListener('error', reject, { once: true });
+          });
+        }
+        return media.duration;
+      });
+      assert.ok(Math.abs(durationSec - original.durationSec) < .1);
+      const cue = original.captions.find(item => item.toSec - item.fromSec > .2);
+      assert.ok(cue);
+      await audio.evaluate((media, time) => { media.currentTime = time; }, (cue.fromSec + cue.toSec) / 2);
+      await player.locator('figcaption span:visible').filter({ hasText: cue.text.replace(/\s+/g, ' ') }).waitFor();
+      finalRow.hostedDurationSec = durationSec;
+      finalRow.hostedTimedCaption = true;
+      await page.screenshot({ path: join(out, '10-watercolor-hosted-player.png') });
+      receipt.cases.push('Opened and seeked the already-published film inside the real hosting preview');
+      return;
+    }
     const final = await waitForOutput(finalRow, 'done');
     await page.reload();
     await verifyFrames(final, finalRow);
