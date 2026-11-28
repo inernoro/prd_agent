@@ -11,7 +11,12 @@ const generate = process.env.E2E_QC_GENERATE === 'true';
 const verifyBrief = process.env.E2E_QC_BRIEF === 'true';
 const retryFilmId = process.env.E2E_QC_RETRY_FILM || '';
 const existingWebId = process.env.E2E_QC_EXISTING_WEB || '';
-assert.equal(origin.origin, 'https://dsn-1400e277-v6-codex-prd-agent.miduo.org');
+const acceptanceOrigins = new Set([
+  'https://dsn-1400e277-v6-codex-prd-agent.miduo.org',
+  'https://dsn-1400e277-v10-codex-prd-agent.miduo.org',
+]);
+assert.ok(origin.protocol === 'https:' && acceptanceOrigins.has(origin.origin), 'Use an authorized CDS acceptance preview');
+assert.equal(origin.href, origin.origin + '/', 'Use the preview root');
 assert.match(commit, /^[a-f0-9]{40}$/);
 assert.ok(process.env.E2E_USER && process.env.E2E_PASSWORD && process.env.RUNNER_TEMP);
 if (generate) assert.equal(process.env.GITHUB_RUN_ATTEMPT, '1', 'Review original tasks before repeating paid jobs');
