@@ -127,5 +127,57 @@
   .qc-face-send::before { left: 6px; right: 6px; }
 }
 
-/* 弹出菜单的底：浅色主题 --bg-input 是实色（白），深色主题它是半透明，叠在 --bg-elevated 上才不透出下面的字 */
-.qc-menu-surface { background: linear-gradient(var(--bg-input), var(--bg-input)), var(--bg-elevated); }
+.qc-menu-surface { background: var(--hosting-surface); }
+
+/* V10：安静的文字按钮（起头、次要动作）：平时没有底和框，悬停才出一层浅底 */
+.qc-face-quiet { --qc-face-h: 32px; --qc-face-bg: transparent; }
+.qc-face-quiet:hover:not(:disabled) { --qc-face-bg: var(--bg-tertiary); color: var(--text-primary); }
+/* 不依赖 Button 组件的主按钮（浮层里用） */
+.qc-face-primary-plain { --qc-face-h: 34px; --qc-face-r: 10px; --qc-face-bg: var(--button-primary-bg); color: var(--button-primary-fg); }
+.qc-face-primary-plain:hover:not(:disabled) { --qc-face-bg: var(--button-primary-bg-hover); }
+
+/* V10 输入框：一块面，不套框；靠一圈极淡的轮廓和柔和的投影浮起来，聚焦时轮廓变成主色 */
+.qc-composer {
+  background: var(--bg-input);
+  border-radius: 22px;
+  box-shadow: 0 0 0 1px var(--border-subtle), 0 16px 40px -24px var(--border-default);
+  transition: box-shadow .2s;
+}
+.qc-composer:focus-within { box-shadow: 0 0 0 1.5px var(--accent-primary), 0 16px 40px -24px var(--border-default); }
+
+/* ---------- 深邃底 ----------
+ * 页面与它的弹出层、浮层沿用网页托管的配色（--hosting-*，深浅两档都定义好了）：
+ * 深色是近黑的冷灰底 + 一层实色面，不再用通用的暖灰半透明玻璃（看起来像塑料）。
+ * 与 HostedCollectionManager 同一个做法：在作用域里把通用令牌指向托管令牌，组件照常写语义令牌。 */
+.qc-scope, .qc-menu-surface {
+  --text-primary: var(--hosting-text);
+  --text-secondary: var(--hosting-secondary);
+  --text-muted: var(--hosting-muted);
+  --bg-base: var(--hosting-bg);
+  --bg-elevated: var(--hosting-surface);
+  --bg-card: var(--hosting-surface);
+  --bg-card-hover: var(--hosting-inset);
+  --bg-input: var(--hosting-inset);
+  --bg-secondary: var(--hosting-surface);
+  --bg-tertiary: var(--hosting-inset);
+  --border-subtle: var(--hosting-border);
+  --border-default: var(--hosting-border-strong);
+  --accent-primary: var(--hosting-accent);
+  --accent-on-primary: var(--hosting-on-accent);
+  --selection-bg: var(--hosting-accent-soft);
+  --button-primary-bg: var(--hosting-accent);
+  --button-primary-bg-hover: color-mix(in srgb, var(--hosting-accent) 86%, var(--hosting-text));
+  --button-primary-fg: var(--hosting-on-accent);
+  --shadow-card-sm: 0 1px 2px var(--hosting-scrim);
+  color: var(--text-primary);
+}
+.qc-scope { background: var(--hosting-bg); }
+/* 输入框用实色面（比底亮一档），在深底上浮起来 */
+.qc-scope .qc-composer, .qc-composer { background: var(--hosting-surface); box-shadow: 0 0 0 1px var(--hosting-border), 0 24px 48px -28px var(--hosting-scrim); }
+.qc-scope .qc-composer:focus-within, .qc-composer:focus-within { box-shadow: 0 0 0 1.5px var(--hosting-accent), 0 24px 48px -28px var(--hosting-scrim); }
+
+/* ---------- 字重 ----------
+ * 600 只给页面标题、状态标题与分区标题；500 给卡片标题、名字与按钮；正文与说明 400。
+ * 中文在 600 下发闷，按钮一律 500；安静的文字按钮 400。 */
+.qc-face, .qc-scope .map-btn { font-weight: 500; }
+.qc-face-quiet { font-weight: 400; }

@@ -6,7 +6,7 @@ import type { QcAttachment } from '../../prd-admin/src/pages/quick-creation-agen
 // 布局与阅读回归使用静止背景；动态画布单独由三档演示用例验证。
 test.beforeEach(async ({ page }) => { await page.emulateMedia({ reducedMotion: 'reduce' }); });
 
-test('网页托管生成入口与 V9 手机输入框', async ({ page }, testInfo) => {
+test('网页托管生成入口与 V10 手机输入框', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.addInitScript(() => {
     localStorage.setItem('prd-admin-auth', JSON.stringify({ state: {
@@ -25,6 +25,7 @@ test('网页托管生成入口与 V9 手机输入框', async ({ page }, testInfo
     } });
   });
   const base = '/api/quick-creation';
+  const runId = 'b'.repeat(32);
   await page.route('**/api/**', async route => {
     const path = new URL(route.request().url()).pathname;
     let data: unknown = { items: [], total: 0, folders: [], tags: [], teams: [], fragments: [] };
@@ -33,6 +34,15 @@ test('网页托管生成入口与 V9 手机输入框', async ({ page }, testInfo
       items: [{ id: 'sketchnote', name: '视觉笔记', nameEn: 'Sketchnote', categoryId: 'presentation', line: '纸面笔记' }],
       categories: [{ id: 'presentation', name: '知识讲解' }],
       source: { name: 'Lemo-Opuscar by Lemomo (LemoLab)', url: 'https://example.invalid/', posterLicense: 'CC BY 4.0' },
+    };
+    if (path === `${base}/works`) data = { items: [{
+      runId, title: '测试中的影片', kind: 'video', templateId: 'sketchnote', status: 'running',
+      publishStatus: 'none', summary: '生成中', updatedAt: '2026-11-29T01:00:00Z',
+    }] };
+    if (path === `${base}/runs/${runId}`) data = {
+      id: runId, kind: 'video', title: '测试中的影片', templateId: 'sketchnote', status: 'running',
+      ask: '', attachments: [], elapsedSec: 132, remainSec: 480, publish: { status: 'none' },
+      stages: [{ key: 'composing-page', status: 'running', progress: 42, label: 'OpenDesign 正在创作视频 · 已调用模型 7 次' }],
     };
     if (path === `${base}/attachments/knowledge`) data = {
       id: 'a'.repeat(32), name: '需求评审的三个习惯.md', kind: 'kb', status: 'ready', meta: '示例稿件', chars: 1840,
@@ -63,12 +73,22 @@ test('网页托管生成入口与 V9 手机输入框', async ({ page }, testInfo
   await page.getByRole('button', { name: '生成', exact: true }).click();
   await expect(page.locator('[data-qc-ready=compose]')).toHaveAttribute('data-output', 'web');
   const tools = page.locator('[data-qc=composer-tools]');
-  await expect(tools.getByRole('button')).toHaveCount(4);
-  await expect(tools.locator('[data-qc=brief-send]')).toBeDisabled();
+  await expect(tools.getByRole('button')).toHaveCount(5);
+  const submit = tools.locator('[data-qc=submit]');
+  const send = tools.locator('[data-qc=brief-send]');
+  const input = page.getByRole('textbox', { name: '发给快速创作', exact: true });
+  await expect(page.getByRole('region', { name: '预览' })).toHaveCount(0);
+  await expect(submit).toBeDisabled();
+  await expect(submit).toHaveAttribute('title', /放进稿件/);
+  await expect(send).toHaveCount(0);
   await expect(page.locator('[data-qc=block-reason]')).toHaveCount(0);
+  await input.fill('我想做一个培训短片');
+  await expect(send).toBeEnabled();
+  await expect(submit).toHaveCount(0);
+  await input.clear();
   await tools.locator('[data-qc=composer-plus]').click();
   const plus = page.locator('[data-qc=plus-menu]');
-  await expect(plus.getByRole('button')).toHaveText(['上传稿件或图片', '从知识库选择']);
+  await expect(plus.getByRole('button')).toHaveText(['上传稿件或图片', '从知识库选择', '用示例稿件试一下']);
   await testInfo.attach('手机添加资料', { body: await page.screenshot(), contentType: 'image/png' });
   await plus.getByRole('button', { name: '从知识库选择' }).click();
   const docs = page.getByRole('dialog', { name: '选择知识库稿件' });
@@ -81,23 +101,38 @@ test('网页托管生成入口与 V9 手机输入框', async ({ page }, testInfo
     plus.getByRole('button', { name: '上传稿件或图片' }).click(),
   ]);
   expect(chooser.isMultiple()).toBe(true);
-  await tools.locator('[data-qc=style-chip]').click();
-  const output = page.locator('[data-qc=style-popover]').getByRole('radiogroup', { name: '选择产出' });
+  const outputChip = tools.locator('[data-qc=output-chip]');
+  const styleChip = tools.locator('[data-qc=style-chip]');
+  await outputChip.click();
+  const output = page.locator('[data-qc=output-popover]').getByRole('radiogroup', { name: '选择产出' });
   await expect(output).toBeVisible();
   await testInfo.attach('手机切换产出和风格', { body: await page.screenshot(), contentType: 'image/png' });
   await output.getByRole('radio', { name: '视频', exact: true }).click();
-  await expect(tools.locator('[data-qc=style-chip]')).toContainText(/(?:时长|约 1 分钟) · 视觉笔记/);
+  await expect(outputChip).toHaveAttribute('data-output', 'video');
+  await expect(styleChip).toHaveAttribute('aria-label', /视觉笔记/);
   await page.keyboard.press('Escape');
   await page.locator('[data-qc=sample-doc]').click();
-  await expect(tools.locator('[data-qc=style-chip]')).toContainText('约 3 分钟 · 视觉笔记');
+  await expect(outputChip).toContainText('3 分钟');
+  await expect(styleChip).toHaveAttribute('aria-label', /视觉笔记/);
   await expect(tools.getByRole('button', { name: '生成', exact: true })).toBeEnabled();
   await expect(tools.locator('[data-qc=brief-send]')).toHaveCount(0);
   await tools.getByRole('button', { name: '语音输入', exact: true }).click();
-  const input = page.getByRole('textbox', { name: '发给快速创作', exact: true });
   await expect(input).toHaveValue('使用温和的配色');
-  await expect(tools.locator('[data-qc=brief-send]')).toBeEnabled();
-  await expect(tools.locator('[data-qc=submit]')).toHaveCount(0);
+  await expect(submit).toBeEnabled();
+  await expect(send).toHaveCount(0);
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
+
+  await page.locator('[data-qc=works-link]').click();
+  await expect(page.locator('[data-qc=recent-works]')).toBeInViewport();
+  const work = page.locator(`[data-work="${runId}"]`);
+  await expect(work).toContainText('生成中');
+  await work.click();
+  await expect(page.locator('[data-qc=stage-title]')).toHaveText('正在创作');
+  await expect(page.getByRole('progressbar', { name: '总进度' })).toHaveAttribute('aria-valuenow', '42');
+  await expect(page.getByText(/已调用模型 7 次/)).toBeHidden();
+  await page.locator('[data-qc=process-toggle]').click();
+  await expect(page.getByText(/已调用模型 7 次/)).toBeVisible();
+  await testInfo.attach('手机任务进展', { body: await page.screenshot(), contentType: 'image/png' });
 });
 
 for (const resume of ['点重试', '读回已保存回复']) {
