@@ -29,6 +29,7 @@
 .dw-right { margin-left: auto; }
 .dw-head { min-height: 52px; margin-bottom: 3px; padding-block: 4px; }
 .dw-head--draft { display: grid; min-width: 0; margin: 0; padding-block: 0; border-bottom: 1px solid var(--dw-line); }
+.dw-workspace--log > .dw-head--draft { flex-shrink: 0; }
 .dw-draft-bar { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 8px; min-height: 42px; }
 .dw-draft-heading { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .dw-draft-heading h1 { min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

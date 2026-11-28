@@ -23,7 +23,8 @@ const textLimit = 48 * 1024;
 const imageLimit = 1.5 * 1024 * 1024;
 const actors = new Map<string, DesignActor>([
   ['publisher', { kind: 'human', id: 'publisher', label: 'Fixture publisher', permissions: ['read', 'write', 'approve'] }],
-  ['implementer', { kind: 'agent', id: 'implementer', label: 'Fixture implementer', permissions: ['read'], feedback: true }],
+  ['implementer', { kind: 'agent', id: 'implementer', label: 'Fixture implementer', permissions: ['read'], feedback: true, designRole: 'impl-agent' }],
+  ['confirmer', { kind: 'human', id: 'confirmer', label: 'Fixture confirmer', permissions: ['read', 'write', 'approve'] }],
   ['reader', { kind: 'agent', id: 'reader', label: 'Fixture read-only actor', permissions: ['read'] }],
 ]);
 
@@ -65,7 +66,13 @@ describe('CDS V2 feedback contract', () => {
   beforeEach(async () => {
     directory = await mkdtemp(path.join(tmpdir(), 'cds-design-v2-feedback-'));
     store = new FileProjectRevisionStore(directory);
-    const service = new DesignWorkspaceService(store);
+    const service = new DesignWorkspaceService(store, {
+      feedbackAssignees: async project => project === projectId ? [
+        { id: 'publisher', label: 'Fixture publisher', kind: 'person' },
+        { id: 'implementer', label: 'Fixture implementer', kind: 'impl-agent' },
+        { id: 'confirmer', label: 'Fixture confirmer', kind: 'person' },
+      ] : [],
+    });
     const app = express();
     app.use('/api', createDesignWorkspaceRouter({ service, resolveAccess: (request, project) =>
       project === projectId || project === otherProject ? actors.get(request.get('x-fixture-user') ?? '') ?? null : null,
@@ -128,12 +135,128 @@ describe('CDS V2 feedback contract', () => {
       title: 'Fixture feedback', body: 'Check the archived design revision.' };
   }
 
+  function handoverReport(designId: string) {
+    return { ...report(designId), handlerId: 'implementer', body: '## 诉求\n\n核对交付记录。\n\n## 怎么算解决\n\n能打开对应反馈。' };
+  }
+
   async function deliveryFiles(designId: string, version: number) {
     const response = await read(`?designId=${designId}&version=${version}`);
     expect(response.status).toBe(200);
     const { designs } = await response.json() as DesignWorkspace;
     return designs[0].versions.find(row => row.version === version)!.delivery!.files;
   }
+
+  it('A-76 persists the holder, makes repeated transitions idempotent, and requires CDS screenshot proof', async () => {
+    const designId = await publish(initialFile);
+    const create = handoverReport(designId);
+    expect((await send('/feedback', { ...create, handlerId: 'reader' }, 'publisher')).status).toBe(400);
+    const opened = await send('/feedback', create, 'publisher');
+    expect(opened.status).toBe(201);
+    const { result: { id: feedbackId } } = await opened.json();
+    const stage = { type: 'feedback.stage', designId, feedbackId, action: 'take', expectedStage: 'raised',
+      body: '我会核对交付记录。', requestId: 'fixture-take-once' };
+    expect((await send('/feedback', stage, 'publisher')).status).toBe(403);
+    expect((await send('/feedback', stage)).status).toBe(201);
+    expect((await send('/feedback', stage)).status).toBe(200);
+    expect((await send('/feedback', { ...stage, requestId: randomUUID() })).status).toBe(409);
+
+    const submit = { ...stage, requestId: randomUUID(), action: 'deliver', expectedStage: 'working',
+      body: '已经核对记录，请确认。' };
+    expect((await send('/feedback', submit)).status).toBe(400);
+    const image = dataUrl(phonePng());
+    expect((await send('/feedback/attachments', { type: 'feedback.attach', designId, feedbackId, title: '普通附图', image })).status).toBe(201);
+    expect((await send('/feedback', submit)).status).toBe(400);
+    expect((await send('/feedback', { type: 'feedback.resolve', designId, feedbackId, decision: 'close', body: '提前关闭' }, 'publisher')).status).toBe(409);
+
+    const reopened = new DesignWorkspaceService(new FileProjectRevisionStore(directory));
+    const thread = (await reopened.workspace(projectId, actors.get('publisher')!)).designs[0].feedback?.[0];
+    expect(thread).toMatchObject({ stage: 'working', status: 'open', handler: { id: 'implementer', kind: 'impl-agent' },
+      transitions: [{ action: 'take', author: { id: 'implementer', kind: 'impl-agent' } }] });
+    const inbox = await read('?view=inbox', 'implementer');
+    expect(inbox.status).toBe(200);
+    expect(await inbox.json()).toMatchObject({ projectId, items: [{ designId, feedbackId, stage: 'working' }] });
+    expect(await (await read('?view=inbox', 'publisher')).json()).toMatchObject({ projectId, items: [] });
+    expect(await (await read('?view=inbox', 'implementer', otherProject)).json()).toMatchObject({ projectId: otherProject, items: [] });
+  });
+
+  it('A-77 and A-79 validate structured messages and persist the authenticated author role', async () => {
+    const designId = await publish(initialFile);
+    const opened = await send('/feedback', handoverReport(designId), 'publisher');
+    expect(opened.status).toBe(201);
+    const { result: { id: feedbackId } } = await opened.json();
+    const reply = { type: 'feedback.reply', designId, feedbackId, body: '布局已经调整，我会复查。' };
+    const message = { kind: 'answer', lead: '已调整页面布局。', items: ['A-01'] };
+    for (const invalid of [
+      { ...reply },
+      { ...reply, message: { ...message, lead: 'https://fixture.invalid/example' } },
+      { ...reply, message: { ...message, items: ['A-999'] } },
+      { ...reply, message: { ...message, authorKind: 'person' } },
+      { ...reply, message: { ...message, kind: 'confirm' } },
+    ]) expect((await send('/feedback', invalid)).status).toBe(400);
+    expect((await send('/feedback', { ...reply, message })).status).toBe(201);
+    const { designs } = await (await read()).json() as DesignWorkspace;
+    expect(designs[0].feedback?.[0]).toMatchObject({ author: { kind: 'person' }, stage: 'raised',
+      replies: [{ author: { id: 'implementer', kind: 'impl-agent' }, message }],
+    });
+  });
+
+  it('round-trips program evidence through delivery, return and final human confirmation', async () => {
+    const designId = await publish(initialFile);
+    const proof = { runId: 'RUN-fixture', screenId: 'initial-desktop', slot: 'desktop-light' } as const;
+    const artifactId = 'fixture-program-image';
+    const at = '2026-11-21T00:00:00.000Z';
+    const commit = 'd'.repeat(40);
+    const dataset = 'e'.repeat(64);
+    const provenance = { dataset, commit, capturedBy: 'cds' as const };
+    expect(await store.append({
+      projectId, revision: 2,
+      request: { key: 'fixture-program-proof', fingerprint: 'fixture-program-proof', result: { type: 'acceptance.capture' } },
+      assets: [{ id: artifactId, mime: 'image/png', base64: phonePng().toString('base64') }],
+      design: { id: designId, run: { id: proof.runId, version: 1, commit, previewUrl: 'https://fixture.invalid',
+        createdAt: at, verdict: 'pending', issues: {}, cells: [],
+        programEvidence: { 'initial-desktop/desktop-light': { ...provenance, fixtureDigest: dataset, digest: dataset, by: 'implementer', at } },
+        visual: { 'initial-desktop/desktop-light': { ...provenance, imageId: artifactId, checks: {}, by: 'CDS', at } },
+      } },
+    })).toBe(true);
+    const opened = await send('/feedback', handoverReport(designId), 'publisher');
+    const { result: { id: feedbackId } } = await opened.json();
+    const stage = (action: string, expectedStage: string, body: string, actor = 'implementer', evidence?: typeof proof) => send('/feedback',
+      { type: 'feedback.stage', designId, feedbackId, action, expectedStage, body, ...(evidence ? { proof: evidence } : {}) }, actor);
+
+    expect((await stage('take', 'raised', '我会核对反馈。')).status).toBe(201);
+    expect((await stage('deliver', 'working', '我已核对反馈。', 'implementer', { ...proof, slot: 'desktop-dark' } as typeof proof)).status).toBe(400);
+    expect((await stage('deliver', 'working', '我已核对反馈。', 'implementer', proof)).status).toBe(201);
+    expect((await stage('confirm', 'review', '可以完结。', 'implementer', proof)).status).toBe(403);
+    expect((await stage('return', 'review', '请补充关闭时的画面。', 'publisher')).status).toBe(201);
+    expect((await stage('deliver', 'returned', '已经补充画面。', 'implementer', proof)).status).toBe(201);
+    expect((await stage('confirm', 'review', '结果已经核对。', 'publisher', proof)).status).toBe(201);
+    const { designs } = await (await read()).json() as DesignWorkspace;
+    const thread = designs[0].feedback?.[0];
+    expect(thread).toMatchObject({ stage: 'done', status: 'closed' });
+    expect(thread?.transitions?.map(step => step.action)).toEqual(['take', 'deliver', 'return', 'deliver', 'confirm']);
+    expect(thread?.transitions?.at(-1)?.proof).toMatchObject({ ...proof, imageId: artifactId, commit });
+    expect((await read('/artifacts/' + artifactId)).status).toBe(200);
+
+    const agentReport = { ...handoverReport(designId), handlerId: 'publisher' };
+    expect((await send('/feedback', agentReport)).status).toBe(400);
+    expect((await send('/feedback', { ...agentReport, confirmerId: 'reader' })).status).toBe(400);
+    expect((await send('/feedback', { ...agentReport, confirmerId: 'publisher' })).status).toBe(400);
+    const delegated = await send('/feedback', { ...agentReport, confirmerId: 'confirmer' });
+    expect(delegated.status).toBe(201);
+    const { result: { id: delegatedId } } = await delegated.json();
+    const next = (action: string, expectedStage: string, actor: string, evidence?: typeof proof) => send('/feedback',
+      { type: 'feedback.stage', designId, feedbackId: delegatedId, action, expectedStage,
+        body: '已核对本次交接。', ...(evidence ? { proof: evidence } : {}) }, actor);
+    expect((await next('take', 'raised', 'publisher')).status).toBe(201);
+    expect((await next('deliver', 'working', 'publisher', proof)).status).toBe(201);
+    expect(await (await read('?view=inbox', 'confirmer')).json()).toMatchObject({ items: [{ feedbackId: delegatedId, stage: 'review' }] });
+    expect((await next('confirm', 'review', 'implementer', proof)).status).toBe(403);
+    expect((await next('confirm', 'review', 'publisher', proof)).status).toBe(403);
+    expect((await next('confirm', 'review', 'confirmer', proof)).status).toBe(201);
+    expect((await (await read()).json() as DesignWorkspace).designs[0].feedback?.find(row => row.id === delegatedId)).toMatchObject({
+      stage: 'done', author: { id: 'implementer', kind: 'impl-agent' }, confirmer: { id: 'confirmer', kind: 'person' },
+    });
+  });
 
   it('keeps text feedback at 48 KiB and accepts only attachments on the independent upload endpoint', async () => {
     const designId = await publish(initialFile);

@@ -42,6 +42,14 @@ const intakeResult = z.object({
 });
 const feedbackBase = { requestId: id, designId: id };
 const feedbackBody = z.string().trim().min(1).max(4_000);
+const paragraph = z.string().trim().min(1).max(300);
+const lead = z.string().trim().min(1).max(80);
+const replyMessage = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('answer'), lead, items: z.array(id).min(1).max(60) }).strict(),
+  z.object({ kind: z.literal('propose'), lead, conclusion: paragraph, scope: paragraph }).strict(),
+  z.object({ kind: z.literal('evidence'), lead, runId: id, commit: z.string().regex(/^[a-f0-9]{7,40}$/i) }).strict(),
+  z.object({ kind: z.literal('confirm'), lead }).strict(),
+]);
 const workflowReason = z.string().trim().min(1).max(1_000);
 const slot = z.enum(['desktop-light', 'desktop-dark', 'phone-light', 'phone-dark']);
 const imagePath = z.string().trim().min(1).max(1200);
@@ -65,6 +73,8 @@ const schemas = {
     z.object({ view: z.literal('delivery'), id, version }).strict(),
     z.object({ view: z.literal('handoff'), id, version: positiveVersion }).strict(),
     z.object({ view: z.literal('feedback'), id, version }).strict(),
+    z.object({ view: z.literal('inbox') }).strict(),
+    z.object({ view: z.literal('assignees') }).strict(),
     z.object({ view: z.literal('file'), id, version: positiveVersion, path: z.string().min(1).max(400),
       offset: z.number().int().nonnegative().optional(), limit: z.number().int().min(1).max(16_000).optional() }).strict(),
   ]),
@@ -75,9 +85,12 @@ const schemas = {
     z.object({ ...feedbackBase, type: z.literal('feedback.create'), version: positiveVersion,
       category: z.enum(['reuse', 'implementation', 'gap', 'constraint', 'acceptance']),
       title: z.string().trim().min(1).max(180), body: feedbackBody, screenId: id.optional(), filePath: z.string().trim().min(1).max(400).optional(),
-      evidence: z.array(z.string().trim().min(1).max(1_000)).max(8).optional() }).strict(),
+      evidence: z.array(z.string().trim().min(1).max(1_000)).max(8).optional(), handlerId: id.optional(), confirmerId: id.optional() }).strict(),
     z.object({ ...feedbackBase, type: z.literal('feedback.reply'), feedbackId: id, body: feedbackBody,
-      revision: version, supplement: z.literal(true).optional() }).strict(),
+      revision: version, supplement: z.literal(true).optional(), message: replyMessage.optional() }).strict(),
+    z.object({ ...feedbackBase, type: z.literal('feedback.stage'), feedbackId: id, body: feedbackBody,
+      action: z.enum(['take', 'deliver', 'confirm', 'return']), expectedStage: z.enum(['raised', 'working', 'review', 'returned', 'done']),
+      proof: z.object({ runId: id, screenId: id, slot }).strict().optional() }).strict(),
     z.object({ ...feedbackBase, type: z.literal('feedback.attach'), feedbackId: id, title: z.string().trim().min(1).max(180),
       imagePath, version, screenId: id.optional(), slot: slot.optional() }).strict(),
     z.object({ ...feedbackBase, type: z.literal('feedback.resolve'), feedbackId: id, body: feedbackBody,
@@ -202,6 +215,11 @@ export function createDesignBridge(credentials, options = {}) {
       const args = parsed.data;
       if (name === readTool) {
         if (args.view === 'intake') return intake();
+        if (args.view === 'inbox' || args.view === 'assignees') {
+          const result = await client.request('GET', `${path}?view=${args.view}`);
+          if (result.projectId !== projectId || !Array.isArray(result.items)) throw new Error('CDS 返回的交接记录与当前项目不符');
+          return result;
+        }
         if (args.view === 'diff') {
           const query = new URLSearchParams({ designId: args.id, from: args.fromVersion, to: args.toVersion });
           const result = await client.request('GET', `${path}/diff?${query}`);
@@ -289,6 +307,7 @@ export function createDesignBridge(credentials, options = {}) {
         const targetMatches = args.type.startsWith('brief.') ? result?.designKey === args.designKey && result?.version === args.expectedVersion
           : result?.designId === args.designId;
         if (receipt.projectId !== projectId || !targetMatches || result?.type !== args.type
+          || (args.feedbackId && result?.id !== args.feedbackId)
           || (args.type === 'feedback.attach' && (result.id !== args.feedbackId || !id.safeParse(result.artifactId).success
             || (args.version !== undefined && result.version !== args.version)))
           || typeof receipt.reused !== 'boolean' || !id.safeParse(result?.id).success) {

@@ -1,11 +1,11 @@
 import { Folder, Grid2X2, Layers, List, Maximize, MessageSquare, Search, X } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import type { DesignComment, DesignEntry, DesignModuleRef, DesignTheme, DesignVersion, DesignViewerState, DesignWorkspace } from '../../../../src/shared/design-workspace';
-import { charterOf, FrameworkBadge, FrameworkOverview, FrameworkStatus, frameworkUses } from './DesignFramework';
+import { charterOf, FrameworkBadge, FrameworkPreview, FrameworkStatus, frameworkUses } from './DesignFramework';
 import { DesignRequirementList } from './DesignRequirements';
-import { adoptedFrameworkVersion, latestDesignFeedbackAt } from '../../../../src/shared/design-workspace';
-import { designArtifact, designDate, designFeedbackAwaitsViewer, designPublisherLabel, designStatus, failedBaseline, isNewDesignRequirement, latestDesign, legacyRequirementGroup, newDesignLabel, openReviews, scopeKey, statusNames } from './design-ui';
+import { adoptedFrameworkVersion } from '../../../../src/shared/design-workspace';
+import { designArtifact, designDate, designPublisherLabel, designStatus, failedBaseline, isNewDesignRequirement, latestDesign, legacyRequirementGroup, newDesignLabel, openReviews, scopeKey, statusNames } from './design-ui';
 
 export const libraryStatuses = [
   ['all', '全部状态'], ['attention', '等你处理'], ['review', statusNames.review], ['failed', statusNames.failed],
@@ -45,7 +45,6 @@ function DesignCard({ entry, workspace, viewer, theme, href, onLarge, task }: Ca
   const action = task ?? (failed === undefined ? undefined : { label: '验收未通过', href: href + '&tab=accept&version=' + failed });
   const target = action && 'href' in action ? action.href : href;
   const unread = newDesignLabel(entry, viewer);
-  const unreadFeedback = latestDesignFeedbackAt(entry) > (viewer.designs?.[entry.id]?.feedbackAt ?? viewer.firstVisitAt ?? viewer.lastVisitAt ?? '');
   const framework = workspace.frameworks.find(row => row.id === version.framework);
   return <article className="dw-design-card" data-state={status}>
     <div className="dw-thumb">
@@ -54,8 +53,8 @@ function DesignCard({ entry, workspace, viewer, theme, href, onLarge, task }: Ca
         ? <button className="dw-card-cover" type="button" aria-label={'打开稿件 ' + version.title} aria-description={action.label} onClick={action.open} />
         : <Link className="dw-card-cover" to={target}
           aria-label={'打开稿件 ' + version.title} aria-description={action?.label} />}
-      {unread ? <span className="dw-card-new">{unread}</span>
-        : unreadFeedback && <Link className="dw-card-new" to={href + '&tab=delivery&part=feedback'}>新反馈</Link>}
+      {/* V25（用户：「新反馈」看不出是什么意思，也没有结束它的办法，是个无头状态）：去掉「新反馈」角标，只留新稿和新版本 */}
+      {unread && <span className="dw-card-new">{unread}</span>}
       <button className="ep-button dw-card-screen" type="button" aria-label={'大屏查看 ' + version.title}
         onClick={() => onLarge(entry, version)}><Maximize />大屏</button>
     </div>
@@ -114,9 +113,8 @@ export function DesignLibrary({ workspace, query, onChange, mode, theme, viewer,
     const failed = canManage ? failedBaseline(entry) : undefined;
     if (review) tasks.set(entry.id, { label: '核对评审回复', open: () => onReview(entry, review.comment, review.version) });
     else if (canReview) tasks.set(entry.id, { label: '评审 V' + head.version, href });
-    else if (permissions.feedback && entry.feedback?.some(row => designFeedbackAwaitsViewer(entry, row, permissions.actorId))) {
-      tasks.set(entry.id, { label: '处理反馈', href: href + '&tab=delivery' });
-    } else if (failed !== undefined) tasks.set(entry.id, { label: '验收未通过', href: href + '&tab=accept&version=' + failed });
+    /* V25：反馈不再把稿件放进「等你处理」——人怎么接收和结束反馈还没定，放进去却没有结束的办法；反馈在稿件的「对话」里看和回 */
+    else if (failed !== undefined) tasks.set(entry.id, { label: '验收未通过', href: href + '&tab=accept&version=' + failed });
   }
   const attention = (entry: DesignEntry) => tasks.has(entry.id);
   const groupOf = (entry: DesignEntry) => latestDesign(entry).group ?? '未分组';
@@ -189,17 +187,28 @@ export function DesignLibrary({ workspace, query, onChange, mode, theme, viewer,
   const visibleFrameworkIds = new Set(system ? [system.framework, ...system.modules.filter(row => !module || row.id === module.id).map(row => row.framework),
     ...scoped.map(row => latestDesign(row).framework)] : frameworks.map(row => row.id));
   const visibleFrameworks = frameworks.filter(row => visibleFrameworkIds.has(row.id));
+  const [frameworksOpen, setFrameworksOpen] = useState(false);
   const frameworkTiles = (overview: boolean) => visibleFrameworks.map(row => {
     const latest = row.versions.at(-1)!;
     const charter = charterOf(latest);
     const used = frameworkUses(row.id, drafts);
     const adopted = adoptedFrameworkVersion(row);
-    return <button type="button" key={row.id} className={'dw-surface ' + (overview ? 'dw-framework-card' : 'dw-fw-tile')} onClick={() => onFramework(row.id)}>
+    const outdated = adopted === undefined ? 0 : used.filter(({ binding }) => binding.frameworkVersion !== undefined && binding.frameworkVersion < adopted).length;
+    /* V25（用户：框架卡片有明显问题）：原来标题行没有内边距、贴着卡片边，上白下灰像两块拼起来。
+     * 改成和稿件卡片同一种结构：上面是预览（配色、字号），下面两行——名称；状态 · 编号版本 · 几份稿件在用。初衷放到悬停提示和框架页 */
+    if (overview) return <button type="button" key={row.id} className="dw-surface dw-framework-card dw-fwc" data-framework={row.id}
+      title={charter?.intent} onClick={() => onFramework(row.id)}>
+      <span className="dw-fwc-preview"><FrameworkPreview material={latest.material} /></span>
+      <span className="dw-fwc-info">
+        <strong>{latest.title}</strong>
+        <span className="dw-fwc-meta"><FrameworkStatus revision={latest} /><code>{row.id} v{latest.version}</code>
+          <em>{used.length} 份稿件在用{outdated ? ` · ${outdated} 份可升级` : ''}</em></span>
+      </span>
+    </button>;
+    return <button type="button" key={row.id} className="dw-surface dw-fw-tile" onClick={() => onFramework(row.id)}>
       <span className="dw-row"><FrameworkBadge id={row.id} version={latest.version} compact /><FrameworkStatus revision={latest} /></span>
       <strong>{latest.title}</strong>
-      {overview ? <FrameworkOverview material={latest.material} revision={latest} used={used.length}
-        outdated={adopted === undefined ? 0 : used.filter(({ binding }) => binding.frameworkVersion !== undefined && binding.frameworkVersion < adopted).length} />
-        : <><small>{charter?.intent ?? '还没有写设计初衷'}</small><small>{used.length} 份稿件在用</small></>}
+      <small>{charter?.intent ?? '还没有写设计初衷'}</small><small>{used.length} 份稿件在用</small>
     </button>;
   });
   return <>
@@ -214,8 +223,6 @@ export function DesignLibrary({ workspace, query, onChange, mode, theme, viewer,
         {system && <select value={query.module} aria-label="所属模块" onChange={event => onChange({ module: event.target.value, group: '' })}>
           <option value="">全部模块</option>{system.modules.map(row => <option key={row.id} value={row.id}>{row.name}</option>)}
         </select>}
-        {!frameworkList && visibleFrameworks.length > 0 && <button type="button" className="ep-text-button"
-          onClick={() => onChange({ view: 'frameworks', framework: '', frameworkFilter: '' })}>框架 {visibleFrameworks.length} 套</button>}
         {!frameworkList && filters.length > 0 && <div className="dw-filter-chips" aria-label="已选筛选">
           {filters.map(([field, label]) => <button type="button" key={field} onClick={() => onChange(field === 'framework'
             ? { framework: '', frameworkFilter: '' } : field === 'status' ? { status: '', filter: '' } : { [field!]: '' })} aria-label={'清除 ' + label}>
@@ -235,9 +242,23 @@ export function DesignLibrary({ workspace, query, onChange, mode, theme, viewer,
           <button aria-pressed={mode === 'cards'} type="button" onClick={() => onChange({ mode: '' })} aria-label="卡片墙"><Grid2X2 /></button>
           <button aria-pressed={mode === 'list'} type="button" onClick={() => onChange({ mode: 'list' })} aria-label="列表"><List /></button>
         </div>
+        {/* V25（用户：「框架 2 套」直接放在标题旁不行）：框架是右上角的一个按钮，点开是右侧抽屉 */}
+        {visibleFrameworks.length > 0 && <button type="button" className="ep-button dw-fw-open" data-action="frameworks" aria-expanded={frameworksOpen}
+          aria-label={`框架 ${visibleFrameworks.length}`}
+          onClick={() => setFrameworksOpen(true)}><Layers />框架<small>{visibleFrameworks.length}</small></button>}
         {headerActions}
       </div>}
     </div>
+    {frameworksOpen && !frameworkList && <>
+      <div className="dw-fw-scrim" aria-hidden="true" onClick={() => setFrameworksOpen(false)} />
+      <aside className="dw-fw-drawer" role="dialog" aria-modal="true" aria-label="框架">
+        <header><h2>框架<small>{visibleFrameworks.length}</small></h2>
+          <button type="button" className="ep-button ep-icon-button" aria-label="关闭" onClick={() => setFrameworksOpen(false)}><X /></button></header>
+        <p className="dw-muted">稿件按框架出稿：框架定公共壳、令牌和规则，门禁按它检查。</p>
+        <div className="dw-fw-drawer-list">{frameworkTiles(true)}</div>
+        <button type="button" className="ep-link" onClick={() => { setFrameworksOpen(false); onChange({ view: 'frameworks', framework: '', frameworkFilter: '' }); }}>打开框架页</button>
+      </aside>
+    </>}
     <div className="dw-gallery dw-library">
       {frameworkList ? (visibleFrameworks.length ? <div className="dw-card-grid">{frameworkTiles(true)}</div>
         : <p className="dw-placeholder">此范围还没有已登记的设计框架。</p>)

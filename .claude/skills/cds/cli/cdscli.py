@@ -56,7 +56,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Optional
 
-VERSION = "0.26.32"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.26.34"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 CDS_SKILLS = ("cds", "cds-design", "cds-build", "cds-project-scan", "cds-deploy-pipeline", "cds-release", "preview-url")
 
@@ -4752,12 +4752,20 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
                         or any(attachment.get("version") == args.version for attachment in row.get("attachments", []))]
         ok({"projectId": project, "designId": args.id, "items": feedback})
 
-    if action in ("feedback-create", "feedback-reply", "feedback-resolve"):
+    if action in ("inbox", "feedback-assignees"):
+        view = "inbox" if action == "inbox" else "assignees"
+        result = request("GET", "?" + urllib.parse.urlencode({"view": view}))
+        if not isinstance(result.get("items"), list):
+            die("CDS 返回的交接记录无效")
+        ok(result)
+
+    if action in ("feedback-create", "feedback-reply", "feedback-resolve", "feedback-stage"):
         action_type = action.replace("-", ".", 1)
         command = {"type": action_type, "designId": args.id, "body": args.body}
         if action == "feedback-create":
             command.update(version=args.version, category=args.category, title=args.title)
-            for key, value in (("screenId", args.screen), ("filePath", args.file_path), ("evidence", args.evidence)):
+            for key, value in (("screenId", args.screen), ("filePath", args.file_path), ("evidence", args.evidence),
+                               ("handlerId", args.handler_id), ("confirmerId", args.confirmer_id)):
                 if value:
                     command[key] = value
         else:
@@ -4767,8 +4775,20 @@ def cmd_design_workspace(args: argparse.Namespace) -> None:
                     command["revision"] = args.revision
                 if args.supplement:
                     command["supplement"] = True
+                if args.message_file:
+                    message = read_input(args.message_file)
+                    if not isinstance(message, dict):
+                        die("回复类型文件必须是 JSON 对象")
+                    command["message"] = message
             if action == "feedback-resolve":
                 command["decision"] = args.decision
+            if action == "feedback-stage":
+                command.update(action=args.action, expectedStage=args.expected_stage)
+                proof = (args.run, args.screen, args.slot)
+                if any(proof) and not all(proof):
+                    die("请同时提供运行编号、画面和视口主题")
+                if all(proof):
+                    command["proof"] = dict(runId=args.run, screenId=args.screen, slot=args.slot)
         request_id = args.request_id or hashlib.sha256(json.dumps([project, command], sort_keys=True, ensure_ascii=False).encode()).hexdigest()
         receipt = request("POST", "/feedback", {**command, "requestId": request_id}, retry_id=request_id)
         result = receipt.get("result") or {}
@@ -5253,7 +5273,7 @@ def _register_design_parser(sub: Any) -> None:
     preview.add_argument("--theme", choices=("light", "dark"), default="light")
     preview.add_argument("--port", type=int, default=0, help="环回端口，默认自动选择")
     framework = sub.add_parser("framework", help="项目设计框架").add_subparsers(dest="design_action", required=True)
-    for routes, actions in ((design, ("intake", "delivery", "handoff", "brief-reply", "brief-claim", "brief-release", "feedback", "feedback-create", "feedback-reply", "feedback-resolve", "attach-evidence", "publish", "list", "reviewers", "request-review", "comments", "diff", "accept", "record", "visual", "capture", "recheck", "flow", "smoke", "coverage", "regress", "known-create", "result", "freeze", "unfreeze", "start-upgrade", "cancel-upgrade", "bind", "sign", "scaffold", "extract", "enable-method", "disable-method")),
+    for routes, actions in ((design, ("intake", "delivery", "handoff", "brief-reply", "brief-claim", "brief-release", "feedback", "inbox", "feedback-assignees", "feedback-create", "feedback-reply", "feedback-stage", "feedback-resolve", "attach-evidence", "publish", "list", "reviewers", "request-review", "comments", "diff", "accept", "record", "visual", "capture", "recheck", "flow", "smoke", "coverage", "regress", "known-create", "result", "freeze", "unfreeze", "start-upgrade", "cancel-upgrade", "bind", "sign", "scaffold", "extract", "enable-method", "disable-method")),
                             (framework, ("show", "list", "publish", "import"))):
         for action in actions:
             parser = routes.add_parser(action, help="发布项目框架版本" if action == "publish" and routes is framework else None)
@@ -5261,7 +5281,7 @@ def _register_design_parser(sub: Any) -> None:
             parser.add_argument("--project", help="默认使用当前仓库绑定的项目")
             parser.add_argument("--host", help="使用 --workspace-credential 时核对已绑定的 CDS 主机")
             parser.add_argument("--as-user", help="由 CDS 成员在交互终端登录后执行")
-            if action not in ("intake", "list", "publish", "reviewers", "scaffold") or (routes is framework and action == "publish"):
+            if action not in ("intake", "list", "publish", "reviewers", "scaffold", "inbox", "feedback-assignees") or (routes is framework and action == "publish"):
                 parser.add_argument("id")
             if action in ("publish", "request-review", "accept", "record", "visual", "capture", "recheck", "flow", "smoke", "coverage", "regress", "known-create", "freeze", "unfreeze", "start-upgrade", "cancel-upgrade", "bind", "sign", "extract", "import"):
                 parser.add_argument("--request-id")
@@ -5285,7 +5305,7 @@ def _register_design_parser(sub: Any) -> None:
                     parser.add_argument("--body", required=True, help="对该已交接需求的回复")
             if action == "feedback":
                 parser.add_argument("--version", type=int, help="按版本查看，仍包括前版未关闭的反馈")
-            if action in ("feedback-create", "feedback-reply", "feedback-resolve"):
+            if action in ("feedback-create", "feedback-reply", "feedback-resolve", "feedback-stage"):
                 parser.add_argument("--request-id")
                 parser.add_argument("--body", required=True)
                 if action == "feedback-create":
@@ -5295,13 +5315,22 @@ def _register_design_parser(sub: Any) -> None:
                     parser.add_argument("--screen")
                     parser.add_argument("--file-path")
                     parser.add_argument("--evidence", action="append")
+                    parser.add_argument("--handler-id", help="从 design feedback-assignees 回读的交接方")
+                    parser.add_argument("--confirmer-id", help="智能体发起交接时指定的同项目真人确认人")
                 else:
                     parser.add_argument("--feedback-id", required=True)
                 if action == "feedback-reply":
                     parser.add_argument("--revision", type=int, help="由此回复发布的稿件版本")
                     parser.add_argument("--supplement", action="store_true", help="为旧反馈补写诉求和完成标准")
+                    parser.add_argument("--message-file", help="本次回复的结构化类型字段 JSON")
                 if action == "feedback-resolve":
                     parser.add_argument("--decision", choices=("close", "reopen"), required=True)
+                if action == "feedback-stage":
+                    parser.add_argument("--action", choices=("take", "deliver", "confirm", "return"), required=True)
+                    parser.add_argument("--expected-stage", choices=("raised", "working", "review", "returned", "done"), required=True)
+                    parser.add_argument("--run")
+                    parser.add_argument("--screen")
+                    parser.add_argument("--slot", choices=("desktop-light", "desktop-dark", "phone-light", "phone-dark"))
             if action == "attach-evidence":
                 parser.add_argument("--request-id")
                 parser.add_argument("--feedback-id", required=True)
