@@ -3,6 +3,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Caching.Memory;
 using MongoDB.Driver;
+using PrdAgent.Api.Authentication;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Api.Services;
 using PrdAgent.Core.Interfaces;
@@ -242,7 +243,7 @@ public sealed partial class DesignArtifactsController
 
     [HttpPost("/api/quick-creation/runs")]
     public async Task<IActionResult> CreateQuickCreationRun([FromBody] QuickCreationRunRequest request, CancellationToken ct,
-        [FromQuery] string? filmComparison = null)
+        [FromServices] IAdminPermissionService permissionService, [FromQuery] string? filmComparison = null)
     {
         if (!QuickCreationEnabled()) return NotFound();
         if (request.Kind is not ("video" or "web")) return QuickCreationError("请选择网页或视频");
@@ -250,9 +251,12 @@ public sealed partial class DesignArtifactsController
             return QuickCreationError("请选择有效的成片时长");
         if (filmComparison != null)
         {
-            if (!User.HasClaim("permissions", AdminPermissionCatalog.Super)
-                && !User.HasClaim("permissions", AdminPermissionCatalog.LlmGatewayAccess))
-                return Forbid();
+            if (!FederatedConsoleSessionPolicy.IsEligibleBrowserSession(User)) return Forbid();
+            // The quick-creation route sits outside this controller’s admin route prefix.
+            var permissions = await permissionService.GetEffectivePermissionsAsync(
+                this.GetRequiredUserId(), User.HasClaim("isRoot", "1"), ct);
+            if (!permissions.Contains(AdminPermissionCatalog.Super)
+                && !permissions.Contains(AdminPermissionCatalog.LlmGatewayAccess)) return Forbid();
             if (filmComparison is not ("charter-default" or "native-default" or "native-high" or "legacy-high")
                 || request.Kind != "video" || durationChoice != 60 || request.Trial != false
                 || request.BriefId != null || !string.IsNullOrWhiteSpace(request.Ask))
