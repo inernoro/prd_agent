@@ -2297,6 +2297,29 @@ describe('工程规划与设计 V2 前端回归', () => {
     });
   }, 20_000);
 
+  it('V29 展开此前往来后为完整列表提供唯一的就绪标记', async () => {
+    const thread = { ...previousFeedback, replies: Array.from({ length: 6 }, (_, index) => ({
+      author, at: `2026-11-${20 + index}T00:00:00.000Z`, body: `历史往来 ${index + 1}`,
+    })) };
+    const input = { ...historyWorkspace, designs: [{ ...historyDraft, feedback: [thread] }] };
+    await withDesignBrowser(() => input, async (page, commands) => {
+      await page.goto(browserDesignUrl({ design: historyDraft.id, tab: 'log', log: 'delivery', part: 'feedback', fb: thread.id }));
+      const detail = page.locator('.dw-dl-detail');
+      const list = detail.locator('.dw-fl-talk');
+      const ready = detail.locator('.dw-fl-talk[data-history="all"]');
+      await list.waitFor();
+      expect(await list.getAttribute('data-history')).toBe('recent');
+      expect(await ready.count()).toBe(0);
+      expect(await list.getByText('历史往来 1', { exact: true }).count()).toBe(0);
+
+      await detail.getByRole('button', { name: /此前 2 条/ }).click();
+      await list.getByText('历史往来 1', { exact: true }).waitFor();
+      expect(await ready.count()).toBe(1);
+      expect(await ready.locator('.dw-fl-msg').count()).toBe(6);
+      expect(commands).toHaveLength(0);
+    });
+  }, 20_000);
+
   it('A-03 稿件页头的标题、页签和操作可达', async () => {
     for (const version of [4, 2]) {
       const markup = design(`&design=${layoutDraft.id}&version=${version}&tab=preview`, { ...workspace, designs: [layoutDraft] });

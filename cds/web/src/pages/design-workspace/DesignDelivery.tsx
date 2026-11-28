@@ -315,7 +315,7 @@ function FeedbackDetail({ row, entry, version, permissions, busy, command, openS
         <p className="dw-fl-people">{people.map(author => <ActorTag key={author.id} author={author} />)}</p>
         {hidden > 0 && <button type="button" className="ep-link dw-fl-earlier" data-action="earlier" onClick={() => setEarlier(true)}>
           此前 {hidden} 条（{hiddenRange[0] === hiddenRange[1] ? `V${hiddenRange[0]}` : `V${hiddenRange[0]}–V${hiddenRange[1]}`}）</button>}
-        <ol className="dw-dl-replies dw-fl-talk">
+        <ol className="dw-dl-replies dw-fl-talk" data-history={earlier ? 'all' : 'recent'}>
           {history.slice(hidden).map((item, index, shown) => {
             const v = versionAt(item.at), before = index ? versionAt(shown[index - 1].at) : hidden ? versionAt(history[hidden - 1].at) : row.version;
             const kind = actorOf(item.author);
