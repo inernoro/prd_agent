@@ -85,21 +85,6 @@ public sealed class RedisRunQueueIsolationTests : IAsyncLifetime
         Assert.Null(await producer.DequeueAsync(RunKinds.CodeFilm, TimeSpan.Zero));
     }
 
-    [Fact]
-    public void CodeFilmSlotQueues_AreIsolatedFromOtherSlotsAndRevisions()
-    {
-        const string active = "project-a::video::revision::current";
-        const string retired = "project-a::video::revision::retired";
-        var first = RunKinds.CodeFilmSlotQueue("https://film-first.example/");
-        var second = RunKinds.CodeFilmSlotQueue("https://film-second.example/");
-
-        Assert.True(RunKinds.IsCodeFilmQueue(first));
-        Assert.DoesNotContain("film-first", first);
-        Assert.NotEqual(RedisRunQueue.BuildKey(first, active), RedisRunQueue.BuildKey(second, active));
-        Assert.NotEqual(RedisRunQueue.BuildKey(first, active), RedisRunQueue.BuildKey(first, retired));
-        Assert.NotEqual(RedisRunQueue.BuildKey(first, active), RedisRunQueue.BuildKey(RunKinds.CodeFilm, active));
-    }
-
     [DesignQueueRedisTheory]
     [InlineData("project-a::branch-a::revision::revision-a")]
     [InlineData(null)]
@@ -168,6 +153,21 @@ public sealed class RedisRunQueueIsolationTests : IAsyncLifetime
 
 public sealed class RedisRunQueueKeyTests
 {
+    [Fact]
+    public void CodeFilmSlotQueues_AreIsolatedFromOtherSlotsAndRevisions()
+    {
+        const string active = "project-a::video::revision::current";
+        const string retired = "project-a::video::revision::retired";
+        var first = RunKinds.CodeFilmSlotQueue("https://film-first.example/");
+        var second = RunKinds.CodeFilmSlotQueue("https://film-second.example/");
+
+        Assert.True(RunKinds.IsCodeFilmQueue(first));
+        Assert.DoesNotContain("film-first", first);
+        Assert.NotEqual(RedisRunQueue.BuildKey(first, active), RedisRunQueue.BuildKey(second, active));
+        Assert.NotEqual(RedisRunQueue.BuildKey(first, active), RedisRunQueue.BuildKey(first, retired));
+        Assert.NotEqual(RedisRunQueue.BuildKey(first, active), RedisRunQueue.BuildKey(RunKinds.CodeFilm, active));
+    }
+
     [Theory]
     [InlineData("project-a::branch::revision::one", "project-b::branch::revision::one")]
     [InlineData("project-a::branch-a::revision::one", "project-a::branch-b::revision::one")]
