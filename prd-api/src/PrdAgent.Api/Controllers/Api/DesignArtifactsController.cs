@@ -339,10 +339,9 @@ public sealed partial class DesignArtifactsController : ControllerBase
         DesignArtifactLlmRequestPolicy requestPolicy;
         try
         {
-            var modelOptionId = request.ModelOptionId;
-            if (quickCreation != null && string.IsNullOrWhiteSpace(modelOptionId)) modelOptionId = QuickCreationModel();
             requestPolicy = resumeFilm?.LlmRequestPolicy ?? await DesignArtifactModelSelection.CaptureForWebPageAsync(_configuration,
-                _modelResolver, modelOptionId, DesignArtifactOperations.Generate, CancellationToken.None);
+                _modelResolver, request.ModelOptionId, DesignArtifactOperations.Generate, CancellationToken.None,
+                configuredDefault: quickCreation == null ? null : QuickCreationModel());
             if (isCodeFilm && resumeFilm?.LlmRequestPolicy == null
                 && _configuration["DesignRuntime:OpenDesign:CodeFilmReasoningEffort"] is { Length: > 0 } effort)
             {

@@ -74,16 +74,13 @@ internal sealed record DesignArtifactModelSelection(string? ModelPoolId, string?
 
     internal static async Task<IReadOnlyList<DesignArtifactModelOption>> ListWebPageModelsAsync(
         IModelResolver resolver, string operation, CancellationToken ct)
-        => (await ListWebPagePoolsAsync(resolver, operation, ct))
+        => (await ListWebPagePoolsAsync(resolver, WebPageCaller(operation), ct))
             .Select(pool => new DesignArtifactModelOption(pool.Code, string.IsNullOrWhiteSpace(pool.Name) ? pool.Code : pool.Name))
             .ToArray();
 
     private static async Task<IReadOnlyList<AvailableModelPool>> ListWebPagePoolsAsync(
-        IModelResolver resolver, string operation, CancellationToken ct)
+        IModelResolver resolver, string caller, CancellationToken ct)
     {
-        var caller = operation == DesignArtifactOperations.Edit
-            ? AppCallerRegistry.Admin.WebHosting.EditHtml
-            : AppCallerRegistry.Admin.WebHosting.GenerateHtml;
         var pools = await resolver.GetAvailablePoolsAsync(caller, ModelTypes.Chat, ct);
         return pools
             .Where(pool => pool.ResolutionType == "LogicalModel" && !string.IsNullOrWhiteSpace(pool.Code)
@@ -91,19 +88,33 @@ internal sealed record DesignArtifactModelSelection(string? ModelPoolId, string?
             .ToArray();
     }
 
+    private static string WebPageCaller(string operation) => operation == DesignArtifactOperations.Edit
+        ? AppCallerRegistry.Admin.WebHosting.EditHtml
+        : AppCallerRegistry.Admin.WebHosting.GenerateHtml;
+
     internal static async Task<DesignArtifactLlmRequestPolicy> CaptureForWebPageAsync(
-        IConfiguration configuration, IModelResolver? resolver, string? modelOptionId, string operation, CancellationToken ct)
+        IConfiguration configuration, IModelResolver? resolver, string? modelOptionId, string operation, CancellationToken ct,
+        string? configuredDefault = null)
     {
         var policy = CaptureForNewRun(configuration);
-        var useDefault = string.IsNullOrWhiteSpace(modelOptionId);
-        if (resolver is null && useDefault) return policy;
-        if (resolver is null || (!useDefault && modelOptionId!.Length > 200))
+        var selectedId = string.IsNullOrWhiteSpace(modelOptionId) ? null : modelOptionId;
+        if (resolver is null && selectedId is null && string.IsNullOrWhiteSpace(configuredDefault)) return policy;
+        if (resolver is null || selectedId is { Length: > 200 })
             throw new DesignArtifactModelUnavailableException();
 
-        var pools = await ListWebPagePoolsAsync(resolver, operation, ct);
-        var selected = useDefault
+        var caller = WebPageCaller(operation);
+        if (selectedId is null && !string.IsNullOrWhiteSpace(configuredDefault))
+        {
+            var route = await resolver.ResolveMetadataAsync(caller, ModelTypes.Chat, configuredDefault, ct: ct);
+            if (!route.Success || string.IsNullOrWhiteSpace(route.LogicalModelPublicId))
+                throw new DesignArtifactModelUnavailableException();
+            selectedId = route.LogicalModelPublicId;
+        }
+
+        var pools = await ListWebPagePoolsAsync(resolver, caller, ct);
+        var selected = selectedId is null
             ? pools.FirstOrDefault(pool => pool.IsDefault)
-            : pools.FirstOrDefault(pool => pool.Code == modelOptionId);
+            : pools.FirstOrDefault(pool => pool.Code == selectedId);
         if (selected is null) throw new DesignArtifactModelUnavailableException();
         policy.Model = selected.Code;
         policy.ModelPoolId = null;

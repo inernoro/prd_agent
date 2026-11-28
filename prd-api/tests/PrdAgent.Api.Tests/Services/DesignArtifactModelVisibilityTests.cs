@@ -85,6 +85,32 @@ public sealed class DesignArtifactModelVisibilityTests
     }
 
     [Fact]
+    public async Task QuickCreationResolvesConfiguredAliasThroughGatewayWithoutAcceptingUserAliases()
+    {
+        const string caller = AppCallerRegistry.Admin.WebHosting.GenerateHtml;
+        const string alias = "workspace-model";
+        const string publicModel = "workspace-model-v2";
+        var resolver = new Mock<IModelResolver>(MockBehavior.Strict);
+        resolver.Setup(x => x.ResolveMetadataAsync(caller, ModelTypes.Chat, alias, null, null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ModelResolutionResult { Success = true, LogicalModelPublicId = publicModel });
+        resolver.Setup(x => x.GetAvailablePoolsAsync(caller, ModelTypes.Chat, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([
+                new AvailableModelPool { Code = publicModel, ResolutionType = "LogicalModel",
+                    Models = [new PoolModelInfo { SupportsNativeResponses = true }] },
+            ]);
+        var configuration = new ConfigurationBuilder().Build();
+
+        var policy = await DesignArtifactModelSelection.CaptureForWebPageAsync(configuration, resolver.Object, null,
+            DesignArtifactOperations.Generate, default, configuredDefault: alias);
+
+        Assert.Equal(publicModel, policy.Model);
+        await Assert.ThrowsAsync<DesignArtifactModelUnavailableException>(() =>
+            DesignArtifactModelSelection.CaptureForWebPageAsync(configuration, resolver.Object, alias,
+                DesignArtifactOperations.Generate, default, configuredDefault: alias));
+        resolver.Verify(x => x.ResolveMetadataAsync(caller, ModelTypes.Chat, alias, null, null, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
     public async Task StartChunkResolutionBecomesAModelChunkBeforeAnyText()
     {
         var chunks = new[]
