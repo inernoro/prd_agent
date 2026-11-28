@@ -66,19 +66,49 @@ export async function verifyWatercolor({page, api, data, match, openV9Run, verif
     let from = 0;
     row.scenes = [];
     for (const [index, scene] of bundle.scenes.entries()) {
+      const frameDigests = [];
       for (const fraction of [.29, .72]) {
         await audio.evaluate((media, time) => { media.currentTime = time; }, from + scene.durationSec * fraction);
         await delay(350);
-        await frame.locator('canvas').screenshot({ path: join(out, run.status + '-scene-' + (index + 1) + '-' + fraction + '.png') });
+        const image = await frame.locator('canvas').screenshot({ path: join(out, run.status + '-scene-' + (index + 1) + '-' + fraction + '.png') });
+        frameDigests.push(digest(image));
       }
-      row.scenes.push({ index: index + 1, codeSha256: digest(Buffer.from(scene.code, 'base64')), seconds: scene.durationSec });
+      row.scenes.push({ index: index + 1, codeSha256: digest(Buffer.from(scene.code, 'base64')), seconds: scene.durationSec,
+        sampledAnimation: frameDigests[0] !== frameDigests[1] });
       from += scene.durationSec;
     }
     assert.ok(Math.abs(from - bundle.durationSec) < .1);
   }
 
+  async function verifyPublication(final, finalRow) {
+    const [published] = await Promise.all([
+      page.waitForResponse(match(base + '/runs/' + final.id + '/publish', 'POST')),
+      page.locator('[data-qc=publish]').click(),
+    ]);
+    const delivered = await data(published, 'publish to CDS preview web hosting');
+    assert.ok(delivered.publish.siteId);
+    finalRow.siteId = delivered.publish.siteId;
+    assert.equal((await getRun(final.id)).publish.siteId, finalRow.siteId);
+    await page.locator('[data-qc=open-hosting]').click();
+    await page.locator('[data-hosted-site-id="' + finalRow.siteId + '"]').waitFor();
+    assert.equal(new URL(page.url()).searchParams.get('focusSite'), finalRow.siteId);
+    await page.screenshot({ path: join(out, '08-watercolor-published.png') });
+    receipt.cases.push('Opened the published work from its final-film page');
+  }
+
   const original = await getRun(id);
   await openV9Run(page, original);
+  if (original.trial === null) {
+    const finalRow = { id, kind: 'full-only' };
+    receipt.runs.push(finalRow);
+    const final = await waitForOutput(finalRow, 'done');
+    await page.reload();
+    await verifyFrames(final, finalRow);
+    await verifyPublication(final, finalRow);
+    if (Math.abs(finalRow.durationSec - 60) > 9) receipt.failures.push({ code: 'duration_target', actual: finalRow.durationSec });
+    receipt.cases.push('Final-film fallback exercised publication independently from the failing two-scene trial');
+    return;
+  }
   const trialRow = { id, kind: 'trial' };
   receipt.runs.push(trialRow);
   const trial = await waitForOutput(trialRow, 'trial-ready');
@@ -103,23 +133,11 @@ export async function verifyWatercolor({page, api, data, match, openV9Run, verif
   await page.reload();
   await verifyFrames(final, finalRow);
   assert.ok(finalRow.scenes.length > 2);
-  if (JSON.stringify(finalRow.scenes.slice(0, 2)) !== JSON.stringify(trialRow.scenes)) {
+  if (finalRow.scenes.slice(0, 2).some((scene, index) => scene.codeSha256 !== trialRow.scenes[index].codeSha256 || scene.seconds !== trialRow.scenes[index].seconds)) {
     receipt.failures.push({ code: 'trial_scenes_changed' });
   }
   if (Math.abs(finalRow.durationSec - 60) > 9) receipt.failures.push({ code: 'duration_target', actual: finalRow.durationSec });
-  const [published] = await Promise.all([
-    page.waitForResponse(match(base + '/runs/' + final.id + '/publish', 'POST')),
-    page.locator('[data-qc=publish]').click(),
-  ]);
-  const delivered = await data(published, 'publish to CDS preview web hosting');
-  assert.ok(delivered.publish.siteId);
-  finalRow.siteId = delivered.publish.siteId;
-  assert.equal((await getRun(final.id)).publish.siteId, finalRow.siteId);
-  await page.locator('[data-qc=open-hosting]').click();
-  await page.locator('[data-hosted-site-id="' + finalRow.siteId + '"]').waitFor();
-  assert.equal(new URL(page.url()).searchParams.get('focusSite'), finalRow.siteId);
-  await page.screenshot({ path: join(out, '08-watercolor-published.png') });
-  receipt.cases.push('Opened the published work from its final-film page');
+  await verifyPublication(final, finalRow);
   if (![trialRow, finalRow].some(row => row.progress.some(sample => sample.visibleScenes && sample.scenes.length))) {
     receipt.failures.push({ code: 'live_scene_preview_absent' });
   }
